@@ -1,0 +1,7 @@
+node_modules/
+main.js
+*.js.map
+.env
+.DS_Store
+Thumbs.db
+desktop.ini

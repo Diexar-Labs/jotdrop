@@ -1,0 +1,213 @@
+/* Diexar Keep — Google Keep-stijl kaartjesweergave */
+
+.diexar-keep-view {
+  padding: 16px 20px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.diexar-keep-toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--background-primary);
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.diexar-keep-new-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border: none;
+  padding: 8px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: background 0.15s ease;
+}
+
+.diexar-keep-new-btn:hover {
+  background: var(--interactive-accent-hover);
+}
+
+.diexar-keep-new-btn-icon {
+  display: inline-flex;
+  align-items: center;
+}
+
+.diexar-keep-search {
+  flex: 1;
+  max-width: 360px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-normal);
+}
+
+.diexar-keep-search:focus {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 1px;
+}
+
+/* Masonry-achtig grid via CSS columns */
+.diexar-keep-grid {
+  --diexar-keep-card-width: 240px;
+  column-width: var(--diexar-keep-card-width);
+  column-gap: 12px;
+}
+
+.diexar-keep-card {
+  break-inside: avoid;
+  display: inline-block;
+  width: 100%;
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  transition: box-shadow 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
+}
+
+.diexar-keep-card:hover {
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+  border-color: var(--background-modifier-border-hover);
+}
+
+.diexar-keep-card.is-archived {
+  opacity: 0.7;
+  background: var(--background-secondary-alt);
+}
+
+.diexar-keep-card-body {
+  cursor: pointer;
+}
+
+.diexar-keep-card-title {
+  font-size: 1em;
+  font-weight: 600;
+  margin: 0 0 6px;
+  color: var(--text-normal);
+  word-break: break-word;
+}
+
+.diexar-keep-card-preview {
+  font-size: 0.88em;
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.4;
+  max-height: 180px;
+  overflow: hidden;
+}
+
+.diexar-keep-card-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.diexar-keep-card-tag {
+  font-size: 0.75em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--background-modifier-hover);
+  color: var(--text-accent);
+}
+
+.diexar-keep-card-actions {
+  display: flex;
+  gap: 4px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--background-modifier-border);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.diexar-keep-card:hover .diexar-keep-card-actions,
+.diexar-keep-card:focus-within .diexar-keep-card-actions {
+  opacity: 1;
+}
+
+.diexar-keep-card-action {
+  background: transparent;
+  border: none;
+  padding: 4px;
+  border-radius: 6px;
+  color: var(--text-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.diexar-keep-card-action:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
+.diexar-keep-empty {
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.diexar-keep-empty h3 {
+  margin: 0 0 8px;
+  color: var(--text-normal);
+}
+
+/* Quick capture modal */
+
+.diexar-keep-capture-textarea {
+  width: 100%;
+  min-height: 160px;
+  resize: vertical;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-family: inherit;
+  font-size: 0.95em;
+  line-height: 1.5;
+}
+
+.diexar-keep-capture-textarea:focus {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 1px;
+}
+
+.diexar-keep-capture-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.diexar-keep-capture-hint {
+  font-size: 0.8em;
+  color: var(--text-muted);
+}
+
+/* Smal scherm: minder kolombreedte */
+@media (max-width: 480px) {
+  .diexar-keep-grid {
+    --diexar-keep-card-width: 100%;
+  }
+  .diexar-keep-card-actions {
+    opacity: 1;
+  }
+}
