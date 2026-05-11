@@ -161,6 +161,25 @@
   cursor: pointer;
 }
 
+.diexar-keep-card-thumbnail {
+  margin: -12px -14px 10px;
+  border-radius: 10px 10px 0 0;
+  overflow: hidden;
+  background: var(--background-secondary);
+  max-height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.diexar-keep-card-thumbnail img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 220px;
+  object-fit: cover;
+}
+
 .diexar-keep-card-title {
   font-size: 1em;
   font-weight: 600;

@@ -8,6 +8,7 @@ import {
   getAllVaultTags,
   updateMeta,
 } from "./metadata";
+import { buildLinkNote, detectUrl, fetchOg } from "./ogfetch";
 
 export class QuickCaptureModal extends Modal {
   plugin: DiexarKeepPlugin;
@@ -161,11 +162,33 @@ export class QuickCaptureModal extends Modal {
   }
 
   async save(): Promise<void> {
-    const content = this.textArea.value.trim();
+    let content = this.textArea.value.trim();
     if (!content) {
       new Notice("Niets te bewaren — kaartje is leeg.");
       return;
     }
+
+    // Als de tekst een URL bevat, haal OG-meta op en bed de thumbnail in.
+    // Soft-fail: bij timeout of fout slaan we gewoon de originele tekst op.
+    const url = detectUrl(content);
+    if (url) {
+      const notice = new Notice("Preview ophalen…", 0);
+      try {
+        const attachmentsFolder = `${this.plugin.settings.notesFolder}/.attachments`;
+        const preview = await withTimeout(
+          fetchOg(this.app, attachmentsFolder, url),
+          10_000,
+        );
+        if (preview) {
+          content = buildLinkNote(url, preview, content);
+        }
+      } catch (e) {
+        console.error("Diexar Keep: preview ophalen mislukt:", e);
+      } finally {
+        notice.hide();
+      }
+    }
+
     try {
       const file = await createNoteInFolder(this.app, this.plugin.settings.notesFolder, content);
       if (this.state.color !== "default" || this.state.tags.length > 0 || this.state.pinned) {
@@ -188,6 +211,13 @@ export class QuickCaptureModal extends Modal {
   onClose(): void {
     this.contentEl.empty();
   }
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+  return await Promise.race([
+    promise,
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
+  ]);
 }
 
 export async function createNoteInFolder(app: App, folderPath: string, content: string): Promise<TFile> {

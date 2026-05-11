@@ -177,6 +177,20 @@ export class DiexarKeepView extends ItemView {
       new EditNoteModal(this.app, this.plugin, file).open();
     });
 
+    const thumbnailBasename = extractFirstEmbeddedImage(content);
+    if (thumbnailBasename) {
+      const resourcePath = this.resolveAttachmentResource(file, thumbnailBasename);
+      if (resourcePath) {
+        const thumbWrap = body.createDiv({ cls: "diexar-keep-card-thumbnail" });
+        const img = thumbWrap.createEl("img");
+        img.src = resourcePath;
+        img.alt = "";
+        img.loading = "lazy";
+        // Als het bestand niet bestaat (broken link), verberg de thumbnail-wrap.
+        img.addEventListener("error", () => thumbWrap.remove());
+      }
+    }
+
     body.createEl("h3", { cls: "diexar-keep-card-title", text: titleText });
 
     if (previewText) {
@@ -305,6 +319,36 @@ export class DiexarKeepView extends ItemView {
     menu.showAtMouseEvent(event);
   }
 
+  /**
+   * Resolveer een ingebedde afbeelding naar een resource-path dat als `<img src>` werkt.
+   *
+   * 1. Probeer Obsidian's metadataCache (vindt standaard-attachments via vault-zoek).
+   * 2. Fall back op `<note-folder>/.attachments/<basename>` — Obsidian's metadataCache
+   *    slaat dot-prefixed mappen over (`.attachments/`, `.trash/`), maar de adapter zelf
+   *    kan ze wél lezen. Android-deelflow gebruikt deze conventie.
+   * 3. Fall back op `<notesFolder>/.attachments/<basename>` (geconfigureerde notitiemap).
+   */
+  private resolveAttachmentResource(noteFile: TFile, basename: string): string | null {
+    const dest = this.app.metadataCache.getFirstLinkpathDest(basename, noteFile.path);
+    if (dest) {
+      return this.app.vault.getResourcePath(dest);
+    }
+    const candidates: string[] = [];
+    const noteFolder = noteFile.parent?.path ?? "";
+    if (noteFolder) candidates.push(`${noteFolder}/.attachments/${basename}`);
+    else candidates.push(`.attachments/${basename}`);
+    const configured = this.plugin.settings.notesFolder;
+    if (configured && configured !== noteFolder) {
+      candidates.push(`${configured}/.attachments/${basename}`);
+    }
+    for (const p of candidates) {
+      const normalized = normalizePath(p);
+      // We checken niet synchroon of het bestand bestaat — img.onerror ruimt op bij fail.
+      return this.app.vault.adapter.getResourcePath(normalized);
+    }
+    return null;
+  }
+
   private async toggleArchive(file: TFile, currentlyArchived: boolean): Promise<void> {
     const archiveFolder = normalizePath(this.plugin.settings.archiveFolder);
     const notesFolder = normalizePath(this.plugin.settings.notesFolder);
@@ -371,11 +415,42 @@ function extractTitle(content: string): string {
 
 function extractPreview(content: string, title: string): string {
   const body = stripFrontmatter(content);
-  const lines = body.split("\n").map((l) => l.trim()).filter(Boolean);
+  // Filter image-embed-only regels weg (zowel wiki ![[…]] als standaard ![](…)),
+  // anders verschijnt de hashnaam van de thumbnail als ruwe tekst in de preview.
+  // Ook diagnostische HTML-comments uit Android (<!-- diexar-preview: … -->).
+  const lines = body
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0)
+    .filter((l) => !/^!\[\[[^\]]+\]\]$/.test(l))
+    .filter((l) => !/^!\[[^\]]*\]\([^)]+\)$/.test(l))
+    .filter((l) => !/^<!--\s*diexar-preview:.*-->$/.test(l));
   const startIdx = lines[0] && stripFirstHeading(lines[0]) === title.trim() ? 1 : 0;
   const rest = lines.slice(startIdx).join("\n");
   if (!rest) return "";
   return rest.length > PREVIEW_MAX_CHARS ? `${rest.slice(0, PREVIEW_MAX_CHARS)}…` : rest;
+}
+
+/**
+ * Vindt de basenaam van de eerste ingebedde afbeelding in de notitie.
+ * Ondersteunt zowel Obsidian-wikilinks `![[bestand.jpg]]` als markdown `![](path)`.
+ */
+function extractFirstEmbeddedImage(content: string): string | null {
+  const body = stripFrontmatter(content);
+  const wiki = body.match(/!\[\[([^\]|]+?)\]\]/);
+  if (wiki) {
+    return wiki[1].trim().split("|")[0].trim();
+  }
+  const md = body.match(/!\[[^\]]*\]\(([^)]+)\)/);
+  if (md) {
+    const url = md[1].trim();
+    // Voor lokale paden: pak de basename. Voor http(s) doen we niets (geen lokale resolve).
+    if (/^https?:\/\//i.test(url)) return null;
+    const clean = url.split("#")[0].split("?")[0];
+    const parts = clean.split("/");
+    return parts[parts.length - 1] || null;
+  }
+  return null;
 }
 
 function stripFirstHeading(line: string): string {
