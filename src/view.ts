@@ -281,18 +281,80 @@ export class DiexarKeepView extends ItemView {
 
   private handlePreviewClick(e: MouseEvent): void {
     const target = e.target as HTMLElement;
-    const link = target.closest(".diexar-keep-wikilink") as HTMLElement | null;
-    if (!link) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const href = link.dataset.href;
-    if (!href) return;
-    const dest = this.app.metadataCache.getFirstLinkpathDest(href, "");
-    if (dest) {
-      void this.app.workspace.getLeaf(false).openFile(dest);
-    } else {
-      new Notice(`Geen notitie gevonden: ${href}`);
+    const wiki = target.closest(".diexar-keep-wikilink") as HTMLElement | null;
+    if (wiki) {
+      e.preventDefault();
+      e.stopPropagation();
+      const href = wiki.dataset.href;
+      if (!href) return;
+      const dest = this.app.metadataCache.getFirstLinkpathDest(href, "");
+      if (dest) {
+        void this.app.workspace.getLeaf(false).openFile(dest);
+      } else {
+        new Notice(`Geen notitie gevonden: ${href}`);
+      }
+      return;
     }
+    const url = target.closest(".diexar-keep-url") as HTMLElement | null;
+    if (url) {
+      e.preventDefault();
+      e.stopPropagation();
+      const href = url.dataset.href;
+      if (href) this.showLinkBar(url, href);
+    }
+  }
+
+  private showLinkBar(anchor: HTMLElement, href: string): void {
+    document.body.querySelectorAll(".diexar-keep-link-bar").forEach((el) => el.remove());
+
+    const bar = document.body.createDiv({ cls: "diexar-keep-link-bar" });
+    const urlSpan = bar.createSpan({ cls: "diexar-keep-link-bar-url" });
+    urlSpan.setText(href.length > 60 ? `${href.slice(0, 57)}…` : href);
+    const openBtn = bar.createEl("button", {
+      cls: "diexar-keep-link-bar-open",
+      text: "Link openen",
+    });
+    const closeBtn = bar.createEl("button", {
+      cls: "diexar-keep-link-bar-close",
+      attr: { "aria-label": "Sluiten" },
+      text: "×",
+    });
+
+    const dismiss = () => {
+      if (bar.isConnected) bar.remove();
+      document.removeEventListener("click", outsideHandler, true);
+      window.clearTimeout(timer);
+    };
+    openBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      window.open(href, "_blank", "noopener,noreferrer");
+      dismiss();
+    });
+    closeBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      dismiss();
+    });
+
+    const outsideHandler = (ev: MouseEvent) => {
+      if (!bar.contains(ev.target as Node)) dismiss();
+    };
+    setTimeout(() => document.addEventListener("click", outsideHandler, true), 0);
+    const timer = window.setTimeout(dismiss, 4500);
+
+    const rect = anchor.getBoundingClientRect();
+    bar.style.position = "fixed";
+    bar.style.zIndex = "9999";
+    // Tijdelijk renderen om de bar-breedte te kennen, dan correct positioneren.
+    const barRect = bar.getBoundingClientRect();
+    const left = Math.max(
+      8,
+      Math.min(window.innerWidth - barRect.width - 8, rect.left),
+    );
+    const top = rect.bottom + 6 + barRect.height > window.innerHeight
+      ? rect.top - barRect.height - 6
+      : rect.bottom + 6;
+    bar.style.left = `${left}px`;
+    bar.style.top = `${top}px`;
   }
 
   private showColorMenu(event: MouseEvent, file: TFile, meta: NoteMeta, cardEl: HTMLElement): void {

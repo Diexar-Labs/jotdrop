@@ -139,18 +139,51 @@ export function stripFrontmatter(content: string): string {
 
 /**
  * Heel beperkte HTML-render voor previews: escapet HTML, rendert `[[link]]` en `[[link|alias]]`
- * als gestileerde spans (clickable via event delegation), en behoudt newlines.
+ * als gestileerde spans, en zet `[text](url)` plus losse http(s)-URL's om naar klikbare
+ * `<a class="diexar-keep-url">`-tags. Klikken worden afgevangen door de view via delegation.
  */
 export function renderInlinePreviewHtml(text: string): string {
   const escaped = escapeHtml(text);
-  return escaped.replace(
+
+  // Wikilinks → spans. target/alias komen uit reeds geescapete tekst,
+  // dus geen tweede escape-laag toepassen.
+  const withWiki = escaped.replace(
     /\[\[([^\]\|\n]+)(?:\|([^\]\n]+))?\]\]/g,
     (_match, target: string, alias?: string) => {
-      const safeTarget = escapeAttr(target.trim());
-      const display = escapeHtml((alias ?? target).trim());
+      const safeTarget = target.trim();
+      const display = (alias ?? target).trim();
       return `<span class="diexar-keep-wikilink" data-href="${safeTarget}">${display}</span>`;
     },
   );
+
+  // Markdown-links eerst naar placeholders zodat de bare-URL-pass hun href-deel niet opnieuw matcht.
+  const placeholders: string[] = [];
+  const withMd = withWiki.replace(
+    /\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g,
+    (_m, label: string, url: string) => {
+      const idx = placeholders.length;
+      // url komt al door de buitenste escapeHtml-pass; niet nogmaals escapen,
+      // anders krijg je &amp;amp; in href en knappen Telegraaf-URLs af op 404.
+      placeholders.push(
+        `<a class="diexar-keep-url" data-href="${url}" rel="noopener noreferrer">${label}</a>`,
+      );
+      return `L${idx}`;
+    },
+  );
+
+  // Losse URL's
+  const withUrls = withMd.replace(
+    /https?:\/\/\S+/g,
+    (raw: string) => {
+      const tailMatch = raw.match(/[).,;:!?\]"']+$/);
+      const trail = tailMatch ? tailMatch[0] : "";
+      const clean = trail ? raw.slice(0, raw.length - trail.length) : raw;
+      if (!clean) return raw;
+      return `<a class="diexar-keep-url" data-href="${clean}" rel="noopener noreferrer">${clean}</a>${trail}`;
+    },
+  );
+
+  return withUrls.replace(/L(\d+)/g, (_m, idx: string) => placeholders[Number(idx)]);
 }
 
 function escapeHtml(s: string): string {

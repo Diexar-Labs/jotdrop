@@ -211,6 +211,83 @@
   font-weight: 600;
 }
 
+.diexar-keep-url {
+  color: var(--text-accent);
+  text-decoration: underline;
+  cursor: pointer;
+  word-break: break-all;
+}
+
+.diexar-keep-url:hover {
+  text-decoration-thickness: 2px;
+}
+
+.diexar-keep-card[data-color]:not([data-color="default"]) .diexar-keep-url {
+  color: inherit;
+  font-weight: 600;
+}
+
+/* Floating "Link openen"-bar */
+.diexar-keep-link-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(420px, calc(100vw - 24px));
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--background-primary);
+  border: 1px solid var(--background-modifier-border);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  font-size: 0.85em;
+  color: var(--text-normal);
+  animation: diexar-keep-link-bar-in 0.12s ease-out;
+}
+
+@keyframes diexar-keep-link-bar-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.diexar-keep-link-bar-url {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+.diexar-keep-link-bar-open {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border: none;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.95em;
+}
+
+.diexar-keep-link-bar-open:hover {
+  background: var(--interactive-accent-hover);
+}
+
+.diexar-keep-link-bar-close {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 1.1em;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.diexar-keep-link-bar-close:hover {
+  background: var(--background-modifier-hover);
+  color: var(--text-normal);
+}
+
 .diexar-keep-card-tags {
   display: flex;
   flex-wrap: wrap;

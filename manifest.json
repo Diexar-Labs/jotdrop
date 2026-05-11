@@ -1,7 +1,7 @@
 {
   "id": "diexar-keep",
   "name": "Diexar Keep",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "minAppVersion": "1.5.0",
   "description": "Google Keep-stijl kaartjesweergave voor snelle notities. Snel dumpen, taggen, archiveren en bewerken.",
   "author": "Diexar Labs",
