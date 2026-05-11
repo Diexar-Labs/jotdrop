@@ -43,7 +43,13 @@ export async function fetchOg(
 ): Promise<OgPreview | null> {
   try {
     if (/tiktok\.com/i.test(url)) {
-      return await fetchTikTokOEmbed(app, attachmentsFolder, url);
+      // vm./vt.-shortlinks accepteert het oEmbed-endpoint niet — die hangt dan
+      // 10+ seconden voor 'ie opgeeft. Resolve eerst naar de canonieke URL via
+      // de redirect-target's `<link rel="canonical">` of `og:url`.
+      const canonical = /vm\.tiktok\.com|vt\.tiktok\.com/i.test(url)
+        ? await resolveCanonicalUrl(url)
+        : url;
+      return await fetchTikTokOEmbed(app, attachmentsFolder, canonical);
     }
     const fetchUrl = rewriteForScraping(url);
 
@@ -83,6 +89,36 @@ export async function fetchOg(
   } catch (e) {
     console.error("Diexar Keep: OG-fetch faalde:", e);
     return null;
+  }
+}
+
+/**
+ * Volgt vm./vt.tiktok.com-shortlinks naar de canonieke `/@user/video/<id>`-URL.
+ * Obsidian's `requestUrl` volgt 3xx automatisch — we extraheren daarna de
+ * canonical-link of og:url meta uit de uiteindelijke HTML.
+ */
+async function resolveCanonicalUrl(shortUrl: string): Promise<string> {
+  try {
+    const res = await requestUrl({
+      url: shortUrl,
+      method: "GET",
+      headers: { "User-Agent": CHROME_UA },
+      throw: false,
+    });
+    if (res.status < 200 || res.status >= 300) return shortUrl;
+    const html = res.text;
+    const linkPattern1 = /<link[^>]+?rel\s*=\s*["']canonical["'][^>]*?href\s*=\s*["']([^"']+)["']/i;
+    const linkPattern2 = /<link[^>]+?href\s*=\s*["']([^"']+)["'][^>]*?rel\s*=\s*["']canonical["']/i;
+    const canon = html.match(linkPattern1) || html.match(linkPattern2);
+    if (canon) {
+      const decoded = decodeHtmlEntities(canon[1]).trim();
+      if (decoded) return decoded;
+    }
+    const ogUrl = extractMeta(html, "og:url");
+    if (ogUrl) return ogUrl;
+    return shortUrl;
+  } catch {
+    return shortUrl;
   }
 }
 

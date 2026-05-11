@@ -1,8 +1,46 @@
 import esbuild from "esbuild";
 import process from "process";
+import fs from "fs";
+import path from "path";
 import builtins from "builtin-modules";
 
 const prod = process.argv[2] === "production";
+
+// Plugin-install-locatie in de vault. Override via DIEXAR_VAULT_PLUGIN_DIR env-var
+// als je een andere vault gebruikt. Skip-stilletjes-als-pad-ontbreekt voorkomt
+// build-failures op CI of bij een verse clone zonder lokale vault.
+const VAULT_PLUGIN_DIR =
+  process.env.DIEXAR_VAULT_PLUGIN_DIR ||
+  "F:/New Dee/My Notes/Vault_1/.obsidian/plugins/diexar-keep";
+
+function copyToVault() {
+  if (!fs.existsSync(VAULT_PLUGIN_DIR)) {
+    console.log(`[deploy] skip — vault-pluginmap bestaat niet: ${VAULT_PLUGIN_DIR}`);
+    return;
+  }
+  const files = ["main.js", "manifest.json", "styles.css"];
+  for (const f of files) {
+    if (!fs.existsSync(f)) continue;
+    try {
+      fs.copyFileSync(f, path.join(VAULT_PLUGIN_DIR, f));
+    } catch (e) {
+      console.error(`[deploy] kon ${f} niet kopiëren:`, e.message);
+    }
+  }
+  console.log(`[deploy] gekopieerd naar ${VAULT_PLUGIN_DIR}`);
+}
+
+// esbuild-plugin: roept copyToVault() na elke succesvolle build aan, zowel in
+// production als in watch-mode. Reload Obsidian (Ctrl+R) of toggle de plugin
+// om de nieuwe bundle te zien.
+const deployPlugin = {
+  name: "diexar-deploy",
+  setup(build) {
+    build.onEnd((result) => {
+      if (result.errors.length === 0) copyToVault();
+    });
+  },
+};
 
 const context = await esbuild.context({
   entryPoints: ["src/main.ts"],
@@ -30,6 +68,7 @@ const context = await esbuild.context({
   treeShaking: true,
   outfile: "main.js",
   minify: prod,
+  plugins: [deployPlugin],
 });
 
 if (prod) {

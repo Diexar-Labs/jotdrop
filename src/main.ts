@@ -2,6 +2,7 @@ import { Plugin, WorkspaceLeaf } from "obsidian";
 import { DEFAULT_SETTINGS, DiexarKeepSettings, DiexarKeepSettingTab } from "./settings";
 import { DiexarKeepView, VIEW_TYPE_DIEXAR_KEEP } from "./view";
 import { QuickCaptureModal } from "./capture";
+import { PreviewRescue } from "./previewRescue";
 
 export default class DiexarKeepPlugin extends Plugin {
   settings!: DiexarKeepSettings;
@@ -43,6 +44,15 @@ export default class DiexarKeepPlugin extends Plugin {
       this.refreshViews();
     }));
     this.registerEvent(this.app.vault.on("rename", () => this.refreshViews()));
+
+    const rescue = new PreviewRescue(this);
+    rescue.start();
+
+    this.addCommand({
+      id: "rescue-pending-previews",
+      name: "Pending OG-previews nu ophalen",
+      callback: () => { void rescue.rescueAllNow(); },
+    });
 
     this.app.workspace.onLayoutReady(() => {
       // niets opdwingen — gebruiker opent zelf via ribbon of command
