@@ -6,6 +6,9 @@ import { QuickCaptureModal } from "./capture";
 export default class DiexarKeepPlugin extends Plugin {
   settings!: DiexarKeepSettings;
   private refreshTimer: number | null = null;
+  // Paden waarvan we de volgende modify-event willen negeren: gebruikt bij
+  // in-place updates (bv. kleurwissel) zodat de grid niet hersorteert door mtime.
+  private readonly suppressedPaths: Set<string> = new Set();
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -32,7 +35,13 @@ export default class DiexarKeepPlugin extends Plugin {
 
     this.registerEvent(this.app.vault.on("create", () => this.refreshViews()));
     this.registerEvent(this.app.vault.on("delete", () => this.refreshViews()));
-    this.registerEvent(this.app.vault.on("modify", () => this.refreshViews()));
+    this.registerEvent(this.app.vault.on("modify", (file) => {
+      if (this.suppressedPaths.has(file.path)) {
+        this.suppressedPaths.delete(file.path);
+        return;
+      }
+      this.refreshViews();
+    }));
     this.registerEvent(this.app.vault.on("rename", () => this.refreshViews()));
 
     this.app.workspace.onLayoutReady(() => {
@@ -63,6 +72,16 @@ export default class DiexarKeepPlugin extends Plugin {
       await leaf.setViewState({ type: VIEW_TYPE_DIEXAR_KEEP, active: true });
     }
     workspace.revealLeaf(leaf);
+  }
+
+  /**
+   * Markeer dat de eerstvolgende modify-event voor dit pad genegeerd moet worden.
+   * Wordt gebruikt bij in-place metadata-updates (kleurwissel) zodat de grid
+   * niet hersorteert vanwege de bumpende mtime. Auto-clear na 2s als veiligheid.
+   */
+  suppressModifyOnce(path: string): void {
+    this.suppressedPaths.add(path);
+    window.setTimeout(() => this.suppressedPaths.delete(path), 2000);
   }
 
   refreshViews(): void {

@@ -235,8 +235,7 @@
 }
 
 .diexar-keep-card:hover .diexar-keep-card-actions,
-.diexar-keep-card:focus-within .diexar-keep-card-actions,
-.diexar-keep-card.is-pinned .diexar-keep-card-actions {
+.diexar-keep-card:focus-within .diexar-keep-card-actions {
   opacity: 1;
 }
 

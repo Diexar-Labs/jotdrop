@@ -212,7 +212,7 @@ export class DiexarKeepView extends ItemView {
     setIcon(colorBtn, "palette");
     colorBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      this.showColorMenu(e, file, meta.color);
+      this.showColorMenu(e, file, meta, cardEl);
     });
 
     const editBtn = actions.createEl("button", {
@@ -281,16 +281,24 @@ export class DiexarKeepView extends ItemView {
     }
   }
 
-  private showColorMenu(event: MouseEvent, file: TFile, current: ColorName): void {
+  private showColorMenu(event: MouseEvent, file: TFile, meta: NoteMeta, cardEl: HTMLElement): void {
     const menu = new Menu();
     for (const name of COLOR_NAMES) {
       menu.addItem((i) =>
         i
           .setTitle(COLOR_LABELS_NL[name])
-          .setIcon(name === current ? "check" : "circle")
+          .setIcon(name === meta.color ? "check" : "circle")
           .onClick(async () => {
+            // In-place update: voorkomt dat re-rendering de kaart bovenaan zet
+            // doordat updateMeta de mtime bumpt en de grid hersorteert.
+            this.plugin.suppressModifyOnce(file.path);
             await updateMeta(this.app, file, { color: name });
-            this.plugin.refreshViews();
+            meta.color = name;
+            if (name === "default") {
+              delete cardEl.dataset.color;
+            } else {
+              cardEl.dataset.color = name;
+            }
           }),
       );
     }
