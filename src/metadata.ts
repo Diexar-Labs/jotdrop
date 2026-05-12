@@ -27,19 +27,12 @@ export const COLOR_NAMES: ColorName[] = [
   "gray",
 ];
 
-export const COLOR_LABELS_NL: Record<ColorName, string> = {
-  default: "Standaard",
-  red: "Rood",
-  orange: "Oranje",
-  yellow: "Geel",
-  green: "Groen",
-  teal: "Turquoise",
-  blue: "Blauw",
-  purple: "Paars",
-  pink: "Roze",
-  brown: "Bruin",
-  gray: "Grijs",
-};
+import { t } from "./i18n";
+
+/** Localized display label for a note color (looks up `color_<name>`). */
+export function colorLabel(name: ColorName): string {
+  return t(`color_${name}`);
+}
 
 export interface NoteMeta {
   color: ColorName;
@@ -140,10 +133,16 @@ export function stripFrontmatter(content: string): string {
 /**
  * Heel beperkte HTML-render voor previews: escapet HTML, rendert `[[link]]` en `[[link|alias]]`
  * als gestileerde spans, en zet `[text](url)` plus losse http(s)-URL's om naar klikbare
- * `<a class="diexar-keep-url">`-tags. Klikken worden afgevangen door de view via delegation.
+ * `<a class="obsidrop-url">`-tags. Klikken worden afgevangen door de view via delegation.
  */
 export function renderInlinePreviewHtml(text: string): string {
-  const escaped = escapeHtml(text);
+  // Checklist-syntax aan begin van een regel wordt vervangen door vorm-glyphs.
+  // Vorm i.p.v. kleur, dus ook leesbaar zonder kleur-onderscheid (kleurenblind-vriendelijk).
+  const withChecks = text
+    .replace(/^- \[ \] /gm, "☐ ")
+    .replace(/^- \[[xX]\] /gm, "☑ ");
+
+  const escaped = escapeHtml(withChecks);
 
   // Wikilinks → spans. target/alias komen uit reeds geescapete tekst,
   // dus geen tweede escape-laag toepassen.
@@ -152,7 +151,7 @@ export function renderInlinePreviewHtml(text: string): string {
     (_match, target: string, alias?: string) => {
       const safeTarget = target.trim();
       const display = (alias ?? target).trim();
-      return `<span class="diexar-keep-wikilink" data-href="${safeTarget}">${display}</span>`;
+      return `<span class="obsidrop-wikilink" data-href="${safeTarget}">${display}</span>`;
     },
   );
 
@@ -165,7 +164,7 @@ export function renderInlinePreviewHtml(text: string): string {
       // url komt al door de buitenste escapeHtml-pass; niet nogmaals escapen,
       // anders krijg je &amp;amp; in href en knappen Telegraaf-URLs af op 404.
       placeholders.push(
-        `<a class="diexar-keep-url" data-href="${url}" rel="noopener noreferrer">${label}</a>`,
+        `<a class="obsidrop-url" data-href="${url}" rel="noopener noreferrer">${label}</a>`,
       );
       return `L${idx}`;
     },
@@ -179,7 +178,7 @@ export function renderInlinePreviewHtml(text: string): string {
       const trail = tailMatch ? tailMatch[0] : "";
       const clean = trail ? raw.slice(0, raw.length - trail.length) : raw;
       if (!clean) return raw;
-      return `<a class="diexar-keep-url" data-href="${clean}" rel="noopener noreferrer">${clean}</a>${trail}`;
+      return `<a class="obsidrop-url" data-href="${clean}" rel="noopener noreferrer">${clean}</a>${trail}`;
     },
   );
 

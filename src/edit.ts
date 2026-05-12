@@ -1,7 +1,9 @@
 import { App, Modal, Notice, SuggestModal, TFile, normalizePath } from "obsidian";
-import type DiexarKeepPlugin from "./main";
+import type ObsiDropPlugin from "./main";
+import { toggleOrInsertChecklistOnTextArea } from "./capture";
+import { t } from "./i18n";
 import {
-  COLOR_LABELS_NL,
+  colorLabel,
   COLOR_NAMES,
   ColorName,
   getAllVaultTags,
@@ -14,6 +16,7 @@ import {
 interface EditableNote {
   file?: TFile;
   body: string;
+  embedLines: string[];
   color: ColorName;
   tags: string[];
   pinned: boolean;
@@ -25,14 +28,15 @@ interface EditableNote {
  * voor metadata en vault.modify voor body.
  */
 export class EditNoteModal extends Modal {
-  private plugin: DiexarKeepPlugin;
+  private plugin: ObsiDropPlugin;
   private file: TFile;
   private state!: EditableNote;
   private originalBody = "";
+  private originalEmbeds: string[] = [];
   private bodyEl!: HTMLTextAreaElement;
   private chipsEl!: HTMLElement;
 
-  constructor(app: App, plugin: DiexarKeepPlugin, file: TFile) {
+  constructor(app: App, plugin: ObsiDropPlugin, file: TFile) {
     super(app);
     this.plugin = plugin;
     this.file = file;
@@ -40,20 +44,23 @@ export class EditNoteModal extends Modal {
 
   async onOpen(): Promise<void> {
     this.titleEl.setText(this.file.basename);
-    this.contentEl.addClass("diexar-keep-edit-modal");
+    this.contentEl.addClass("obsidrop-edit-modal");
 
     const raw = await this.app.vault.read(this.file);
-    const body = stripFrontmatter(raw).replace(/^\n+/, "");
+    const rawBody = stripFrontmatter(raw).replace(/^\n+/, "");
+    const { textPart, embeds } = splitBodyAndEmbeds(rawBody);
     const meta = readMeta(this.app, this.file);
 
     this.state = {
       file: this.file,
-      body,
+      body: textPart,
+      embedLines: embeds,
       color: meta.color,
       tags: [...meta.tags],
       pinned: meta.pinned,
     };
-    this.originalBody = body;
+    this.originalBody = textPart;
+    this.originalEmbeds = [...embeds];
 
     this.buildLayout();
   }
@@ -62,11 +69,11 @@ export class EditNoteModal extends Modal {
     const root = this.contentEl;
     root.empty();
 
-    const controls = root.createDiv({ cls: "diexar-keep-edit-controls" });
+    const controls = root.createDiv({ cls: "obsidrop-edit-controls" });
     this.renderControls(controls);
 
     this.bodyEl = root.createEl("textarea", {
-      cls: "diexar-keep-edit-body",
+      cls: "obsidrop-edit-body",
     });
     this.bodyEl.rows = 12;
     this.bodyEl.value = this.state.body;
@@ -74,10 +81,10 @@ export class EditNoteModal extends Modal {
       this.state.body = this.bodyEl.value;
     });
 
-    const footer = root.createDiv({ cls: "diexar-keep-edit-footer" });
-    const cancel = footer.createEl("button", { text: "Annuleren" });
+    const footer = root.createDiv({ cls: "obsidrop-edit-footer" });
+    const cancel = footer.createEl("button", { text: t("action_cancel") });
     cancel.addEventListener("click", () => this.close());
-    const save = footer.createEl("button", { text: "Opslaan", cls: "mod-cta" });
+    const save = footer.createEl("button", { text: t("action_save"), cls: "mod-cta" });
     save.addEventListener("click", () => void this.save());
 
     this.bodyEl.addEventListener("keydown", (e) => {
@@ -92,17 +99,17 @@ export class EditNoteModal extends Modal {
     parent.empty();
 
     // Kleurkiezer — wijzigingen worden direct opgeslagen
-    const colorWrap = parent.createDiv({ cls: "diexar-keep-edit-colorrow" });
-    colorWrap.createSpan({ text: "Kleur:", cls: "diexar-keep-edit-label" });
-    const swatches = colorWrap.createDiv({ cls: "diexar-keep-edit-swatches" });
+    const colorWrap = parent.createDiv({ cls: "obsidrop-edit-colorrow" });
+    colorWrap.createSpan({ text: t("label_color"), cls: "obsidrop-edit-label" });
+    const swatches = colorWrap.createDiv({ cls: "obsidrop-edit-swatches" });
     for (const name of COLOR_NAMES) {
       const sw = swatches.createDiv({
-        cls: `diexar-keep-edit-swatch${name === this.state.color ? " is-active" : ""}`,
-        attr: { "aria-label": COLOR_LABELS_NL[name], title: COLOR_LABELS_NL[name] },
+        cls: `obsidrop-edit-swatch${name === this.state.color ? " is-active" : ""}`,
+        attr: { "aria-label": colorLabel(name), title: colorLabel(name) },
       });
       sw.dataset.color = name;
       if (name === this.state.color) {
-        sw.createSpan({ cls: "diexar-keep-edit-swatch-check", text: "✓" });
+        sw.createSpan({ cls: "obsidrop-edit-swatch-check", text: "✓" });
       }
       sw.addEventListener("click", async () => {
         if (this.state.color === name) return;
@@ -112,16 +119,16 @@ export class EditNoteModal extends Modal {
           await updateMeta(this.app, this.file, { color: name });
           this.plugin.refreshViews();
         } catch (err) {
-          new Notice(`Fout: ${err instanceof Error ? err.message : String(err)}`);
+          new Notice(t("notice_error", err instanceof Error ? err.message : String(err)));
         }
       });
     }
 
     // Pin-toggle — direct opslaan
-    const pinWrap = parent.createDiv({ cls: "diexar-keep-edit-row" });
+    const pinWrap = parent.createDiv({ cls: "obsidrop-edit-row" });
     const pinBtn = pinWrap.createEl("button", {
-      cls: `diexar-keep-edit-pin${this.state.pinned ? " is-active" : ""}`,
-      text: this.state.pinned ? "📌 Vastgezet" : "📍 Vastzetten",
+      cls: `obsidrop-edit-pin${this.state.pinned ? " is-active" : ""}`,
+      text: this.state.pinned ? t("action_unpin_btn") : t("action_pin_btn"),
     });
     pinBtn.addEventListener("click", async () => {
       this.state.pinned = !this.state.pinned;
@@ -130,34 +137,43 @@ export class EditNoteModal extends Modal {
         await updateMeta(this.app, this.file, { pinned: this.state.pinned });
         this.plugin.refreshViews();
       } catch (err) {
-        new Notice(`Fout: ${err instanceof Error ? err.message : String(err)}`);
+        new Notice(t("notice_error", err instanceof Error ? err.message : String(err)));
       }
     });
 
     // Link-invoegen
     const linkBtn = pinWrap.createEl("button", {
-      cls: "diexar-keep-edit-linkbtn",
-      text: "🔗 Link invoegen",
+      cls: "obsidrop-edit-linkbtn",
+      text: t("action_insert_link"),
     });
     linkBtn.addEventListener("click", () => {
       new InsertLinkModal(this.app, (path) => this.insertLinkAtCursor(path)).open();
     });
 
+    const checkBtn = pinWrap.createEl("button", {
+      cls: "obsidrop-edit-linkbtn",
+      text: t("action_checklist"),
+    });
+    checkBtn.addEventListener("click", () => {
+      toggleOrInsertChecklistOnTextArea(this.bodyEl);
+      this.state.body = this.bodyEl.value;
+    });
+
     // Tags + chip-input
-    const tagWrap = parent.createDiv({ cls: "diexar-keep-edit-tagrow" });
-    tagWrap.createSpan({ text: "Tags:", cls: "diexar-keep-edit-label" });
-    this.chipsEl = tagWrap.createDiv({ cls: "diexar-keep-edit-chips" });
+    const tagWrap = parent.createDiv({ cls: "obsidrop-edit-tagrow" });
+    tagWrap.createSpan({ text: t("label_tags"), cls: "obsidrop-edit-label" });
+    this.chipsEl = tagWrap.createDiv({ cls: "obsidrop-edit-chips" });
     this.renderChips();
 
     const tagInput = tagWrap.createEl("input", {
-      cls: "diexar-keep-edit-taginput",
-      attr: { type: "text", placeholder: "Voeg tag toe…" },
+      cls: "obsidrop-edit-taginput",
+      attr: { type: "text", placeholder: t("tag_input_placeholder") },
     });
-    const datalistId = `diexar-keep-tagcompletion-${Date.now()}`;
+    const datalistId = `obsidrop-tagcompletion-${Date.now()}`;
     const datalist = tagWrap.createEl("datalist", { attr: { id: datalistId } });
     tagInput.setAttribute("list", datalistId);
-    for (const t of getAllVaultTags(this.app)) {
-      datalist.createEl("option", { attr: { value: t } });
+    for (const tag of getAllVaultTags(this.app)) {
+      datalist.createEl("option", { attr: { value: tag } });
     }
     const commit = () => {
       const value = tagInput.value.replace(/^#/, "").trim();
@@ -185,9 +201,9 @@ export class EditNoteModal extends Modal {
     if (!this.chipsEl) return;
     this.chipsEl.empty();
     for (const tag of this.state.tags) {
-      const chip = this.chipsEl.createSpan({ cls: "diexar-keep-edit-chip" });
+      const chip = this.chipsEl.createSpan({ cls: "obsidrop-edit-chip" });
       chip.createSpan({ text: `#${tag}` });
-      const x = chip.createSpan({ cls: "diexar-keep-edit-chip-x", text: "×" });
+      const x = chip.createSpan({ cls: "obsidrop-edit-chip-x", text: "×" });
       x.addEventListener("click", () => {
         this.state.tags = this.state.tags.filter((t) => t !== tag);
         this.renderChips();
@@ -211,7 +227,10 @@ export class EditNoteModal extends Modal {
 
   private async save(): Promise<void> {
     try {
-      const bodyChanged = this.state.body !== this.originalBody;
+      const embedsChanged =
+        this.state.embedLines.length !== this.originalEmbeds.length ||
+        this.state.embedLines.some((e, i) => e !== this.originalEmbeds[i]);
+      const bodyChanged = this.state.body !== this.originalBody || embedsChanged;
       await updateMeta(this.app, this.file, {
         color: this.state.color,
         tags: this.state.tags,
@@ -222,15 +241,16 @@ export class EditNoteModal extends Modal {
         const current = await this.app.vault.read(this.file);
         const fmMatch = current.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
         const fm = fmMatch ? fmMatch[0] : "";
-        const newContent = `${fm}${this.state.body.replace(/^\n+/, "")}`;
+        const combined = combineBodyAndEmbeds(this.state.body, this.state.embedLines);
+        const newContent = `${fm}${combined.replace(/^\n+/, "")}`;
         await this.app.vault.modify(this.file, newContent);
       }
-      new Notice(`Opgeslagen: ${this.file.basename}`);
+      new Notice(t("notice_saved", this.file.basename));
       this.plugin.refreshViews();
       this.close();
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      new Notice(`Fout bij opslaan: ${message}`);
+      new Notice(t("notice_save_failed", message));
     }
   }
 
@@ -249,7 +269,7 @@ export class InsertLinkModal extends SuggestModal<TFile> {
   constructor(app: App, onPick: (linkPath: string) => void) {
     super(app);
     this.onPick = onPick;
-    this.setPlaceholder("Zoek notitie om naar te linken…");
+    this.setPlaceholder(t("link_picker_placeholder"));
   }
 
   getSuggestions(query: string): TFile[] {
@@ -263,7 +283,7 @@ export class InsertLinkModal extends SuggestModal<TFile> {
 
   renderSuggestion(value: TFile, el: HTMLElement): void {
     el.createDiv({ text: value.basename });
-    el.createDiv({ cls: "diexar-keep-suggest-path", text: value.path });
+    el.createDiv({ cls: "obsidrop-suggest-path", text: value.path });
   }
 
   onChooseSuggestion(item: TFile): void {
@@ -272,4 +292,41 @@ export class InsertLinkModal extends SuggestModal<TFile> {
     const linkPath = matches.length === 1 ? item.basename : item.path.replace(/\.md$/, "");
     this.onPick(linkPath);
   }
+}
+
+const EMBED_LINE_REGEX = /^\s*!\[\[[^\]]+\]\]\s*$/;
+
+/**
+ * Splitst de body in tekst (zonder embed-only regels) en de embed-regels los.
+ * Houdt blank-line-structuur intact maar vouwt opeenvolgende lege regels
+ * samen die ontstaan door het uitfilteren van een embed.
+ */
+export function splitBodyAndEmbeds(body: string): { textPart: string; embeds: string[] } {
+  const embeds: string[] = [];
+  const kept: string[] = [];
+  for (const line of body.split("\n")) {
+    if (EMBED_LINE_REGEX.test(line)) {
+      embeds.push(line.trim());
+    } else {
+      kept.push(line);
+    }
+  }
+  const cleaned: string[] = [];
+  let prevBlank = false;
+  for (const line of kept) {
+    const blank = line.trim() === "";
+    if (blank && prevBlank) continue;
+    cleaned.push(line);
+    prevBlank = blank;
+  }
+  while (cleaned.length > 0 && cleaned[0].trim() === "") cleaned.shift();
+  while (cleaned.length > 0 && cleaned[cleaned.length - 1].trim() === "") cleaned.pop();
+  return { textPart: cleaned.join("\n"), embeds };
+}
+
+export function combineBodyAndEmbeds(bodyText: string, embedLines: string[]): string {
+  if (embedLines.length === 0) return bodyText;
+  const body = bodyText.replace(/\n+$/, "");
+  if (body === "") return embedLines.join("\n");
+  return `${body}\n\n${embedLines.join("\n")}`;
 }

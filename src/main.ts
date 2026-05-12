@@ -1,11 +1,12 @@
 import { Plugin, WorkspaceLeaf } from "obsidian";
-import { DEFAULT_SETTINGS, DiexarKeepSettings, DiexarKeepSettingTab } from "./settings";
-import { DiexarKeepView, VIEW_TYPE_DIEXAR_KEEP } from "./view";
+import { DEFAULT_SETTINGS, ObsiDropSettings, ObsiDropSettingTab } from "./settings";
+import { ObsiDropView, VIEW_TYPE_OBSIDROP } from "./view";
 import { QuickCaptureModal } from "./capture";
 import { PreviewRescue } from "./previewRescue";
+import { t } from "./i18n";
 
-export default class DiexarKeepPlugin extends Plugin {
-  settings!: DiexarKeepSettings;
+export default class ObsiDropPlugin extends Plugin {
+  settings!: ObsiDropSettings;
   private refreshTimer: number | null = null;
   // Paden waarvan we de volgende modify-event willen negeren: gebruikt bij
   // in-place updates (bv. kleurwissel) zodat de grid niet hersorteert door mtime.
@@ -14,25 +15,25 @@ export default class DiexarKeepPlugin extends Plugin {
   async onload(): Promise<void> {
     await this.loadSettings();
 
-    this.registerView(VIEW_TYPE_DIEXAR_KEEP, (leaf) => new DiexarKeepView(leaf, this));
+    this.registerView(VIEW_TYPE_OBSIDROP, (leaf) => new ObsiDropView(leaf, this));
 
-    this.addRibbonIcon("sticky-note", "Open Diexar Keep", () => {
+    this.addRibbonIcon("sticky-note", t("open_obsidrop"), () => {
       this.activateView();
     });
 
     this.addCommand({
-      id: "open-diexar-keep",
-      name: "Open Keep-weergave",
+      id: "open-obsidrop",
+      name: t("cmd_open_view"),
       callback: () => this.activateView(),
     });
 
     this.addCommand({
       id: "quick-capture-keep",
-      name: "Snelle notitie (quick capture)",
+      name: t("cmd_quick_capture"),
       callback: () => new QuickCaptureModal(this.app, this).open(),
     });
 
-    this.addSettingTab(new DiexarKeepSettingTab(this.app, this));
+    this.addSettingTab(new ObsiDropSettingTab(this.app, this));
 
     this.registerEvent(this.app.vault.on("create", () => this.refreshViews()));
     this.registerEvent(this.app.vault.on("delete", () => this.refreshViews()));
@@ -50,7 +51,7 @@ export default class DiexarKeepPlugin extends Plugin {
 
     this.addCommand({
       id: "rescue-pending-previews",
-      name: "Pending OG-previews nu ophalen",
+      name: t("cmd_rescue_previews"),
       callback: () => { void rescue.rescueAllNow(); },
     });
 
@@ -73,13 +74,13 @@ export default class DiexarKeepPlugin extends Plugin {
 
   async activateView(): Promise<void> {
     const { workspace } = this.app;
-    const existing = workspace.getLeavesOfType(VIEW_TYPE_DIEXAR_KEEP);
+    const existing = workspace.getLeavesOfType(VIEW_TYPE_OBSIDROP);
     let leaf: WorkspaceLeaf | null;
     if (existing.length > 0) {
       leaf = existing[0];
     } else {
       leaf = workspace.getLeaf("tab");
-      await leaf.setViewState({ type: VIEW_TYPE_DIEXAR_KEEP, active: true });
+      await leaf.setViewState({ type: VIEW_TYPE_OBSIDROP, active: true });
     }
     workspace.revealLeaf(leaf);
   }
@@ -100,10 +101,10 @@ export default class DiexarKeepPlugin extends Plugin {
     }
     this.refreshTimer = window.setTimeout(() => {
       this.refreshTimer = null;
-      const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_DIEXAR_KEEP);
+      const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_OBSIDROP);
       for (const leaf of leaves) {
         const view = leaf.view;
-        if (view instanceof DiexarKeepView) {
+        if (view instanceof ObsiDropView) {
           void view.render();
         }
       }

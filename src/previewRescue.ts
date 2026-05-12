@@ -1,12 +1,14 @@
 import { Notice, TAbstractFile, TFile } from "obsidian";
 import { fetchOg, buildLinkNote, detectUrl } from "./ogfetch";
-import type DiexarKeepPlugin from "./main";
+import type ObsiDropPlugin from "./main";
+import { t } from "./i18n";
 
 /**
  * Pakt placeholder-notities op die Android v0.6.0+ via Syncthing binnenstuurt
- * (gekenmerkt door `<!-- diexar-preview: pending -->`) en die de Android-side
- * `PreviewWorker` om wat voor reden ook niet kon afronden — bv. omdat de
- * telefoon offline was, de batterij leeg ging, of WorkManager-retries op zijn.
+ * (gekenmerkt door `<!-- obsidrop-preview: pending -->` of het oudere
+ * `diexar-preview`-formaat) en die de Android-side `PreviewWorker` om wat voor
+ * reden ook niet kon afronden — bv. omdat de telefoon offline was, de batterij
+ * leeg ging, of WorkManager-retries op zijn.
  *
  * Wachttijd: 15s voor we ingrijpen, zodat Android-PreviewWorker eerst zijn
  * kans krijgt en we geen Syncthing-conflicts triggeren. Marker-check vóór elke
@@ -14,13 +16,18 @@ import type DiexarKeepPlugin from "./main";
  * overschrijven.
  */
 
-const PENDING_MARKER = "<!-- diexar-preview: pending -->";
+// Accepteer beide markers — `diexar-preview` blijft erin voor placeholders die
+// van een oudere Android-build (vóór de rename) zijn binnengekomen.
+const PENDING_MARKER_REGEX = /<!--\s*(?:obsidrop|diexar)-preview:\s*pending\s*-->/;
+function hasPendingMarker(content: string): boolean {
+  return PENDING_MARKER_REGEX.test(content);
+}
 const RESCUE_DELAY_MS = 15_000;
 
 export class PreviewRescue {
   private pending = new Map<string, number>();
 
-  constructor(private plugin: DiexarKeepPlugin) {}
+  constructor(private plugin: ObsiDropPlugin) {}
 
   start(): void {
     const { vault } = this.plugin.app;
@@ -70,7 +77,7 @@ export class PreviewRescue {
       } catch {
         continue;
       }
-      if (!content.includes(PENDING_MARKER)) continue;
+      if (!hasPendingMarker(content)) continue;
       const t = this.pending.get(file.path);
       if (t != null) {
         window.clearTimeout(t);
@@ -79,7 +86,7 @@ export class PreviewRescue {
       await this.rescue(file);
       count++;
     }
-    new Notice(`Diexar Keep: ${count} pending-notitie(s) geprobeerd`);
+    new Notice(t("notice_pending_attempted", String(count)));
     return count;
   }
 
@@ -90,7 +97,7 @@ export class PreviewRescue {
     } catch {
       return;
     }
-    if (!content.includes(PENDING_MARKER)) {
+    if (!hasPendingMarker(content)) {
       const t = this.pending.get(file.path);
       if (t != null) {
         window.clearTimeout(t);
@@ -115,7 +122,7 @@ export class PreviewRescue {
     } catch {
       return;
     }
-    if (!content.includes(PENDING_MARKER)) return; // Android was 'm voor.
+    if (!hasPendingMarker(content)) return; // Android was 'm voor.
 
     const url = detectUrl(content);
     if (!url) return;
@@ -132,13 +139,13 @@ export class PreviewRescue {
     } catch {
       return;
     }
-    if (!latest.includes(PENDING_MARKER)) return;
+    if (!hasPendingMarker(latest)) return;
 
     const newContent = buildLinkNote(url, preview, url);
     try {
       await this.plugin.app.vault.modify(file, newContent);
     } catch (e) {
-      console.error("Diexar Keep preview-rescue: write faalde voor", file.path, e);
+      console.error("ObsiDrop preview-rescue: write faalde voor", file.path, e);
     }
   }
 }

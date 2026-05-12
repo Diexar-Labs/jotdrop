@@ -87,7 +87,7 @@ export async function fetchOg(
 
     return { sourceUrl: url, title, description, imageBasename };
   } catch (e) {
-    console.error("Diexar Keep: OG-fetch faalde:", e);
+    console.error("ObsiDrop: OG-fetch faalde:", e);
     return null;
   }
 }
@@ -202,7 +202,7 @@ async function downloadImage(
     await app.vault.adapter.writeBinary(path, res.arrayBuffer);
     return filename;
   } catch (e) {
-    console.error("Diexar Keep: image-download faalde:", e);
+    console.error("ObsiDrop: image-download faalde:", e);
     return null;
   }
 }

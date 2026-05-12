@@ -1,9 +1,9 @@
 import { ItemView, Menu, Notice, TFile, WorkspaceLeaf, normalizePath, setIcon } from "obsidian";
-import type DiexarKeepPlugin from "./main";
+import type ObsiDropPlugin from "./main";
 import { QuickCaptureModal } from "./capture";
 import { EditNoteModal } from "./edit";
 import {
-  COLOR_LABELS_NL,
+  colorLabel,
   COLOR_NAMES,
   ColorName,
   DEFAULT_META,
@@ -13,8 +13,9 @@ import {
   stripFrontmatter,
   updateMeta,
 } from "./metadata";
+import { t } from "./i18n";
 
-export const VIEW_TYPE_DIEXAR_KEEP = "diexar-keep-view";
+export const VIEW_TYPE_OBSIDROP = "obsidrop-view";
 
 const PREVIEW_MAX_CHARS = 280;
 
@@ -25,23 +26,23 @@ interface CardData {
   archived: boolean;
 }
 
-export class DiexarKeepView extends ItemView {
-  plugin: DiexarKeepPlugin;
+export class ObsiDropView extends ItemView {
+  plugin: ObsiDropPlugin;
   private gridEl!: HTMLElement;
   private searchEl!: HTMLInputElement;
   private query = "";
 
-  constructor(leaf: WorkspaceLeaf, plugin: DiexarKeepPlugin) {
+  constructor(leaf: WorkspaceLeaf, plugin: ObsiDropPlugin) {
     super(leaf);
     this.plugin = plugin;
   }
 
   getViewType(): string {
-    return VIEW_TYPE_DIEXAR_KEEP;
+    return VIEW_TYPE_OBSIDROP;
   }
 
   getDisplayText(): string {
-    return "Diexar Keep";
+    return t("view_title");
   }
 
   getIcon(): string {
@@ -51,27 +52,27 @@ export class DiexarKeepView extends ItemView {
   async onOpen(): Promise<void> {
     const root = this.contentEl;
     root.empty();
-    root.addClass("diexar-keep-view");
+    root.addClass("obsidrop-view");
 
-    const toolbar = root.createDiv({ cls: "diexar-keep-toolbar" });
+    const toolbar = root.createDiv({ cls: "obsidrop-toolbar" });
 
-    const newBtn = toolbar.createEl("button", { cls: "diexar-keep-new-btn" });
-    setIcon(newBtn.createSpan({ cls: "diexar-keep-new-btn-icon" }), "plus");
-    newBtn.createSpan({ text: "Nieuwe notitie" });
+    const newBtn = toolbar.createEl("button", { cls: "obsidrop-new-btn" });
+    setIcon(newBtn.createSpan({ cls: "obsidrop-new-btn-icon" }), "plus");
+    newBtn.createSpan({ text: t("action_new_note") });
     newBtn.addEventListener("click", () => {
       new QuickCaptureModal(this.app, this.plugin).open();
     });
 
     this.searchEl = toolbar.createEl("input", {
-      cls: "diexar-keep-search",
-      attr: { type: "search", placeholder: "Zoeken in notities…" },
+      cls: "obsidrop-search",
+      attr: { type: "search", placeholder: t("search_placeholder") },
     });
     this.searchEl.addEventListener("input", () => {
       this.query = this.searchEl.value.toLowerCase();
       void this.render();
     });
 
-    this.gridEl = root.createDiv({ cls: "diexar-keep-grid" });
+    this.gridEl = root.createDiv({ cls: "obsidrop-grid" });
     this.applyCardWidth();
     await this.render();
   }
@@ -82,7 +83,7 @@ export class DiexarKeepView extends ItemView {
 
   applyCardWidth(): void {
     if (this.gridEl) {
-      this.gridEl.style.setProperty("--diexar-keep-card-width", `${this.plugin.settings.cardWidth}px`);
+      this.gridEl.style.setProperty("--obsidrop-card-width", `${this.plugin.settings.cardWidth}px`);
     }
   }
 
@@ -95,11 +96,9 @@ export class DiexarKeepView extends ItemView {
     const filtered = cards.filter((c) => this.matchesQuery(c));
 
     if (filtered.length === 0) {
-      const empty = this.gridEl.createDiv({ cls: "diexar-keep-empty" });
-      empty.createEl("h3", { text: "Nog geen notities" });
-      empty.createEl("p", {
-        text: `Klik op "Nieuwe notitie" of gebruik de hotkey om je eerste kaartje te maken.`,
-      });
+      const empty = this.gridEl.createDiv({ cls: "obsidrop-empty" });
+      empty.createEl("h3", { text: t("empty_no_notes_title") });
+      empty.createEl("p", { text: t("empty_no_notes_desc") });
       return;
     }
 
@@ -107,17 +106,17 @@ export class DiexarKeepView extends ItemView {
     const rest = filtered.filter((c) => !c.meta.pinned);
 
     if (pinned.length > 0) {
-      const pinnedSection = this.gridEl.createDiv({ cls: "diexar-keep-section" });
-      pinnedSection.createDiv({ cls: "diexar-keep-section-label", text: "Vastgezet" });
-      const pinnedGrid = pinnedSection.createDiv({ cls: "diexar-keep-grid-inner" });
+      const pinnedSection = this.gridEl.createDiv({ cls: "obsidrop-section" });
+      pinnedSection.createDiv({ cls: "obsidrop-section-label", text: t("section_pinned") });
+      const pinnedGrid = pinnedSection.createDiv({ cls: "obsidrop-grid-inner" });
       for (const c of pinned) this.renderCard(pinnedGrid, c);
 
-      const restSection = this.gridEl.createDiv({ cls: "diexar-keep-section" });
-      restSection.createDiv({ cls: "diexar-keep-section-label", text: "Overige" });
-      const restGrid = restSection.createDiv({ cls: "diexar-keep-grid-inner" });
+      const restSection = this.gridEl.createDiv({ cls: "obsidrop-section" });
+      restSection.createDiv({ cls: "obsidrop-section-label", text: t("section_other") });
+      const restGrid = restSection.createDiv({ cls: "obsidrop-grid-inner" });
       for (const c of rest) this.renderCard(restGrid, c);
     } else {
-      const inner = this.gridEl.createDiv({ cls: "diexar-keep-grid-inner" });
+      const inner = this.gridEl.createDiv({ cls: "obsidrop-grid-inner" });
       for (const c of rest) this.renderCard(inner, c);
     }
   }
@@ -163,7 +162,7 @@ export class DiexarKeepView extends ItemView {
   private renderCard(parent: HTMLElement, card: CardData): void {
     const { file, content, meta, archived } = card;
     const cardEl = parent.createDiv({
-      cls: `diexar-keep-card${archived ? " is-archived" : ""}${meta.pinned ? " is-pinned" : ""}`,
+      cls: `obsidrop-card${archived ? " is-archived" : ""}${meta.pinned ? " is-pinned" : ""}`,
     });
     if (meta.color !== "default") {
       cardEl.dataset.color = meta.color;
@@ -172,7 +171,7 @@ export class DiexarKeepView extends ItemView {
     const titleText = extractTitle(content) || file.basename;
     const previewText = extractPreview(content, titleText);
 
-    const body = cardEl.createDiv({ cls: "diexar-keep-card-body" });
+    const body = cardEl.createDiv({ cls: "obsidrop-card-body" });
     body.addEventListener("click", () => {
       new EditNoteModal(this.app, this.plugin, file).open();
     });
@@ -181,7 +180,7 @@ export class DiexarKeepView extends ItemView {
     if (thumbnailBasename) {
       const resourcePath = this.resolveAttachmentResource(file, thumbnailBasename);
       if (resourcePath) {
-        const thumbWrap = body.createDiv({ cls: "diexar-keep-card-thumbnail" });
+        const thumbWrap = body.createDiv({ cls: "obsidrop-card-thumbnail" });
         const img = thumbWrap.createEl("img");
         img.src = resourcePath;
         img.alt = "";
@@ -191,26 +190,26 @@ export class DiexarKeepView extends ItemView {
       }
     }
 
-    body.createEl("h3", { cls: "diexar-keep-card-title", text: titleText });
+    body.createEl("h3", { cls: "obsidrop-card-title", text: titleText });
 
     if (previewText) {
-      const preview = body.createDiv({ cls: "diexar-keep-card-preview" });
+      const preview = body.createDiv({ cls: "obsidrop-card-preview" });
       preview.innerHTML = renderInlinePreviewHtml(previewText);
       preview.addEventListener("click", (e) => this.handlePreviewClick(e));
     }
 
     if (meta.tags.length > 0) {
-      const tagWrap = body.createDiv({ cls: "diexar-keep-card-tags" });
+      const tagWrap = body.createDiv({ cls: "obsidrop-card-tags" });
       for (const tag of meta.tags) {
-        tagWrap.createSpan({ cls: "diexar-keep-card-tag", text: `#${tag}` });
+        tagWrap.createSpan({ cls: "obsidrop-card-tag", text: `#${tag}` });
       }
     }
 
-    const actions = cardEl.createDiv({ cls: "diexar-keep-card-actions" });
+    const actions = cardEl.createDiv({ cls: "obsidrop-card-actions" });
 
     const pinBtn = actions.createEl("button", {
-      cls: `diexar-keep-card-action${meta.pinned ? " is-active" : ""}`,
-      attr: { "aria-label": meta.pinned ? "Losmaken" : "Vastzetten" },
+      cls: `obsidrop-card-action${meta.pinned ? " is-active" : ""}`,
+      attr: { "aria-label": meta.pinned ? t("action_unpin") : t("action_pin") },
     });
     setIcon(pinBtn, meta.pinned ? "pin-off" : "pin");
     pinBtn.addEventListener("click", async (e) => {
@@ -220,8 +219,8 @@ export class DiexarKeepView extends ItemView {
     });
 
     const colorBtn = actions.createEl("button", {
-      cls: "diexar-keep-card-action",
-      attr: { "aria-label": "Kleur" },
+      cls: "obsidrop-card-action",
+      attr: { "aria-label": t("action_color") },
     });
     setIcon(colorBtn, "palette");
     colorBtn.addEventListener("click", (e) => {
@@ -230,8 +229,8 @@ export class DiexarKeepView extends ItemView {
     });
 
     const editBtn = actions.createEl("button", {
-      cls: "diexar-keep-card-action",
-      attr: { "aria-label": "Bewerken" },
+      cls: "obsidrop-card-action",
+      attr: { "aria-label": t("action_edit") },
     });
     setIcon(editBtn, "pencil");
     editBtn.addEventListener("click", (e) => {
@@ -240,8 +239,8 @@ export class DiexarKeepView extends ItemView {
     });
 
     const archiveBtn = actions.createEl("button", {
-      cls: "diexar-keep-card-action",
-      attr: { "aria-label": archived ? "Terug uit archief" : "Archiveren" },
+      cls: "obsidrop-card-action",
+      attr: { "aria-label": archived ? t("action_unarchive") : t("action_archive") },
     });
     setIcon(archiveBtn, archived ? "archive-restore" : "archive");
     archiveBtn.addEventListener("click", async (e) => {
@@ -250,8 +249,8 @@ export class DiexarKeepView extends ItemView {
     });
 
     const moreBtn = actions.createEl("button", {
-      cls: "diexar-keep-card-action",
-      attr: { "aria-label": "Meer" },
+      cls: "obsidrop-card-action",
+      attr: { "aria-label": t("action_more") },
     });
     setIcon(moreBtn, "more-vertical");
     moreBtn.addEventListener("click", (e) => {
@@ -259,7 +258,7 @@ export class DiexarKeepView extends ItemView {
       const menu = new Menu();
       menu.addItem((i) =>
         i
-          .setTitle("Open in nieuw tabblad")
+          .setTitle(t("action_open_in_tab"))
           .setIcon("file-plus")
           .onClick(async () => {
             await this.app.workspace.getLeaf("tab").openFile(file);
@@ -267,11 +266,11 @@ export class DiexarKeepView extends ItemView {
       );
       menu.addItem((i) =>
         i
-          .setTitle("Verwijder kaartje")
+          .setTitle(t("action_delete"))
           .setIcon("trash-2")
           .onClick(async () => {
             await this.app.vault.trash(file, true);
-            new Notice(`Verwijderd: ${file.basename}`);
+            new Notice(t("notice_deleted", file.basename));
             this.plugin.refreshViews();
           })
       );
@@ -281,7 +280,7 @@ export class DiexarKeepView extends ItemView {
 
   private handlePreviewClick(e: MouseEvent): void {
     const target = e.target as HTMLElement;
-    const wiki = target.closest(".diexar-keep-wikilink") as HTMLElement | null;
+    const wiki = target.closest(".obsidrop-wikilink") as HTMLElement | null;
     if (wiki) {
       e.preventDefault();
       e.stopPropagation();
@@ -291,11 +290,11 @@ export class DiexarKeepView extends ItemView {
       if (dest) {
         void this.app.workspace.getLeaf(false).openFile(dest);
       } else {
-        new Notice(`Geen notitie gevonden: ${href}`);
+        new Notice(t("notice_note_not_found", href));
       }
       return;
     }
-    const url = target.closest(".diexar-keep-url") as HTMLElement | null;
+    const url = target.closest(".obsidrop-url") as HTMLElement | null;
     if (url) {
       e.preventDefault();
       e.stopPropagation();
@@ -305,18 +304,18 @@ export class DiexarKeepView extends ItemView {
   }
 
   private showLinkBar(anchor: HTMLElement, href: string): void {
-    document.body.querySelectorAll(".diexar-keep-link-bar").forEach((el) => el.remove());
+    document.body.querySelectorAll(".obsidrop-link-bar").forEach((el) => el.remove());
 
-    const bar = document.body.createDiv({ cls: "diexar-keep-link-bar" });
-    const urlSpan = bar.createSpan({ cls: "diexar-keep-link-bar-url" });
+    const bar = document.body.createDiv({ cls: "obsidrop-link-bar" });
+    const urlSpan = bar.createSpan({ cls: "obsidrop-link-bar-url" });
     urlSpan.setText(href.length > 60 ? `${href.slice(0, 57)}…` : href);
     const openBtn = bar.createEl("button", {
-      cls: "diexar-keep-link-bar-open",
-      text: "Link openen",
+      cls: "obsidrop-link-bar-open",
+      text: t("action_open_link"),
     });
     const closeBtn = bar.createEl("button", {
-      cls: "diexar-keep-link-bar-close",
-      attr: { "aria-label": "Sluiten" },
+      cls: "obsidrop-link-bar-close",
+      attr: { "aria-label": t("action_close") },
       text: "×",
     });
 
@@ -362,7 +361,7 @@ export class DiexarKeepView extends ItemView {
     for (const name of COLOR_NAMES) {
       menu.addItem((i) =>
         i
-          .setTitle(COLOR_LABELS_NL[name])
+          .setTitle(colorLabel(name))
           .setIcon(name === meta.color ? "check" : "circle")
           .onClick(async () => {
             // In-place update: voorkomt dat re-rendering de kaart bovenaan zet
@@ -479,14 +478,15 @@ function extractPreview(content: string, title: string): string {
   const body = stripFrontmatter(content);
   // Filter image-embed-only regels weg (zowel wiki ![[…]] als standaard ![](…)),
   // anders verschijnt de hashnaam van de thumbnail als ruwe tekst in de preview.
-  // Ook diagnostische HTML-comments uit Android (<!-- diexar-preview: … -->).
+  // Ook diagnostische HTML-comments uit Android (<!-- obsidrop-preview: … -->,
+  // plus oudere `diexar-preview`-marker voor backward compat met al gesyncde notities).
   const lines = body
     .split("\n")
     .map((l) => l.trim())
     .filter((l) => l.length > 0)
     .filter((l) => !/^!\[\[[^\]]+\]\]$/.test(l))
     .filter((l) => !/^!\[[^\]]*\]\([^)]+\)$/.test(l))
-    .filter((l) => !/^<!--\s*diexar-preview:.*-->$/.test(l));
+    .filter((l) => !/^<!--\s*(?:obsidrop|diexar)-preview:.*-->$/.test(l));
   const startIdx = lines[0] && stripFirstHeading(lines[0]) === title.trim() ? 1 : 0;
   const rest = lines.slice(startIdx).join("\n");
   if (!rest) return "";
