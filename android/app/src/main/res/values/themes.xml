@@ -10,6 +10,19 @@
         <item name="android:navigationBarColor">@android:color/transparent</item>
     </style>
 
+    <!-- Splash theme: deep aubergine background that matches the brand banner;
+         the launcher icon is shown centered. After cold-start, postSplashScreenTheme
+         hands off to the regular Theme.ObsiDrop so transparent system bars + the
+         Compose sunset gradient take over without a flash. -->
+    <style name="Theme.ObsiDrop.Splash" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">@color/splash_background</item>
+        <item name="windowSplashScreenAnimatedIcon">@mipmap/ic_launcher</item>
+        <item name="postSplashScreenTheme">@style/Theme.ObsiDrop</item>
+        <!-- Fallback for API < 31 where the native splash isn't honored: the compat
+             library shows windowBackground until installSplashScreen() runs. -->
+        <item name="android:windowBackground">@color/splash_background</item>
+    </style>
+
     <style name="Theme.ObsiDrop.Transparent" parent="Theme.ObsiDrop">
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:windowIsTranslucent">true</item>

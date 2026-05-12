@@ -2,4 +2,5 @@
 <resources>
     <color name="diexar_primary">#C2185B</color>
     <color name="ic_launcher_background">#C2185B</color>
+    <color name="splash_background">#4B3754</color>
 </resources>
