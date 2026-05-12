@@ -10,6 +10,14 @@
   "keywords": ["obsidian", "plugin", "notes", "keep"],
   "author": "Diexar Labs",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Diexar-Labs/obsidrop.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Diexar-Labs/obsidrop/issues"
+  },
+  "homepage": "https://github.com/Diexar-Labs/obsidrop#readme",
   "devDependencies": {
     "@types/node": "^20.11.0",
     "builtin-modules": "^3.3.0",

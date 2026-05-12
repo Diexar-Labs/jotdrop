@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ObsiDrop</string>
+    <string name="share_target_label">ObsiDrop</string>
+    <string name="settings_title">ObsiDrop · settings</string>
+
+    <string name="intro">Share text from any app to ObsiDrop — it lands directly as a card in your Obsidian vault.</string>
+
+    <string name="section_vault">Obsidian vault</string>
+    <string name="no_vault_picked">No vault folder picked yet.</string>
+    <string name="pick_vault">Pick vault folder</string>
+
+    <string name="section_subfolder">Subfolder for cards</string>
+    <string name="subfolder_hint">e.g. Mini Notes</string>
+    <string name="save_subfolder">Save subfolder</string>
+
+    <string name="test_button">Test: write sample note</string>
+    <string name="test_note_body">Test from ObsiDrop\n\nIf you see this, it works.</string>
+
+    <string name="help_text">Tip: use any app\'s share menu and pick "ObsiDrop". The shared text lands in the chosen subfolder as a timestamped markdown file.</string>
+
+    <string name="toast_saved">Saved: %1$s</string>
+    <string name="toast_saved_short">Saved</string>
+    <string name="toast_fetching_preview">Fetching preview…</string>
+    <string name="toast_deleted">Note deleted</string>
+    <string name="toast_archived">Note archived</string>
+    <string name="toast_error">Error: %1$s</string>
+    <string name="toast_vault_picked">Vault folder saved.</string>
+    <string name="toast_subfolder_saved">Subfolder saved.</string>
+    <string name="error_no_vault">Pick a vault folder in the app first.</string>
+    <string name="error_empty">Nothing to save.</string>
+    <string name="error_unknown">Unknown error.</string>
+    <string name="error_with_message">Error: %1$s</string>
+    <string name="error_generic">Error</string>
+
+    <string name="loading">Loading…</string>
+    <string name="empty_no_vault">No vault chosen yet. Open settings to get started.</string>
+    <string name="empty_no_notes">No notes yet. Tap + to start.</string>
+    <string name="open_settings">Open settings</string>
+    <string name="retry">Try again</string>
+
+    <string name="action_settings">Settings</string>
+    <string name="action_new_note">New note</string>
+    <string name="action_save">Save</string>
+    <string name="action_back">Back</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_archive">Archive</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_close">Close</string>
+    <string name="action_pin">Pin</string>
+    <string name="action_unpin">Unpin</string>
+    <string name="action_color">Pick color</string>
+    <string name="action_link">Insert link</string>
+    <string name="action_open_link">Open link</string>
+    <string name="action_speech">Speech to text</string>
+    <string name="action_checklist">Checklist item</string>
+    <string name="action_add_photo">Add photo</string>
+    <string name="action_insert_photo">Insert photo</string>
+    <string name="action_take_photo">Take photo</string>
+    <string name="action_pick_from_gallery">Pick from gallery</string>
+    <string name="action_remove_tag">Remove tag</string>
+
+    <string name="section_support">About ObsiDrop</string>
+    <string name="support_blurb">ObsiDrop is free and open-source. Found it useful? A coffee or sponsorship makes my day — no obligations, no lock-ins.</string>
+    <string name="support_kofi">☕ Buy me a Ko-fi</string>
+    <string name="support_sponsors">❤ Sponsor on GitHub</string>
+
+    <string name="action_ocr_camera">Text from photo (camera)</string>
+    <string name="action_ocr_gallery">Text from photo (gallery)</string>
+    <string name="ocr_running">Reading text from photo…</string>
+    <string name="ocr_no_text">No text found in the photo.</string>
+    <string name="ocr_failed">OCR failed: %1$s</string>
+    <string name="speech_prompt">Speak now…</string>
+    <string name="speech_unavailable">Speech recognition isn\'t available on this device.</string>
+    <string name="speech_canceled">Speech recognition canceled.</string>
+
+    <string name="section_speech">Speech to text</string>
+    <string name="speech_lang_label">Default language for voice input</string>
+    <string name="speech_lang_hint">Works online out of the box. For offline recognition: download the language via Android settings → Languages and input → Speech recognition.</string>
+
+    <string name="section_pinned">Pinned</string>
+    <string name="section_other">Other</string>
+
+    <string name="tag_placeholder">Add tag (Enter/comma)…</string>
+    <string name="color_picker_title">Pick a color</string>
+    <string name="color_label">Current: %1$s</string>
+    <string name="link_picker_title">Link to note</string>
+    <string name="link_picker_placeholder">Search notes in vault…</string>
+    <string name="link_picker_empty">No notes found.</string>
+
+    <string name="editor_title_new">New note</string>
+    <string name="editor_title_edit">Edit note</string>
+    <string name="editor_hint">Write here…</string>
+
+    <string name="delete_title">Delete note?</string>
+    <string name="delete_message">This action cannot be undone.</string>
+    <string name="archive_title">Archive note?</string>
+    <string name="archive_message">The note will be moved to the Archive subfolder.</string>
+
+    <string name="photo_error">Photo error: %1$s</string>
+    <string name="camera_error">Camera error: %1$s</string>
+    <string name="no_camera_app">No camera app available</string>
+    <string name="parse_error">Parse error: %1$s</string>
+    <string name="empty_share">Empty share — nothing saved</string>
+    <string name="no_image_in_share">No image found in share</string>
+
+    <!-- Note colors -->
+    <string name="color_default">Default</string>
+    <string name="color_red">Red</string>
+    <string name="color_orange">Orange</string>
+    <string name="color_yellow">Yellow</string>
+    <string name="color_green">Cream</string>
+    <string name="color_teal">Slate blue</string>
+    <string name="color_blue">Blue</string>
+    <string name="color_purple">Purple</string>
+    <string name="color_pink">Pink</string>
+    <string name="color_brown">Brown</string>
+    <string name="color_gray">Gray</string>
+</resources>

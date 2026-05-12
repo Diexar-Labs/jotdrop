@@ -1,0 +1,24 @@
+# Gradle / build
+/build/
+/app/build/
+/.gradle/
+/captures/
+local.properties
+
+# Gradle wrapper jar — wordt door CI/Android Studio aangemaakt
+/gradle/wrapper/gradle-wrapper.jar
+
+# IDE
+/.idea/
+*.iml
+*.iws
+*.ipr
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Keystore (geen release-keystore committen)
+*.jks
+!debug.keystore
