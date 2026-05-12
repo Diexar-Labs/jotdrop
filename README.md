@@ -1,7 +1,6 @@
 <div align="center">
 
-<!-- IMAGE: docs/banner.png - 1280×640 social/Open-Graph banner. Suggestion: app icon + tagline "ObsiDrop · Google Keep, on your own files" on the sunset-gradient background (peach → lavender). Used by GitHub's repo preview card on Twitter/Slack/Discord. -->
-<img src="docs/banner.png" alt="ObsiDrop - Google Keep–style quick-capture for Obsidian and Android" width="720" />
+<img src="docs/banner.png" alt="ObsiDrop - Google Keep-style quick-capture for Obsidian and Android" width="720" />
 
 # ObsiDrop
 
