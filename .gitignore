@@ -6,3 +6,6 @@ main.js
 Thumbs.db
 desktop.ini
 release-staging/
+
+# Sessie-werkbestand (Claude Code handoff) — niet voor publieke repo
+handoff.md

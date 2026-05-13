@@ -47,11 +47,23 @@
     <string name="action_archive">Archive</string>
     <string name="action_cancel">Cancel</string>
     <string name="action_close">Close</string>
+    <string name="action_open_external">Open externally</string>
+    <string name="lightbox_load_failed">Could not load image.</string>
+    <string name="reminder_channel_name">Reminders</string>
+    <string name="reminder_channel_desc">Notifications for note reminders.</string>
+    <string name="reminder_notification_title">ObsiDrop reminder</string>
+    <string name="reminder_default_title">Open note</string>
+    <string name="action_set_reminder">Set reminder</string>
+    <string name="action_clear_reminder">Clear</string>
+    <string name="label_reminder">Reminder</string>
+    <string name="reminder_none">No reminder set</string>
+    <string name="reminder_permission_needed">Allow notifications to receive reminders.</string>
     <string name="action_pin">Pin</string>
     <string name="action_unpin">Unpin</string>
     <string name="action_color">Pick color</string>
     <string name="action_link">Insert link</string>
     <string name="action_open_link">Open link</string>
+    <string name="link_chip_more">+%1$d more</string>
     <string name="action_speech">Speech to text</string>
     <string name="action_checklist">Checklist item</string>
     <string name="action_add_photo">Add photo</string>
@@ -80,6 +92,27 @@
 
     <string name="section_pinned">Pinned</string>
     <string name="section_other">Other</string>
+
+    <string name="search_hint">Search notes…</string>
+    <string name="action_clear_search">Clear search</string>
+    <string name="tag_filter_clear">Clear filter</string>
+    <string name="empty_no_results">No notes match your search.</string>
+    <string name="tag_overflow_more">+%1$d more</string>
+    <string name="tag_sheet_title">All tags</string>
+    <string name="tag_sheet_search">Search tags…</string>
+    <string name="tag_sheet_empty">No tags match.</string>
+
+    <string name="selection_count">%1$d selected</string>
+    <string name="action_select_all">Select all</string>
+    <string name="action_exit_selection">Exit selection</string>
+    <string name="action_select_note">Select note</string>
+    <string name="bulk_archive_title">Archive %1$d notes?</string>
+    <string name="bulk_archive_message">The notes will be moved to the Archive subfolder.</string>
+    <string name="bulk_delete_title">Delete %1$d notes?</string>
+    <string name="bulk_delete_message">This action cannot be undone.</string>
+    <string name="toast_bulk_archived">Archived %1$d notes</string>
+    <string name="toast_bulk_deleted">Deleted %1$d notes</string>
+    <string name="toast_bulk_partial">%1$d done, %2$d failed</string>
 
     <string name="tag_placeholder">Add tag (Enter/comma)…</string>
     <string name="color_picker_title">Pick a color</string>

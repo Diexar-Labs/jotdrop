@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Statische cirkelboog die door splash_spinner.xml geroteerd wordt. 3/4-arc met
+  open einde maakt de rotatie zichtbaar. Wit op aubergine splash_background =
+  hoog contrast zonder kleurafhankelijke informatie (kleurenblind-vriendelijk).
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!--
+      Android 12+ splash-icon krijgt een ronde mask met ~66% safe-zone (radius
+      ~36 op een 108-canvas). Vorige boog stond op radius 36 + halve stroke =
+      buiten de mask → het zag eruit alsof de ring vastzat in een vierkant.
+      Hier teruggebracht naar radius 28 met smallere stroke → 3 units marge
+      tussen ring en mask-rand.
+    -->
+    <group
+        android:name="rotationGroup"
+        android:pivotX="54"
+        android:pivotY="54">
+        <path
+            android:strokeColor="#FFFFFFFF"
+            android:strokeWidth="5"
+            android:strokeLineCap="round"
+            android:pathData="M 54,26 A 28,28 0 1 1 26,54" />
+    </group>
+</vector>

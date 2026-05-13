@@ -158,8 +158,14 @@ class ShareActivity : AppCompatActivity() {
         if (body.isEmpty()) {
             body = intent.getStringExtra("android.intent.extra.HTML_TEXT")?.trim().orEmpty()
         }
+        // Wanneer de subject als titel-regel gebruikt wordt: tags eruit strippen.
+        // Body laat saveNote() doorheen de neutralizer lopen — die escapet hashtags
+        // i.p.v. ze te verwijderen, want daar tellen ze als content.
         return when {
-            subject.isNotEmpty() && body.isNotEmpty() && body != subject -> "# $subject\n\n$body"
+            subject.isNotEmpty() && body.isNotEmpty() && body != subject -> {
+                val cleanTitle = Storage.sanitizeTitleFromShare(subject)
+                if (cleanTitle.isEmpty()) body else "# $cleanTitle\n\n$body"
+            }
             subject.isNotEmpty() -> subject
             else -> body
         }

@@ -84,7 +84,9 @@ class PreviewWorker(
         }
 
         fun buildPlaceholder(url: String, subject: String?): String {
-            val title = subject?.trim()?.takeIf { it.isNotEmpty() } ?: url
+            val rawTitle = subject?.trim()?.takeIf { it.isNotEmpty() } ?: url
+            // Strippen — geen escapen — zodat de kaart-titel niet vol staat met `\#fyp`.
+            val title = Storage.sanitizeTitleFromShare(rawTitle).ifEmpty { url }
             return buildString {
                 append("# "); append(title); append("\n\n")
                 append("["); append(title); append("]("); append(url); append(")\n\n")
@@ -98,13 +100,14 @@ class PreviewWorker(
             fallbackSubject: String?,
             diagnostic: String?,
         ): String {
-            val title = preview?.title?.trim()?.takeIf { it.isNotEmpty() }
+            val rawTitle = preview?.title?.trim()?.takeIf { it.isNotEmpty() }
                 ?: fallbackSubject?.trim()?.takeIf { it.isNotEmpty() }
                 ?: url
+            val title = Storage.sanitizeTitleFromShare(rawTitle).ifEmpty { url }
             val description = preview?.description?.trim()
             val imageBasename = preview?.imageBasename
 
-            return buildString {
+            val raw = buildString {
                 append("# ")
                 append(title)
                 append("\n\n")
@@ -128,6 +131,10 @@ class PreviewWorker(
                     append(" -->")
                 }
             }
+            // Neutralisatie nogmaals over de hele tekst — de description kan
+            // alsnog `#tags` bevatten en die mogen ABSOLUUT niet in Obsidian's
+            // graph view belanden.
+            return Storage.neutralizeBodyHashtags(raw)
         }
     }
 }

@@ -69,6 +69,9 @@ data class NoteMeta(
     val color: NoteColor = NoteColor.DEFAULT,
     val tags: List<String> = emptyList(),
     val pinned: Boolean = false,
+    // ISO-string in lokale tijd zonder timezone-suffix, bv. "2026-05-14T14:30".
+    // Wordt door ReminderScheduler omgezet naar epoch millis voor AlarmManager.
+    val reminder: String? = null,
 )
 
 data class ParsedNote(
@@ -99,6 +102,7 @@ object FrontmatterParser {
     private fun parseMeta(yaml: String): NoteMeta {
         var color = NoteColor.DEFAULT
         var pinned = false
+        var reminder: String? = null
         val tags = mutableListOf<String>()
         val seen = mutableSetOf<String>()
 
@@ -123,6 +127,10 @@ object FrontmatterParser {
             when (key.lowercase()) {
                 "color" -> color = NoteColor.fromKey(unquote(rawValue))
                 "pinned" -> pinned = parseBool(rawValue)
+                "reminder" -> {
+                    val v = unquote(rawValue).trim()
+                    if (v.isNotEmpty()) reminder = v
+                }
                 "tags" -> {
                     if (rawValue.isEmpty()) {
                         // Block-style list — kijk naar volgende '- value' regels
@@ -159,7 +167,7 @@ object FrontmatterParser {
             }
             i++
         }
-        return NoteMeta(color = color, tags = tags.toList(), pinned = pinned)
+        return NoteMeta(color = color, tags = tags.toList(), pinned = pinned, reminder = reminder)
     }
 
     private fun parseBool(value: String): Boolean {
@@ -213,7 +221,7 @@ object FrontmatterWriter {
         }
 
         val newLines = mutableListOf<String>()
-        val handled = setOf("color", "tags", "pinned")
+        val handled = setOf("color", "tags", "pinned", "reminder")
 
         // Bewaar onbekende keys in originele volgorde, sla blocks voor handled keys over.
         var i = 0
@@ -256,6 +264,9 @@ object FrontmatterWriter {
         if (meta.tags.isNotEmpty()) {
             val flat = meta.tags.joinToString(", ") { yamlScalar(it) }
             newLines.add("tags: [${flat}]")
+        }
+        if (!meta.reminder.isNullOrBlank()) {
+            newLines.add("reminder: ${yamlScalar(meta.reminder)}")
         }
 
         val body = parsed.body.removePrefix("\n")

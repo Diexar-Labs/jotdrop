@@ -16,6 +16,11 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.FileProvider
 import java.io.File
+import java.time.LocalDateTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.util.Calendar
+import java.util.Locale
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -55,11 +60,14 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -69,6 +77,9 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.TimeInput
+import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -155,6 +166,8 @@ private fun EditorScreen(initialUri: Uri?, onClose: () -> Unit) {
     var color by remember { mutableStateOf(NoteColor.DEFAULT) }
     var pinned by remember { mutableStateOf(false) }
     val tags = remember { mutableStateListOf<String>() }
+    var reminder by remember { mutableStateOf<String?>(null) }
+    var originalReminder by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
     var showArchiveDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
@@ -382,6 +395,8 @@ private fun EditorScreen(initialUri: Uri?, onClose: () -> Unit) {
                     pinned = parsed.meta.pinned
                     tags.clear()
                     tags.addAll(parsed.meta.tags)
+                    reminder = parsed.meta.reminder
+                    originalReminder = parsed.meta.reminder
                 } catch (e: Throwable) {
                     loadError = context.getString(R.string.parse_error, e.message ?: e.javaClass.simpleName)
                 }
@@ -404,17 +419,34 @@ private fun EditorScreen(initialUri: Uri?, onClose: () -> Unit) {
         if (color == NoteColor.DEFAULT) screenBackgroundBrush(dark) else noteCardBrush(bg, dark)
     }
 
-    fun applyMetaAsync(newColor: NoteColor = color, newPinned: Boolean = pinned, newTags: List<String> = tags.toList()) {
+    fun applyMetaAsync(
+        newColor: NoteColor = color,
+        newPinned: Boolean = pinned,
+        newTags: List<String> = tags.toList(),
+        newReminder: String? = reminder,
+    ) {
         val uri = currentUri ?: return
+        val reminderChanged = newReminder != originalReminder
         scope.launch {
-            val newMeta = NoteMeta(color = newColor, tags = newTags, pinned = newPinned)
+            val newMeta = NoteMeta(color = newColor, tags = newTags, pinned = newPinned, reminder = newReminder)
             withContext(Dispatchers.IO) {
                 Storage.updateNoteMeta(context, Uri.parse(uri), newMeta)
+            }
+            // Alleen reschedulen als de reminder daadwerkelijk wijzigde — anders
+            // burnen we onnodig AlarmManager-calls bij tag/kleur/pin-updates.
+            if (reminderChanged) {
+                val parsedUri = Uri.parse(uri)
+                ReminderScheduler.cancel(context, parsedUri)
+                if (!newReminder.isNullOrBlank()) {
+                    ReminderScheduler.schedule(context, parsedUri, newReminder)
+                }
+                originalReminder = newReminder
             }
         }
     }
 
     fun closeWithSaveIfNeeded() {
+        val reminderAtSave = reminder
         attemptSaveAndClose(
             scope = scope,
             context = context,
@@ -424,12 +456,24 @@ private fun EditorScreen(initialUri: Uri?, onClose: () -> Unit) {
             color = color,
             pinned = pinned,
             tags = tags.toList(),
+            reminder = reminderAtSave,
             isDirty = isDirty,
             onSavingChange = { saving = it },
             onSaved = { newUri ->
                 if (newUri != null) currentUri = newUri.toString()
                 originalBody = bodyText.text
                 originalEmbeds = embedLines.toList()
+                // Bij nieuwe notitie krijgen we hier de definitieve URI binnen
+                // — pas dan kunnen we de reminder schedulen (cancel-old is een
+                // no-op want er was nog niets).
+                val finalUri = newUri ?: currentUri?.let { Uri.parse(it) }
+                if (finalUri != null) {
+                    ReminderScheduler.cancel(context, finalUri)
+                    if (!reminderAtSave.isNullOrBlank()) {
+                        ReminderScheduler.schedule(context, finalUri, reminderAtSave)
+                    }
+                    originalReminder = reminderAtSave
+                }
                 onClose()
             },
             onError = { msg ->
@@ -536,6 +580,7 @@ private fun EditorScreen(initialUri: Uri?, onClose: () -> Unit) {
                     IconButton(
                         enabled = !saving && (bodyText.text.isNotBlank() || embedLines.isNotEmpty()) && (isDirty || !isExisting),
                         onClick = {
+                            val reminderAtSave = reminder
                             attemptSaveAndClose(
                                 scope = scope,
                                 context = context,
@@ -545,12 +590,21 @@ private fun EditorScreen(initialUri: Uri?, onClose: () -> Unit) {
                                 color = color,
                                 pinned = pinned,
                                 tags = tags.toList(),
+                                reminder = reminderAtSave,
                                 isDirty = true,
                                 onSavingChange = { saving = it },
                                 onSaved = { newUri ->
                                     if (newUri != null) currentUri = newUri.toString()
                                     originalBody = bodyText.text
                                     originalEmbeds = embedLines.toList()
+                                    val finalUri = newUri ?: currentUri?.let { Uri.parse(it) }
+                                    if (finalUri != null) {
+                                        ReminderScheduler.cancel(context, finalUri)
+                                        if (!reminderAtSave.isNullOrBlank()) {
+                                            ReminderScheduler.schedule(context, finalUri, reminderAtSave)
+                                        }
+                                        originalReminder = reminderAtSave
+                                    }
                                     Toast.makeText(context, R.string.toast_saved_short, Toast.LENGTH_SHORT).show()
                                     onClose()
                                 },
@@ -596,6 +650,11 @@ private fun EditorScreen(initialUri: Uri?, onClose: () -> Unit) {
                         if (tags.remove(tag)) {
                             if (isExisting) applyMetaAsync(newTags = tags.toList())
                         }
+                    },
+                    reminder = reminder,
+                    onReminderChange = { newIso ->
+                        reminder = newIso
+                        if (isExisting) applyMetaAsync(newReminder = newIso)
                     },
                     foreground = fg,
                 )
@@ -644,8 +703,12 @@ private fun EditorScreen(initialUri: Uri?, onClose: () -> Unit) {
                 showArchiveDialog = false
                 val uri = currentUri ?: return@ConfirmDialog
                 scope.launch {
+                    val parsedUri = Uri.parse(uri)
+                    // Cancel reminder vóór de move: URI verandert na archiveren
+                    // dus zonder cancel hier blijft de oude alarm als wees achter.
+                    ReminderScheduler.cancel(context, parsedUri)
                     val res = withContext(Dispatchers.IO) {
-                        Storage.archiveNote(context, Uri.parse(uri))
+                        Storage.archiveNote(context, parsedUri)
                     }
                     res.onSuccess {
                         Toast.makeText(context, R.string.toast_archived, Toast.LENGTH_SHORT).show()
@@ -668,8 +731,10 @@ private fun EditorScreen(initialUri: Uri?, onClose: () -> Unit) {
                 showDeleteDialog = false
                 val uri = currentUri ?: return@ConfirmDialog
                 scope.launch {
+                    val parsedUri = Uri.parse(uri)
+                    ReminderScheduler.cancel(context, parsedUri)
                     val res = withContext(Dispatchers.IO) {
-                        Storage.deleteNote(context, Uri.parse(uri))
+                        Storage.deleteNote(context, parsedUri)
                     }
                     res.onSuccess {
                         Toast.makeText(context, R.string.toast_deleted, Toast.LENGTH_SHORT).show()
@@ -693,6 +758,8 @@ private fun EditorBody(
     tags: List<String>,
     onAddTag: (String) -> Unit,
     onRemoveTag: (String) -> Unit,
+    reminder: String?,
+    onReminderChange: (String?) -> Unit,
     foreground: Color,
 ) {
     val context = LocalContext.current
@@ -733,6 +800,12 @@ private fun EditorBody(
             tags = tags,
             onAdd = onAddTag,
             onRemove = onRemoveTag,
+            foreground = foreground,
+        )
+        Spacer(Modifier.height(8.dp))
+        ReminderEditor(
+            reminder = reminder,
+            onChange = onReminderChange,
             foreground = foreground,
         )
         Spacer(Modifier.height(12.dp))
@@ -1023,6 +1096,7 @@ private fun attemptSaveAndClose(
     color: NoteColor,
     pinned: Boolean,
     tags: List<String>,
+    reminder: String?,
     isDirty: Boolean,
     onSavingChange: (Boolean) -> Unit,
     onSaved: (Uri?) -> Unit,
@@ -1030,13 +1104,18 @@ private fun attemptSaveAndClose(
     closeWhenClean: Boolean,
     onClose: () -> Unit,
 ) {
-    val meta = NoteMeta(color = color, tags = tags, pinned = pinned)
+    val meta = NoteMeta(color = color, tags = tags, pinned = pinned, reminder = reminder)
     if (!isDirty && currentUri != null) {
         // Metadata is bij bestaande notities al onmiddellijk gesynct; alleen sluiten.
         if (closeWhenClean) onClose()
         return
     }
-    val combinedBody = combineBodyAndEmbeds(bodyText, embedLines)
+    // Neutraliseer inline `#hashtags` in de body voordat we wegschrijven —
+    // anders zou typen van `#fyp` in de editor alsnog Obsidian's graph view
+    // vervuilen. Spiegelt het gedrag van de plugin's edit-modal en de
+    // Storage.saveNote-path. Embeds worden niet aangeraakt (regex matcht ze niet).
+    val safeBody = Storage.neutralizeBodyHashtags(bodyText)
+    val combinedBody = combineBodyAndEmbeds(safeBody, embedLines)
     if (combinedBody.isBlank()) {
         if (currentUri == null) {
             if (closeWhenClean) onClose()
@@ -1113,5 +1192,184 @@ internal fun combineBodyAndEmbeds(bodyText: String, embedLines: List<String>): S
 internal fun extractEmbedBasename(embedLine: String): String? {
     val m = Regex("!\\[\\[([^\\]]+)]]").find(embedLine) ?: return null
     return m.groupValues[1].trim().substringBefore("|").trim().takeIf { it.isNotEmpty() }
+}
+
+/**
+ * Inline rij die de huidige reminder toont (of "geen herinnering") en knoppen
+ * geeft om er een te kiezen / wissen. Bij tap op de tekst of de set-knop:
+ * native DatePicker → TimePicker (twee dialogen na elkaar, simpelste UX op
+ * Android zonder externe DateTime-picker-libs).
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ReminderEditor(
+    reminder: String?,
+    onChange: (String?) -> Unit,
+    foreground: Color,
+) {
+    val context = LocalContext.current
+    val display = formatReminderDisplay(reminder)
+
+    var showDatePicker by remember { mutableStateOf(false) }
+    var showTimePicker by remember { mutableStateOf<DateParts?>(null) }
+
+    // POST_NOTIFICATIONS-permissie sinds Android 13. Just-in-time vragen:
+    // alleen relevant als de gebruiker een reminder wil zetten.
+    val notifPermLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        if (granted) {
+            showDatePicker = true
+        } else {
+            Toast.makeText(context, R.string.reminder_permission_needed, Toast.LENGTH_LONG).show()
+        }
+    }
+    val pick: () -> Unit = {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU &&
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                context, android.Manifest.permission.POST_NOTIFICATIONS,
+            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            notifPermLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            showDatePicker = true
+        }
+    }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Filled.Notifications,
+            contentDescription = null,
+            tint = foreground.copy(alpha = if (reminder != null) 0.9f else 0.5f),
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = display ?: stringResource(R.string.reminder_none),
+            style = MaterialTheme.typography.bodyMedium,
+            color = foreground.copy(alpha = if (reminder != null) 1f else 0.6f),
+            modifier = Modifier
+                .weight(1f)
+                .clickable(onClick = pick),
+        )
+        if (reminder != null) {
+            TextButton(onClick = { onChange(null) }) {
+                Text(stringResource(R.string.action_clear_reminder))
+            }
+        } else {
+            TextButton(onClick = pick) {
+                Text(stringResource(R.string.action_set_reminder))
+            }
+        }
+    }
+
+    if (showDatePicker) {
+        val initial = parseReminderToCalendar(reminder) ?: defaultFutureCalendar()
+        val datePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = initial.timeInMillis,
+        )
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    val millis = datePickerState.selectedDateMillis ?: return@TextButton
+                    val cal = Calendar.getInstance().apply { timeInMillis = millis }
+                    showDatePicker = false
+                    showTimePicker = DateParts(
+                        year = cal.get(Calendar.YEAR),
+                        month = cal.get(Calendar.MONTH),
+                        day = cal.get(Calendar.DAY_OF_MONTH),
+                        initialHour = initial.get(Calendar.HOUR_OF_DAY),
+                        initialMinute = initial.get(Calendar.MINUTE),
+                    )
+                }) {
+                    Text(stringResource(android.R.string.ok))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) {
+                    Text(stringResource(android.R.string.cancel))
+                }
+            },
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
+
+    showTimePicker?.let { parts ->
+        val timeState = rememberTimePickerState(
+            initialHour = parts.initialHour,
+            initialMinute = parts.initialMinute,
+            is24Hour = android.text.format.DateFormat.is24HourFormat(context),
+        )
+        AlertDialog(
+            onDismissRequest = { showTimePicker = null },
+            title = { Text(stringResource(R.string.action_set_reminder)) },
+            text = {
+                // TimeInput = twee tekstvelden (HH:MM). Geen klokwijzer-gedoe.
+                TimeInput(state = timeState)
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val iso = String.format(
+                        Locale.US,
+                        "%04d-%02d-%02dT%02d:%02d",
+                        parts.year, parts.month + 1, parts.day,
+                        timeState.hour, timeState.minute,
+                    )
+                    showTimePicker = null
+                    onChange(iso)
+                }) {
+                    Text(stringResource(android.R.string.ok))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showTimePicker = null }) {
+                    Text(stringResource(android.R.string.cancel))
+                }
+            },
+        )
+    }
+}
+
+/** Tijdelijke staat tussen date- en time-picker: bewaart gekozen datum + initiële tijd. */
+private data class DateParts(
+    val year: Int,
+    val month: Int,
+    val day: Int,
+    val initialHour: Int,
+    val initialMinute: Int,
+)
+
+private fun defaultFutureCalendar(): Calendar = Calendar.getInstance().apply {
+    // Default 1 uur in de toekomst — zelden wil je iets exact "nu".
+    add(Calendar.HOUR_OF_DAY, 1)
+    set(Calendar.SECOND, 0)
+    set(Calendar.MILLISECOND, 0)
+}
+
+private fun parseReminderToCalendar(iso: String?): Calendar? {
+    if (iso.isNullOrBlank()) return null
+    return try {
+        val ldt = LocalDateTime.parse(iso, DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm"))
+        Calendar.getInstance().apply {
+            timeInMillis = ldt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        }
+    } catch (_: Throwable) {
+        null
+    }
+}
+
+private fun formatReminderDisplay(iso: String?): String? {
+    if (iso.isNullOrBlank()) return null
+    return try {
+        val ldt = LocalDateTime.parse(iso, DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm"))
+        ldt.format(DateTimeFormatter.ofPattern("EEE d MMM, HH:mm", Locale.getDefault()))
+    } catch (_: Throwable) {
+        iso
+    }
 }
 

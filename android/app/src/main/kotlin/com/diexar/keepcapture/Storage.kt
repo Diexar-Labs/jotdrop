@@ -78,7 +78,75 @@ object Storage {
     }
 
     fun saveNote(context: Context, content: String): Result<String> {
-        return createNote(context, content).map { it.first }
+        return createNote(context, neutralizeBodyHashtags(content)).map { it.first }
+    }
+
+    /**
+     * Strip `#hashtag`-patronen volledig uit een titel-regel. Absolute regel:
+     * tags zijn ALLEEN handmatig door de gebruiker toegevoegd. Inhoud die uit
+     * een share, OG-meta of paste komt mag dus geen tags in de titel hebben —
+     * en escapen (`\#`) lost het wel op voor de graph maar laat lelijke
+     * backslashes achter in de kaart-titel. Daarom: weghalen.
+     *
+     * Bewaart heading-marker (`# `) en wikilinks intact; verwijdert alleen
+     * losse `#tag`-tokens en de spaties eromheen.
+     */
+    fun sanitizeTitleFromShare(title: String): String {
+        val tagPattern = Regex("(?<![\\\\\\w/])#[A-Za-z_/][\\w/-]*")
+        return tagPattern.replace(title, "")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .trim(',', ';', '·', '|', '-', '–', '—')
+            .trim()
+    }
+
+    /**
+     * Escape inline `#hashtag`-syntax in vrije body-tekst zodat Obsidian de tags
+     * niet vault-breed indexeert. Spiegel van TS `neutralizeBodyHashtags` in
+     * `src/metadata.ts` — frontmatter (`---`-blok) blijft ongemoeid, code-fences
+     * en inline-code worden overgeslagen.
+     */
+    fun neutralizeBodyHashtags(content: String): String {
+        val fmRegex = Regex("^---\\r?\\n[\\s\\S]*?\\r?\\n---\\r?\\n?")
+        val fmMatch = fmRegex.find(content)
+        return if (fmMatch != null) {
+            fmMatch.value + neutralizeInlineHashtags(content.substring(fmMatch.value.length))
+        } else {
+            neutralizeInlineHashtags(content)
+        }
+    }
+
+    private fun neutralizeInlineHashtags(text: String): String {
+        val fencePattern = Regex("```[\\s\\S]*?```|~~~[\\s\\S]*?~~~")
+        val out = StringBuilder()
+        var idx = 0
+        for (m in fencePattern.findAll(text)) {
+            out.append(processOutsideFences(text.substring(idx, m.range.first)))
+            out.append(m.value)
+            idx = m.range.last + 1
+        }
+        out.append(processOutsideFences(text.substring(idx)))
+        return out.toString()
+    }
+
+    private fun processOutsideFences(segment: String): String {
+        val inlineCode = Regex("`[^`\\n]+`")
+        val out = StringBuilder()
+        var idx = 0
+        for (m in inlineCode.findAll(segment)) {
+            out.append(escapeHashtags(segment.substring(idx, m.range.first)))
+            out.append(m.value)
+            idx = m.range.last + 1
+        }
+        out.append(escapeHashtags(segment.substring(idx)))
+        return out.toString()
+    }
+
+    private fun escapeHashtags(segment: String): String {
+        // Negative lookbehind on `\` or word-char or `/` to skip heading-markers,
+        // wiki-link-anchors, URL-anchors en al-geescapete `\#`.
+        val tagPattern = Regex("(?<![\\\\\\w/])#([A-Za-z_/][\\w/-]*)")
+        return tagPattern.replace(segment, "\\\\#$1")
     }
 
     /**
@@ -97,7 +165,8 @@ object Storage {
             return Result.failure(it)
         }
         val stamp = SimpleDateFormat("yyyy-MM-dd HHmmss", Locale.US).format(Date())
-        val title = subject?.trim()?.takeIf { it.isNotEmpty() } ?: "Foto $stamp"
+        val rawTitle = subject?.trim()?.takeIf { it.isNotEmpty() } ?: "Foto $stamp"
+        val title = sanitizeTitleFromShare(rawTitle).ifEmpty { "Foto $stamp" }
         val body = buildString {
             append("# "); append(title); append("\n\n")
             append("![["); append(basename); append("]]")
@@ -204,6 +273,7 @@ object Storage {
                 lastModified = child.lastModified,
                 title = extractTitle(parsed.body, child.name),
                 snippet = extractSnippet(parsed.body),
+                urls = extractUrls(parsed.body),
                 meta = parsed.meta,
                 thumbnailBasename = firstImage,
                 thumbnailUri = firstImage?.let { attachments[it] },
@@ -504,7 +574,14 @@ object Storage {
     }
 
     private fun extractTitle(body: String, fallbackFilename: String): String {
-        val firstLine = body.lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
+        // Embed-regels overslaan; anders krijg je `![[bestand.jpg]]` als
+        // kaart-titel bij notities die met een afbeelding beginnen.
+        val wikiEmbed = Regex("^!\\[\\[[^\\]]+]]$")
+        val mdImage = Regex("^!\\[[^\\]]*]\\([^)]+\\)$")
+        val firstLine = body.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && !wikiEmbed.matches(it) && !mdImage.matches(it) }
+            .firstOrNull().orEmpty()
         val cleaned = firstLine.trimStart('#').trim()
         return cleaned.ifBlank { fallbackFilename.removeSuffix(".md") }
     }
@@ -518,7 +595,36 @@ object Storage {
             .filter { it.isNotBlank() && !wikiEmbed.matches(it) && !mdImage.matches(it) }
             .toList()
         val rest = if (lines.size > 1) lines.drop(1).joinToString("\n") else ""
-        return rest.take(280)
+        // URLs strippen — die worden als chips onderaan getoond (plugin-pariteit).
+        // Markdown-link-syntax behoudt het label, losse URLs verdwijnen volledig.
+        val stripped = rest
+            .replace(Regex("\\[([^\\]\\n]+)]\\(https?://[^)\\s]+\\)"), "$1")
+            .replace(Regex("https?://\\S+"), "")
+            .replace(Regex("[ \\t]{2,}"), " ")
+            .lineSequence()
+            .map { it.trimEnd() }
+            .joinToString("\n")
+            .trim()
+        return stripped.take(280)
+    }
+
+    /**
+     * Unieke `http(s)://`-URL's uit de body, in invoegvolgorde. Embed-syntax
+     * eerst gestript zodat lokale image-paden niet meelopen. Trailing leestekens
+     * worden afgekapt zodat zinnen die op een URL eindigen schone hostnames
+     * geven.
+     */
+    private fun extractUrls(body: String): List<String> {
+        val stripped = body
+            .replace(Regex("!\\[\\[[^\\]]+]]"), "")
+            .replace(Regex("!\\[[^\\]]*]\\([^)]+\\)"), "")
+        val matches = Regex("https?://[^\\s)<>\"']+").findAll(stripped)
+        val seen = LinkedHashSet<String>()
+        for (m in matches) {
+            val clean = m.value.trimEnd('.', ',', ')', ']', '}', '"', '\'', '!', '?', ';', ':')
+            if (clean.isNotEmpty()) seen.add(clean)
+        }
+        return seen.toList()
     }
 
     private fun generateFilename(content: String): String {
@@ -541,6 +647,7 @@ data class NoteSummary(
     val lastModified: Long,
     val title: String,
     val snippet: String,
+    val urls: List<String> = emptyList(),
     val meta: NoteMeta = NoteMeta(),
     val thumbnailBasename: String? = null,
     val thumbnailUri: Uri? = null,

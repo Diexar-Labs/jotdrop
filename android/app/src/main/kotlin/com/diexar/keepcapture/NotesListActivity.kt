@@ -6,6 +6,7 @@ import android.os.Bundle
 import android.text.format.DateUtils
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
@@ -24,9 +25,16 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
 import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridItemSpan
@@ -35,22 +43,38 @@ import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddAPhoto
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.CameraAlt
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.filled.RadioButtonUnchecked
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SmallFloatingActionButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
@@ -84,6 +108,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.lifecycleScope
 import coil.compose.AsyncImage
 import com.diexar.keepcapture.ui.ObsiDropTheme
@@ -324,6 +350,72 @@ private fun NotesListScreen(
     val openLinkLabel = stringResource(R.string.action_open_link)
     val dark = isSystemInDarkTheme()
     val bgBrush = remember(dark) { screenBackgroundBrush(dark) }
+    // Bij niet-null: lightbox is open en toont deze afbeelding op volle scherm.
+    var lightboxUri by remember { mutableStateOf<Uri?>(null) }
+    var searchQuery by remember { mutableStateOf("") }
+    var selectedTags by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var tagSheetOpen by remember { mutableStateOf(false) }
+    var selectionMode by remember { mutableStateOf(false) }
+    var selectedNoteUris by remember { mutableStateOf<Set<Uri>>(emptySet()) }
+    var showBulkArchiveDialog by remember { mutableStateOf(false) }
+    var showBulkDeleteDialog by remember { mutableStateOf(false) }
+
+    // Bron-notities + afgeleiden — gelift uit de Loaded-tak zodat de selection
+    // top-bar (op Scaffold-niveau) toegang heeft tot het gefilterde aantal voor
+    // "Alles selecteren".
+    val loadedNotes = (state as? NotesUiState.Loaded)?.notes.orEmpty()
+    val tagsByFrequency = remember(loadedNotes) {
+        loadedNotes.flatMap { it.meta.tags }
+            .groupingBy { it }.eachCount()
+            .entries
+            .sortedWith(
+                compareByDescending<Map.Entry<String, Int>> { it.value }
+                    .thenBy { it.key.lowercase() }
+            )
+            .map { it.key }
+    }
+    val allTagsAlpha = remember(loadedNotes) {
+        loadedNotes.flatMap { it.meta.tags }.distinct().sortedBy { it.lowercase() }
+    }
+    val visibleTags = remember(tagsByFrequency, selectedTags) {
+        val top = tagsByFrequency.take(TAG_CHIPS_TOP_N)
+        val extraSelected = selectedTags.filter { it !in top }.sortedBy { it.lowercase() }
+        (top + extraSelected).distinct()
+    }
+    val overflowCount = (tagsByFrequency.size - visibleTags.size).coerceAtLeast(0)
+    val filtered = remember(loadedNotes, searchQuery, selectedTags) {
+        if (loadedNotes.isEmpty()) emptyList()
+        else applyFilters(loadedNotes, searchQuery, selectedTags)
+    }
+
+    // Selection-helpers — gewone lambdas (geen @Composable) zodat ze in callbacks/
+    // dialog-onConfirm-handlers gebruikt kunnen worden.
+    val exitSelection: () -> Unit = {
+        selectionMode = false
+        selectedNoteUris = emptySet()
+    }
+    val toggleSelect: (Uri) -> Unit = { uri ->
+        val newSet = if (uri in selectedNoteUris) selectedNoteUris - uri else selectedNoteUris + uri
+        selectedNoteUris = newSet
+        if (newSet.isEmpty()) selectionMode = false
+    }
+    val enterSelection: (Uri) -> Unit = { uri ->
+        selectionMode = true
+        selectedNoteUris = setOf(uri)
+    }
+    val selectAll: () -> Unit = {
+        selectedNoteUris = filtered.map { it.uri }.toSet()
+    }
+    val onCardClick: (NoteSummary) -> Unit = { note ->
+        if (selectionMode) toggleSelect(note.uri) else onOpenNote(note)
+    }
+    val onCardLongClick: (NoteSummary) -> Unit = { note ->
+        if (selectionMode) toggleSelect(note.uri) else enterSelection(note.uri)
+    }
+
+    // BackHandler: in selection-mode vangt back-button af om uit te stappen
+    // in plaats van naar het systeem-home-scherm te gaan.
+    BackHandler(enabled = selectionMode) { exitSelection() }
 
     val onUrlClick: (String) -> Unit = { url ->
         scope.launch {
@@ -354,24 +446,36 @@ private fun NotesListScreen(
     Scaffold(
         containerColor = Color.Transparent,
         topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        stringResource(R.string.app_name),
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                },
-                actions = {
-                    IconButton(onClick = onOpenSettings) {
-                        Icon(Icons.Filled.Settings, contentDescription = stringResource(R.string.action_settings))
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                    scrolledContainerColor = Color.Transparent,
-                ),
-            )
+            if (selectionMode) {
+                SelectionTopBar(
+                    selectedCount = selectedNoteUris.size,
+                    canSelectAll = selectedNoteUris.size < filtered.size,
+                    canBulkAct = selectedNoteUris.isNotEmpty(),
+                    onExit = exitSelection,
+                    onSelectAll = selectAll,
+                    onArchive = { showBulkArchiveDialog = true },
+                    onDelete = { showBulkDeleteDialog = true },
+                )
+            } else {
+                TopAppBar(
+                    title = {
+                        Text(
+                            stringResource(R.string.app_name),
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    },
+                    actions = {
+                        IconButton(onClick = onOpenSettings) {
+                            Icon(Icons.Filled.Settings, contentDescription = stringResource(R.string.action_settings))
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent,
+                        scrolledContainerColor = Color.Transparent,
+                    ),
+                )
+            }
         },
         floatingActionButton = {
             Column(horizontalAlignment = Alignment.End) {
@@ -432,7 +536,7 @@ private fun NotesListScreen(
                 .padding(padding),
         ) {
             when (val s = state) {
-                NotesUiState.Loading -> CenteredText(stringResource(R.string.loading))
+                NotesUiState.Loading -> LoadingSpinner()
                 NotesUiState.NoVault -> EmptyState(
                     text = stringResource(R.string.empty_no_vault),
                     actionLabel = stringResource(R.string.open_settings),
@@ -447,26 +551,155 @@ private fun NotesListScreen(
                     if (s.notes.isEmpty()) {
                         CenteredText(stringResource(R.string.empty_no_notes))
                     } else {
-                        NotesGrid(
-                            notes = s.notes,
-                            onOpenNote = onOpenNote,
-                            onTogglePin = onTogglePin,
-                            onUrlClick = onUrlClick,
-                        )
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            SearchAndFilterBar(
+                                query = searchQuery,
+                                onQueryChange = { searchQuery = it },
+                                visibleTags = visibleTags,
+                                selectedTags = selectedTags,
+                                overflowCount = overflowCount,
+                                onTagToggle = { tag ->
+                                    selectedTags = if (tag in selectedTags) selectedTags - tag else selectedTags + tag
+                                },
+                                onClearTags = { selectedTags = emptySet() },
+                                onShowAllTags = { tagSheetOpen = true },
+                            )
+                            // weight(1f) zorgt dat de grid (of "no-results"-state) de rest
+                            // van de hoogte krijgt naast de bar bovenin — anders raakt de
+                            // verticale layout in de knoop.
+                            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                                if (filtered.isEmpty()) {
+                                    CenteredText(stringResource(R.string.empty_no_results))
+                                } else {
+                                    NotesGrid(
+                                        notes = filtered,
+                                        selectionMode = selectionMode,
+                                        selectedUris = selectedNoteUris,
+                                        onCardClick = onCardClick,
+                                        onCardLongClick = onCardLongClick,
+                                        onTogglePin = onTogglePin,
+                                        onUrlClick = onUrlClick,
+                                        onThumbnailClick = { uri -> lightboxUri = uri },
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
     }
+    lightboxUri?.let { uri ->
+        ImageLightbox(uri = uri, onClose = { lightboxUri = null })
     }
+    if (tagSheetOpen) {
+        TagPickerSheet(
+            allTags = allTagsAlpha,
+            selectedTags = selectedTags,
+            onTagToggle = { tag ->
+                selectedTags = if (tag in selectedTags) selectedTags - tag else selectedTags + tag
+            },
+            onDismiss = { tagSheetOpen = false },
+        )
+    }
+    if (showBulkArchiveDialog) {
+        AlertDialog(
+            onDismissRequest = { showBulkArchiveDialog = false },
+            title = { Text(stringResource(R.string.bulk_archive_title, selectedNoteUris.size)) },
+            text = { Text(stringResource(R.string.bulk_archive_message)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showBulkArchiveDialog = false
+                    val toArchive = selectedNoteUris.toList()
+                    scope.launch {
+                        val (ok, fail) = bulkPerform(toArchive) { uri ->
+                            ReminderScheduler.cancel(context, uri)
+                            withContext(Dispatchers.IO) { Storage.archiveNote(context, uri) }
+                        }
+                        val msg = if (fail == 0) {
+                            context.getString(R.string.toast_bulk_archived, ok)
+                        } else {
+                            context.getString(R.string.toast_bulk_partial, ok, fail)
+                        }
+                        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                        exitSelection()
+                        onRefresh()
+                    }
+                }) {
+                    Text(stringResource(R.string.action_archive))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBulkArchiveDialog = false }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            },
+        )
+    }
+    if (showBulkDeleteDialog) {
+        AlertDialog(
+            onDismissRequest = { showBulkDeleteDialog = false },
+            title = { Text(stringResource(R.string.bulk_delete_title, selectedNoteUris.size)) },
+            text = { Text(stringResource(R.string.bulk_delete_message)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showBulkDeleteDialog = false
+                    val toDelete = selectedNoteUris.toList()
+                    scope.launch {
+                        val (ok, fail) = bulkPerform(toDelete) { uri ->
+                            ReminderScheduler.cancel(context, uri)
+                            withContext(Dispatchers.IO) { Storage.deleteNote(context, uri) }
+                        }
+                        val msg = if (fail == 0) {
+                            context.getString(R.string.toast_bulk_deleted, ok)
+                        } else {
+                            context.getString(R.string.toast_bulk_partial, ok, fail)
+                        }
+                        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                        exitSelection()
+                        onRefresh()
+                    }
+                }) {
+                    Text(stringResource(R.string.action_delete))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showBulkDeleteDialog = false }) {
+                    Text(stringResource(R.string.action_cancel))
+                }
+            },
+        )
+    }
+    }
+}
+
+/**
+ * Sequentiële uitvoer van een suspend-bewerking op een lijst URIs. Geeft (ok, fail) terug.
+ * Sequentieel ipv parallel omdat Storage's DocumentFile-IO door SAF heen niet altijd
+ * thread-safe is — beter conservatief.
+ */
+private suspend fun bulkPerform(
+    uris: List<Uri>,
+    op: suspend (Uri) -> Result<Unit>,
+): Pair<Int, Int> {
+    var ok = 0
+    var fail = 0
+    for (uri in uris) {
+        if (op(uri).isSuccess) ok++ else fail++
+    }
+    return ok to fail
 }
 
 @Composable
 private fun NotesGrid(
     notes: List<NoteSummary>,
-    onOpenNote: (NoteSummary) -> Unit,
+    selectionMode: Boolean,
+    selectedUris: Set<Uri>,
+    onCardClick: (NoteSummary) -> Unit,
+    onCardLongClick: (NoteSummary) -> Unit,
     onTogglePin: (NoteSummary) -> Unit,
     onUrlClick: (String) -> Unit,
+    onThumbnailClick: (Uri) -> Unit,
 ) {
     val pinned = notes.filter { it.meta.pinned }
     val rest = notes.filter { !it.meta.pinned }
@@ -491,9 +724,13 @@ private fun NotesGrid(
                 NoteCard(
                     note = note,
                     darkTheme = dark,
-                    onClick = { onOpenNote(note) },
+                    selectionMode = selectionMode,
+                    isSelected = note.uri in selectedUris,
+                    onClick = { onCardClick(note) },
+                    onLongClick = { onCardLongClick(note) },
                     onPinClick = { onTogglePin(note) },
                     onUrlClick = onUrlClick,
+                    onThumbnailClick = onThumbnailClick,
                 )
             }
             item(span = StaggeredGridItemSpan.FullLine) {
@@ -504,10 +741,226 @@ private fun NotesGrid(
             NoteCard(
                 note = note,
                 darkTheme = dark,
-                onClick = { onOpenNote(note) },
+                selectionMode = selectionMode,
+                isSelected = note.uri in selectedUris,
+                onClick = { onCardClick(note) },
+                onLongClick = { onCardLongClick(note) },
                 onPinClick = { onTogglePin(note) },
                 onUrlClick = onUrlClick,
+                onThumbnailClick = onThumbnailClick,
             )
+        }
+    }
+}
+
+private fun applyFilters(
+    notes: List<NoteSummary>,
+    query: String,
+    selectedTags: Set<String>,
+): List<NoteSummary> {
+    val q = query.trim().lowercase()
+    if (q.isEmpty() && selectedTags.isEmpty()) return notes
+    return notes.filter { note ->
+        val matchesQuery = q.isEmpty() ||
+            note.title.lowercase().contains(q) ||
+            note.snippet.lowercase().contains(q) ||
+            note.meta.tags.any { it.lowercase().contains(q) }
+        // OR-semantiek binnen tags: notitie matcht als 'ie minstens één van de gekozen tags heeft.
+        // Sparse handmatige tags maken AND-mode (vrijwel) altijd leeg, daarom OR.
+        val matchesTags = selectedTags.isEmpty() ||
+            note.meta.tags.any { it in selectedTags }
+        matchesQuery && matchesTags
+    }
+}
+
+private const val TAG_CHIPS_TOP_N = 8
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SearchAndFilterBar(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    visibleTags: List<String>,
+    selectedTags: Set<String>,
+    overflowCount: Int,
+    onTagToggle: (String) -> Unit,
+    onClearTags: () -> Unit,
+    onShowAllTags: () -> Unit,
+) {
+    Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp)) {
+        OutlinedTextField(
+            value = query,
+            onValueChange = onQueryChange,
+            placeholder = { Text(stringResource(R.string.search_hint)) },
+            leadingIcon = {
+                Icon(Icons.Filled.Search, contentDescription = null)
+            },
+            trailingIcon = {
+                if (query.isNotEmpty()) {
+                    IconButton(onClick = { onQueryChange("") }) {
+                        Icon(
+                            Icons.Filled.Close,
+                            contentDescription = stringResource(R.string.action_clear_search),
+                        )
+                    }
+                }
+            },
+            singleLine = true,
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth(),
+        )
+        if (visibleTags.isNotEmpty() || overflowCount > 0) {
+            Spacer(Modifier.height(6.dp))
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                contentPadding = PaddingValues(vertical = 2.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                if (selectedTags.isNotEmpty()) {
+                    item(key = "__clear__") {
+                        FilterChip(
+                            selected = false,
+                            onClick = onClearTags,
+                            label = { Text(stringResource(R.string.tag_filter_clear)) },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Filled.Close,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(FilterChipDefaults.IconSize),
+                                )
+                            },
+                        )
+                    }
+                }
+                items(visibleTags, key = { it }) { tag ->
+                    val isSelected = tag in selectedTags
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = { onTagToggle(tag) },
+                        // Expliciet ✓-icoon bij selectie — vorm-gebaseerde bevestiging
+                        // naast de kleurwissel, conform de UI-regel om niet alleen op
+                        // kleur te leunen.
+                        leadingIcon = if (isSelected) {
+                            {
+                                Icon(
+                                    Icons.Filled.Done,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(FilterChipDefaults.IconSize),
+                                )
+                            }
+                        } else null,
+                        label = { Text("#$tag") },
+                    )
+                }
+                if (overflowCount > 0) {
+                    item(key = "__more__") {
+                        FilterChip(
+                            selected = false,
+                            onClick = onShowAllTags,
+                            label = {
+                                Text(stringResource(R.string.tag_overflow_more, overflowCount))
+                            },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TagPickerSheet(
+    allTags: List<String>,
+    selectedTags: Set<String>,
+    onTagToggle: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var query by remember { mutableStateOf("") }
+    val filtered = remember(allTags, query) {
+        val q = query.trim().lowercase()
+        if (q.isEmpty()) allTags
+        else allTags.filter { it.lowercase().contains(q) }
+    }
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+            Text(
+                text = stringResource(R.string.tag_sheet_title),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(bottom = 12.dp),
+            )
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                placeholder = { Text(stringResource(R.string.tag_sheet_search)) },
+                leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                trailingIcon = {
+                    if (query.isNotEmpty()) {
+                        IconButton(onClick = { query = "" }) {
+                            Icon(
+                                Icons.Filled.Close,
+                                contentDescription = stringResource(R.string.action_clear_search),
+                            )
+                        }
+                    }
+                },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(8.dp))
+            if (filtered.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        text = stringResource(R.string.tag_sheet_empty),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            } else {
+                LazyColumn(modifier = Modifier.fillMaxWidth()) {
+                    items(filtered, key = { it }) { tag ->
+                        val isSelected = tag in selectedTags
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { onTagToggle(tag) }
+                                .padding(vertical = 12.dp, horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            // Vaste 24dp-cel zodat selected/non-selected rijen identiek
+                            // inspringen — vorm-gebaseerd: ✓ óf niets.
+                            Box(
+                                modifier = Modifier.size(24.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                if (isSelected) {
+                                    Icon(
+                                        Icons.Filled.Done,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.size(12.dp))
+                            Text(
+                                text = "#$tag",
+                                style = MaterialTheme.typography.bodyLarge.copy(
+                                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                ),
+                            )
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
         }
     }
 }
@@ -526,12 +979,72 @@ private val CARD_SHAPE = RoundedCornerShape(16.dp)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
+private fun SelectionTopBar(
+    selectedCount: Int,
+    canSelectAll: Boolean,
+    canBulkAct: Boolean,
+    onExit: () -> Unit,
+    onSelectAll: () -> Unit,
+    onArchive: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    TopAppBar(
+        navigationIcon = {
+            IconButton(onClick = onExit) {
+                Icon(
+                    Icons.Filled.Close,
+                    contentDescription = stringResource(R.string.action_exit_selection),
+                )
+            }
+        },
+        title = {
+            Text(
+                text = stringResource(R.string.selection_count, selectedCount),
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+            )
+        },
+        actions = {
+            if (canSelectAll) {
+                IconButton(onClick = onSelectAll) {
+                    Icon(
+                        Icons.Filled.DoneAll,
+                        contentDescription = stringResource(R.string.action_select_all),
+                    )
+                }
+            }
+            IconButton(onClick = onArchive, enabled = canBulkAct) {
+                Icon(
+                    Icons.Filled.Archive,
+                    contentDescription = stringResource(R.string.action_archive),
+                )
+            }
+            IconButton(onClick = onDelete, enabled = canBulkAct) {
+                Icon(
+                    Icons.Filled.Delete,
+                    contentDescription = stringResource(R.string.action_delete),
+                )
+            }
+        },
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = Color.Transparent,
+            scrolledContainerColor = Color.Transparent,
+        ),
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@Composable
 private fun NoteCard(
     note: NoteSummary,
     darkTheme: Boolean,
+    selectionMode: Boolean,
+    isSelected: Boolean,
     onClick: () -> Unit,
+    onLongClick: () -> Unit,
     onPinClick: () -> Unit,
     onUrlClick: (String) -> Unit,
+    onThumbnailClick: (Uri) -> Unit,
 ) {
     val bg = noteBackground(note.meta.color, darkTheme)
     val fg = contentColorOn(note.meta.color, darkTheme)
@@ -540,8 +1053,10 @@ private fun NoteCard(
     // CardDefaults.cardColors/cardElevation zijn @Composable en kunnen niet in
     // remember-blokken; die laten we Compose zelf afhandelen.
     val brush = remember(bg, darkTheme) { noteCardBrush(bg, darkTheme) }
-    val border = remember(fg) {
-        androidx.compose.foundation.BorderStroke(0.7.dp, fg.copy(alpha = 0.08f))
+    val primaryColor = MaterialTheme.colorScheme.primary
+    val border = remember(fg, isSelected, primaryColor) {
+        if (isSelected) androidx.compose.foundation.BorderStroke(2.dp, primaryColor)
+        else androidx.compose.foundation.BorderStroke(0.7.dp, fg.copy(alpha = 0.08f))
     }
     val accent = remember(note.meta.color, fg) { accentOn(note.meta.color, fg) }
     val timestampText = remember(note.lastModified) { formatTimestamp(note.lastModified) }
@@ -555,7 +1070,7 @@ private fun NoteCard(
     val thumbnailUri = note.thumbnailUri
 
     Card(
-        onClick = onClick,
+        // Geen onClick op de Card: combinedClickable hieronder regelt click + long-press.
         colors = CardDefaults.cardColors(containerColor = Color.Transparent, contentColor = fg),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         shape = CARD_SHAPE,
@@ -563,18 +1078,31 @@ private fun NoteCard(
         // graphicsLayer promoot de kaart naar een eigen render-layer; tijdens
         // scroll wordt de rasterized output gehergebruikt i.p.v. de gradient +
         // text+border opnieuw te tekenen per frame. Voorkomt frame drops.
-        modifier = Modifier.graphicsLayer { },
+        modifier = Modifier
+            .graphicsLayer { }
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick,
+            ),
     ) {
         Box(modifier = Modifier.fillMaxSize().background(brush = brush)) {
             Column {
                 if (thumbnailUri != null) {
+                    // In selection-mode: thumbnail-tap toggelt de kaart i.p.v. de
+                    // lightbox openen. Anders zou je nooit een kaart met thumb kunnen
+                    // (de)selecteren via z'n bovenste helft.
                     AsyncImage(
                         model = thumbnailUri,
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
+                        alignment = Alignment.Center,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .aspectRatio(16f / 9f),
+                            .aspectRatio(16f / 9f)
+                            .clickable {
+                                if (selectionMode) onClick()
+                                else onThumbnailClick(thumbnailUri)
+                            },
                     )
                 }
                 Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
@@ -599,6 +1127,7 @@ private fun NoteCard(
                             maxLines = 5,
                             overflow = TextOverflow.Ellipsis,
                             onClick = { offset ->
+                                if (selectionMode) { onClick(); return@ClickableText }
                                 val urlAnn = annotated
                                     .getStringAnnotations(tag = "URL", start = offset, end = offset)
                                     .firstOrNull()
@@ -608,6 +1137,17 @@ private fun NoteCard(
                                     onClick()
                                 }
                             },
+                        )
+                    }
+                    if (note.urls.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        // In selection-mode: link-chips niet kunnen klikken, zodat de
+                        // hele kaart selecteerbaar blijft. We renderen ze wel (visueel
+                        // beeld klopt nog), maar maken ze inert.
+                        LinkChips(
+                            note.urls,
+                            foreground = fg,
+                            onChipClick = if (selectionMode) ({ onClick() }) else onUrlClick,
                         )
                     }
                     if (note.meta.tags.isNotEmpty()) {
@@ -622,7 +1162,19 @@ private fun NoteCard(
                     )
                 }
             }
-            if (note.meta.pinned) {
+            // Rechtsboven: in selection-mode altijd ✓-circle (gevuld als selected,
+            // alleen-outline als niet). Anders: de bestaande pin-knop als 'ie pinned is.
+            if (selectionMode) {
+                Icon(
+                    imageVector = if (isSelected) Icons.Filled.CheckCircle else Icons.Filled.RadioButtonUnchecked,
+                    contentDescription = stringResource(R.string.action_select_note),
+                    tint = if (isSelected) primaryColor else fg.copy(alpha = 0.55f),
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp)
+                        .size(24.dp),
+                )
+            } else if (note.meta.pinned) {
                 IconButton(
                     onClick = onPinClick,
                     modifier = Modifier
@@ -670,6 +1222,67 @@ private fun chunkTagsForRow(tags: List<String>): List<List<String>> {
     return tags.chunked(perRow)
 }
 
+private const val LINK_CHIPS_VISIBLE = 3
+
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun LinkChips(urls: List<String>, foreground: Color, onChipClick: (String) -> Unit) {
+    val visible = urls.take(LINK_CHIPS_VISIBLE)
+    val overflow = urls.size - visible.size
+    androidx.compose.foundation.layout.FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        for (url in visible) {
+            LinkChip(url = url, foreground = foreground, onClick = { onChipClick(url) })
+        }
+        if (overflow > 0) {
+            Surface(
+                color = foreground.copy(alpha = 0.06f),
+                contentColor = foreground,
+                shape = RoundedCornerShape(10.dp),
+            ) {
+                Text(
+                    text = stringResource(R.string.link_chip_more, overflow),
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun LinkChip(url: String, foreground: Color, onClick: () -> Unit) {
+    val host = remember(url) { hostnameOf(url) }
+    Surface(
+        color = foreground.copy(alpha = 0.14f),
+        contentColor = foreground,
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier.clickable(onClick = onClick),
+    ) {
+        Text(
+            text = host,
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontWeight = FontWeight.Medium,
+                textDecoration = TextDecoration.Underline,
+            ),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+        )
+    }
+}
+
+private fun hostnameOf(url: String): String {
+    return try {
+        val uri = java.net.URI(url)
+        (uri.host ?: url).removePrefix("www.")
+    } catch (_: Throwable) {
+        url
+    }
+}
+
 @Composable
 private fun TagChip(tag: String, foreground: Color) {
     Surface(
@@ -689,6 +1302,18 @@ private fun TagChip(tag: String, foreground: Color) {
 private fun CenteredText(text: String) {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Text(text, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+@Composable
+private fun LoadingSpinner() {
+    // Vervangt de eerdere kleine "Loading…"-tekst. Visuele consistentie met de
+    // splash-spinner: één en hetzelfde draaiend-ring-idiom door de hele app.
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        CircularProgressIndicator(
+            modifier = Modifier.size(48.dp),
+            strokeWidth = 4.dp,
+        )
     }
 }
 
@@ -813,5 +1438,69 @@ internal fun renderPreviewAnnotated(
             i = m.end
         }
         if (i < source.length) append(source.substring(i))
+    }
+}
+
+/**
+ * Volledig-scherm-dialog die de gegeven afbeelding op groot formaat toont.
+ * Buiten tap of "Sluiten" sluit de dialog; "Extern openen" geeft het bestand
+ * door aan de standaard-gallery via ACTION_VIEW met read-permission.
+ */
+@Composable
+private fun ImageLightbox(uri: Uri, onClose: () -> Unit) {
+    val context = LocalContext.current
+    Dialog(
+        onDismissRequest = onClose,
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            dismissOnClickOutside = true,
+        ),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color(0xCC000000))
+                .clickable(onClick = onClose),
+            contentAlignment = Alignment.Center,
+        ) {
+            AsyncImage(
+                model = uri,
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+            )
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Button(onClick = {
+                    try {
+                        val intent = Intent(Intent.ACTION_VIEW).apply {
+                            setDataAndType(uri, "image/*")
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        }
+                        context.startActivity(intent)
+                        onClose()
+                    } catch (e: Throwable) {
+                        Toast.makeText(
+                            context,
+                            context.getString(R.string.toast_error, e.message ?: ""),
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }) {
+                    Text(stringResource(R.string.action_open_external))
+                }
+                Spacer(Modifier.height(8.dp))
+                Button(onClick = onClose) {
+                    Text(stringResource(R.string.action_close))
+                }
+            }
+        }
     }
 }
