@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ObsiDrop — Privacy Policy</title>
+  <style>
+    body {
+      font-family: Georgia, serif;
+      font-size: 17px;
+      line-height: 1.7;
+      color: #1a1a1a;
+      background: #ffffff;
+      margin: 0;
+      padding: 2rem 1rem;
+    }
+    .container {
+      max-width: 700px;
+      margin: 0 auto;
+    }
+    h1 {
+      font-size: 1.6rem;
+      margin-bottom: 0.25rem;
+      border-bottom: 2px solid #1a1a1a;
+      padding-bottom: 0.5rem;
+    }
+    .meta {
+      font-size: 0.85rem;
+      color: #555;
+      margin-bottom: 2rem;
+    }
+    h2 {
+      font-size: 1.1rem;
+      margin-top: 2rem;
+      margin-bottom: 0.4rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    p {
+      margin: 0.4rem 0 1rem;
+    }
+    ul {
+      margin: 0.4rem 0 1rem 1.4rem;
+      padding: 0;
+    }
+    li {
+      margin-bottom: 0.3rem;
+    }
+    .none-box {
+      display: inline-block;
+      background: #f0f0f0;
+      border-left: 3px solid #555;
+      padding: 0.4rem 0.8rem;
+      font-family: monospace;
+      font-size: 0.95rem;
+      margin: 0.2rem 0 1rem;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    footer {
+      margin-top: 3rem;
+      font-size: 0.82rem;
+      color: #777;
+      border-top: 1px solid #ddd;
+      padding-top: 1rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+
+    <h1>ObsiDrop — Privacy Policy</h1>
+    <p class="meta">Effective date: 2026-05-14 &nbsp;|&nbsp; Author: Diexar Labs &nbsp;|&nbsp; License: MIT</p>
+
+    <p>ObsiDrop is a Chrome extension that clips the current browser tab into a locally-running Obsidian instance. This page explains exactly what the extension does and does not do with your data.</p>
+
+    <h2>1. Data collected externally</h2>
+    <div class="none-box">None.</div>
+    <p>ObsiDrop never contacts any external server, cloud service, or API outside your own device. There is no analytics, no telemetry, no crash reporting, and no advertising of any kind.</p>
+
+    <h2>2. What the extension reads from your browser</h2>
+    <p>When you trigger a clip, the extension reads:</p>
+    <ul>
+      <li>The current tab's <strong>title</strong> and <strong>URL</strong></li>
+      <li>Any <strong>text you have selected</strong> on the page (if any)</li>
+    </ul>
+    <p>This information is read on demand only — not continuously, not in the background.</p>
+
+    <h2>3. What is stored locally</h2>
+    <p>ObsiDrop stores two values in <code>chrome.storage.local</code>:</p>
+    <ul>
+      <li>A <strong>port number</strong> — the port your local Obsidian plugin listens on</li>
+      <li>A <strong>bearer token</strong> — used to authenticate requests to that local plugin</li>
+    </ul>
+    <p><code>chrome.storage.local</code> is stored only on this device and is never synced to your Google account or any remote service. No other data is ever written to storage.</p>
+
+    <h2>4. Where your data goes</h2>
+    <p>When you clip a page, the title, URL, and selected text are sent in a single HTTP request to <code>http://127.0.0.1</code> (your own computer) on the port you configured. The request never leaves your device. It is received by the ObsiDrop companion plugin running inside your local Obsidian installation.</p>
+
+    <h2>5. Third parties</h2>
+    <div class="none-box">None.</div>
+    <p>ObsiDrop shares no data with any third party, period. There are no embedded SDKs, no tracking pixels, no external scripts.</p>
+
+    <h2>6. Permissions used</h2>
+    <p>The extension requests only the permissions it needs:</p>
+    <ul>
+      <li><strong>activeTab</strong> — to read the title, URL, and selection of the current tab when you click the extension button</li>
+      <li><strong>storage</strong> — to save the port number and bearer token locally</li>
+    </ul>
+
+    <h2>7. Open source</h2>
+    <p>ObsiDrop is open source under the MIT license. You can inspect every line of code to verify these claims. The source is available at the project repository linked from the Chrome Web Store listing.</p>
+
+    <h2>8. Contact</h2>
+    <p>Questions or concerns? Reach out to Diexar Labs at <a href="mailto:brosb4hoos@proton.me">brosb4hoos@proton.me</a> or open an issue on the project repository.</p>
+
+    <footer>
+      ObsiDrop is developed by Diexar Labs and released under the MIT License. This policy may be updated if the extension's functionality changes — check the repository for the latest version.
+    </footer>
+
+  </div>
+</body>
+</html>

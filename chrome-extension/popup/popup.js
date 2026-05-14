@@ -1,11 +1,11 @@
 // ObsiDrop Web Clipper — popup logic
 //
-// Stappen:
-// 1. Lees actuele tab; haal title/url + selected-text-uit-de-pagina-DOM op via
-//    chrome.scripting.executeScript (eenmalig, geen permanent content-script).
-// 2. Vul het preview-blok en de selectie-veld.
-// 3. Op Save → POST naar 127.0.0.1:<port>/clip met Bearer-token uit storage.
-//    Bij netwerkfout of 401: fallback obsidian://obsidrop-clip?…
+// Steps:
+// 1. Read the active tab; retrieve title/url + selected text from the page DOM via
+//    chrome.scripting.executeScript (one-time injection, no permanent content-script).
+// 2. Populate the preview block and the selection field.
+// 3. On Save → POST to 127.0.0.1:<port>/clip with Bearer token from storage.
+//    On network error or 401: fall back to obsidian://obsidrop-clip?…
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -35,8 +35,8 @@ async function getActiveTab() {
 }
 
 /**
- * Voert in-page een minimaal script uit dat title, og:meta en geselecteerde
- * tekst leest. Faalt stil op chrome://-pagina's e.d.
+ * Executes a minimal in-page script that reads the title, og:meta tags and
+ * selected text. Fails silently on chrome:// pages and similar restricted origins.
  */
 async function readPageInfo(tabId) {
   try {
@@ -88,7 +88,7 @@ function normalizeTag(raw) {
 }
 
 function addTagsFromText(raw) {
-  // Splits op komma zodat oude komma-gewoonte ook chip-creatie triggert.
+  // Split on comma so that the old comma habit also triggers chip creation.
   for (const piece of raw.split(",")) {
     const t = normalizeTag(piece);
     if (t && !currentTags.includes(t)) currentTags.push(t);
@@ -97,7 +97,7 @@ function addTagsFromText(raw) {
 }
 
 function renderTags() {
-  // Verwijder bestaande chips; render opnieuw vóór de input.
+  // Remove existing chips; re-render them before the input.
   els.tagsBox.querySelectorAll(".tag-chip").forEach((el) => el.remove());
   for (const tag of currentTags) {
     const chip = document.createElement("span");
@@ -150,7 +150,7 @@ async function save() {
   els.saveBtn.disabled = true;
   setStatus("Saving…", "busy");
 
-  // Commit pending tekst in het tags-veld als chip, anders gaat 'ie verloren.
+  // Commit any pending text in the tags field as a chip, otherwise it is lost.
   const pending = els.tags.value.trim();
   if (pending) {
     addTagsFromText(pending);
@@ -181,9 +181,9 @@ async function save() {
     setTimeout(() => window.close(), 600);
   } catch (e) {
     console.warn("ObsiDrop: clip-server unreachable, falling back to obsidian:// URI", e);
-    // Fallback opent Obsidian via protocol-handler. We weten niet zeker of de
-    // plugin actief is — gebruiker ziet de notitie in z'n vault zodra Obsidian
-    // open is en de plugin geladen.
+    // Fallback opens Obsidian via the protocol handler. We cannot be certain the
+    // plugin is active — the user will see the note in their vault once Obsidian
+    // is open and the plugin is loaded.
     const uri = buildObsidianUri(payload);
     try {
       await chrome.tabs.update(activeTab.id, { url: uri });
@@ -199,8 +199,8 @@ async function save() {
 els.saveBtn.addEventListener("click", () => { void save(); });
 els.optionsBtn.addEventListener("click", () => chrome.runtime.openOptionsPage());
 
-// Tags-input: Enter/komma commit chip; Enter op leeg veld saved direct;
-// Backspace op leeg veld haalt laatste chip weg.
+// Tags input: Enter/comma commits a chip; Enter on an empty field saves immediately;
+// Backspace on an empty field removes the last chip.
 els.tags.addEventListener("keydown", (e) => {
   const v = els.tags.value;
   if (e.key === "Enter" || e.key === ",") {
@@ -220,7 +220,7 @@ els.tags.addEventListener("keydown", (e) => {
   }
 });
 
-// Commit pending tekst bij blur, zodat een half-getypte tag niet verdwijnt.
+// Commit pending text on blur so that a half-typed tag is not lost.
 els.tags.addEventListener("blur", () => {
   const v = els.tags.value.trim();
   if (v) {
@@ -229,18 +229,18 @@ els.tags.addEventListener("blur", () => {
   }
 });
 
-// Klik op lege ruimte in de chip-box → focus de input.
+// Click on empty space in the chip box → focus the input.
 els.tagsBox.addEventListener("click", (e) => {
   if (e.target === els.tagsBox) els.tags.focus();
 });
 
-// Globale Enter → Save, behalve in selectie-textarea (daar is Enter = newline)
-// en in het tags-veld (eigen handler hierboven).
+// Global Enter → Save, except in the selection textarea (Enter = newline there)
+// and in the tags field (handled by its own listener above).
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Enter") return;
   const t = e.target;
   if (t === els.selection || t === els.tags) return;
-  // Knoppen activeren zichzelf al via Enter — niet dubbel afvuren.
+  // Buttons already activate themselves via Enter — do not fire twice.
   if (t instanceof HTMLButtonElement) return;
   e.preventDefault();
   if (!els.saveBtn.disabled) void save();
