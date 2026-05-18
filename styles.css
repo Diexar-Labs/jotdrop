@@ -127,7 +127,7 @@
 
 .jotdrop-selection-action.is-destructive:hover {
   background: rgba(220, 60, 60, 0.12);
-  color: #d33;
+  color: #dd3333;
 }
 
 .jotdrop-selection-count {
@@ -227,7 +227,7 @@
 .jotdrop-confirm-ok.is-destructive {
   background: #c0392b;
   border-color: #c0392b;
-  color: #fff;
+  color: #ffffff;
 }
 
 .jotdrop-confirm-ok.is-destructive:hover {
@@ -417,6 +417,17 @@
 .jotdrop-card {
   --kc-bg: var(--background-secondary);
   --kc-border: var(--background-modifier-border);
+  break-inside: avoid;
+  display: inline-block;
+  width: 100%;
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  background: var(--kc-bg);
+  border: 1px solid var(--kc-border);
+  border-radius: 10px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+  transition: box-shadow 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
+  position: relative;
 }
 .jotdrop-card[data-color="red"]    { --kc-bg: #FAAFA8; --kc-border: #E7948C; }
 .jotdrop-card[data-color="orange"] { --kc-bg: #F39F76; --kc-border: #DC8559; }
@@ -442,7 +453,7 @@
 .theme-dark .jotdrop-card[data-color="gray"]   { --kc-bg: #3C3F43; --kc-border: #585B5F; }
 
 .theme-dark .jotdrop-card[data-color]:not([data-color="default"]) {
-  color: #fff;
+  color: #ffffff;
 }
 .jotdrop-card[data-color]:not([data-color="default"]) {
   color: #1f1f1f;
@@ -450,20 +461,6 @@
 .jotdrop-card[data-color]:not([data-color="default"]) .jotdrop-card-title,
 .jotdrop-card[data-color]:not([data-color="default"]) .jotdrop-card-preview {
   color: inherit;
-}
-
-.jotdrop-card {
-  break-inside: avoid;
-  display: inline-block;
-  width: 100%;
-  margin: 0 0 12px;
-  padding: 12px 14px;
-  background: var(--kc-bg);
-  border: 1px solid var(--kc-border);
-  border-radius: 10px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-  transition: box-shadow 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
-  position: relative;
 }
 
 .jotdrop-card:hover {
@@ -896,8 +893,8 @@
 .jotdrop-edit-swatch-check {
   font-size: 14px;
   font-weight: bold;
-  color: #111;
-  text-shadow: 0 0 2px #fff, 0 0 2px #fff;
+  color: #111111;
+  text-shadow: 0 0 2px #ffffff, 0 0 2px #ffffff;
   line-height: 1;
   pointer-events: none;
 }
@@ -1161,18 +1158,19 @@
   gap: 8px;
   flex-wrap: wrap;
 }
-.jotdrop-support-button {
+.jotdrop-support-buttons a.jotdrop-support-button {
   display: inline-flex;
   align-items: center;
   padding: 6px 14px;
   border-radius: 6px;
   background: var(--interactive-normal);
-  color: var(--text-normal) !important;
-  text-decoration: none !important;
+  color: var(--text-normal);
+  text-decoration: none;
   font-size: var(--font-ui-small);
   border: 1px solid var(--background-modifier-border);
   transition: background 120ms ease;
 }
-.jotdrop-support-button:hover {
+.jotdrop-support-buttons a.jotdrop-support-button:hover {
   background: var(--interactive-hover);
+  text-decoration: none;
 }

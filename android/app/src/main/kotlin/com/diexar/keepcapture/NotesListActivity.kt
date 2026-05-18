@@ -596,17 +596,19 @@ private fun NotesListScreen(
                 // Voicememo-knop bovenaan de stack. Tijdens opname switcht het
                 // icoon naar Stop + krijgt een rode container — vormverschil
                 // (mic ↔ stop) is de primaire feedback, niet alleen kleur.
+                // In idle-state pakken we de FAB-default (primaryContainer) zodat
+                // de mic-knop dezelfde kleur heeft als de foto- en plus-FAB.
                 SmallFloatingActionButton(
                     onClick = onToggleRecord,
                     containerColor = if (isRecording) {
                         MaterialTheme.colorScheme.errorContainer
                     } else {
-                        MaterialTheme.colorScheme.secondaryContainer
+                        MaterialTheme.colorScheme.primaryContainer
                     },
                     contentColor = if (isRecording) {
                         MaterialTheme.colorScheme.onErrorContainer
                     } else {
-                        MaterialTheme.colorScheme.onSecondaryContainer
+                        MaterialTheme.colorScheme.onPrimaryContainer
                     },
                 ) {
                     Icon(
