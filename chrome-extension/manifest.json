@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "JotDrop Web Clipper",
+  "name": "Jot Drop Web Clipper",
   "version": "0.1.2",
-  "description": "Save the current page as a card in JotDrop (Obsidian).",
+  "description": "Save the current page as a card in Jot Drop (Obsidian).",
   "permissions": ["activeTab", "storage", "scripting"],
   "host_permissions": [
     "http://127.0.0.1/*",
@@ -14,7 +14,7 @@
     "128": "icons/icon128.png"
   },
   "action": {
-    "default_title": "Clip to JotDrop",
+    "default_title": "Clip to Jot Drop",
     "default_popup": "popup/popup.html",
     "default_icon": {
       "16": "icons/icon16.png",

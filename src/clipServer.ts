@@ -184,7 +184,7 @@ export class ClipServer {
         }
       }
     } catch (e) {
-      console.error("JotDrop clip: OG-fetch failed:", e);
+      console.error("Jot Drop clip: OG-fetch failed:", e);
     }
 
     const safe = neutralizeBodyHashtags(content);

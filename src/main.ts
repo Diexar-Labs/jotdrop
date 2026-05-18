@@ -155,7 +155,7 @@ export default class JotDropPlugin extends Plugin {
         content = `![[${preview.imageBasename}]]\n\n${content}`;
       }
     } catch (e) {
-      console.error("JotDrop URI-clip: OG-fetch failed:", e);
+      console.error("Jot Drop URI-clip: OG-fetch failed:", e);
     } finally {
       notice.hide();
     }
@@ -220,7 +220,7 @@ export default class JotDropPlugin extends Plugin {
           changed += 1;
         }
       } catch (err) {
-        console.error("JotDrop: neutralize failed for", file.path, err);
+        console.error("Jot Drop: neutralize failed for", file.path, err);
       }
     }
     if (changed === 0) {

@@ -1,8 +1,8 @@
 <div align="center">
 
-<img src="docs/banner.png" alt="JotDrop - Google Keep-style quick-capture for Obsidian and Android" width="720" />
+<img src="docs/banner.png" alt="Jot Drop - Google Keep-style quick-capture for Obsidian and Android" width="720" />
 
-# JotDrop
+# Jot Drop
 
 **Google Keep, on your own files.**
 
@@ -19,11 +19,11 @@ A card-grid quick-capture for [Obsidian](https://obsidian.md/) with a matching A
 
 ---
 
-## Why JotDrop?
+## Why Jot Drop?
 
-Google Keep is great - until you remember Google reads everything you put in there. JotDrop gives you the same fast, friction-free "dump a thought" experience, but every note is a plain Markdown file in your own Obsidian vault. No cloud account, no ads, no telemetry, no lock-in. Sync between phone and laptop with Syncthing (free) or any folder-sync you already use.
+Google Keep is great - until you remember Google reads everything you put in there. Jot Drop gives you the same fast, friction-free "dump a thought" experience, but every note is a plain Markdown file in your own Obsidian vault. No cloud account, no ads, no telemetry, no lock-in. Sync between phone and laptop with Syncthing (free) or any folder-sync you already use.
 
-- **Quick capture, anywhere.** Share a link from any Android app → JotDrop turns it into a note with a preview card. Open the app, tap once, type, done.
+- **Quick capture, anywhere.** Share a link from any Android app → Jot Drop turns it into a note with a preview card. Open the app, tap once, type, done.
 - **Card grid in Obsidian.** A dedicated view shows your notes as Keep-style cards: titles, colors, tags, archived, pinned-on-top. Filter, sort, search.
 - **Plain Markdown, always.** Notes are `.md` files with YAML frontmatter. They live in your vault. You can edit them anywhere - Obsidian, VS Code, Vim, mobile.
 - **Offline by default.** No server. No account. Works on a plane.
@@ -32,7 +32,7 @@ Google Keep is great - until you remember Google reads everything you put in the
 ## Screenshots
 
 <p align="center">
-  <img src="docs/screenshots/plugin-grid.png" alt="JotDrop card grid in Obsidian" width="820" />
+  <img src="docs/screenshots/plugin-grid.png" alt="Jot Drop card grid in Obsidian" width="820" />
   <br/><sub><em>Obsidian desktop - Keep-style card grid</em></sub>
 </p>
 
@@ -43,7 +43,7 @@ Google Keep is great - until you remember Google reads everything you put in the
       <br/><sub><em>Quick-note editor - colors, tags, checklist, pin</em></sub>
     </td>
     <td align="center" width="40%">
-      <img src="docs/screenshots/android-list.png" alt="JotDrop Android home screen with 2-column card grid" width="240" />
+      <img src="docs/screenshots/android-list.png" alt="Jot Drop Android home screen with 2-column card grid" width="240" />
       <br/><sub><em>Android - home screen</em></sub>
     </td>
   </tr>
@@ -95,22 +95,22 @@ Google Keep is great - until you remember Google reads everything you put in the
 **Easiest — via Community plugins (recommended):**
 
 1. Open Obsidian → Settings → Community plugins → **Browse**.
-2. Search for **JotDrop** and click Install, then Enable.
-3. Click the sticky-note icon in the left ribbon (or run command "JotDrop: Open Keep view").
+2. Search for **Jot Drop** and click Install, then Enable.
+3. Click the sticky-note icon in the left ribbon (or run command "Jot Drop: Open Keep view").
 
 **Manual install (for offline / pre-release versions):**
 
 1. Go to the [latest release](https://github.com/Diexar-Labs/jotdrop/releases/latest).
 2. Download `manifest.json`, `main.js`, and `styles.css`.
 3. Put them in `<your-vault>/.obsidian/plugins/jotdrop/` (create the folder if it doesn't exist).
-4. Open Obsidian → Settings → Community plugins → enable **JotDrop**.
+4. Open Obsidian → Settings → Community plugins → enable **Jot Drop**.
 
 ### Android app
 
 1. Download `jotdrop-debug.apk` from the [latest release](https://github.com/Diexar-Labs/jotdrop/releases/latest).
 2. Open the file on your phone → Android will ask permission to install from unknown sources → grant it.
-3. Open JotDrop → first screen lets you pick the vault folder (the same one you sync to your laptop).
-4. From now on, the share-sheet in any app includes JotDrop.
+3. Open Jot Drop → first screen lets you pick the vault folder (the same one you sync to your laptop).
+4. From now on, the share-sheet in any app includes Jot Drop.
 
 > **Note:** the APK is debug-signed (so you can install over a previous version without uninstalling). It's safe - built by GitHub Actions in this repo, you can see the build log on the releases page.
 
@@ -125,13 +125,13 @@ Install [Syncthing](https://syncthing.net/) on phone + laptop, point both at you
 1. In the Obsidian plugin's settings, enable **Web clipper** under "Clip server" and copy the token.
 2. Load the [`chrome-extension/`](chrome-extension/) folder as an unpacked extension in Chrome (`chrome://extensions` → Developer mode → Load unpacked).
 3. Open the extension's Options page, paste the token, save.
-4. Click the JotDrop icon on any page to clip the URL + title + selection (if any) into your vault as a Markdown note.
+4. Click the Jot Drop icon on any page to clip the URL + title + selection (if any) into your vault as a Markdown note.
 
 The clip server only binds to `127.0.0.1` and never exposes itself on the network. Off by default.
 
 ## How it works
 
-JotDrop is intentionally simple plumbing:
+Jot Drop is intentionally simple plumbing:
 
 - Each note is a plain Markdown file in `<vault>/Mini Notes/` (folder configurable).
 - Metadata lives in YAML frontmatter at the top:
@@ -146,7 +146,7 @@ JotDrop is intentionally simple plumbing:
 - The Android app writes the file. The Obsidian plugin reads it. They never talk to each other - they meet in the vault.
 - Link-preview cards are written as a "pending" placeholder by Android, then the plugin (or Android) fetches the Open Graph data and rewrites the note. A race-safe marker check prevents either side from overwriting user edits.
 
-This is why JotDrop **needs no server, no account, no API key** - and why anything that can write to the same folder (e.g. a `curl` script, a Shortcuts automation) can capture into it.
+This is why Jot Drop **needs no server, no account, no API key** - and why anything that can write to the same folder (e.g. a `curl` script, a Shortcuts automation) can capture into it.
 
 ## Known issues
 
@@ -154,7 +154,7 @@ This is why JotDrop **needs no server, no account, no API key** - and why anythi
 
 If you bulk-delete many notes in the plugin while another device (phone or laptop) running Syncthing is **offline**, the deletes may be "resurrected" when that peer reconnects: the offline peer still has those files with valid version metadata, and on reconnect Syncthing can side with the peer and push the files back to the device that deleted them.
 
-This is Syncthing reconciliation behavior, not specific to JotDrop — single deletes you do while everything is online propagate fine. It's the combination of *bulk* delete and an *offline* peer that triggers it. Mitigations:
+This is Syncthing reconciliation behavior, not specific to Jot Drop — single deletes you do while everything is online propagate fine. It's the combination of *bulk* delete and an *offline* peer that triggers it. Mitigations:
 
 - Make sure Syncthing is **running on every device** before bulk-deleting, and stays running for ~30s after so the deletes propagate.
 - Enable **File Versioning** in Syncthing (see [Syncing the two](#syncing-the-two)). Even if files do come back, you have copies in `.stversions/` to delete from properly.
@@ -192,7 +192,7 @@ For larger ideas, open an issue first to chat about it. No CLA, no commit-messag
 
 ## Support
 
-Open source, MIT-licensed, no premium tiers. If JotDrop saves you time and you feel like saying thanks:
+Open source, MIT-licensed, no premium tiers. If Jot Drop saves you time and you feel like saying thanks:
 
 <a href="https://ko-fi.com/L3L11ZETB9"><img src="https://img.shields.io/badge/Ko--fi-Support%20me-FF5E5B?logo=ko-fi&logoColor=white" alt="Ko-fi" /></a>
 &nbsp;

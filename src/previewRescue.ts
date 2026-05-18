@@ -166,7 +166,7 @@ export class PreviewRescue {
     try {
       await this.plugin.app.vault.modify(file, newContent);
     } catch (e) {
-      console.error("JotDrop preview-rescue: write failed for", file.path, e);
+      console.error("Jot Drop preview-rescue: write failed for", file.path, e);
     }
   }
 }

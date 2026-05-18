@@ -242,7 +242,7 @@ export class QuickCaptureModal extends Modal {
           content = buildLinkNote(chosenUrl, chosenPreview, content);
         }
       } catch (e) {
-        console.error("JotDrop: preview fetch failed:", e);
+        console.error("Jot Drop: preview fetch failed:", e);
       } finally {
         notice.hide();
       }

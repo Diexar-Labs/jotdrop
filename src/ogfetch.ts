@@ -97,7 +97,7 @@ export async function fetchOg(
     }
 
     if (!html) {
-      console.warn(`JotDrop: could not fetch HTML for ${url} (${errors.join("; ")})`);
+      console.warn(`Jot Drop: could not fetch HTML for ${url} (${errors.join("; ")})`);
       return null;
     }
 
@@ -123,7 +123,7 @@ export async function fetchOg(
 
     return { sourceUrl: url, title, description, imageBasename };
   } catch (e) {
-    console.error("JotDrop: OG-fetch failed:", e);
+    console.error("Jot Drop: OG-fetch failed:", e);
     return null;
   }
 }
@@ -271,7 +271,7 @@ async function downloadImage(
     });
     const res = await requestUrl({ url: imageUrl, method: "GET", headers, throw: false });
     if (res.status < 200 || res.status >= 300) {
-      console.warn(`JotDrop: image download failed for ${imageUrl} (HTTP ${res.status})`);
+      console.warn(`Jot Drop: image download failed for ${imageUrl} (HTTP ${res.status})`);
       return null;
     }
 
@@ -281,7 +281,7 @@ async function downloadImage(
     const rawCt = (res.headers?.["content-type"] ?? "") as string;
     const contentType = rawCt.split(";")[0].trim().toLowerCase();
     if (contentType && !contentType.startsWith("image/")) {
-      console.warn(`JotDrop: skipping non-image response (${contentType}) for ${imageUrl}`);
+      console.warn(`Jot Drop: skipping non-image response (${contentType}) for ${imageUrl}`);
       return null;
     }
 
@@ -297,7 +297,7 @@ async function downloadImage(
     await app.vault.adapter.writeBinary(path, res.arrayBuffer);
     return filename;
   } catch (e) {
-    console.error("JotDrop: image download failed:", e);
+    console.error("Jot Drop: image download failed:", e);
     return null;
   }
 }
