@@ -1,5 +1,5 @@
 /**
- * Lightweight i18n module for Jot Drop.
+ * Lightweight i18n module for JotDrop.
  *
  * Detects the user's Obsidian interface language and looks up strings against
  * the matching translation map. Falls back to English when a key is missing.
@@ -17,12 +17,12 @@ const SUPPORTED: ReadonlyArray<Lang> = ["en", "nl", "es", "de", "fr", "it"];
 
 const EN: Record<string, string> = {
   // App / commands
-  open_jotdrop: "Open Jot Drop",
+  open_jotdrop: "Open JotDrop",
   cmd_open_view: "Open Keep view",
   cmd_quick_capture: "Quick note (quick capture)",
   cmd_rescue_previews: "Fetch pending OG previews now",
   cmd_neutralize_hashtags: "Neutralize inline hashtags in existing notes",
-  view_title: "Jot Drop",
+  view_title: "JotDrop",
 
   // Actions
   action_cancel: "Cancel",
@@ -109,7 +109,7 @@ const EN: Record<string, string> = {
   notice_fetching_preview: "Fetching preview…",
   notice_saved: "Saved: {0}",
   notice_save_failed: "Save failed: {0}",
-  notice_pending_attempted: "Jot Drop: attempted {0} pending note(s)",
+  notice_pending_attempted: "JotDrop: attempted {0} pending note(s)",
   notice_neutralized: "Neutralized hashtags in {0} note(s)",
   notice_neutralized_none: "No inline hashtags found — nothing to do.",
   notice_error: "Error: {0}",
@@ -156,7 +156,7 @@ const EN: Record<string, string> = {
   // Clip server (Chrome extension)
   settings_clip_server_section: "Web clipper (Chrome extension)",
   settings_clip_server_desc:
-    "Run a tiny localhost server (127.0.0.1 only) so the Jot Drop Chrome extension can save pages here. The extension needs the token below; paste it into the extension's options page.",
+    "Run a tiny localhost server (127.0.0.1 only) so the JotDrop Chrome extension can save pages here. The extension needs the token below; paste it into the extension's options page.",
   settings_clip_server_enabled: "Enable clip server",
   settings_clip_server_enabled_desc:
     "Only binds to 127.0.0.1, never the network. Off by default.",
@@ -175,9 +175,9 @@ const EN: Record<string, string> = {
   notice_clip_saved: "Clipped: {0}",
 
   // Support section
-  section_support: "About Jot Drop",
+  section_support: "About JotDrop",
   support_blurb:
-    "Jot Drop is free and open-source. Found it useful? A coffee or sponsorship makes my day — no obligations, no lock-ins.",
+    "JotDrop is free and open-source. Found it useful? A coffee or sponsorship makes my day — no obligations, no lock-ins.",
   support_kofi: "☕ Buy me a Ko-fi",
   support_sponsors: "❤ Sponsor on GitHub",
 
@@ -196,12 +196,12 @@ const EN: Record<string, string> = {
 };
 
 const NL: Record<string, string> = {
-  open_jotdrop: "Open Jot Drop",
+  open_jotdrop: "Open JotDrop",
   cmd_open_view: "Open Keep-weergave",
   cmd_quick_capture: "Snelle notitie (quick capture)",
   cmd_rescue_previews: "Pending OG-previews nu ophalen",
   cmd_neutralize_hashtags: "Inline hashtags in bestaande notities neutraliseren",
-  view_title: "Jot Drop",
+  view_title: "JotDrop",
 
   action_cancel: "Annuleren",
   action_save: "Opslaan",
@@ -283,7 +283,7 @@ const NL: Record<string, string> = {
   notice_fetching_preview: "Preview ophalen…",
   notice_saved: "Opgeslagen: {0}",
   notice_save_failed: "Fout bij opslaan: {0}",
-  notice_pending_attempted: "Jot Drop: {0} pending-notitie(s) geprobeerd",
+  notice_pending_attempted: "JotDrop: {0} pending-notitie(s) geprobeerd",
   notice_neutralized: "Hashtags geneutraliseerd in {0} notitie(s)",
   notice_neutralized_none: "Geen inline hashtags gevonden — niets te doen.",
   notice_error: "Fout: {0}",
@@ -327,7 +327,7 @@ const NL: Record<string, string> = {
 
   settings_clip_server_section: "Web-clipper (Chrome-extensie)",
   settings_clip_server_desc:
-    "Start een klein lokaal servertje (alleen 127.0.0.1) zodat de Jot Drop Chrome-extensie pagina's hier kan opslaan. De extensie heeft het token hieronder nodig; plak het in de optie-pagina van de extensie.",
+    "Start een klein lokaal servertje (alleen 127.0.0.1) zodat de JotDrop Chrome-extensie pagina's hier kan opslaan. De extensie heeft het token hieronder nodig; plak het in de optie-pagina van de extensie.",
   settings_clip_server_enabled: "Clip-server aanzetten",
   settings_clip_server_enabled_desc:
     "Bindt alleen op 127.0.0.1, nooit op het netwerk. Standaard uit.",
@@ -345,9 +345,9 @@ const NL: Record<string, string> = {
   notice_clip_server_error: "Clip-server-fout: {0}",
   notice_clip_saved: "Geclipt: {0}",
 
-  section_support: "Over Jot Drop",
+  section_support: "Over JotDrop",
   support_blurb:
-    "Jot Drop is gratis en open-source. Vind je het waardevol? Een koffie of sponsorship maakt mijn dag — geen verplichting, geen lock-ins.",
+    "JotDrop is gratis en open-source. Vind je het waardevol? Een koffie of sponsorship maakt mijn dag — geen verplichting, geen lock-ins.",
   support_kofi: "☕ Trakteer op Ko-fi",
   support_sponsors: "❤ Word sponsor op GitHub",
 

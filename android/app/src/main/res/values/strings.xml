@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Jot Drop</string>
-    <string name="share_target_label">Jot Drop</string>
-    <string name="settings_title">Jot Drop · settings</string>
+    <string name="app_name">JotDrop</string>
+    <string name="share_target_label">JotDrop</string>
+    <string name="settings_title">JotDrop · settings</string>
 
-    <string name="intro">Share text from any app to Jot Drop — it lands directly as a card in your Obsidian vault.</string>
+    <string name="intro">Share text from any app to JotDrop — it lands directly as a card in your Obsidian vault.</string>
 
     <string name="section_vault">Obsidian vault</string>
     <string name="no_vault_picked">No vault folder picked yet.</string>
@@ -15,9 +15,9 @@
     <string name="save_subfolder">Save subfolder</string>
 
     <string name="test_button">Test: write sample note</string>
-    <string name="test_note_body">Test from Jot Drop\n\nIf you see this, it works.</string>
+    <string name="test_note_body">Test from JotDrop\n\nIf you see this, it works.</string>
 
-    <string name="help_text">Tip: use any app\'s share menu and pick "Jot Drop". The shared text lands in the chosen subfolder as a timestamped markdown file.</string>
+    <string name="help_text">Tip: use any app\'s share menu and pick "JotDrop". The shared text lands in the chosen subfolder as a timestamped markdown file.</string>
 
     <string name="toast_saved">Saved: %1$s</string>
     <string name="toast_saved_short">Saved</string>
@@ -51,7 +51,7 @@
     <string name="lightbox_load_failed">Could not load image.</string>
     <string name="reminder_channel_name">Reminders</string>
     <string name="reminder_channel_desc">Notifications for note reminders.</string>
-    <string name="reminder_notification_title">Jot Drop reminder</string>
+    <string name="reminder_notification_title">JotDrop reminder</string>
     <string name="reminder_default_title">Open note</string>
     <string name="action_set_reminder">Set reminder</string>
     <string name="action_clear_reminder">Clear</string>
@@ -83,8 +83,8 @@
     <string name="action_pick_from_gallery">Pick from gallery</string>
     <string name="action_remove_tag">Remove tag</string>
 
-    <string name="section_support">About Jot Drop</string>
-    <string name="support_blurb">Jot Drop is free and open-source. Found it useful? A coffee or sponsorship makes my day — no obligations, no lock-ins.</string>
+    <string name="section_support">About JotDrop</string>
+    <string name="support_blurb">JotDrop is free and open-source. Found it useful? A coffee or sponsorship makes my day — no obligations, no lock-ins.</string>
     <string name="support_kofi">☕ Buy me a Ko-fi</string>
     <string name="support_sponsors">❤ Sponsor on GitHub</string>
 

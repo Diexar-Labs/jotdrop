@@ -1,6 +1,6 @@
 {
   "id": "jotdrop",
-  "name": "Jot Drop",
+  "name": "JotDrop",
   "version": "0.14.1",
   "minAppVersion": "1.5.0",
   "description": "Google Keep–style quick-capture card grid. Capture notes on Android via the companion app and see them as cards in your vault. Offline, no account, every note is plain Markdown.",

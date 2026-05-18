@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="settings_title">Jot Drop · instellingen</string>
+    <string name="settings_title">JotDrop · instellingen</string>
 
-    <string name="intro">Deel tekst vanuit elke app naar Jot Drop — het wordt direct als kaartje opgeslagen in je Obsidian-vault.</string>
+    <string name="intro">Deel tekst vanuit elke app naar JotDrop — het wordt direct als kaartje opgeslagen in je Obsidian-vault.</string>
 
     <string name="section_vault">Obsidian-vault</string>
     <string name="no_vault_picked">Nog geen vault-map gekozen.</string>
@@ -13,9 +13,9 @@
     <string name="save_subfolder">Submap opslaan</string>
 
     <string name="test_button">Test: schrijf voorbeeldnotitie</string>
-    <string name="test_note_body">Test vanuit Jot Drop\n\nAls je dit ziet werkt \'t.</string>
+    <string name="test_note_body">Test vanuit JotDrop\n\nAls je dit ziet werkt \'t.</string>
 
-    <string name="help_text">Tip: gebruik in elke app het deelmenu en kies "Jot Drop". De gedeelde tekst belandt direct in de gekozen submap als markdown-bestand met tijdstempel.</string>
+    <string name="help_text">Tip: gebruik in elke app het deelmenu en kies "JotDrop". De gedeelde tekst belandt direct in de gekozen submap als markdown-bestand met tijdstempel.</string>
 
     <string name="toast_saved">Opgeslagen: %1$s</string>
     <string name="toast_saved_short">Opgeslagen</string>
@@ -49,7 +49,7 @@
     <string name="lightbox_load_failed">Afbeelding kan niet geladen worden.</string>
     <string name="reminder_channel_name">Herinneringen</string>
     <string name="reminder_channel_desc">Notificaties voor notitie-herinneringen.</string>
-    <string name="reminder_notification_title">Jot Drop-herinnering</string>
+    <string name="reminder_notification_title">JotDrop-herinnering</string>
     <string name="reminder_default_title">Open notitie</string>
     <string name="action_set_reminder">Herinnering instellen</string>
     <string name="action_clear_reminder">Wissen</string>
@@ -81,8 +81,8 @@
     <string name="action_pick_from_gallery">Kies uit galerij</string>
     <string name="action_remove_tag">Verwijder tag</string>
 
-    <string name="section_support">Over Jot Drop</string>
-    <string name="support_blurb">Jot Drop is gratis en open-source. Vind je het waardevol? Een koffie of sponsorship maakt mijn dag — geen verplichting, geen lock-ins.</string>
+    <string name="section_support">Over JotDrop</string>
+    <string name="support_blurb">JotDrop is gratis en open-source. Vind je het waardevol? Een koffie of sponsorship maakt mijn dag — geen verplichting, geen lock-ins.</string>
     <string name="support_kofi">☕ Trakteer op Ko-fi</string>
     <string name="support_sponsors">❤ Word sponsor op GitHub</string>
 

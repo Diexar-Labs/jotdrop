@@ -1,7 +1,7 @@
 /**
  * Lightweight MediaRecorder wrapper for voice memos. Uses opus/webm on
  * Chromium (Obsidian Electron) — playable in Obsidian's audio player and
- * accepted by the Android side of Jot Drop over Syncthing.
+ * accepted by the Android side of JotDrop over Syncthing.
  */
 export interface RecordResult {
   blob: Blob;

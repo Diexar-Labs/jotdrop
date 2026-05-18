@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Jot Drop"
+rootProject.name = "JotDrop"
 include(":app")

@@ -206,7 +206,7 @@ export class JotDropSettingTab extends PluginSettingTab {
         }),
     );
 
-    // "About Jot Drop" — unobtrusive, dismisses itself if the user has no
+    // "About JotDrop" — unobtrusive, dismisses itself if the user has no
     // interest. No popups, no "premium" features. Open source +
     // optional thank-you button.
     const support = containerEl.createDiv({ cls: "jotdrop-support" });
