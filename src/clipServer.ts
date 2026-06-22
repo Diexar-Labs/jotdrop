@@ -5,11 +5,14 @@ import { fetchOg } from "./ogfetch";
 import { neutralizeBodyHashtags, updateMeta, ColorName, isColorName } from "./metadata";
 import { t } from "./i18n";
 
-// Node's http module via Electron's CommonJS bridge. Obsidian runs on Electron,
-// so require works; 'http' is not part of Obsidian's plugin TS types. Typing the
-// require keeps `http.createServer` fully typed (no `any` propagation).
-// eslint-disable-next-line @typescript-eslint/no-require-imports, import/no-nodejs-modules -- the loopback clip server genuinely needs Node's http; Obsidian exposes no typed equivalent
-const http = require("http") as typeof import("http");
+// Node's http module via Electron's CommonJS bridge (desktop-only clip server).
+// 'http' is not part of Obsidian's plugin TS types, so type just the bit we use.
+// We do NOT disable import/no-nodejs-modules: the review bot forbids disabling it,
+// and it stays a harmless warning — a loopback server genuinely needs Node's http.
+// eslint-disable-next-line @typescript-eslint/no-require-imports -- loopback clip server needs Node's http; Obsidian exposes no typed equivalent
+const http = require("http") as {
+  createServer(handler: (req: IncomingMessageLike, res: ServerResponseLike) => void): ServerLike;
+};
 
 interface IncomingMessageLike {
   method?: string;
