@@ -29,7 +29,7 @@ export default class JotDropPlugin extends Plugin {
     this.registerView(VIEW_TYPE_JOTDROP, (leaf) => new JotDropView(leaf, this));
 
     this.addRibbonIcon("sticky-note", t("open_jotdrop"), () => {
-      this.activateView();
+      void this.activateView();
     });
 
     this.addCommand({
@@ -170,7 +170,11 @@ export default class JotDropPlugin extends Plugin {
   }
 
   async loadSettings(): Promise<void> {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    this.settings = Object.assign(
+      {},
+      DEFAULT_SETTINGS,
+      (await this.loadData()) as Partial<JotDropSettings>,
+    );
     // One-time migration: the previous default "modified-desc" reordered cards
     // on every edit. Move it to the stable "created-desc" once, then leave the
     // setting alone so a deliberate later choice sticks.
@@ -197,7 +201,7 @@ export default class JotDropPlugin extends Plugin {
       leaf = workspace.getLeaf("tab");
       await leaf.setViewState({ type: VIEW_TYPE_JOTDROP, active: true });
     }
-    workspace.revealLeaf(leaf);
+    await workspace.revealLeaf(leaf);
   }
 
   /**

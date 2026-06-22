@@ -10,16 +10,16 @@ import { VoiceMemoRecorder, RecordResult } from "./recorder";
 import {
   colorLabel,
   COLOR_NAMES,
-  ColorName,
   DEFAULT_META,
   formatReminderShort,
   NoteMeta,
   parseReminderMs,
   readMeta,
-  renderInlinePreviewHtml,
+  renderInlinePreview,
   stripFrontmatter,
   updateMeta,
 } from "./metadata";
+import { voidAsync } from "./asyncUtil";
 import { t } from "./i18n";
 
 export const VIEW_TYPE_JOTDROP = "jotdrop-view";
@@ -65,10 +65,6 @@ function findEmbeddedAudioBasenames(content: string): string[] {
 /** Image + audio combined — used by the delete flow for refcount + cleanup. */
 function findEmbeddedAttachmentBasenames(content: string): string[] {
   return collectEmbedBasenames(content, (n) => IMAGE_EXT_RE.test(n) || AUDIO_EXT_RE.test(n));
-}
-
-function isAudioBasename(name: string): boolean {
-  return AUDIO_EXT_RE.test(name);
 }
 
 function formatMemoDuration(ms: number): string {
@@ -166,7 +162,7 @@ export class JotDropView extends ItemView {
     this.applyCardWidth();
 
     // Escape exits selection mode (counterpart of Android's BackHandler).
-    this.registerDomEvent(document, "keydown", (ev: KeyboardEvent) => {
+    this.registerDomEvent(activeDocument, "keydown", (ev: KeyboardEvent) => {
       if (ev.key === "Escape" && this.selectionMode) {
         ev.preventDefault();
         this.exitSelection();
@@ -518,14 +514,14 @@ export class JotDropView extends ItemView {
     } catch {
       // Cleanup failures must not block the note deletion.
     }
-    await this.app.vault.trash(file, true);
+    await this.app.fileManager.trashFile(file);
   }
 
   private async trashAttachmentByBasename(noteFile: TFile, basename: string): Promise<void> {
     const dest = this.app.metadataCache.getFirstLinkpathDest(basename, noteFile.path);
     if (dest) {
       try {
-        await this.app.vault.trash(dest, true);
+        await this.app.fileManager.trashFile(dest);
         return;
       } catch {
         // fall through to adapter lookup
@@ -928,7 +924,7 @@ export class JotDropView extends ItemView {
 
     if (previewText) {
       const preview = body.createDiv({ cls: "jotdrop-card-preview" });
-      preview.innerHTML = renderInlinePreviewHtml(previewText);
+      renderInlinePreview(preview, previewText);
       preview.addEventListener("click", (e) => {
         if (this.selectionMode) {
           e.stopPropagation();
@@ -984,11 +980,11 @@ export class JotDropView extends ItemView {
       attr: { "aria-label": meta.pinned ? t("action_unpin") : t("action_pin") },
     });
     setIcon(pinBtn, meta.pinned ? "pin-off" : "pin");
-    pinBtn.addEventListener("click", async (e) => {
+    pinBtn.addEventListener("click", voidAsync(async (e) => {
       e.stopPropagation();
       await updateMeta(this.app, file, { pinned: !meta.pinned });
       this.plugin.refreshViews();
-    });
+    }));
 
     const colorBtn = actions.createEl("button", {
       cls: "jotdrop-card-action",
@@ -1015,10 +1011,10 @@ export class JotDropView extends ItemView {
       attr: { "aria-label": archived ? t("action_unarchive") : t("action_archive") },
     });
     setIcon(archiveBtn, archived ? "archive-restore" : "archive");
-    archiveBtn.addEventListener("click", async (e) => {
+    archiveBtn.addEventListener("click", voidAsync(async (e) => {
       e.stopPropagation();
       await this.toggleArchive(file, archived);
-    });
+    }));
 
     const moreBtn = actions.createEl("button", {
       cls: "jotdrop-card-action",
@@ -1079,7 +1075,7 @@ export class JotDropView extends ItemView {
 
   private handlePreviewClick(e: MouseEvent): void {
     const target = e.target as HTMLElement;
-    const wiki = target.closest(".jotdrop-wikilink") as HTMLElement | null;
+    const wiki = target.closest<HTMLElement>(".jotdrop-wikilink");
     if (wiki) {
       e.preventDefault();
       e.stopPropagation();
@@ -1093,7 +1089,7 @@ export class JotDropView extends ItemView {
       }
       return;
     }
-    const url = target.closest(".jotdrop-url") as HTMLElement | null;
+    const url = target.closest<HTMLElement>(".jotdrop-url");
     if (url) {
       e.preventDefault();
       e.stopPropagation();
@@ -1103,9 +1099,9 @@ export class JotDropView extends ItemView {
   }
 
   private showLinkBar(anchor: HTMLElement, href: string): void {
-    document.body.querySelectorAll(".jotdrop-link-bar").forEach((el) => el.remove());
+    activeDocument.body.querySelectorAll(".jotdrop-link-bar").forEach((el) => el.remove());
 
-    const bar = document.body.createDiv({ cls: "jotdrop-link-bar" });
+    const bar = activeDocument.body.createDiv({ cls: "jotdrop-link-bar" });
     const urlSpan = bar.createSpan({ cls: "jotdrop-link-bar-url" });
     urlSpan.setText(href.length > 60 ? `${href.slice(0, 57)}…` : href);
     const openBtn = bar.createEl("button", {
@@ -1120,7 +1116,7 @@ export class JotDropView extends ItemView {
 
     const dismiss = () => {
       if (bar.isConnected) bar.remove();
-      document.removeEventListener("click", outsideHandler, true);
+      activeDocument.removeEventListener("click", outsideHandler, true);
       window.clearTimeout(timer);
     };
     openBtn.addEventListener("click", (ev) => {
@@ -1136,12 +1132,10 @@ export class JotDropView extends ItemView {
     const outsideHandler = (ev: MouseEvent) => {
       if (!bar.contains(ev.target as Node)) dismiss();
     };
-    setTimeout(() => document.addEventListener("click", outsideHandler, true), 0);
+    window.setTimeout(() => activeDocument.addEventListener("click", outsideHandler, true), 0);
     const timer = window.setTimeout(dismiss, 4500);
 
     const rect = anchor.getBoundingClientRect();
-    bar.style.position = "fixed";
-    bar.style.zIndex = "9999";
     // Render temporarily to know the bar width, then position correctly.
     const barRect = bar.getBoundingClientRect();
     const left = Math.max(

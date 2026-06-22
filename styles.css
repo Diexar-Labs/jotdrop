@@ -587,6 +587,8 @@
 
 /* Floating "Link openen"-bar */
 .jotdrop-link-bar {
+  position: fixed;
+  z-index: 9999;
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -1195,4 +1197,10 @@
 .jotdrop-support-buttons a.jotdrop-support-button:hover {
   background: var(--interactive-hover);
   text-decoration: none;
+}
+
+/* Read-only clip-server token field — full width, monospace for legibility */
+.jotdrop-clip-token-input {
+  width: 100%;
+  font-family: var(--font-monospace);
 }

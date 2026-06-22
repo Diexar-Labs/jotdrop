@@ -84,7 +84,7 @@ export async function fetchOg(
     for (const ua of [CHROME_UA, ...FALLBACK_UAS]) {
       const attempt = await downloadHtml(fetchUrl, ua);
       if ("error" in attempt) {
-        errors.push(`${ua.split(/[\s\/]/)[0]}=${attempt.error}`);
+        errors.push(`${ua.split(/[\s/]/)[0]}=${attempt.error}`);
         continue;
       }
       if (!html) html = attempt.html;
@@ -173,7 +173,7 @@ async function fetchTikTokOEmbed(
       throw: false,
     });
     if (res.status < 200 || res.status >= 300) return null;
-    const json = JSON.parse(res.text);
+    const json = JSON.parse(res.text) as Record<string, unknown>;
     const title = typeof json.title === "string" ? json.title : null;
     const author = typeof json.author_name === "string" ? json.author_name : null;
     const thumbnailUrl = typeof json.thumbnail_url === "string" ? json.thumbnail_url : null;
@@ -278,7 +278,7 @@ async function downloadImage(
     // Reject non-image responses — some servers return an HTML error page or a
     // redirect to a login screen for image URLs, resulting in a Markdown file
     // that Obsidian incorrectly treats as a PNG/JPEG.
-    const rawCt = (res.headers?.["content-type"] ?? "") as string;
+    const rawCt = res.headers?.["content-type"] ?? "";
     const contentType = rawCt.split(";")[0].trim().toLowerCase();
     if (contentType && !contentType.startsWith("image/")) {
       console.warn(`JotDrop: skipping non-image response (${contentType}) for ${imageUrl}`);
@@ -374,7 +374,7 @@ function extractJsonLdImage(html: string): string | null {
   let match: RegExpExecArray | null;
   while ((match = scriptRe.exec(html)) !== null) {
     try {
-      const json = JSON.parse(match[1].trim());
+      const json: unknown = JSON.parse(match[1].trim());
       const found = walkForJsonLdImage(json);
       if (found) return found;
     } catch {
@@ -517,7 +517,7 @@ function decodeHtmlEntities(s: string): string {
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">")
     .replace(/&nbsp;/g, " ")
-    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)));
+    .replace(/&#(\d+);/g, (_, n: string) => String.fromCharCode(parseInt(n, 10)));
 }
 
 function absolutize(maybeRelative: string, base: string): string {

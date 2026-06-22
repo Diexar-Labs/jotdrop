@@ -43,7 +43,7 @@ export class ConfirmModal extends Modal {
       this.close();
       this.onConfirm();
     });
-    setTimeout(() => confirm.focus(), 0);
+    window.setTimeout(() => confirm.focus(), 0);
   }
 
   onClose(): void {

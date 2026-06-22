@@ -51,7 +51,7 @@ export class TagPickerModal extends Modal {
     this.listEl = contentEl.createDiv({ cls: "jotdrop-tagpicker-list" });
     this.renderList();
     // Focus the search field so the user can filter immediately.
-    setTimeout(() => this.inputEl.focus(), 0);
+    window.setTimeout(() => this.inputEl.focus(), 0);
   }
 
   onClose(): void {

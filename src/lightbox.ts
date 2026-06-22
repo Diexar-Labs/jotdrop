@@ -1,6 +1,7 @@
 import { App, FileSystemAdapter, Modal, Notice, TFile } from "obsidian";
 import type JotDropPlugin from "./main";
 import { EditNoteModal } from "./edit";
+import { voidAsync } from "./asyncUtil";
 import { t } from "./i18n";
 
 /**
@@ -62,14 +63,14 @@ export class LightboxModal extends Modal {
       const openBtn = actions.createEl("button", {
         text: t("lightbox_open_in_tab"),
       });
-      openBtn.addEventListener("click", async () => {
+      openBtn.addEventListener("click", voidAsync(async () => {
         try {
           await this.app.workspace.getLeaf("tab").openFile(this.attachmentFile!);
           this.close();
         } catch (err) {
           new Notice(t("notice_error", err instanceof Error ? err.message : String(err)));
         }
-      });
+      }));
     }
 
     const adapter = this.app.vault.adapter;
@@ -78,12 +79,12 @@ export class LightboxModal extends Modal {
         cls: "jotdrop-lightbox-external",
         text: t("lightbox_open_external"),
       });
-      externalBtn.addEventListener("click", async () => {
+      externalBtn.addEventListener("click", voidAsync(async () => {
         try {
           const fullPath = adapter.getFullPath(this.vaultPath!);
-          // Electron's shell is under the hood; desktop only.
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          const { shell } = require("electron");
+          // Electron's shell — desktop only; not part of Obsidian's plugin TS types.
+          // eslint-disable-next-line @typescript-eslint/no-require-imports -- desktop-only "open in system app"; Electron's shell has no Obsidian-typed equivalent
+          const { shell } = require("electron") as { shell: { openPath(path: string): Promise<string> } };
           const err = await shell.openPath(fullPath);
           if (err) {
             new Notice(t("notice_error", err));
@@ -93,7 +94,7 @@ export class LightboxModal extends Modal {
         } catch (err) {
           new Notice(t("notice_error", err instanceof Error ? err.message : String(err)));
         }
-      });
+      }));
     }
 
     const closeBtn = actions.createEl("button", {

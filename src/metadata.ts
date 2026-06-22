@@ -104,7 +104,7 @@ export async function updateMeta(
   file: TFile,
   patch: Partial<NoteMeta>,
 ): Promise<void> {
-  await app.fileManager.processFrontMatter(file, (fm) => {
+  await app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
     if (patch.color !== undefined) {
       if (patch.color === "default") delete fm.color;
       else fm.color = patch.color;
@@ -230,69 +230,63 @@ export function neutralizeBodyHashtags(content: string): string {
 }
 
 /**
- * Very limited HTML render for previews: escapes HTML, renders `[[link]]` and `[[link|alias]]`
- * as styled spans, and converts `[text](url)` plus bare http(s) URLs into clickable
- * `<a class="jotdrop-url">` tags. Clicks are caught by the view via delegation.
+ * Renders a limited inline preview into `parent` as real DOM nodes — never via
+ * innerHTML, so user text is inserted as text content and can never inject
+ * markup. Handles checklist glyphs, `[[wikilink]]` / `[[link|alias]]` as styled
+ * spans, and `[text](url)` plus bare http(s) URLs as clickable `.jotdrop-url`
+ * anchors. Clicks are caught by the view via delegation on the data-href attr.
  */
-export function renderInlinePreviewHtml(text: string): string {
-  // Checklist syntax at the start of a line is replaced by shape glyphs.
-  // Shape instead of color, so readable without color distinction (color-blind friendly).
-  const withChecks = text
+export function renderInlinePreview(parent: HTMLElement, text: string): void {
+  // Checklist syntax at the start of a line becomes a shape glyph — shape, not
+  // colour, so it stays readable without colour distinction (color-blind friendly).
+  const src = text
     .replace(/^- \[ \] /gm, "☐ ")
     .replace(/^- \[[xX]\] /gm, "☑ ");
 
-  const escaped = escapeHtml(withChecks);
+  // Single ordered scan: wikilink | markdown-link | bare-url. Alternation consumes
+  // a markdown link whole, so its href is never re-matched as a separate bare URL.
+  const tokenRe =
+    /\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\]|\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)|(https?:\/\/\S+)/g;
 
-  // Wikilinks → spans. target/alias come from already-escaped text,
-  // so no second escape layer should be applied.
-  const withWiki = escaped.replace(
-    /\[\[([^\]\|\n]+)(?:\|([^\]\n]+))?\]\]/g,
-    (_match, target: string, alias?: string) => {
-      const safeTarget = target.trim();
-      const display = (alias ?? target).trim();
-      return `<span class="jotdrop-wikilink" data-href="${safeTarget}">${display}</span>`;
-    },
-  );
+  let lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = tokenRe.exec(src)) !== null) {
+    if (m.index > lastIndex) parent.appendText(src.slice(lastIndex, m.index));
 
-  // Markdown links to placeholders first so the bare-URL pass does not re-match their href part.
-  const placeholders: string[] = [];
-  const withMd = withWiki.replace(
-    /\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g,
-    (_m, label: string, url: string) => {
-      const idx = placeholders.length;
-      // url has already gone through the outer escapeHtml pass; do not escape again,
-      // otherwise you get &amp;amp; in href and Telegraaf URLs break with 404.
-      placeholders.push(
-        `<a class="jotdrop-url" data-href="${url}" rel="noopener noreferrer">${label}</a>`,
-      );
-      return `L${idx}`;
-    },
-  );
-
-  // Bare URLs
-  const withUrls = withMd.replace(
-    /https?:\/\/\S+/g,
-    (raw: string) => {
-      const tailMatch = raw.match(/[).,;:!?\]"']+$/);
-      const trail = tailMatch ? tailMatch[0] : "";
+    if (m[1] !== undefined) {
+      // [[target]] or [[target|alias]]
+      const span = parent.createSpan({
+        cls: "jotdrop-wikilink",
+        text: (m[2] ?? m[1]).trim(),
+      });
+      span.dataset.href = m[1].trim();
+    } else if (m[3] !== undefined) {
+      // [label](https://url)
+      const a = parent.createEl("a", {
+        cls: "jotdrop-url",
+        text: m[3],
+        attr: { rel: "noopener noreferrer" },
+      });
+      a.dataset.href = m[4];
+    } else if (m[5] !== undefined) {
+      // Bare URL — strip trailing sentence punctuation back into plain text.
+      const raw = m[5];
+      const trail = raw.match(/[).,;:!?\]"']+$/)?.[0] ?? "";
       const clean = trail ? raw.slice(0, raw.length - trail.length) : raw;
-      if (!clean) return raw;
-      return `<a class="jotdrop-url" data-href="${clean}" rel="noopener noreferrer">${clean}</a>${trail}`;
-    },
-  );
+      if (clean) {
+        const a = parent.createEl("a", {
+          cls: "jotdrop-url",
+          text: clean,
+          attr: { rel: "noopener noreferrer" },
+        });
+        a.dataset.href = clean;
+        if (trail) parent.appendText(trail);
+      } else {
+        parent.appendText(raw);
+      }
+    }
 
-  return withUrls.replace(/L(\d+)/g, (_m, idx: string) => placeholders[Number(idx)]);
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function escapeAttr(s: string): string {
-  return escapeHtml(s);
+    lastIndex = tokenRe.lastIndex;
+  }
+  if (lastIndex < src.length) parent.appendText(src.slice(lastIndex));
 }

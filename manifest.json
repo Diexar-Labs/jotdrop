@@ -1,8 +1,8 @@
 {
   "id": "jotdrop",
   "name": "JotDrop",
-  "version": "0.15.0",
-  "minAppVersion": "1.5.0",
+  "version": "0.16.0",
+  "minAppVersion": "1.8.7",
   "description": "Google Keep–style quick-capture card grid. Capture notes on Android via the companion app and see them as cards in your vault. Offline, no account, every note is plain Markdown.",
   "author": "Diexar Labs",
   "authorUrl": "https://github.com/Diexar-Labs",

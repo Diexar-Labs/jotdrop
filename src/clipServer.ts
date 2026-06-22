@@ -1,17 +1,15 @@
 import { Notice } from "obsidian";
 import type JotDropPlugin from "./main";
 import { createNoteInFolder } from "./capture";
-import { buildLinkNote, fetchOg } from "./ogfetch";
+import { fetchOg } from "./ogfetch";
 import { neutralizeBodyHashtags, updateMeta, ColorName, isColorName } from "./metadata";
 import { t } from "./i18n";
 
-// Node's http module via Electron's CommonJS bridge. Obsidian runs on Electron
-// so require works. No import statement because 'http' is not in the TS types
-// for Obsidian plugins.
-
-/* eslint-disable @typescript-eslint/no-var-requires */
-const http = require("http");
-/* eslint-enable */
+// Node's http module via Electron's CommonJS bridge. Obsidian runs on Electron,
+// so require works; 'http' is not part of Obsidian's plugin TS types. Typing the
+// require keeps `http.createServer` fully typed (no `any` propagation).
+// eslint-disable-next-line @typescript-eslint/no-require-imports, import/no-nodejs-modules -- the loopback clip server genuinely needs Node's http; Obsidian exposes no typed equivalent
+const http = require("http") as typeof import("http");
 
 interface IncomingMessageLike {
   method?: string;
@@ -252,7 +250,7 @@ function sanitizeTags(v: unknown): string[] {
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
   return await Promise.race([
     promise,
-    new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
+    new Promise<null>((resolve) => window.setTimeout(() => resolve(null), ms)),
   ]);
 }
 

@@ -73,10 +73,10 @@ export class ReminderScheduler {
     // Notice with click handler → opens lightbox if there is an attachment,
     // otherwise the edit modal.
     const notice = new Notice(t("notice_reminder_fired", file.basename), 30_000);
-    notice.noticeEl.addClass("jotdrop-reminder-notice");
-    notice.noticeEl.addEventListener("click", () => {
+    notice.messageEl.addClass("jotdrop-reminder-notice");
+    notice.messageEl.addEventListener("click", () => {
       notice.hide();
-      this.openCard(file);
+      void this.openCard(file);
     });
   }
 

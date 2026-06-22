@@ -70,11 +70,11 @@ export class QuickCaptureModal extends Modal {
       }
     });
 
-    setTimeout(() => this.textArea.focus(), 50);
+    window.setTimeout(() => this.textArea.focus(), 50);
   }
 
   private renderControls(parent: HTMLElement): void {
-    let bar = parent.querySelector(".jotdrop-capture-controls") as HTMLElement | null;
+    let bar = parent.querySelector(".jotdrop-capture-controls");
     if (!bar) bar = parent.createDiv({ cls: "jotdrop-capture-controls" });
     bar.empty();
 
@@ -330,7 +330,7 @@ export function toggleOrInsertChecklistOnTextArea(ta: HTMLTextAreaElement): void
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
   return await Promise.race([
     promise,
-    new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
+    new Promise<null>((resolve) => window.setTimeout(() => resolve(null), ms)),
   ]);
 }
 
@@ -351,7 +351,7 @@ function generateFilename(content: string): string {
 
   const firstLine = content.split("\n")[0].trim();
   const slug = firstLine
-    .replace(/[#*_`>\[\]\(\)]/g, "")
+    .replace(/[#*_`>[\]()]/g, "")
     .replace(/[\\/:*?"<>|]/g, "")
     .trim()
     .slice(0, 40);

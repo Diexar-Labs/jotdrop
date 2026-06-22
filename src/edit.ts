@@ -2,13 +2,13 @@ import { App, Modal, Notice, SuggestModal, TFile, normalizePath } from "obsidian
 import type JotDropPlugin from "./main";
 import { toggleOrInsertChecklistOnTextArea } from "./capture";
 import { LightboxModal } from "./lightbox";
+import { voidAsync } from "./asyncUtil";
 import { t } from "./i18n";
 import {
   colorLabel,
   COLOR_NAMES,
   ColorName,
   getAllVaultTags,
-  isColorName,
   neutralizeInlineHashtags,
   readMeta,
   stripFrontmatter,
@@ -135,7 +135,7 @@ export class EditNoteModal extends Modal {
       if (name === this.state.color) {
         sw.createSpan({ cls: "jotdrop-edit-swatch-check", text: "✓" });
       }
-      sw.addEventListener("click", async () => {
+      sw.addEventListener("click", voidAsync(async () => {
         if (this.state.color === name) return;
         this.state.color = name;
         this.renderControls(parent);
@@ -145,7 +145,7 @@ export class EditNoteModal extends Modal {
         } catch (err) {
           new Notice(t("notice_error", err instanceof Error ? err.message : String(err)));
         }
-      });
+      }));
     }
 
     // Pin toggle — save immediately
@@ -154,7 +154,7 @@ export class EditNoteModal extends Modal {
       cls: `jotdrop-edit-pin${this.state.pinned ? " is-active" : ""}`,
       text: this.state.pinned ? t("action_unpin_btn") : t("action_pin_btn"),
     });
-    pinBtn.addEventListener("click", async () => {
+    pinBtn.addEventListener("click", voidAsync(async () => {
       this.state.pinned = !this.state.pinned;
       this.renderControls(parent);
       try {
@@ -163,7 +163,7 @@ export class EditNoteModal extends Modal {
       } catch (err) {
         new Notice(t("notice_error", err instanceof Error ? err.message : String(err)));
       }
-    });
+    }));
 
     // Link insert
     const linkBtn = pinWrap.createEl("button", {
@@ -191,7 +191,7 @@ export class EditNoteModal extends Modal {
       attr: { type: "datetime-local" },
     });
     if (this.state.reminder) reminderInput.value = this.state.reminder;
-    reminderInput.addEventListener("change", async () => {
+    reminderInput.addEventListener("change", voidAsync(async () => {
       this.state.reminder = reminderInput.value.trim() || null;
       try {
         await updateMeta(this.app, this.file, { reminder: this.state.reminder });
@@ -199,12 +199,12 @@ export class EditNoteModal extends Modal {
       } catch (err) {
         new Notice(t("notice_error", err instanceof Error ? err.message : String(err)));
       }
-    });
+    }));
     const clearReminder = reminderRow.createEl("button", {
       cls: "jotdrop-edit-linkbtn",
       text: t("action_clear_reminder"),
     });
-    clearReminder.addEventListener("click", async () => {
+    clearReminder.addEventListener("click", voidAsync(async () => {
       reminderInput.value = "";
       this.state.reminder = null;
       try {
@@ -213,7 +213,7 @@ export class EditNoteModal extends Modal {
       } catch (err) {
         new Notice(t("notice_error", err instanceof Error ? err.message : String(err)));
       }
-    });
+    }));
 
     // Tags + chip input — input lives inside the chips container so it always
     // follows the last chip, even when chips wrap to a new line.

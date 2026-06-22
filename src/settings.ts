@@ -113,7 +113,6 @@ export class JotDropSettingTab extends PluginSettingTab {
         s
           .setLimits(180, 360, 10)
           .setValue(this.plugin.settings.cardWidth)
-          .setDynamicTooltip()
           .onChange(async (value) => {
             this.plugin.settings.cardWidth = value;
             await this.plugin.saveSettings();
@@ -144,7 +143,7 @@ export class JotDropSettingTab extends PluginSettingTab {
 
     // Chrome-extension clip server — deliberately below the basics; not everyone
     // uses it and it does not need to shout for attention at the top.
-    containerEl.createEl("h3", { text: t("settings_clip_server_section") });
+    new Setting(containerEl).setName(t("settings_clip_server_section")).setHeading();
     const clipDesc = containerEl.createEl("p", {
       cls: "jotdrop-clip-desc",
       text: t("settings_clip_server_desc"),
@@ -190,8 +189,7 @@ export class JotDropSettingTab extends PluginSettingTab {
       text
         .setValue(this.plugin.settings.clipServerToken)
         .setDisabled(true);
-      text.inputEl.style.width = "100%";
-      text.inputEl.style.fontFamily = "monospace";
+      text.inputEl.addClass("jotdrop-clip-token-input");
     });
     tokenSetting.addButton((btn) =>
       btn
@@ -218,7 +216,7 @@ export class JotDropSettingTab extends PluginSettingTab {
     // interest. No popups, no "premium" features. Open source +
     // optional thank-you button.
     const support = containerEl.createDiv({ cls: "jotdrop-support" });
-    support.createEl("h3", { text: t("section_support") });
+    new Setting(support).setName(t("section_support")).setHeading();
     support.createEl("p", { text: t("support_blurb") });
     const buttonRow = support.createDiv({ cls: "jotdrop-support-buttons" });
     const kofiLink = buttonRow.createEl("a", {

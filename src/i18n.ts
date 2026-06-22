@@ -11,6 +11,8 @@
  * by extra args to `t()`.
  */
 
+import { getLanguage } from "obsidian";
+
 export type Lang = "en" | "nl" | "es" | "de" | "fr" | "it";
 
 const SUPPORTED: ReadonlyArray<Lang> = ["en", "nl", "es", "de", "fr", "it"];
@@ -384,18 +386,14 @@ const TABLES: Record<Lang, Record<string, string>> = {
 let cachedLang: Lang | null = null;
 
 /**
- * Reads Obsidian's interface language from localStorage. Strips region suffix
+ * Reads Obsidian's interface language via `getLanguage()`. Strips region suffix
  * (en-US → en) and returns "en" when the language isn't supported. Cached on
  * first call; call `resetLangCache()` after a manual change.
  */
 export function getLang(): Lang {
   if (cachedLang) return cachedLang;
-  let raw = "";
-  try {
-    raw = window.localStorage.getItem("language") ?? "";
-  } catch {
-    // localStorage not available (rare)
-  }
+  // Obsidian's own language setting (popout- and platform-safe).
+  const raw = getLanguage();
   const short = raw.split("-")[0].toLowerCase();
   cachedLang = (SUPPORTED as ReadonlyArray<string>).includes(short)
     ? (short as Lang)
