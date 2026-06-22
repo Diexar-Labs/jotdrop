@@ -1306,24 +1306,42 @@ function isUnder(filePath: string, folderPath: string): boolean {
   return filePath === f || filePath.startsWith(`${f}/`);
 }
 
+/**
+ * Stable creation timestamp (ms) used for ordering. Reads the timestamp baked
+ * into the filename (`YYYY-MM-DD HHMMSS …`, written by both the Android app and
+ * the plugin at capture time), which never changes when a note is later edited
+ * — unlike mtime. That is what kept cards jumping to the top on every open/edit.
+ * Falls back to the filesystem creation time for notes without a stamped name.
+ */
+function noteCreatedMs(file: TFile): number {
+  const m = file.basename.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{2})(\d{2})(\d{2})/);
+  if (m) {
+    const ms = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime();
+    if (Number.isFinite(ms)) return ms;
+  }
+  return file.stat.ctime;
+}
+
 function sortFiles(files: TFile[], mode: string): TFile[] {
   const sorted = [...files];
   switch (mode) {
     case "modified-asc":
       sorted.sort((a, b) => a.stat.mtime - b.stat.mtime);
       break;
-    case "created-desc":
-      sorted.sort((a, b) => b.stat.ctime - a.stat.ctime);
-      break;
     case "created-asc":
-      sorted.sort((a, b) => a.stat.ctime - b.stat.ctime);
+      sorted.sort((a, b) => noteCreatedMs(a) - noteCreatedMs(b));
       break;
     case "title-asc":
       sorted.sort((a, b) => a.basename.localeCompare(b.basename));
       break;
     case "modified-desc":
-    default:
       sorted.sort((a, b) => b.stat.mtime - a.stat.mtime);
+      break;
+    // Stable, edit-proof order is the default: newest on top, older at the
+    // bottom, and opening a card no longer reshuffles the grid.
+    case "created-desc":
+    default:
+      sorted.sort((a, b) => noteCreatedMs(b) - noteCreatedMs(a));
       break;
   }
   return sorted;
@@ -1378,24 +1396,63 @@ function truncateWords(text: string, maxWords: number): string {
 }
 
 /**
- * Collects all unique `http(s)://` URLs from the body (after stripping embed
- * syntax so local image paths are excluded). Preserves insertion order.
+ * Collects unique `http(s)://` URLs from the body, for the link chips.
+ *
+ * - Strips embeds so local image paths are excluded.
+ * - Drops the first heading line (the title): a URL that is shown as the card
+ *   title must not also appear as a separate link chip. This is what produced
+ *   two identical links per card on shared TikTok videos — the short link
+ *   (`vm.tiktok.com/…`) landed in the title heading while the canonical link
+ *   sat in the markdown link.
+ * - Parses markdown links `[text](url)` by their target and removes the whole
+ *   construct, so a URL used as link *text* is never counted a second time.
+ *
+ * Dedupe is normalized (lowercase host, no `www.`, no trailing slash) so the
+ * same page shared as `www.tiktok.com/x` and `tiktok.com/x/` collapses to one.
+ * Insertion order is preserved.
  */
 function extractUrls(content: string): string[] {
-  const body = stripFrontmatter(content)
+  let body = stripFrontmatter(content)
     .replace(/!\[\[[^\]]+\]\]/g, "")
     .replace(/!\[[^\]]*\]\([^)]+\)/g, "");
-  const matches = body.match(/https?:\/\/[^\s)<>"']+/g) || [];
+  // Remove the first heading line — its URL (if any) is the card title.
+  body = body.replace(/^[ \t]*#{1,6}[ \t]+.*$/m, "");
+
   const seen = new Set<string>();
   const out: string[] = [];
-  for (const raw of matches) {
+  const push = (raw: string): void => {
     const clean = raw.replace(/[.,)\]}"'!?;:]+$/, "");
-    if (!clean) continue;
-    if (seen.has(clean)) continue;
-    seen.add(clean);
+    if (!clean) return;
+    const key = canonicalUrlKey(clean);
+    if (seen.has(key)) return;
+    seen.add(key);
     out.push(clean);
-  }
+  };
+
+  // Markdown link targets first; drop the whole `[text](url)` so a URL inside
+  // the link text is not matched again below as a bare URL.
+  body = body.replace(/\[[^\]\n]*\]\((https?:\/\/[^)\s]+)\)/g, (_m, url: string) => {
+    push(url);
+    return " ";
+  });
+  for (const raw of body.match(/https?:\/\/[^\s)<>"']+/g) || []) push(raw);
   return out;
+}
+
+/**
+ * Normalized key for URL de-duplication: lowercase host without a leading
+ * `www.`, path without a trailing slash. Query and hash are kept because they
+ * can identify distinct content. Falls back to the trimmed lowercase string.
+ */
+function canonicalUrlKey(url: string): string {
+  try {
+    const u = new URL(url);
+    const host = u.host.toLowerCase().replace(/^www\./, "");
+    const path = u.pathname.replace(/\/+$/, "");
+    return `${host}${path}${u.search}`;
+  } catch {
+    return url.trim().toLowerCase();
+  }
 }
 
 function hostnameOf(url: string): string {

@@ -133,6 +133,7 @@
     <string name="editor_title_new">Nieuwe notitie</string>
     <string name="editor_title_edit">Notitie bewerken</string>
     <string name="editor_hint">Schrijf hier…</string>
+    <string name="editor_title_hint">Titel (optioneel)</string>
 
     <string name="delete_title">Notitie verwijderen?</string>
     <string name="delete_message">Deze actie kan niet ongedaan worden gemaakt.</string>

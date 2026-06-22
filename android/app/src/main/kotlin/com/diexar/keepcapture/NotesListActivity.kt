@@ -118,6 +118,9 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.lifecycleScope
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import java.text.SimpleDateFormat
+import java.util.Locale
 import com.diexar.keepcapture.ui.JotDropTheme
 import com.diexar.keepcapture.ui.noteCardBrush
 import com.diexar.keepcapture.ui.screenBackgroundBrush
@@ -422,11 +425,44 @@ class NotesListActivity : ComponentActivity() {
     }
 }
 
+/**
+ * Stabiele aanmaaktijd (ms) voor sortering: leest de timestamp uit de
+ * bestandsnaam (`yyyy-MM-dd HHmmss …`, geschreven bij capture). Die verandert
+ * NIET bij bewerken — i.t.t. lastModified, waardoor kaarten bij elke open/edit
+ * naar boven sprongen. Geen geldige stamp → terugval op lastModified.
+ */
+private fun noteCreatedMs(note: NoteSummary, fmt: SimpleDateFormat): Long {
+    val name = note.filename
+    if (name.length >= 17) {
+        try {
+            return fmt.parse(name.substring(0, 17))?.time ?: note.lastModified
+        } catch (_: Exception) { /* val terug op lastModified */ }
+    }
+    return note.lastModified
+}
+
+/**
+ * Recycling-hint voor de LazyGrid: kaarten met dezelfde lay-out-vorm
+ * (thumbnail / audio-banner / alleen tekst) hergebruiken elkaars compositie
+ * tijdens scroll, wat het stotteren bij veel kaarten vermindert.
+ */
+private fun noteContentType(note: NoteSummary): String = when {
+    note.thumbnailUri != null -> "thumb"
+    note.audioBasename != null -> "audio"
+    else -> "text"
+}
+
 private fun sortNotes(notes: List<NoteSummary>): List<NoteSummary> {
-    return notes.sortedWith(
-        compareByDescending<NoteSummary> { it.meta.pinned }
-            .thenByDescending { it.lastModified }
-    )
+    // Eén format-instantie, key vooraf berekend (SimpleDateFormat is niet
+    // thread-safe en parse() is relatief duur in een comparator).
+    val fmt = SimpleDateFormat("yyyy-MM-dd HHmmss", Locale.US)
+    return notes
+        .map { it to noteCreatedMs(it, fmt) }
+        .sortedWith(
+            compareByDescending<Pair<NoteSummary, Long>> { it.first.meta.pinned }
+                .thenByDescending { it.second }
+        )
+        .map { it.first }
 }
 
 sealed interface NotesUiState {
@@ -884,7 +920,7 @@ private fun NotesGrid(
             item(span = StaggeredGridItemSpan.FullLine) {
                 SectionLabel(stringResource(R.string.section_pinned))
             }
-            items(pinned, key = { "p-" + it.uri.toString() }) { note ->
+            items(pinned, key = { "p-" + it.uri.toString() }, contentType = { noteContentType(it) }) { note ->
                 NoteCard(
                     note = note,
                     darkTheme = dark,
@@ -901,7 +937,7 @@ private fun NotesGrid(
                 SectionLabel(stringResource(R.string.section_other))
             }
         }
-        items(rest, key = { it.uri.toString() }) { note ->
+        items(rest, key = { it.uri.toString() }, contentType = { noteContentType(it) }) { note ->
             NoteCard(
                 note = note,
                 darkTheme = dark,
@@ -1256,7 +1292,14 @@ private fun NoteCard(
                     // lightbox openen. Anders zou je nooit een kaart met thumb kunnen
                     // (de)selecteren via z'n bovenste helft.
                     AsyncImage(
-                        model = thumbnailUri,
+                        // Decode begrenzen tot ~kaartgrootte i.p.v. de volledige
+                        // foto-resolutie, en geen crossfade: scheelt geheugen en
+                        // frame-tijd bij het scrollen door veel kaarten.
+                        model = ImageRequest.Builder(LocalContext.current)
+                            .data(thumbnailUri)
+                            .size(720)
+                            .crossfade(false)
+                            .build(),
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
                         alignment = Alignment.Center,

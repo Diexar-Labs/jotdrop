@@ -171,6 +171,16 @@ export default class JotDropPlugin extends Plugin {
 
   async loadSettings(): Promise<void> {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    // One-time migration: the previous default "modified-desc" reordered cards
+    // on every edit. Move it to the stable "created-desc" once, then leave the
+    // setting alone so a deliberate later choice sticks.
+    if (!this.settings.sortMigratedToCreated) {
+      if (this.settings.sortMode === "modified-desc") {
+        this.settings.sortMode = "created-desc";
+      }
+      this.settings.sortMigratedToCreated = true;
+      await this.saveSettings();
+    }
   }
 
   async saveSettings(): Promise<void> {

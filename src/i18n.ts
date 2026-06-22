@@ -93,6 +93,7 @@ const EN: Record<string, string> = {
 
   // Capture modal
   capture_title: "Quick note",
+  title_input_placeholder: "Title (optional)",
   capture_placeholder:
     "Dump your thought, idea or task here…\n\nUse [[Link]] to wikilink.",
   capture_hint: "Ctrl/Cmd + Enter = save • Esc = close",
@@ -269,6 +270,7 @@ const NL: Record<string, string> = {
   notice_bulk_partial: "{0} gedaan, {1} mislukt",
 
   capture_title: "Snelle notitie",
+  title_input_placeholder: "Titel (optioneel)",
   capture_placeholder:
     "Dump hier je gedachte, idee of taak…\n\nGebruik [[Link]] om te koppelen.",
   capture_hint: "Ctrl/Cmd + Enter = opslaan • Esc = sluiten",

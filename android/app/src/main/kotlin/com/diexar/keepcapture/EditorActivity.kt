@@ -164,6 +164,10 @@ private fun EditorScreen(initialUri: Uri?, onClose: () -> Unit) {
     var loadError by remember { mutableStateOf<String?>(null) }
     var bodyText by remember { mutableStateOf(TextFieldValue("")) }
     var originalBody by remember { mutableStateOf("") }
+    // Expliciete titel (de eerste `# kop`-regel). Leeg → de kaart leidt zoals
+    // vanouds een titel af uit de eerste woorden van de body.
+    var titleText by remember { mutableStateOf("") }
+    var originalTitle by remember { mutableStateOf("") }
     // Image-embed-regels (`![[basename]]`) leven los van de editor-tekst zodat ze
     // niet als ruwe markdown in beeld staan. We tonen ze als thumbnail-strip
     // boven het textveld en plakken ze terug bij opslaan.
@@ -392,8 +396,11 @@ private fun EditorScreen(initialUri: Uri?, onClose: () -> Unit) {
                     val parsed = FrontmatterParser.parse(raw)
                     val cleanBody = parsed.body.removePrefix("\n")
                     val (textPart, embeds) = splitBodyAndEmbeds(cleanBody)
-                    bodyText = TextFieldValue(textPart)
-                    originalBody = textPart
+                    val (loadedTitle, loadedBody) = splitHeadingTitle(textPart)
+                    titleText = loadedTitle
+                    originalTitle = loadedTitle
+                    bodyText = TextFieldValue(loadedBody)
+                    originalBody = loadedBody
                     embedLines.clear()
                     embedLines.addAll(embeds)
                     originalEmbeds = embeds.toList()
@@ -414,7 +421,7 @@ private fun EditorScreen(initialUri: Uri?, onClose: () -> Unit) {
         }
     }
 
-    val isDirty = loaded && (bodyText.text != originalBody || embedLines.toList() != originalEmbeds)
+    val isDirty = loaded && (bodyText.text != originalBody || titleText != originalTitle || embedLines.toList() != originalEmbeds)
     val isExisting = currentUri != null
     val bg = noteBackground(color, dark)
     val fg = contentColorOn(color, dark)
@@ -457,6 +464,7 @@ private fun EditorScreen(initialUri: Uri?, onClose: () -> Unit) {
             scope = scope,
             context = context,
             bodyText = bodyText.text,
+            title = titleText,
             embedLines = embedLines.toList(),
             currentUri = currentUri,
             color = color,
@@ -468,6 +476,7 @@ private fun EditorScreen(initialUri: Uri?, onClose: () -> Unit) {
             onSaved = { newUri ->
                 if (newUri != null) currentUri = newUri.toString()
                 originalBody = bodyText.text
+                originalTitle = titleText
                 originalEmbeds = embedLines.toList()
                 // Bij nieuwe notitie krijgen we hier de definitieve URI binnen
                 // — pas dan kunnen we de reminder schedulen (cancel-old is een
@@ -584,13 +593,14 @@ private fun EditorScreen(initialUri: Uri?, onClose: () -> Unit) {
                         }
                     }
                     IconButton(
-                        enabled = !saving && (bodyText.text.isNotBlank() || embedLines.isNotEmpty()) && (isDirty || !isExisting),
+                        enabled = !saving && (bodyText.text.isNotBlank() || titleText.isNotBlank() || embedLines.isNotEmpty()) && (isDirty || !isExisting),
                         onClick = {
                             val reminderAtSave = reminder
                             attemptSaveAndClose(
                                 scope = scope,
                                 context = context,
                                 bodyText = bodyText.text,
+                                title = titleText,
                                 embedLines = embedLines.toList(),
                                 currentUri = currentUri,
                                 color = color,
@@ -602,6 +612,7 @@ private fun EditorScreen(initialUri: Uri?, onClose: () -> Unit) {
                                 onSaved = { newUri ->
                                     if (newUri != null) currentUri = newUri.toString()
                                     originalBody = bodyText.text
+                                    originalTitle = titleText
                                     originalEmbeds = embedLines.toList()
                                     val finalUri = newUri ?: currentUri?.let { Uri.parse(it) }
                                     if (finalUri != null) {
@@ -643,6 +654,8 @@ private fun EditorScreen(initialUri: Uri?, onClose: () -> Unit) {
                 else -> EditorBody(
                     value = bodyText,
                     onValueChange = { bodyText = it },
+                    title = titleText,
+                    onTitleChange = { titleText = it },
                     embedBasenames = embedLines.mapNotNull { extractEmbedBasename(it) },
                     tags = tags,
                     onAddTag = { tag ->
@@ -760,6 +773,8 @@ private fun EditorScreen(initialUri: Uri?, onClose: () -> Unit) {
 private fun EditorBody(
     value: TextFieldValue,
     onValueChange: (TextFieldValue) -> Unit,
+    title: String,
+    onTitleChange: (String) -> Unit,
     embedBasenames: List<String>,
     tags: List<String>,
     onAddTag: (String) -> Unit,
@@ -824,6 +839,24 @@ private fun EditorBody(
         Spacer(Modifier.height(12.dp))
         HorizontalDivider(color = foreground.copy(alpha = 0.15f))
         Spacer(Modifier.height(12.dp))
+        TextField(
+            value = title,
+            onValueChange = onTitleChange,
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            placeholder = { Text(stringResource(R.string.editor_title_hint), color = foreground.copy(alpha = 0.5f)) },
+            textStyle = MaterialTheme.typography.titleLarge,
+            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+            colors = TextFieldDefaults.colors(
+                focusedContainerColor = Color.Transparent,
+                unfocusedContainerColor = Color.Transparent,
+                focusedTextColor = foreground,
+                unfocusedTextColor = foreground,
+                cursorColor = foreground,
+                focusedIndicatorColor = Color.Transparent,
+                unfocusedIndicatorColor = Color.Transparent,
+            ),
+        )
         TextField(
             value = value,
             onValueChange = onValueChange,
@@ -1104,6 +1137,7 @@ private fun attemptSaveAndClose(
     scope: CoroutineScope,
     context: Context,
     bodyText: String,
+    title: String,
     embedLines: List<String>,
     currentUri: String?,
     color: NoteColor,
@@ -1127,7 +1161,10 @@ private fun attemptSaveAndClose(
     // anders zou typen van `#fyp` in de editor alsnog Obsidian's graph view
     // vervuilen. Spiegelt het gedrag van de plugin's edit-modal en de
     // Storage.saveNote-path. Embeds worden niet aangeraakt (regex matcht ze niet).
-    val safeBody = Storage.neutralizeBodyHashtags(bodyText)
+    // Titel terug als leidende `# kop`; lege titel → geen kop, dan leidt de
+    // kaart 'm af uit de body (ongewijzigd fallback-gedrag).
+    val merged = joinHeadingTitle(title, bodyText)
+    val safeBody = Storage.neutralizeBodyHashtags(merged)
     val combinedBody = combineBodyAndEmbeds(safeBody, embedLines)
     if (combinedBody.isBlank()) {
         if (currentUri == null) {
@@ -1169,6 +1206,32 @@ private fun attemptSaveAndClose(
  * eventuele dubbele newline die ontstaat door het wegfilteren van een embed.
  */
 private val EMBED_LINE_REGEX = Regex("^\\s*!\\[\\[[^\\]]+]]\\s*$")
+
+/**
+ * Splitst een body in een expliciete titel (de eerste `# kop`-regel) en de
+ * rest. Geen kop → lege titel en de hele tekst blijft body; de kaart leidt dan
+ * zoals vanouds een titel af uit de eerste woorden van de body.
+ */
+internal fun splitHeadingTitle(text: String): Pair<String, String> {
+    val lines = text.split("\n")
+    var i = 0
+    while (i < lines.size && lines[i].isBlank()) i++
+    val heading = if (i < lines.size) Regex("^#{1,6}\\s+(.*\\S)\\s*$").find(lines[i]) else null
+    if (heading == null) return "" to text
+    val body = lines.drop(i + 1).joinToString("\n").trimStart('\n')
+    return heading.groupValues[1].trim() to body
+}
+
+/**
+ * Voegt een expliciete titel en body weer samen. Lege titel → alleen body
+ * (geen kop), zodat de kaart 'm automatisch afleidt.
+ */
+internal fun joinHeadingTitle(title: String, body: String): String {
+    val t = title.trim()
+    val b = body.trim('\n')
+    if (t.isEmpty()) return b
+    return if (b.isEmpty()) "# $t" else "# $t\n\n$b"
+}
 
 internal fun splitBodyAndEmbeds(body: String): Pair<String, List<String>> {
     val embeds = mutableListOf<String>()

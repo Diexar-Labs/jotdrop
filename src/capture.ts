@@ -1,6 +1,6 @@
 import { App, Modal, Notice, TFile, normalizePath } from "obsidian";
 import type JotDropPlugin from "./main";
-import { InsertLinkModal } from "./edit";
+import { InsertLinkModal, joinHeadingTitle } from "./edit";
 import {
   colorLabel,
   COLOR_NAMES,
@@ -14,6 +14,7 @@ import { t } from "./i18n";
 
 export class QuickCaptureModal extends Modal {
   plugin: JotDropPlugin;
+  titleInputEl!: HTMLInputElement;
   textArea!: HTMLTextAreaElement;
   private chipsEl!: HTMLElement;
   private tagInputEl: HTMLInputElement | null = null;
@@ -40,6 +41,11 @@ export class QuickCaptureModal extends Modal {
     contentEl.addClass("jotdrop-capture");
 
     this.renderControls(contentEl);
+
+    this.titleInputEl = contentEl.createEl("input", {
+      cls: "jotdrop-edit-title",
+      attr: { type: "text", placeholder: t("title_input_placeholder") },
+    });
 
     this.textArea = contentEl.createEl("textarea", {
       cls: "jotdrop-capture-textarea",
@@ -206,11 +212,15 @@ export class QuickCaptureModal extends Modal {
   }
 
   async save(): Promise<void> {
-    let content = this.textArea.value.trim();
-    if (!content) {
+    // Title is optional; an empty title means the card derives one from the
+    // first words of the body (same fallback as everywhere else).
+    const titleVal = this.titleInputEl.value.trim();
+    const bodyVal = this.textArea.value.trim();
+    if (!titleVal && !bodyVal) {
       new Notice(t("notice_empty"));
       return;
     }
+    let content = joinHeadingTitle(titleVal, bodyVal);
 
     // If the text contains a URL, fetch OG meta and embed the thumbnail.
     // With multiple URLs we try them sequentially until one yields an OG image.

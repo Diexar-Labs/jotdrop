@@ -493,6 +493,10 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  /* Scope reflow/restyle of the image area to itself. Safe here because the
+     wrapper already clips (overflow: hidden) and has a bounded height — keeps
+     scrolling a large grid cheaper without touching the masonry column flow. */
+  contain: layout style;
 }
 
 .jotdrop-card-thumbnail img {
@@ -994,6 +998,24 @@
 
 .jotdrop-edit-thumbnail:hover {
   border-color: var(--interactive-accent);
+}
+
+.jotdrop-edit-title {
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-family: inherit;
+  font-size: 1.05em;
+  font-weight: 600;
+}
+
+.jotdrop-edit-title:focus {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 1px;
 }
 
 .jotdrop-edit-body {

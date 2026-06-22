@@ -24,18 +24,26 @@ export interface JotDropSettings {
   clipServerPort: number;
   /** Bearer token the extension must send. Generated automatically. */
   clipServerToken: string;
+  /**
+   * One-time guard: older installs defaulted to "modified-desc", which made
+   * cards jump on every edit. On first load we switch that old default to the
+   * stable "created-desc". The flag stops us from overriding a later, deliberate
+   * choice of "modified-desc" by the user.
+   */
+  sortMigratedToCreated: boolean;
 }
 
 export const DEFAULT_SETTINGS: JotDropSettings = {
   notesFolder: "Mini Notes",
   archiveFolder: "Mini Notes/Archive",
-  sortMode: "modified-desc",
+  sortMode: "created-desc",
   cardWidth: 240,
   showArchived: false,
   downloadImages: true,
   clipServerEnabled: false,
   clipServerPort: 27124,
   clipServerToken: "",
+  sortMigratedToCreated: false,
 };
 
 export class JotDropSettingTab extends PluginSettingTab {

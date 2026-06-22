@@ -106,7 +106,14 @@ object Storage {
      */
     fun sanitizeTitleFromShare(title: String): String {
         val tagPattern = Regex("(?<![\\\\\\w/])#[A-Za-z_/][\\w/-]*")
-        return tagPattern.replace(title, "")
+        // URL's uit de titel halen: TikTok e.d. leveren de link soms in zowel
+        // EXTRA_SUBJECT (→ titel) als EXTRA_TEXT (→ markdown-link). Bleef de URL
+        // in de titel staan, dan toonde de kaart twee identieke links. De link
+        // hoort alleen in de markdown-link; valt de titel daardoor leeg, dan
+        // vult buildPlaceholder() 'm met dezelfde URL als de link → één chip.
+        val urlPattern = Regex("https?://\\S+")
+        return urlPattern.replace(title, "")
+            .let { tagPattern.replace(it, "") }
             .replace(Regex("\\s+"), " ")
             .trim()
             .trim(',', ';', '·', '|', '-', '–', '—')
@@ -759,16 +766,45 @@ object Storage {
      * geven.
      */
     private fun extractUrls(body: String): List<String> {
-        val stripped = body
+        var stripped = body
             .replace(Regex("!\\[\\[[^\\]]+]]"), "")
             .replace(Regex("!\\[[^\\]]*]\\([^)]+\\)"), "")
-        val matches = Regex("https?://[^\\s)<>\"']+").findAll(stripped)
+        // Eerste heading-regel (de titel) weghalen: een URL die al als kaart-titel
+        // wordt getoond mag niet óók als losse chip verschijnen. Dit was de
+        // oorzaak van twee identieke links per kaart bij gedeelde TikTok-video's.
+        stripped = stripped.replaceFirst(Regex("(?m)^[ \\t]*#{1,6}[ \\t]+.*$"), "")
+
         val seen = LinkedHashSet<String>()
-        for (m in matches) {
-            val clean = m.value.trimEnd('.', ',', ')', ']', '}', '"', '\'', '!', '?', ';', ':')
-            if (clean.isNotEmpty()) seen.add(clean)
+        val out = ArrayList<String>()
+        fun push(raw: String) {
+            val clean = raw.trimEnd('.', ',', ')', ']', '}', '"', '\'', '!', '?', ';', ':')
+            if (clean.isEmpty()) return
+            if (seen.add(canonicalUrlKey(clean))) out.add(clean)
         }
-        return seen.toList()
+        // Markdown-link-targets eerst; verwijder de hele `[tekst](url)` zodat een
+        // URL die als link-tekst staat niet nog eens als losse URL meetelt.
+        stripped = Regex("\\[[^\\]\\n]*]\\((https?://[^)\\s]+)\\)").replace(stripped) { m ->
+            push(m.groupValues[1]); " "
+        }
+        for (m in Regex("https?://[^\\s)<>\"']+").findAll(stripped)) push(m.value)
+        return out
+    }
+
+    /**
+     * Genormaliseerde sleutel voor URL-deduplicatie: host zonder `www.`, pad
+     * zonder trailing slash. Query/fragment blijven behouden (kunnen content
+     * identificeren). Zo vallen `www.tiktok.com/x` en `tiktok.com/x/` samen.
+     */
+    private fun canonicalUrlKey(url: String): String {
+        return try {
+            val u = java.net.URI(url)
+            val host = (u.host ?: "").lowercase().removePrefix("www.")
+            val path = (u.rawPath ?: "").trimEnd('/')
+            val query = if (u.rawQuery != null) "?" + u.rawQuery else ""
+            "$host$path$query"
+        } catch (_: Exception) {
+            url.trim().lowercase()
+        }
     }
 
     private fun generateFilename(content: String): String {

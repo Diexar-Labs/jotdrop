@@ -17,6 +17,7 @@ import {
 
 interface EditableNote {
   file?: TFile;
+  title: string;
   body: string;
   embedLines: string[];
   color: ColorName;
@@ -34,8 +35,10 @@ export class EditNoteModal extends Modal {
   private plugin: JotDropPlugin;
   private file: TFile;
   private state!: EditableNote;
+  private originalTitle = "";
   private originalBody = "";
   private originalEmbeds: string[] = [];
+  private titleInputEl!: HTMLInputElement;
   private bodyEl!: HTMLTextAreaElement;
   private chipsEl!: HTMLElement;
   private tagInputEl: HTMLInputElement | null = null;
@@ -53,18 +56,23 @@ export class EditNoteModal extends Modal {
     const raw = await this.app.vault.read(this.file);
     const rawBody = stripFrontmatter(raw).replace(/^\n+/, "");
     const { textPart, embeds } = splitBodyAndEmbeds(rawBody);
+    // Split off the explicit title (first `# heading`). No heading → empty
+    // title and the card keeps deriving one from the first words of the body.
+    const { title, body } = splitHeadingTitle(textPart);
     const meta = readMeta(this.app, this.file);
 
     this.state = {
       file: this.file,
-      body: textPart,
+      title,
+      body,
       embedLines: embeds,
       color: meta.color,
       tags: [...meta.tags],
       pinned: meta.pinned,
       reminder: meta.reminder,
     };
-    this.originalBody = textPart;
+    this.originalTitle = title;
+    this.originalBody = body;
     this.originalEmbeds = [...embeds];
 
     this.buildLayout();
@@ -78,6 +86,15 @@ export class EditNoteModal extends Modal {
     this.renderControls(controls);
 
     this.renderEmbedThumbnail(root);
+
+    this.titleInputEl = root.createEl("input", {
+      cls: "jotdrop-edit-title",
+      attr: { type: "text", placeholder: t("title_input_placeholder") },
+    });
+    this.titleInputEl.value = this.state.title;
+    this.titleInputEl.addEventListener("input", () => {
+      this.state.title = this.titleInputEl.value;
+    });
 
     this.bodyEl = root.createEl("textarea", {
       cls: "jotdrop-edit-body",
@@ -336,7 +353,10 @@ export class EditNoteModal extends Modal {
       const embedsChanged =
         this.state.embedLines.length !== this.originalEmbeds.length ||
         this.state.embedLines.some((e, i) => e !== this.originalEmbeds[i]);
-      const bodyChanged = this.state.body !== this.originalBody || embedsChanged;
+      const bodyChanged =
+        this.state.body !== this.originalBody ||
+        this.state.title !== this.originalTitle ||
+        embedsChanged;
       await updateMeta(this.app, this.file, {
         color: this.state.color,
         tags: this.state.tags,
@@ -348,7 +368,9 @@ export class EditNoteModal extends Modal {
         const current = await this.app.vault.read(this.file);
         const fmMatch = current.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
         const fm = fmMatch ? fmMatch[0] : "";
-        const safeBody = neutralizeInlineHashtags(this.state.body);
+        // Re-attach the title as the leading `# heading`; empty title → none.
+        const merged = joinHeadingTitle(this.state.title, this.state.body);
+        const safeBody = neutralizeInlineHashtags(merged);
         const combined = combineBodyAndEmbeds(safeBody, this.state.embedLines);
         const newContent = `${fm}${combined.replace(/^\n+/, "")}`;
         await this.app.vault.modify(this.file, newContent);
@@ -400,6 +422,33 @@ export class InsertLinkModal extends SuggestModal<TFile> {
     const linkPath = matches.length === 1 ? item.basename : item.path.replace(/\.md$/, "");
     this.onPick(linkPath);
   }
+}
+
+/**
+ * Splits a note body into an explicit title (the first `# heading` line) and
+ * the rest. If the first non-blank line is not a heading, the title is empty
+ * and the whole text stays as the body — the card then derives a title from the
+ * first words of the body (the long-standing fallback behavior, kept intact).
+ */
+export function splitHeadingTitle(text: string): { title: string; body: string } {
+  const lines = text.split("\n");
+  let i = 0;
+  while (i < lines.length && lines[i].trim() === "") i++;
+  const heading = i < lines.length ? lines[i].match(/^#{1,6}\s+(.*\S)\s*$/) : null;
+  if (!heading) return { title: "", body: text };
+  const body = lines.slice(i + 1).join("\n").replace(/^\n+/, "");
+  return { title: heading[1].trim(), body };
+}
+
+/**
+ * Re-joins an explicit title and body. An empty title yields the body only (no
+ * heading), so the card falls back to auto-deriving its title.
+ */
+export function joinHeadingTitle(title: string, body: string): string {
+  const t = title.trim();
+  const b = body.replace(/^\n+/, "").replace(/\n+$/, "");
+  if (!t) return b;
+  return b ? `# ${t}\n\n${b}` : `# ${t}`;
 }
 
 const EMBED_LINE_REGEX = /^\s*!\[\[[^\]]+\]\]\s*$/;

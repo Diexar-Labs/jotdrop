@@ -139,6 +139,7 @@
     <string name="editor_title_new">New note</string>
     <string name="editor_title_edit">Edit note</string>
     <string name="editor_hint">Write here…</string>
+    <string name="editor_title_hint">Title (optional)</string>
 
     <string name="delete_title">Delete note?</string>
     <string name="delete_message">This action cannot be undone.</string>
