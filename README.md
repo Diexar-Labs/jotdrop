@@ -129,6 +129,15 @@ Install [Syncthing](https://syncthing.net/) on phone + laptop, point both at you
 
 The clip server only binds to `127.0.0.1` and never exposes itself on the network. Off by default.
 
+### Staying up to date
+
+Manual installs don't auto-update, so here's how to get notified of new releases:
+
+- **Obsidian plugin — via Community plugins:** once installed from Browse, Obsidian checks daily and shows an "Update available" badge in Settings → Community plugins. One click updates it.
+- **Obsidian plugin — manual / pre-release:** use [BRAT](https://github.com/TfTHacker/obsidian42-brat) ("Obsidian42 - BRAT"). Add `Diexar-Labs/jotdrop` as a beta plugin; BRAT watches this repo's releases and updates the plugin for you.
+- **Android app:** the sideloaded APK won't update itself. The easiest fix is [Obtainium](https://github.com/ImranR98/Obtainium) — add `https://github.com/Diexar-Labs/jotdrop` as an app and it tracks releases and installs new APKs automatically (the debug signature is stable, so updates install cleanly over the old version).
+- **Anyone:** on [this repository](https://github.com/Diexar-Labs/jotdrop), click **Watch → Custom → Releases** to get a notification on every new release.
+
 ## How it works
 
 JotDrop is intentionally simple plumbing:

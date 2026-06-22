@@ -54,6 +54,8 @@ import androidx.compose.material.icons.filled.DoneAll
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PushPin
@@ -93,6 +95,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -442,6 +445,40 @@ private fun noteCreatedMs(note: NoteSummary, fmt: SimpleDateFormat): Long {
 }
 
 /**
+ * Wegklikbare balk bovenaan het dashboard die meldt dat er een nieuwere release
+ * is. Toont een update-icoon + tekst (niet alleen kleur — kleurenblind-veilig),
+ * een "Bekijken"-knop naar de release-pagina en een ×-knop om te negeren.
+ */
+@Composable
+private fun UpdateBanner(version: String, onView: () -> Unit, onDismiss: () -> Unit) {
+    Surface(
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(start = 12.dp, top = 4.dp, end = 4.dp, bottom = 4.dp),
+        ) {
+            Icon(Icons.Filled.SystemUpdate, contentDescription = null)
+            Text(
+                text = stringResource(R.string.update_available, version),
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onView) { Text(stringResource(R.string.update_view)) }
+            IconButton(onClick = onDismiss) {
+                Icon(Icons.Filled.Close, contentDescription = stringResource(R.string.update_dismiss))
+            }
+        }
+    }
+}
+
+/**
  * Recycling-hint voor de LazyGrid: kaarten met dezelfde lay-out-vorm
  * (thumbnail / audio-banner / alleen tekst) hergebruiken elkaars compositie
  * tijdens scroll, wat het stotteren bij veel kaarten vermindert.
@@ -509,6 +546,17 @@ private fun NotesListScreen(
     var selectedNoteUris by remember { mutableStateOf<Set<Uri>>(emptySet()) }
     var showBulkArchiveDialog by remember { mutableStateOf(false) }
     var showBulkDeleteDialog by remember { mutableStateOf(false) }
+    var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
+    var overflowOpen by remember { mutableStateOf(false) }
+
+    // Eenmalige, throttled update-check (max 1x/dag) bij openen van het dashboard.
+    // Banner verschijnt alleen als de gevonden versie niet eerder is weggetikt.
+    LaunchedEffect(Unit) {
+        val info = UpdateChecker.check(context, force = false)
+        if (info != null && !UpdateChecker.isDismissed(context, info.version)) {
+            updateInfo = info
+        }
+    }
 
     // Bron-notities + afgeleiden — gelift uit de Loaded-tak zodat de selection
     // top-bar (op Scaffold-niveau) toegang heeft tot het gefilterde aantal voor
@@ -619,6 +667,36 @@ private fun NotesListScreen(
                         IconButton(onClick = onOpenSettings) {
                             Icon(Icons.Filled.Settings, contentDescription = stringResource(R.string.action_settings))
                         }
+                        Box {
+                            IconButton(onClick = { overflowOpen = true }) {
+                                Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.more_options))
+                            }
+                            DropdownMenu(
+                                expanded = overflowOpen,
+                                onDismissRequest = { overflowOpen = false },
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.update_check)) },
+                                    leadingIcon = { Icon(Icons.Filled.SystemUpdate, contentDescription = null) },
+                                    onClick = {
+                                        overflowOpen = false
+                                        scope.launch {
+                                            val info = UpdateChecker.check(context, force = true)
+                                            if (info != null) {
+                                                updateInfo = info
+                                            } else {
+                                                snackbarHostState.showSnackbar(
+                                                    context.getString(
+                                                        R.string.update_up_to_date,
+                                                        UpdateChecker.installedVersion(context) ?: "",
+                                                    )
+                                                )
+                                            }
+                                        }
+                                    },
+                                )
+                            }
+                        }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
                         containerColor = Color.Transparent,
@@ -728,6 +806,18 @@ private fun NotesListScreen(
                         CenteredText(stringResource(R.string.empty_no_notes))
                     } else {
                         Column(modifier = Modifier.fillMaxSize()) {
+                            updateInfo?.let { info ->
+                                UpdateBanner(
+                                    version = info.version,
+                                    onView = {
+                                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(info.url)))
+                                    },
+                                    onDismiss = {
+                                        UpdateChecker.dismiss(context, info.version)
+                                        updateInfo = null
+                                    },
+                                )
+                            }
                             SearchAndFilterBar(
                                 query = searchQuery,
                                 onQueryChange = { searchQuery = it },

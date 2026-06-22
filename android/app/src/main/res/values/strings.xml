@@ -140,6 +140,12 @@
     <string name="editor_title_edit">Edit note</string>
     <string name="editor_hint">Write here…</string>
     <string name="editor_title_hint">Title (optional)</string>
+    <string name="more_options">More options</string>
+    <string name="update_check">Check for updates</string>
+    <string name="update_available">New version %1$s available</string>
+    <string name="update_view">View</string>
+    <string name="update_dismiss">Dismiss</string>
+    <string name="update_up_to_date">You\'re on the latest version (%1$s)</string>
 
     <string name="delete_title">Delete note?</string>
     <string name="delete_message">This action cannot be undone.</string>
