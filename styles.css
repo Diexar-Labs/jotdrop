@@ -835,6 +835,17 @@
   color: var(--text-normal);
 }
 
+/* Companion-apps nudge in the empty state — subtle, one line */
+.jotdrop-empty-app-hint {
+  margin-top: 16px;
+  font-size: var(--font-ui-smaller);
+  line-height: 1.5;
+}
+/* Underline the link so it reads as a link without relying on colour */
+.jotdrop-empty-app-link {
+  text-decoration: underline;
+}
+
 /* Quick capture modal */
 
 .jotdrop-capture-controls,

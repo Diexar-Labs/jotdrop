@@ -665,6 +665,17 @@ export class JotDropView extends ItemView {
       if (cards.length === 0) {
         empty.createEl("h3", { text: t("empty_no_notes_title") });
         empty.createEl("p", { text: t("empty_no_notes_desc") });
+        const appHint = empty.createEl("p", { cls: "jotdrop-empty-app-hint" });
+        appHint.appendText(t("empty_no_notes_app_hint") + " ");
+        appHint.createEl("a", {
+          cls: "jotdrop-empty-app-link",
+          text: t("empty_no_notes_app_link"),
+          attr: {
+            href: "https://github.com/Diexar-Labs/jotdrop#install",
+            target: "_blank",
+            rel: "noopener noreferrer",
+          },
+        });
       } else {
         empty.createEl("h3", { text: t("empty_no_results") });
         const clearBtn = empty.createEl("button", {

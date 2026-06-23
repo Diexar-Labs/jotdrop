@@ -104,6 +104,9 @@ const EN: Record<string, string> = {
   empty_no_notes_title: "No notes yet",
   empty_no_notes_desc:
     'Click "New note" or use the hotkey to create your first card.',
+  empty_no_notes_app_hint:
+    "Don't forget the Android app and the Chrome web clipper — together they give JotDrop that true Google Keep feeling.",
+  empty_no_notes_app_link: "Get them →",
   section_pinned: "Pinned",
   section_other: "Other",
 
@@ -280,6 +283,9 @@ const NL: Record<string, string> = {
   empty_no_notes_title: "Nog geen notities",
   empty_no_notes_desc:
     'Klik op "Nieuwe notitie" of gebruik de hotkey om je eerste kaartje te maken.',
+  empty_no_notes_app_hint:
+    "Vergeet de Android-app en de Chrome-webclipper niet — samen geven ze JotDrop dat échte Google Keep-gevoel.",
+  empty_no_notes_app_link: "Download ze →",
   section_pinned: "Vastgezet",
   section_other: "Overige",
 

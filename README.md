@@ -6,7 +6,9 @@
 
 **Google Keep, on your own files.**
 
-A card-grid quick-capture for [Obsidian](https://obsidian.md/) with a matching Android share-target app - sync them with [Syncthing](https://syncthing.net/) and you have Keep, fully offline, fully yours.
+JotDrop is a **trio**: an [Obsidian](https://obsidian.md/) plugin (the card grid in your vault), a companion **Android app** (share-sheet capture, OCR, voice memos), and a **Chrome web clipper**. Sync them with [Syncthing](https://syncthing.net/) and you have Google Keep — fully offline, fully yours.
+
+> **For the full Google Keep experience, install all three.** The plugin shows and organises your notes; the [Android app](#android-app) and [Chrome extension](#chrome-extension-optional-web-clipper) are what give you Google Keep's capture-from-anywhere. Grab them from the [latest release](https://github.com/Diexar-Labs/jotdrop/releases/latest).
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Obsidian plugin](https://img.shields.io/badge/Obsidian-plugin-7c3aed)](https://github.com/Diexar-Labs/jotdrop/releases)
