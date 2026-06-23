@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "JotDrop Web Clipper",
   "version": "0.1.2",
-  "description": "Save the current page as a card in JotDrop (Obsidian).",
+  "description": "Web clipper for JotDrop, a Google Keep alternative for Obsidian — save any page to your vault as a Markdown note.",
   "permissions": ["activeTab", "storage", "scripting"],
   "host_permissions": [
     "http://127.0.0.1/*",

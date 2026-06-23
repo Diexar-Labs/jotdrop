@@ -1,7 +1,7 @@
 {
   "name": "jotdrop",
   "version": "0.1.0",
-  "description": "Google Keep–style quick-capture card grid for Obsidian.",
+  "description": "A private, open-source Google Keep alternative for Obsidian — a Google Keep–style quick-capture card grid with a companion Android app and Chrome web clipper.",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",

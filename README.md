@@ -1,12 +1,12 @@
 <div align="center">
 
-<img src="docs/banner.png" alt="JotDrop - Google Keep-style quick-capture for Obsidian and Android" width="720" />
+<img src="docs/banner.png" alt="JotDrop — a private, open-source Google Keep alternative for Obsidian and Android" width="720" />
 
 # JotDrop
 
 **Google Keep, on your own files.**
 
-JotDrop is a **trio**: an [Obsidian](https://obsidian.md/) plugin (the card grid in your vault), a companion **Android app** (share-sheet capture, OCR, voice memos), and a **Chrome web clipper**. Sync them with [Syncthing](https://syncthing.net/) and you have Google Keep — fully offline, fully yours.
+JotDrop is a free, open-source **Google Keep alternative** for [Obsidian](https://obsidian.md/) — a **trio**: the plugin (the card grid in your vault), a companion **Android app** (share-sheet capture, OCR, voice memos), and a **Chrome web clipper**. Sync them with [Syncthing](https://syncthing.net/) and you have Google Keep — fully offline, fully yours.
 
 > **For the full Google Keep experience, install all three.** The plugin shows and organises your notes; the [Android app](#android-app) and [Chrome extension](#chrome-extension-optional-web-clipper) are what give you Google Keep's capture-from-anywhere. Grab them from the [latest release](https://github.com/Diexar-Labs/jotdrop/releases/latest).
 
@@ -23,7 +23,7 @@ JotDrop is a **trio**: an [Obsidian](https://obsidian.md/) plugin (the card grid
 
 ## Why JotDrop?
 
-Google Keep is great - until you remember Google reads everything you put in there. JotDrop gives you the same fast, friction-free "dump a thought" experience, but every note is a plain Markdown file in your own Obsidian vault. No cloud account, no ads, no telemetry, no lock-in. Sync between phone and laptop with Syncthing (free) or any folder-sync you already use.
+JotDrop is a private, open-source **Google Keep alternative**. Google Keep is great - until you remember Google reads everything you put in there. JotDrop gives you the same fast, friction-free "dump a thought" experience, but every note is a plain Markdown file in your own Obsidian vault. No cloud account, no ads, no telemetry, no lock-in. Sync between phone and laptop with Syncthing (free) or any folder-sync you already use.
 
 - **Quick capture, anywhere.** Share a link from any Android app → JotDrop turns it into a note with a preview card. Open the app, tap once, type, done.
 - **Card grid in Obsidian.** A dedicated view shows your notes as Keep-style cards: titles, colors, tags, archived, pinned-on-top. Filter, sort, search.
