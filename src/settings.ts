@@ -58,6 +58,23 @@ export class JotDropSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
 
+    // JotDrop is a trio (plugin + Android app + Chrome clipper). Most installs
+    // come from the in-app Browse listing and never see the README, so the
+    // settings page is where the other two parts get discovered.
+    const companions = containerEl.createDiv({ cls: "jotdrop-companions" });
+    new Setting(companions).setName(t("section_companions")).setHeading();
+    companions.createEl("p", { text: t("companions_blurb") });
+    const companionsRow = companions.createDiv({ cls: "jotdrop-support-buttons" });
+    const releasesLink = companionsRow.createEl("a", {
+      cls: "jotdrop-support-button",
+      attr: {
+        href: "https://github.com/Diexar-Labs/jotdrop/releases/latest",
+        target: "_blank",
+        rel: "noopener noreferrer",
+      },
+    });
+    releasesLink.setText(t("companions_download"));
+
     new Setting(containerEl)
       .setName(t("settings_notes_folder"))
       .setDesc(t("settings_notes_folder_desc"))

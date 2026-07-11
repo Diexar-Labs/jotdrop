@@ -3,7 +3,7 @@
   "name": "JotDrop",
   "version": "0.18.0",
   "minAppVersion": "1.8.7",
-  "description": "A private, offline Google Keep alternative for your vault: a Google Keep–style quick-capture card grid, paired with a companion Android app (share-sheet, OCR, voice) and a Chrome web clipper. No account, no cloud, every note plain Markdown.",
+  "description": "A private, offline Google Keep alternative for your vault: a trio of quick-capture card grid, companion Android app (share-sheet, OCR, voice), and Chrome web clipper. Best with all three installed. No account, no cloud, plain Markdown.",
   "author": "Diexar Labs",
   "authorUrl": "https://github.com/Diexar-Labs",
   "fundingUrl": {

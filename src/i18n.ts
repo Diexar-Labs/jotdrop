@@ -163,6 +163,12 @@ const EN: Record<string, string> = {
   settings_download_images_desc:
     "Download the article thumbnail and save it in your vault when capturing a URL. Turn off to save only the title and link.",
 
+  // Companion apps (the JotDrop trio)
+  section_companions: "JotDrop is a trio",
+  companions_blurb:
+    "This plugin is one third of JotDrop. For the full Google Keep experience, also install the free Android app (share-sheet capture, OCR, voice memos) and the Chrome web clipper. All three meet in your vault.",
+  companions_download: "⬇ Get the Android app & web clipper",
+
   // Clip server (Chrome extension)
   settings_clip_server_section: "Web clipper (Chrome extension)",
   settings_clip_server_desc:
@@ -342,6 +348,11 @@ const NL: Record<string, string> = {
   settings_download_images: "Artikel-afbeeldingen opslaan",
   settings_download_images_desc:
     "Download de thumbnail van een artikel en sla die op in je vault bij het vastleggen van een URL. Zet uit om alleen titel en link op te slaan.",
+
+  section_companions: "JotDrop is een trio",
+  companions_blurb:
+    "Deze plugin is een derde van JotDrop. Installeer voor de volledige Google Keep-ervaring ook de gratis Android-app (delen vanuit elke app, OCR, spraakmemo's) en de Chrome-web-clipper. Alle drie komen samen in je vault.",
+  companions_download: "⬇ Download de Android-app & web-clipper",
 
   settings_clip_server_section: "Web-clipper (Chrome-extensie)",
   settings_clip_server_desc:

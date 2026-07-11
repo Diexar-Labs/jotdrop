@@ -1224,6 +1224,19 @@
   }
 }
 
+/* Trio-callout bovenaan settings — zelfde look als de steun-sectie */
+.jotdrop-companions {
+  margin-bottom: 24px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.jotdrop-companions p {
+  margin: 0 0 12px;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  line-height: 1.5;
+}
+
 /* Over/Steun-sectie in settings tab — discreet, geen CTA-knal */
 .jotdrop-support {
   margin-top: 28px;

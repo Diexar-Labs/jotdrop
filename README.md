@@ -8,7 +8,7 @@
 
 JotDrop is a free, open-source **Google Keep alternative** for [Obsidian](https://obsidian.md/) — a **trio**: the plugin (the card grid in your vault), a companion **Android app** (share-sheet capture, OCR, voice memos), and a **Chrome web clipper**. Sync them with [Syncthing](https://syncthing.net/) and you have Google Keep — fully offline, fully yours.
 
-> **For the full Google Keep experience, install all three.** The plugin shows and organises your notes; the [Android app](#android-app) and [Chrome extension](#chrome-extension-optional-web-clipper) are what give you Google Keep's capture-from-anywhere. Grab them from the [latest release](https://github.com/Diexar-Labs/jotdrop/releases/latest).
+> **For the full Google Keep experience, install all three.** The plugin shows and organises your notes; the [Android app](#android-app) and [Chrome extension](#chrome-extension-web-clipper) are what give you Google Keep's capture-from-anywhere. Grab them from the [latest release](https://github.com/Diexar-Labs/jotdrop/releases/latest).
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Obsidian plugin](https://img.shields.io/badge/Obsidian-plugin-7c3aed)](https://github.com/Diexar-Labs/jotdrop/releases)
@@ -92,6 +92,12 @@ JotDrop is a private, open-source **Google Keep alternative**. Google Keep is gr
 
 > **TL;DR:** grab the files from the [latest release](https://github.com/Diexar-Labs/jotdrop/releases/latest), drop them in the right place, done. No build tools needed.
 
+JotDrop is a **trio**. Each part works on its own, but you only get the full Google Keep experience when all three are installed:
+
+1. **[Obsidian plugin](#obsidian-plugin-desktop--mobile)** - the Keep-style card grid: view, organise, edit.
+2. **[Android app](#android-app)** - capture from anywhere: share-sheet, OCR, voice memos.
+3. **[Chrome extension](#chrome-extension-web-clipper)** - clip web pages straight into your vault.
+
 ### Obsidian plugin (desktop + mobile)
 
 **Easiest — via Community plugins (recommended):**
@@ -122,7 +128,9 @@ Install [Syncthing](https://syncthing.net/) on phone + laptop, point both at you
 
 > **Recommended Syncthing setting:** enable **File Versioning** on the shared folder (Simple Versioning is fine), on both devices. Deleted and overwritten files are kept in `.stversions/` so an accidental delete — or a sync race, see [Known issues](#known-issues) — is recoverable instead of permanent.
 
-### Chrome extension (optional web clipper)
+### Chrome extension (web clipper)
+
+Part three of the trio - this is what replaces Keep's browser extension.
 
 1. In the Obsidian plugin's settings, enable **Web clipper** under "Clip server" and copy the token.
 2. Load the [`chrome-extension/`](chrome-extension/) folder as an unpacked extension in Chrome (`chrome://extensions` → Developer mode → Load unpacked).
