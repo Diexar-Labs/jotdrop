@@ -123,6 +123,8 @@ const EN: Record<string, string> = {
   notice_error: "Error: {0}",
   notice_deleted: "Deleted: {0}",
   notice_note_not_found: "Note not found: {0}",
+  notice_archived: "Archived: {0}",
+  notice_unarchived: "Restored from archive: {0}",
 
   // Reminders
   label_reminder: "Reminder:",
@@ -303,6 +305,8 @@ const NL: Record<string, string> = {
   notice_error: "Fout: {0}",
   notice_deleted: "Verwijderd: {0}",
   notice_note_not_found: "Geen notitie gevonden: {0}",
+  notice_archived: "Gearchiveerd: {0}",
+  notice_unarchived: "Terug uit archief: {0}",
 
   label_reminder: "Herinnering:",
   action_clear_reminder: "Wissen",

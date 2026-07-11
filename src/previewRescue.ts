@@ -162,7 +162,11 @@ export class PreviewRescue {
     }
     if (!hasPendingMarker(latest)) return;
 
-    const newContent = buildLinkNote(url, preview, url);
+    // Preserve frontmatter set while the preview was pending (tags/color/pin
+    // added to the fresh card would otherwise be wiped by the rewrite).
+    const fmMatch = latest.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
+    const fm = fmMatch ? fmMatch[0] : "";
+    const newContent = fm + buildLinkNote(url, preview, url);
     try {
       await this.plugin.app.vault.modify(file, newContent);
     } catch (e) {

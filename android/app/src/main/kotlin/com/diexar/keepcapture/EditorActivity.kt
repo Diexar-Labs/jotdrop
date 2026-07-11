@@ -22,6 +22,8 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Calendar
 import java.util.Locale
+import java.util.TimeZone
+import kotlinx.coroutines.sync.withLock
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -36,6 +38,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -104,8 +107,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.SnapshotStateList
+import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -181,6 +187,12 @@ class EditorActivity : ComponentActivity() {
     }
 }
 
+// Saver voor mutableStateListOf<String> in rememberSaveable (rotatie/procesdood).
+private val stringStateListSaver = listSaver<SnapshotStateList<String>, String>(
+    save = { it.toList() },
+    restore = { it.toMutableStateList() },
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () -> Unit) {
@@ -188,37 +200,47 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
     val scope = rememberCoroutineScope()
     val dark = isSystemInDarkTheme()
 
-    var currentUri by remember { mutableStateOf(initialUri?.toString()) }
+    // Alle inhouds-state is rememberSaveable: bij rotatie of procesdood
+    // (camera/foto-picker opent een andere app!) recreëert de activity en
+    // gooide `remember` alle ongetypte tekst weg. `loaded` is ook saveable,
+    // anders herlaadt de LaunchedEffect de notitie van schijf óver de
+    // herstelde (ongesavede) tekst heen.
+    var currentUri by rememberSaveable { mutableStateOf(initialUri?.toString()) }
     // Positie binnen de meegegeven kaartvolgorde; -1 = geen navigatie mogelijk.
-    var navIndex by remember { mutableStateOf(navUris.indexOf(initialUri?.toString())) }
+    var navIndex by rememberSaveable { mutableStateOf(navUris.indexOf(initialUri?.toString())) }
     val navEnabled = navUris.size >= 2 && navIndex >= 0
-    var loaded by remember { mutableStateOf(initialUri == null) }
+    var loaded by rememberSaveable { mutableStateOf(initialUri == null) }
     var loadError by remember { mutableStateOf<String?>(null) }
-    var bodyText by remember { mutableStateOf(TextFieldValue("")) }
-    var originalBody by remember { mutableStateOf("") }
+    var bodyText by rememberSaveable(stateSaver = TextFieldValue.Saver) {
+        mutableStateOf(TextFieldValue(""))
+    }
+    var originalBody by rememberSaveable { mutableStateOf("") }
     // Expliciete titel (de eerste `# kop`-regel). Leeg → de kaart leidt zoals
     // vanouds een titel af uit de eerste woorden van de body.
-    var titleText by remember { mutableStateOf("") }
-    var originalTitle by remember { mutableStateOf("") }
+    var titleText by rememberSaveable { mutableStateOf("") }
+    var originalTitle by rememberSaveable { mutableStateOf("") }
+    // Kop-diepte van de geladen titelregel (1 = `#`, 2 = `##`, …) — gaat mee
+    // terug bij opslaan zodat het niveau de round-trip overleeft.
+    var titleLevel by rememberSaveable { mutableStateOf(1) }
     // Image-embed-regels (`![[basename]]`) leven los van de editor-tekst zodat ze
     // niet als ruwe markdown in beeld staan. We tonen ze als thumbnail-strip
     // boven het textveld en plakken ze terug bij opslaan.
-    val embedLines = remember { mutableStateListOf<String>() }
-    var originalEmbeds by remember { mutableStateOf<List<String>>(emptyList()) }
-    var color by remember { mutableStateOf(NoteColor.DEFAULT) }
-    var pinned by remember { mutableStateOf(false) }
-    val tags = remember { mutableStateListOf<String>() }
-    var reminder by remember { mutableStateOf<String?>(null) }
-    var originalReminder by remember { mutableStateOf<String?>(null) }
+    val embedLines = rememberSaveable(saver = stringStateListSaver) { mutableStateListOf<String>() }
+    var originalEmbeds by rememberSaveable { mutableStateOf<List<String>>(emptyList()) }
+    var color by rememberSaveable { mutableStateOf(NoteColor.DEFAULT) }
+    var pinned by rememberSaveable { mutableStateOf(false) }
+    val tags = rememberSaveable(saver = stringStateListSaver) { mutableStateListOf<String>() }
+    var reminder by rememberSaveable { mutableStateOf<String?>(null) }
+    var originalReminder by rememberSaveable { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
     var showArchiveDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showColorPicker by remember { mutableStateOf(false) }
     var showLinkPicker by remember { mutableStateOf(false) }
     var photoMenuExpanded by remember { mutableStateOf(false) }
-    var pendingCameraUri by remember { mutableStateOf<Uri?>(null) }
-    var pendingCameraFile by remember { mutableStateOf<File?>(null) }
-    var pendingOcr by remember { mutableStateOf(false) }
+    var pendingCameraUri by rememberSaveable { mutableStateOf<Uri?>(null) }
+    var pendingCameraFile by rememberSaveable { mutableStateOf<File?>(null) }
+    var pendingOcr by rememberSaveable { mutableStateOf(false) }
 
     fun insertImageEmbed(basename: String) {
         // Embed leeft in een aparte lijst — pas bij opslaan plakken we hem
@@ -431,9 +453,10 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
                 val parsed = FrontmatterParser.parse(raw)
                 val cleanBody = parsed.body.removePrefix("\n")
                 val (textPart, embeds) = splitBodyAndEmbeds(cleanBody)
-                val (loadedTitle, loadedBody) = splitHeadingTitle(textPart)
+                val (loadedTitle, loadedBody, loadedLevel) = splitHeadingTitle(textPart)
                 titleText = loadedTitle
                 originalTitle = loadedTitle
+                titleLevel = loadedLevel
                 bodyText = TextFieldValue(loadedBody)
                 originalBody = loadedBody
                 embedLines.clear()
@@ -484,7 +507,11 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
         scope.launch {
             val newMeta = NoteMeta(color = newColor, tags = newTags, pinned = newPinned, reminder = newReminder)
             withContext(Dispatchers.IO) {
-                Storage.updateNoteMeta(context, Uri.parse(uri), newMeta)
+                // Onder de schrijf-mutex: updateNoteMeta is read-modify-write en
+                // mag niet verweven raken met een gelijktijdige body-save.
+                Storage.noteWriteMutex.withLock {
+                    Storage.updateNoteMeta(context, Uri.parse(uri), newMeta)
+                }
             }
             // Alleen reschedulen als de reminder daadwerkelijk wijzigde — anders
             // burnen we onnodig AlarmManager-calls bij tag/kleur/pin-updates.
@@ -506,6 +533,7 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
             context = context,
             bodyText = bodyText.text,
             title = titleText,
+            titleLevel = titleLevel,
             embedLines = embedLines.toList(),
             currentUri = currentUri,
             color = color,
@@ -558,6 +586,7 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
                 context = context,
                 bodyText = bodyText.text,
                 title = titleText,
+                titleLevel = titleLevel,
                 embedLines = embedLines.toList(),
                 currentUri = currentUri,
                 color = color,
@@ -695,6 +724,7 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
                                 context = context,
                                 bodyText = bodyText.text,
                                 title = titleText,
+                                titleLevel = titleLevel,
                                 embedLines = embedLines.toList(),
                                 currentUri = currentUri,
                                 color = color,
@@ -923,29 +953,45 @@ private fun EditorBody(
             .padding(horizontal = 16.dp, vertical = 12.dp),
     ) {
         if (embedItems.isNotEmpty()) {
-            // Horizontaal scrollbare strip: anders eten meerdere previews het halve scherm
-            // op en kun je nauwelijks nog door de tekst scrollen. Audio-embeds krijgen een
-            // play/pause-player; alle overige (image) types een thumbnail.
-            val embedScroll = rememberScrollState()
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(embedScroll),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                for ((name, uri) in embedItems) {
-                    if (isAudioBasename(name)) {
-                        AudioPlayerCard(uri = uri, foreground = foreground)
-                    } else {
-                        AsyncImage(
-                            model = uri,
-                            contentDescription = null,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .height(140.dp)
-                                .aspectRatio(4f / 3f)
-                                .clip(RoundedCornerShape(8.dp)),
-                        )
+            // Eén enkele afbeelding krijgt een grote hero-weergave over de volle
+            // breedte (max 260dp hoog, hele afbeelding zichtbaar) — pariteit met de
+            // desktop-edit-modal. Bij meerdere embeds valt hij terug op de compacte
+            // strip hieronder, anders eten de previews het halve scherm op.
+            val soloImage = embedItems.singleOrNull()?.takeIf { !isAudioBasename(it.first) }
+            if (soloImage != null) {
+                AsyncImage(
+                    model = soloImage.second,
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 140.dp, max = 260.dp)
+                        .clip(RoundedCornerShape(8.dp)),
+                )
+            } else {
+                // Horizontaal scrollbare strip: audio-embeds krijgen een
+                // play/pause-player; alle overige (image) types een thumbnail.
+                val embedScroll = rememberScrollState()
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(embedScroll),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    for ((name, uri) in embedItems) {
+                        if (isAudioBasename(name)) {
+                            AudioPlayerCard(uri = uri, foreground = foreground)
+                        } else {
+                            AsyncImage(
+                                model = uri,
+                                contentDescription = null,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier
+                                    .height(140.dp)
+                                    .aspectRatio(4f / 3f)
+                                    .clip(RoundedCornerShape(8.dp)),
+                            )
+                        }
                     }
                 }
             }
@@ -1311,6 +1357,7 @@ private fun attemptSaveAndClose(
     context: Context,
     bodyText: String,
     title: String,
+    titleLevel: Int = 1,
     embedLines: List<String>,
     currentUri: String?,
     color: NoteColor,
@@ -1336,7 +1383,7 @@ private fun attemptSaveAndClose(
     // Storage.saveNote-path. Embeds worden niet aangeraakt (regex matcht ze niet).
     // Titel terug als leidende `# kop`; lege titel → geen kop, dan leidt de
     // kaart 'm af uit de body (ongewijzigd fallback-gedrag).
-    val merged = joinHeadingTitle(title, bodyText)
+    val merged = joinHeadingTitle(title, bodyText, titleLevel)
     val safeBody = Storage.neutralizeBodyHashtags(merged)
     val combinedBody = combineBodyAndEmbeds(safeBody, embedLines)
     if (combinedBody.isBlank()) {
@@ -1350,19 +1397,23 @@ private fun attemptSaveAndClose(
     onSavingChange(true)
     scope.launch {
         val result: Result<Uri?> = withContext(Dispatchers.IO) {
-            if (currentUri != null) {
-                // Body wijzigt — herschrijf bestand met behoud van frontmatter.
-                val rawCurrent = Storage.readNote(context, Uri.parse(currentUri))
-                    .getOrElse { return@withContext Result.failure(it) }
-                val parsed = FrontmatterParser.parse(rawCurrent)
-                val fmBlock = parsed.frontmatter
-                val newRaw = if (fmBlock.isEmpty()) combinedBody else fmBlock + combinedBody
-                // Pas eerst meta toe (geeft consistente frontmatter), dan write.
-                Storage.updateNote(context, Uri.parse(currentUri), FrontmatterWriter.apply(newRaw, meta)).map { null }
-            } else {
-                // Nieuwe notitie: body + meta in één keer wegschrijven.
-                val combined = FrontmatterWriter.apply(combinedBody, meta)
-                Storage.createNote(context, combined).map { it.second }
+            // Onder de schrijf-mutex zodat deze read-modify-write niet kan
+            // verweven met een nog lopende meta-update of PreviewWorker-write.
+            Storage.noteWriteMutex.withLock {
+                if (currentUri != null) {
+                    // Body wijzigt — herschrijf bestand met behoud van frontmatter.
+                    val rawCurrent = Storage.readNote(context, Uri.parse(currentUri))
+                        .getOrElse { return@withContext Result.failure(it) }
+                    val parsed = FrontmatterParser.parse(rawCurrent)
+                    val fmBlock = parsed.frontmatter
+                    val newRaw = if (fmBlock.isEmpty()) combinedBody else fmBlock + combinedBody
+                    // Pas eerst meta toe (geeft consistente frontmatter), dan write.
+                    Storage.updateNote(context, Uri.parse(currentUri), FrontmatterWriter.apply(newRaw, meta)).map { null }
+                } else {
+                    // Nieuwe notitie: body + meta in één keer wegschrijven.
+                    val combined = FrontmatterWriter.apply(combinedBody, meta)
+                    Storage.createNote(context, combined).map { it.second }
+                }
             }
         }
         onSavingChange(false)
@@ -1385,25 +1436,28 @@ private val EMBED_LINE_REGEX = Regex("^\\s*!\\[\\[[^\\]]+]]\\s*$")
  * rest. Geen kop → lege titel en de hele tekst blijft body; de kaart leidt dan
  * zoals vanouds een titel af uit de eerste woorden van de body.
  */
-internal fun splitHeadingTitle(text: String): Pair<String, String> {
+internal fun splitHeadingTitle(text: String): Triple<String, String, Int> {
     val lines = text.split("\n")
     var i = 0
     while (i < lines.size && lines[i].isBlank()) i++
-    val heading = if (i < lines.size) Regex("^#{1,6}\\s+(.*\\S)\\s*$").find(lines[i]) else null
-    if (heading == null) return "" to text
+    val heading = if (i < lines.size) Regex("^(#{1,6})\\s+(.*\\S)\\s*$").find(lines[i]) else null
+    if (heading == null) return Triple("", text, 1)
     val body = lines.drop(i + 1).joinToString("\n").trimStart('\n')
-    return heading.groupValues[1].trim() to body
+    return Triple(heading.groupValues[2].trim(), body, heading.groupValues[1].length)
 }
 
 /**
  * Voegt een expliciete titel en body weer samen. Lege titel → alleen body
- * (geen kop), zodat de kaart 'm automatisch afleidt.
+ * (geen kop), zodat de kaart 'm automatisch afleidt. [level] bewaart de
+ * oorspronkelijke kop-diepte: een `## titel` mag bij opslaan niet stilletjes
+ * degraderen naar `#`.
  */
-internal fun joinHeadingTitle(title: String, body: String): String {
+internal fun joinHeadingTitle(title: String, body: String, level: Int = 1): String {
     val t = title.trim()
     val b = body.trim('\n')
     if (t.isEmpty()) return b
-    return if (b.isEmpty()) "# $t" else "# $t\n\n$b"
+    val marker = "#".repeat(level.coerceIn(1, 6))
+    return if (b.isEmpty()) "$marker $t" else "$marker $t\n\n$b"
 }
 
 internal fun splitBodyAndEmbeds(body: String): Pair<String, List<String>> {
@@ -1443,7 +1497,9 @@ internal fun extractEmbedBasename(embedLine: String): String? {
     return m.groupValues[1].trim().substringBefore("|").trim().takeIf { it.isNotEmpty() }
 }
 
-private val AUDIO_EXTENSIONS = setOf("m4a", "mp3", "wav", "ogg", "aac", "flac", "3gp", "amr")
+// "webm" hoort erbij: desktop-voicememo's (plugin, MediaRecorder opus/webm)
+// werden anders als kapotte afbeelding gerenderd i.p.v. als audio-player.
+private val AUDIO_EXTENSIONS = setOf("m4a", "mp3", "wav", "ogg", "aac", "flac", "3gp", "amr", "webm")
 
 internal fun isAudioBasename(name: String): Boolean {
     val ext = name.substringAfterLast('.', "").lowercase()
@@ -1625,15 +1681,22 @@ private fun ReminderEditor(
 
     if (showDatePicker) {
         val initial = parseReminderToCalendar(reminder) ?: defaultFutureCalendar()
+        // Material3's DatePicker rekent in UTC-middernacht: zowel de initiële
+        // selectie als selectedDateMillis. Lokale kalenders gebruiken zette
+        // de herinnering in west-van-UTC-tijdzones een dag te vroeg.
+        val initialUtc = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+            clear()
+            set(initial.get(Calendar.YEAR), initial.get(Calendar.MONTH), initial.get(Calendar.DAY_OF_MONTH))
+        }
         val datePickerState = rememberDatePickerState(
-            initialSelectedDateMillis = initial.timeInMillis,
+            initialSelectedDateMillis = initialUtc.timeInMillis,
         )
         DatePickerDialog(
             onDismissRequest = { showDatePicker = false },
             confirmButton = {
                 TextButton(onClick = {
                     val millis = datePickerState.selectedDateMillis ?: return@TextButton
-                    val cal = Calendar.getInstance().apply { timeInMillis = millis }
+                    val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply { timeInMillis = millis }
                     showDatePicker = false
                     showTimePicker = DateParts(
                         year = cal.get(Calendar.YEAR),

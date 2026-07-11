@@ -11,6 +11,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.TimeUnit
 
 /**
@@ -33,6 +34,7 @@ class PreviewWorker(
         val url = inputData.getString(KEY_URL)
             ?: return ListenableWorker.Result.failure()
         val fallbackSubject = inputData.getString(KEY_FALLBACK_SUBJECT)
+        val extraText = inputData.getString(KEY_EXTRA_TEXT)
         val noteUri = Uri.parse(noteUriString)
 
         val current = Storage.readNote(applicationContext, noteUri).getOrNull()
@@ -52,25 +54,39 @@ class PreviewWorker(
             "${e.javaClass.simpleName}: ${e.message?.take(80)}"
         } ?: if (preview?.imageBasename == null) "geen og:image gevonden" else null
 
-        val content = buildLinkNote(url, preview, fallbackSubject, diagnostic)
+        val content = buildLinkNote(url, preview, fallbackSubject, diagnostic, extraText)
 
-        return Storage.updateNote(applicationContext, noteUri, content).fold(
-            onSuccess = { ListenableWorker.Result.success() },
-            onFailure = { ListenableWorker.Result.retry() },
-        )
+        // Onder de schrijf-mutex: herlees vlak vóór de write. De OG-fetch duurt
+        // 3-15s; als de gebruiker in die tijd de notitie bewerkte (marker weg)
+        // of tags/kleur/pin zette (frontmatter erbij), mag de herschrijf die
+        // wijzigingen niet weggooien.
+        return Storage.noteWriteMutex.withLock {
+            val latest = Storage.readNote(applicationContext, noteUri).getOrNull()
+                ?: return@withLock ListenableWorker.Result.success()
+            if (!latest.contains(PENDING_MARKER)) {
+                return@withLock ListenableWorker.Result.success()
+            }
+            val fm = FrontmatterParser.parse(latest).frontmatter
+            Storage.updateNote(applicationContext, noteUri, fm + content).fold(
+                onSuccess = { ListenableWorker.Result.success() },
+                onFailure = { ListenableWorker.Result.retry() },
+            )
+        }
     }
 
     companion object {
         const val KEY_NOTE_URI = "note_uri"
         const val KEY_URL = "url"
         const val KEY_FALLBACK_SUBJECT = "subject"
+        const val KEY_EXTRA_TEXT = "extra_text"
         const val PENDING_MARKER = "<!-- jotdrop-preview: pending -->"
 
-        fun enqueue(context: Context, noteUri: Uri, url: String, subject: String?) {
+        fun enqueue(context: Context, noteUri: Uri, url: String, subject: String?, extraText: String? = null) {
             val data = workDataOf(
                 KEY_NOTE_URI to noteUri.toString(),
                 KEY_URL to url,
                 KEY_FALLBACK_SUBJECT to subject,
+                KEY_EXTRA_TEXT to extraText,
             )
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.CONNECTED)
@@ -83,13 +99,17 @@ class PreviewWorker(
             WorkManager.getInstance(context.applicationContext).enqueue(req)
         }
 
-        fun buildPlaceholder(url: String, subject: String?): String {
+        fun buildPlaceholder(url: String, subject: String?, extraText: String? = null): String {
             val rawTitle = subject?.trim()?.takeIf { it.isNotEmpty() } ?: url
             // Strippen — geen escapen — zodat de kaart-titel niet vol staat met `\#fyp`.
             val title = Storage.sanitizeTitleFromShare(rawTitle).ifEmpty { url }
             return buildString {
                 append("# "); append(title); append("\n\n")
                 append("["); append(title); append("]("); append(url); append(")\n\n")
+                if (!extraText.isNullOrBlank()) {
+                    // Meegedeelde tekst rond de URL hoort in de notitie te blijven.
+                    append(Storage.neutralizeBodyHashtags(extraText.trim())); append("\n\n")
+                }
                 append(PENDING_MARKER)
             }
         }
@@ -99,6 +119,7 @@ class PreviewWorker(
             preview: OgPreview?,
             fallbackSubject: String?,
             diagnostic: String?,
+            extraText: String? = null,
         ): String {
             val rawTitle = preview?.title?.trim()?.takeIf { it.isNotEmpty() }
                 ?: fallbackSubject?.trim()?.takeIf { it.isNotEmpty() }
@@ -124,6 +145,10 @@ class PreviewWorker(
                 if (!description.isNullOrEmpty()) {
                     append("\n\n")
                     append(description)
+                }
+                if (!extraText.isNullOrBlank()) {
+                    append("\n\n")
+                    append(extraText.trim())
                 }
                 if (diagnostic != null) {
                     append("\n\n<!-- jotdrop-preview: ")

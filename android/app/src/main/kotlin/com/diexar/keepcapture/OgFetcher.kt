@@ -358,7 +358,36 @@ object OgFetcher {
         }
     }
 
+    /**
+     * SSRF-guard: OG-fetching mag nooit bruikbaar zijn om de eigen telefoon,
+     * het LAN of cloud-metadata-endpoints te bereiken via een gedeelde URL.
+     * Hostname-literal-check (spiegelt de plugin): een publieke DNS-naam die
+     * naar een privé-IP resolvet vangt dit niet, maar de directe en
+     * redirect-literal-gevallen wel.
+     */
+    private fun isForbiddenTarget(urlString: String): Boolean {
+        val url = try { URL(urlString) } catch (_: Exception) { return true }
+        if (url.protocol != "http" && url.protocol != "https") return true
+        val host = url.host.lowercase().trim('[', ']')
+        if (host == "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return true
+        if (host.contains(":")) {
+            // IPv6: loopback, link-local (fe80::/10), unique-local (fc00::/7).
+            return host == "::1" || host == "::" || Regex("^(fe[89ab]|f[cd])").containsMatchIn(host)
+        }
+        val v4 = Regex("^(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})$").matchEntire(host) ?: return false
+        val a = v4.groupValues[1].toInt()
+        val b = v4.groupValues[2].toInt()
+        return a == 127 || a == 10 || a == 0 ||
+            (a == 192 && b == 168) ||
+            (a == 172 && b in 16..31) ||
+            (a == 169 && b == 254) ||
+            a >= 224 // multicast/reserved
+    }
+
     private fun downloadHtml(urlString: String, userAgent: String = USER_AGENT): Result<String> {
+        if (isForbiddenTarget(urlString)) {
+            return Result.failure(IllegalArgumentException("Geweigerd: niet-publiek doel."))
+        }
         val url = URL(urlString)
         val conn = (url.openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
@@ -401,6 +430,9 @@ object OgFetcher {
     }
 
     private fun downloadImage(context: Context, urlString: String): Result<String> {
+        if (isForbiddenTarget(urlString)) {
+            return Result.failure(IllegalArgumentException("Geweigerd: niet-publiek doel."))
+        }
         val attachmentsFolder = Storage.getOrCreateAttachmentsFolder(context).getOrElse {
             return Result.failure(it)
         }
@@ -446,6 +478,26 @@ object OgFetcher {
                     return Result.success(basename)
                 }
             }
+
+            // Geen Content-Type-header → snif de magic bytes vóór we een bestand
+            // aanmaken; anders belandt een headerloze HTML-foutpagina alsnog als
+            // .jpg in de vault. Spiegelt de sniff in de plugin-fetcher.
+            val stream = java.io.BufferedInputStream(conn.inputStream)
+            if (mime.isEmpty()) {
+                stream.mark(16)
+                val header = ByteArray(16)
+                var headerRead = 0
+                while (headerRead < header.size) {
+                    val n = stream.read(header, headerRead, header.size - headerRead)
+                    if (n <= 0) break
+                    headerRead += n
+                }
+                stream.reset()
+                if (!looksLikeImageBytes(header, headerRead)) {
+                    return Result.failure(IllegalStateException("Geen afbeelding: onherkenbare bytes."))
+                }
+            }
+
             val mimeForFile = when (ext) {
                 "jpg" -> "image/jpeg"
                 "png" -> "image/png"
@@ -457,7 +509,7 @@ object OgFetcher {
                 ?: return Result.failure(IllegalStateException("Kan attachment niet aanmaken."))
 
             context.contentResolver.openOutputStream(target.uri, "wt")?.use { out ->
-                conn.inputStream.use { input ->
+                stream.use { input ->
                     val chunk = ByteArray(16 * 1024)
                     var total = 0
                     while (true) {
@@ -480,6 +532,19 @@ object OgFetcher {
         } finally {
             conn.disconnect()
         }
+    }
+
+    /** Magic-byte-check voor responses zónder Content-Type. Alleen formaten uit onze extensie-map. */
+    private fun looksLikeImageBytes(b: ByteArray, len: Int): Boolean {
+        if (len >= 3 && b[0] == 0xFF.toByte() && b[1] == 0xD8.toByte() && b[2] == 0xFF.toByte()) return true // JPEG
+        if (len >= 4 && b[0] == 0x89.toByte() && b[1] == 0x50.toByte() && b[2] == 0x4E.toByte() && b[3] == 0x47.toByte()) return true // PNG
+        if (len >= 4 && b[0] == 0x47.toByte() && b[1] == 0x49.toByte() && b[2] == 0x46.toByte() && b[3] == 0x38.toByte()) return true // GIF
+        if (len >= 12 && b[0] == 0x52.toByte() && b[1] == 0x49.toByte() && b[2] == 0x46.toByte() && b[3] == 0x46.toByte() &&
+            b[8] == 0x57.toByte() && b[9] == 0x45.toByte() && b[10] == 0x42.toByte() && b[11] == 0x50.toByte()
+        ) return true // WEBP
+        if (len >= 2 && b[0] == 0x42.toByte() && b[1] == 0x4D.toByte()) return true // BMP
+        if (len >= 12 && b[4] == 0x66.toByte() && b[5] == 0x74.toByte() && b[6] == 0x79.toByte() && b[7] == 0x70.toByte()) return true // AVIF/HEIC (ftyp)
+        return false
     }
 
     private fun hashName(input: String): String {
@@ -669,6 +734,9 @@ object OgFetcher {
     private fun resolveRedirects(urlString: String, maxHops: Int = 6): String {
         var current = urlString
         repeat(maxHops) {
+            // Ook elke redirect-hop langs de SSRF-guard: een publieke URL die
+            // 302't naar 192.168.x.x mag daar niet heen gevolgd worden.
+            if (isForbiddenTarget(current)) return urlString
             val conn = try {
                 (URL(current).openConnection() as HttpURLConnection).apply {
                     requestMethod = "HEAD"

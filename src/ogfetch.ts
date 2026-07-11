@@ -25,6 +25,48 @@ const FALLBACK_UAS = [
 
 const URL_REGEX = /https?:\/\/\S+/i;
 
+// Mirror of the Android OgFetcher caps: OG tags live in <head>, so half a
+// megabyte of HTML is plenty, and a thumbnail larger than 4MB is either an
+// original photo or a deliberately huge response (memory/disk DoS).
+const MAX_HTML_BYTES = 512 * 1024;
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+
+/**
+ * SSRF guard: OG fetching must never be usable to probe the user's own
+ * machine, LAN or cloud-metadata endpoints. Clipped/shared URLs are untrusted
+ * (they can even arrive tokenless via the obsidian:// handler), so any
+ * non-public target is refused. Hostname-literal check — a public DNS name
+ * that *resolves* to a private IP is not caught here (requestUrl offers no
+ * per-hop hook), but this closes the direct and redirect-literal cases.
+ */
+function isForbiddenTarget(url: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return true;
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:") return true;
+  const host = u.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local")) return true;
+  // IPv6 literals: loopback, link-local (fe80::/10), unique-local (fc00::/7).
+  if (host.includes(":")) {
+    return host === "::1" || host === "::" || /^(fe8|fe9|fea|feb|fc|fd)/.test(host);
+  }
+  const v4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    return (
+      a === 127 || a === 10 || a === 0 ||
+      (a === 192 && b === 168) ||
+      (a === 172 && b >= 16 && b <= 31) ||
+      (a === 169 && b === 254) ||
+      a >= 224 // multicast/reserved
+    );
+  }
+  return false;
+}
+
 export interface OgPreview {
   sourceUrl: string;
   title: string | null;
@@ -230,15 +272,37 @@ async function downloadHtml(url: string, userAgent: string): Promise<DownloadRes
     accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     secFetchDest: "document",
   });
+  if (isForbiddenTarget(url)) return { error: "forbidden target" };
   try {
     const res = await requestUrl({ url, method: "GET", headers, throw: false });
     if (res.status < 200 || res.status >= 300) {
       return { error: `HTTP ${res.status}` };
     }
-    return { html: res.text };
+    // OG/meta tags live in <head>; truncating keeps a hostile multi-MB page
+    // from being regex-scanned whole (same cap as the Android fetcher).
+    return { html: res.text.slice(0, MAX_HTML_BYTES) };
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }
+}
+
+/**
+ * Magic-byte sniff for responses without a Content-Type header. Only the
+ * formats our extension map supports; anything unrecognized is refused.
+ */
+function sniffImageContentType(buf: ArrayBuffer): string | null {
+  const b = new Uint8Array(buf.slice(0, 16));
+  if (b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return "image/jpeg";
+  if (b.length >= 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return "image/png";
+  if (b.length >= 6 && b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38) return "image/gif";
+  if (
+    b.length >= 12 &&
+    b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 &&
+    b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50
+  ) return "image/webp";
+  if (b.length >= 2 && b[0] === 0x42 && b[1] === 0x4d) return "image/bmp";
+  if (b.length >= 12 && b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x70) return "image/avif";
+  return null;
 }
 
 async function downloadImage(
@@ -265,6 +329,10 @@ async function downloadImage(
       }
     }
 
+    if (isForbiddenTarget(imageUrl)) {
+      console.warn(`JotDrop: refusing non-public image target ${imageUrl}`);
+      return null;
+    }
     const headers = browserHeaders(CHROME_UA, {
       accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
       secFetchDest: "image",
@@ -274,14 +342,20 @@ async function downloadImage(
       console.warn(`JotDrop: image download failed for ${imageUrl} (HTTP ${res.status})`);
       return null;
     }
+    if (res.arrayBuffer.byteLength > MAX_IMAGE_BYTES) {
+      console.warn(`JotDrop: image too large (${res.arrayBuffer.byteLength} bytes) for ${imageUrl}`);
+      return null;
+    }
 
     // Reject non-image responses — some servers return an HTML error page or a
     // redirect to a login screen for image URLs, resulting in a Markdown file
-    // that Obsidian incorrectly treats as a PNG/JPEG.
+    // that Obsidian incorrectly treats as a PNG/JPEG. Without a Content-Type
+    // header we fall back to magic-byte sniffing instead of trusting the URL.
     const rawCt = res.headers?.["content-type"] ?? "";
-    const contentType = rawCt.split(";")[0].trim().toLowerCase();
-    if (contentType && !contentType.startsWith("image/")) {
-      console.warn(`JotDrop: skipping non-image response (${contentType}) for ${imageUrl}`);
+    let contentType = rawCt.split(";")[0].trim().toLowerCase();
+    if (!contentType) contentType = sniffImageContentType(res.arrayBuffer) ?? "";
+    if (!contentType.startsWith("image/")) {
+      console.warn(`JotDrop: skipping non-image response (${contentType || "unknown"}) for ${imageUrl}`);
       return null;
     }
 
@@ -558,7 +632,7 @@ export function buildLinkNote(url: string, preview: OgPreview, userContent: stri
   if (isJustUrl) {
     let s = `# ${title}\n\n`;
     if (preview.imageBasename) s += `![[${preview.imageBasename}]]\n\n`;
-    s += `[${title}](${url})`;
+    s += safeMarkdownLink(title, url);
     if (preview.description) s += `\n\n${preview.description}`;
     return s;
   }
@@ -566,4 +640,15 @@ export function buildLinkNote(url: string, preview: OgPreview, userContent: stri
     return `![[${preview.imageBasename}]]\n\n${userContent}`;
   }
   return userContent;
+}
+
+/**
+ * Markdown link whose text/target come from untrusted input (OG title, clip
+ * payload, obsidian://-URI params). Brackets in the text or parens in the URL
+ * would otherwise let a hostile page title break out of the link construct.
+ */
+export function safeMarkdownLink(title: string, url: string): string {
+  const safeTitle = title.replace(/[[\]]/g, "").replace(/\s+/g, " ").trim();
+  const safeUrl = url.replace(/\(/g, "%28").replace(/\)/g, "%29").replace(/ /g, "%20");
+  return `[${safeTitle || safeUrl}](${safeUrl})`;
 }

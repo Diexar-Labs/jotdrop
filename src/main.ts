@@ -5,7 +5,7 @@ import { QuickCaptureModal, createNoteInFolder } from "./capture";
 import { PreviewRescue } from "./previewRescue";
 import { ReminderScheduler } from "./reminderScheduler";
 import { ClipServer } from "./clipServer";
-import { fetchOg } from "./ogfetch";
+import { fetchOg, safeMarkdownLink } from "./ogfetch";
 import {
   ColorName,
   isColorName,
@@ -147,7 +147,7 @@ export default class JotDropPlugin extends Plugin {
     const notice = new Notice(t("notice_fetching_preview"), 0);
     let content = `# ${title}\n\n`;
     if (selection) content += `> ${selection.replace(/\n/g, "\n> ")}\n\n`;
-    content += `[${title}](${url})`;
+    content += safeMarkdownLink(title, url);
     try {
       const attachmentsFolder = `${this.settings.notesFolder}/.attachments`;
       const preview = await fetchOg(this.app, attachmentsFolder, url, this.settings.downloadImages);

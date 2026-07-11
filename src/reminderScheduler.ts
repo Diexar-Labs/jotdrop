@@ -31,6 +31,10 @@ export class ReminderScheduler {
 
   scheduleFile(file: TFile): void {
     this.cancelFile(file.path);
+    // Archived notes never fire — parity with the Android app, which cancels
+    // the alarm on archive. Covers load, modify AND rename-into-archive.
+    const archive = normalizePath(this.plugin.settings.archiveFolder);
+    if (archive && (file.path === archive || file.path.startsWith(`${archive}/`))) return;
     const meta = readMeta(this.plugin.app, file);
     const ms = parseReminderMs(meta.reminder);
     if (!Number.isFinite(ms)) return;

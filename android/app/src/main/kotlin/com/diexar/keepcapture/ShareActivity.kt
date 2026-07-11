@@ -51,11 +51,18 @@ class ShareActivity : AppCompatActivity() {
         }
 
         val subject = intent?.getStringExtra(Intent.EXTRA_SUBJECT)
-        val placeholder = PreviewWorker.buildPlaceholder(url, subject)
+        // Begeleidende tekst rond de URL bewaren ("Niet vergeten! https://…"):
+        // die ging voorheen verloren zodra er een URL in de share zat, terwijl
+        // de plugin-capture 'm wél bewaart.
+        val extraText = intent?.getStringExtra(Intent.EXTRA_TEXT)
+            ?.replace(url, "")
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() && it != subject?.trim() }
+        val placeholder = PreviewWorker.buildPlaceholder(url, subject, extraText)
         val created = Storage.createNote(this, placeholder)
         created.onSuccess { (filename, noteUri) ->
             toast(getString(R.string.toast_saved, filename))
-            PreviewWorker.enqueue(applicationContext, noteUri, url, subject)
+            PreviewWorker.enqueue(applicationContext, noteUri, url, subject, extraText)
         }.onFailure { err ->
             toast(getString(R.string.toast_error, err.message ?: "onbekende fout"))
         }

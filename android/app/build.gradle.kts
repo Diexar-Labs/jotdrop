@@ -11,8 +11,8 @@ android {
         applicationId = "com.diexar.keepcapture"
         minSdk = 26
         targetSdk = 34
-        versionCode = 49
-        versionName = "0.24.0"
+        versionCode = 50
+        versionName = "0.25.0"
     }
 
     // Stabiele debug-keystore in de repo. AGP's default genereert per CI-runner
@@ -32,8 +32,17 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8 aan: debug-builds van Compose zijn berucht traag bij scrollen
+            // (geen inlining/optimalisatie, extra runtime-checks). De release-
+            // build is de échte scroll-perf-fix voor eindgebruikers.
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // Bewust dezelfde (gecommite debug-)keystore als de debug-build:
+            // identieke signature, dus bestaande installaties updaten gewoon
+            // door zonder uninstall. Play Store vergt later alsnog een echte
+            // release-key; voor GitHub-distributie is dit de juiste afweging.
+            signingConfig = signingConfigs.getByName("debug")
         }
         debug {
             isDebuggable = true

@@ -6,11 +6,20 @@ import android.net.Uri
 import android.provider.DocumentsContract
 import androidx.documentfile.provider.DocumentFile
 import androidx.preference.PreferenceManager
+import kotlinx.coroutines.sync.Mutex
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
 object Storage {
+    /**
+     * Serialiseert read-modify-write-cycli op notitiebestanden. Meta-updates
+     * (pin/kleur/tag), body-saves en de PreviewWorker lezen elk eerst het
+     * bestand en schrijven het daarna terug; zonder lock kan een trage write
+     * een nieuwere overschrijven (getypte tekst kwijt na een tag-tik).
+     */
+    val noteWriteMutex = Mutex()
+
     private const val KEY_VAULT_URI = "vault_tree_uri"
     private const val KEY_SUBFOLDER = "subfolder"
     private const val KEY_SPEECH_LANG = "speech_language"
@@ -583,7 +592,10 @@ object Storage {
 
     private fun looksLikeAudio(name: String): Boolean {
         val ext = name.substringAfterLast('.', "").lowercase()
-        return ext in setOf("m4a", "mp3", "wav", "ogg", "aac", "flac", "3gp", "amr")
+        // "webm" = desktop-voicememo's van de plugin (opus/webm); zonder die
+        // extensie werden ze niet als audio herkend én bij delete overgeslagen
+        // door de refcount (wees-bestanden in .attachments/).
+        return ext in setOf("m4a", "mp3", "wav", "ogg", "aac", "flac", "3gp", "amr", "webm")
     }
 
     fun archiveNote(context: Context, uri: Uri): Result<Unit> {

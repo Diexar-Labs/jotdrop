@@ -406,21 +406,39 @@
   gap: 16px;
 }
 
-/* Masonry-achtig grid via CSS columns */
+/* Masonry via expliciete kolom-stacks (JS verdeelt rij-gewijs, round-robin).
+   Bewust GEEN CSS multicolumn: dat vult kolom-gewijs, waardoor de nieuwste
+   kaart onderin kolom 1 belandde i.p.v. linksboven (Keep-volgorde). */
 .jotdrop-grid-inner {
   --jotdrop-card-width: 240px;
-  column-width: var(--jotdrop-card-width);
-  column-gap: 12px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.jotdrop-grid-col {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Onzichtbare marker onderaan het grid; de IntersectionObserver rendert het
+   volgende venster kaarten zodra deze in de buurt van de viewport komt. */
+.jotdrop-grid-sentinel {
+  height: 1px;
 }
 
 /* Kleurpalet — light mode defaults */
 .jotdrop-card {
   --kc-bg: var(--background-secondary);
   --kc-border: var(--background-modifier-border);
-  break-inside: avoid;
-  display: inline-block;
-  width: 100%;
-  margin: 0 0 12px;
+  /* Kaarten buiten beeld niet layouten/painten; auto onthoudt na de eerste
+     render de echte hoogte, 180px is enkel de startschatting. Browsers zonder
+     content-visibility negeren dit gewoon (progressive enhancement). */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 180px;
   padding: 12px 14px;
   background: var(--kc-bg);
   border: 1px solid var(--kc-border);
@@ -1198,11 +1216,9 @@
   background: var(--interactive-accent-hover);
 }
 
-/* Smal scherm: minder kolombreedte */
+/* Smal scherm: actieknoppen altijd zichtbaar (geen hover op touch). Het
+   kolomaantal zelf volgt uit de containerbreedte (computeColumnCount). */
 @media (max-width: 480px) {
-  .jotdrop-grid-inner {
-    --jotdrop-card-width: 100%;
-  }
   .jotdrop-card-actions {
     opacity: 1;
   }

@@ -29,6 +29,13 @@ const PREVIEW_MAX_WORDS = 25;
 const LINK_CHIPS_VISIBLE = 3;
 const TAG_CHIPS_TOP_N = 8;
 const LONG_PRESS_MS = 500;
+// Cards are rendered in windows of this size; an IntersectionObserver sentinel
+// appends the next window when the user scrolls near the bottom. Keeps the DOM
+// small on large vaults — full up-front rendering made mobile scrolling stutter.
+const RENDER_CHUNK = 60;
+// Must match the flex gap of .jotdrop-grid-inner / .jotdrop-grid-col in styles.css.
+const GRID_GAP = 12;
+const SEARCH_DEBOUNCE_MS = 120;
 
 // Mirrors Storage.findEmbeddedImageBasenames / findEmbeddedAudioBasenames in
 // the Android app. Covers both Obsidian-style `![[name.ext]]` and standard
@@ -88,6 +95,14 @@ interface CardData {
   archived: boolean;
 }
 
+interface AttachmentResource {
+  resourcePath: string;
+  file: TFile | null;
+  vaultPath: string;
+  /** Alternative locations to try when the primary path 404s (img.onerror). */
+  fallbacks: { resourcePath: string; vaultPath: string }[];
+}
+
 export class JotDropView extends ItemView {
   plugin: JotDropPlugin;
   private gridEl!: HTMLElement;
@@ -104,6 +119,15 @@ export class JotDropView extends ItemView {
   private lastFiltered: CardData[] = [];
   private micBtnEl: HTMLButtonElement | null = null;
   private recorder: VoiceMemoRecorder | null = null;
+  // Windowed rendering state. renderLimit survives re-renders (selection
+  // toggles, external modifies) so the scroll position is not thrown away;
+  // it resets to one chunk whenever the filter set changes.
+  private renderLimit = RENDER_CHUNK;
+  private sentinelObserver: IntersectionObserver | null = null;
+  private resizeObserver: ResizeObserver | null = null;
+  private lastColumnCount = 0;
+  private resizeTimer: number | null = null;
+  private searchTimer: number | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: JotDropPlugin) {
     super(leaf);
@@ -149,7 +173,13 @@ export class JotDropView extends ItemView {
     });
     this.searchEl.addEventListener("input", () => {
       this.query = this.searchEl.value.toLowerCase();
-      void this.render();
+      this.renderLimit = RENDER_CHUNK;
+      // Debounced: a full re-render per keystroke stutters on large vaults.
+      if (this.searchTimer != null) window.clearTimeout(this.searchTimer);
+      this.searchTimer = window.setTimeout(() => {
+        this.searchTimer = null;
+        void this.render();
+      }, SEARCH_DEBOUNCE_MS);
     });
 
     this.selectionToolbarEl = root.createDiv({
@@ -160,6 +190,18 @@ export class JotDropView extends ItemView {
     this.filterBarEl = root.createDiv({ cls: "jotdrop-filter-bar" });
     this.gridEl = root.createDiv({ cls: "jotdrop-grid" });
     this.applyCardWidth();
+
+    // Re-render only when the computed column count actually changes —
+    // resizing within the same count needs no DOM work (flex handles it).
+    this.resizeObserver = new ResizeObserver(() => {
+      if (this.computeColumnCount() === this.lastColumnCount) return;
+      if (this.resizeTimer != null) window.clearTimeout(this.resizeTimer);
+      this.resizeTimer = window.setTimeout(() => {
+        this.resizeTimer = null;
+        void this.render();
+      }, 100);
+    });
+    this.resizeObserver.observe(root);
 
     // Escape exits selection mode (counterpart of Android's BackHandler).
     this.registerDomEvent(activeDocument, "keydown", (ev: KeyboardEvent) => {
@@ -370,7 +412,12 @@ export class JotDropView extends ItemView {
       "",
     ].join("\n");
     const safeTitle = title.replace(/[\\/:*?"<>|]/g, "");
-    const notePath = normalizePath(`${notesFolder}/${safeTitle}.md`);
+    // Filename leads with the timestamp — the same `<stamp> <slug>` convention
+    // as quick capture and the Android app, so noteCreatedMs() can read a
+    // stable creation time from the name. The old `Voicememo <stamp>` name fell
+    // back to ctime, which Syncthing does not preserve: memos landed mid-grid
+    // on other devices.
+    const notePath = normalizePath(`${notesFolder}/${stamp} ${safeTitle}.md`);
     try {
       if (!(await this.app.vault.adapter.exists(notesFolder))) {
         await this.app.vault.adapter.mkdir(notesFolder);
@@ -623,6 +670,12 @@ export class JotDropView extends ItemView {
     // Release the mic stream if the view closes mid-recording.
     this.recorder?.discard();
     this.recorder = null;
+    this.sentinelObserver?.disconnect();
+    this.sentinelObserver = null;
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
+    if (this.resizeTimer != null) window.clearTimeout(this.resizeTimer);
+    if (this.searchTimer != null) window.clearTimeout(this.searchTimer);
     this.contentEl.empty();
   }
 
@@ -635,6 +688,8 @@ export class JotDropView extends ItemView {
   async render(): Promise<void> {
     if (!this.gridEl) return;
     this.applyCardWidth();
+    this.sentinelObserver?.disconnect();
+    this.sentinelObserver = null;
     this.gridEl.empty();
 
     const cards = await this.collectCards();
@@ -689,21 +744,95 @@ export class JotDropView extends ItemView {
 
     const pinned = filtered.filter((c) => c.meta.pinned);
     const rest = filtered.filter((c) => !c.meta.pinned);
+    const ordered = [...pinned, ...rest];
 
-    if (pinned.length > 0) {
-      const pinnedSection = this.gridEl.createDiv({ cls: "jotdrop-section" });
-      pinnedSection.createDiv({ cls: "jotdrop-section-label", text: t("section_pinned") });
-      const pinnedGrid = pinnedSection.createDiv({ cls: "jotdrop-grid-inner" });
-      for (const c of pinned) this.renderCard(pinnedGrid, c);
+    // Row-major masonry: cards are distributed round-robin over explicit column
+    // stacks, so the newest note sits top-LEFT and the next one to its RIGHT —
+    // Google Keep / Android-app order. The previous CSS-multicolumn layout
+    // filled column-wise (newest ran DOWN the first column, with old notes at
+    // the top of the other columns), which read as a broken sort order.
+    const columnCount = this.computeColumnCount();
+    this.lastColumnCount = columnCount;
 
-      const restSection = this.gridEl.createDiv({ cls: "jotdrop-section" });
-      restSection.createDiv({ cls: "jotdrop-section-label", text: t("section_other") });
-      const restGrid = restSection.createDiv({ cls: "jotdrop-grid-inner" });
-      for (const c of rest) this.renderCard(restGrid, c);
-    } else {
-      const inner = this.gridEl.createDiv({ cls: "jotdrop-grid-inner" });
-      for (const c of rest) this.renderCard(inner, c);
+    const makeColumns = (parent: HTMLElement): HTMLElement[] => {
+      const inner = parent.createDiv({ cls: "jotdrop-grid-inner" });
+      return Array.from({ length: columnCount }, () =>
+        inner.createDiv({ cls: "jotdrop-grid-col" }),
+      );
+    };
+
+    // Sections are created lazily so a render window that ends inside the
+    // pinned section does not leave an empty "Other" header behind.
+    let pinnedCols: HTMLElement[] | null = null;
+    let restCols: HTMLElement[] | null = null;
+    let pinnedCount = 0;
+    let restCount = 0;
+    const appendCard = (c: CardData): void => {
+      if (c.meta.pinned) {
+        if (!pinnedCols) {
+          const section = this.gridEl.createDiv({ cls: "jotdrop-section" });
+          section.createDiv({ cls: "jotdrop-section-label", text: t("section_pinned") });
+          pinnedCols = makeColumns(section);
+        }
+        this.renderCard(pinnedCols[pinnedCount % columnCount], c);
+        pinnedCount++;
+      } else {
+        if (!restCols) {
+          if (pinned.length > 0) {
+            const section = this.gridEl.createDiv({ cls: "jotdrop-section" });
+            section.createDiv({ cls: "jotdrop-section-label", text: t("section_other") });
+            restCols = makeColumns(section);
+          } else {
+            restCols = makeColumns(this.gridEl);
+          }
+        }
+        this.renderCard(restCols[restCount % columnCount], c);
+        restCount++;
+      }
+    };
+
+    let renderedCount = 0;
+    const renderUpTo = (n: number): void => {
+      const target = Math.min(n, ordered.length);
+      while (renderedCount < target) {
+        appendCard(ordered[renderedCount]);
+        renderedCount++;
+      }
+      this.renderLimit = Math.max(this.renderLimit, renderedCount);
+    };
+
+    renderUpTo(this.renderLimit);
+
+    if (renderedCount < ordered.length) {
+      const sentinel = this.gridEl.createDiv({ cls: "jotdrop-grid-sentinel" });
+      const observer = new IntersectionObserver(
+        (entries) => {
+          if (!entries.some((e) => e.isIntersecting)) return;
+          renderUpTo(renderedCount + RENDER_CHUNK);
+          if (renderedCount >= ordered.length) {
+            observer.disconnect();
+            sentinel.remove();
+            if (this.sentinelObserver === observer) this.sentinelObserver = null;
+          } else {
+            // appendCard may have created a new section after the sentinel;
+            // re-appending moves it back to the end of the grid.
+            this.gridEl.appendChild(sentinel);
+          }
+        },
+        // The scrollable ancestor is the view itself; the margin pre-renders
+        // the next window well before the user reaches the bottom.
+        { root: this.contentEl, rootMargin: "1200px 0px" },
+      );
+      observer.observe(sentinel);
+      this.sentinelObserver = observer;
     }
+  }
+
+  /** Number of masonry columns that fit the view at the configured card width. */
+  private computeColumnCount(): number {
+    const width = this.gridEl?.clientWidth || this.contentEl.clientWidth || 720;
+    const cardWidth = Math.max(140, this.plugin.settings.cardWidth || 240);
+    return Math.max(1, Math.floor((width + GRID_GAP) / (cardWidth + GRID_GAP)));
   }
 
   /**
@@ -803,6 +932,7 @@ export class JotDropView extends ItemView {
   private toggleTagFilter(tag: string): void {
     if (this.selectedTags.has(tag)) this.selectedTags.delete(tag);
     else this.selectedTags.add(tag);
+    this.renderLimit = RENDER_CHUNK;
     void this.render();
   }
 
@@ -810,6 +940,7 @@ export class JotDropView extends ItemView {
     this.selectedTags.clear();
     this.query = "";
     if (this.searchEl) this.searchEl.value = "";
+    this.renderLimit = RENDER_CHUNK;
     void this.render();
   }
 
@@ -908,11 +1039,25 @@ export class JotDropView extends ItemView {
     if (attachment) {
       const thumbWrap = body.createDiv({ cls: "jotdrop-card-thumbnail" });
       const img = thumbWrap.createEl("img");
-      img.src = attachment.resourcePath;
+      // The lightbox must follow whichever candidate actually loaded.
+      let current = attachment;
+      const fallbacks = [...attachment.fallbacks];
+      img.src = current.resourcePath;
       img.alt = "";
       img.loading = "lazy";
-      // If the file does not exist (broken link), hide the thumbnail wrapper.
-      img.addEventListener("error", () => thumbWrap.remove());
+      // Keep large photo decodes off the main thread during scrolling.
+      img.decoding = "async";
+      // On a broken path, walk the fallback locations (e.g. archived note →
+      // attachment still in the notes folder) before hiding the wrapper.
+      img.addEventListener("error", () => {
+        const next = fallbacks.shift();
+        if (next) {
+          current = { resourcePath: next.resourcePath, file: null, vaultPath: next.vaultPath, fallbacks: [] };
+          img.src = next.resourcePath;
+        } else {
+          thumbWrap.remove();
+        }
+      });
       thumbWrap.addEventListener("click", (e) => {
         e.stopPropagation();
         if (this.selectionMode) { this.toggleSelect(file.path); return; }
@@ -920,9 +1065,9 @@ export class JotDropView extends ItemView {
           this.app,
           this.plugin,
           file,
-          attachment.resourcePath,
-          attachment.file,
-          attachment.vaultPath,
+          current.resourcePath,
+          current.file,
+          current.vaultPath,
         ).open();
       });
     } else if (audioBasename) {
@@ -1215,13 +1360,14 @@ export class JotDropView extends ItemView {
   private resolveAttachmentResource(
     noteFile: TFile,
     basename: string,
-  ): { resourcePath: string; file: TFile | null; vaultPath: string } | null {
+  ): AttachmentResource | null {
     const dest = this.app.metadataCache.getFirstLinkpathDest(basename, noteFile.path);
     if (dest) {
       return {
         resourcePath: this.app.vault.getResourcePath(dest),
         file: dest,
         vaultPath: dest.path,
+        fallbacks: [],
       };
     }
     const candidates: string[] = [];
@@ -1232,17 +1378,20 @@ export class JotDropView extends ItemView {
     if (configured && configured !== noteFolder) {
       candidates.push(`${configured}/.attachments/${basename}`);
     }
-    for (const p of candidates) {
-      const normalized = normalizePath(p);
-      // Adapter resource also works for dot-prefixed folders that metadataCache skips.
-      // Existence check is async — img.onerror cleans up on failure.
-      return {
-        resourcePath: this.app.vault.adapter.getResourcePath(normalized),
-        file: null,
-        vaultPath: normalized,
-      };
-    }
-    return null;
+    // Adapter resources also work for dot-prefixed folders that metadataCache
+    // skips. Existence checks are async, so the <img> error handler walks the
+    // fallback list instead: an archived note's attachment still lives in the
+    // configured notes folder (archiving moves only the .md).
+    const [first, ...rest] = candidates.map((p) => normalizePath(p));
+    return {
+      resourcePath: this.app.vault.adapter.getResourcePath(first),
+      file: null,
+      vaultPath: first,
+      fallbacks: rest.map((p) => ({
+        resourcePath: this.app.vault.adapter.getResourcePath(p),
+        vaultPath: p,
+      })),
+    };
   }
 
   /**
@@ -1297,18 +1446,18 @@ export class JotDropView extends ItemView {
       if (currentlyArchived) {
         const newPath = normalizePath(`${notesFolder}/${file.name}`);
         await this.app.fileManager.renameFile(file, newPath);
-        new Notice(`Restored from archive: ${file.basename}`);
+        new Notice(t("notice_unarchived", file.basename));
       } else {
         if (!this.app.vault.getAbstractFileByPath(archiveFolder)) {
           await this.app.vault.createFolder(archiveFolder);
         }
         const newPath = normalizePath(`${archiveFolder}/${file.name}`);
         await this.app.fileManager.renameFile(file, newPath);
-        new Notice(`Archived: ${file.basename}`);
+        new Notice(t("notice_archived", file.basename));
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      new Notice(`Error: ${message}`);
+      new Notice(t("notice_error", message));
     }
     this.plugin.refreshViews();
   }
@@ -1343,7 +1492,11 @@ function noteCreatedMs(file: TFile): number {
     const ms = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +m[6]).getTime();
     if (Number.isFinite(ms)) return ms;
   }
-  return file.stat.ctime;
+  // No stamped name: take the earliest of ctime/mtime. Syncthing preserves
+  // mtime but NOT ctime — on a synced device ctime is the sync moment, which
+  // pushed old unstamped notes above genuinely new ones. mtime-fallback also
+  // matches the Android app (lastModified).
+  return Math.min(file.stat.ctime, file.stat.mtime);
 }
 
 function sortFiles(files: TFile[], mode: string): TFile[] {

@@ -53,6 +53,9 @@ export class EditNoteModal extends Modal {
   private originalBody = "";
   private originalEmbeds: string[] = [];
   private originalTags: string[] = [];
+  // Heading depth of the loaded title line (1 for `#`, 2 for `##`, …),
+  // written back on save so the level survives the round-trip.
+  private titleLevel = 1;
   private titleInputEl!: HTMLInputElement;
   private bodyEl!: HTMLTextAreaElement;
   private chipsEl!: HTMLElement;
@@ -84,7 +87,8 @@ export class EditNoteModal extends Modal {
     const { textPart, embeds } = splitBodyAndEmbeds(rawBody);
     // Split off the explicit title (first `# heading`). No heading → empty
     // title and the card keeps deriving one from the first words of the body.
-    const { title, body } = splitHeadingTitle(textPart);
+    const { title, body, level } = splitHeadingTitle(textPart);
+    this.titleLevel = level;
     const meta = readMeta(this.app, this.file);
 
     this.state = {
@@ -462,45 +466,72 @@ export class EditNoteModal extends Modal {
       audio.controls = true;
       audio.src = resolved.resourcePath;
       audio.preload = "metadata";
-      audio.addEventListener("error", () => wrap.remove());
+      const audioFallbacks = [...resolved.fallbacks];
+      audio.addEventListener("error", () => {
+        const next = audioFallbacks.shift();
+        if (next) audio.src = next.resourcePath;
+        else wrap.remove();
+      });
       return;
     }
 
     const wrap = parent.createDiv({ cls: "jotdrop-edit-thumbnail" });
     const img = wrap.createEl("img");
-    img.src = resolved.resourcePath;
+    let current = resolved;
+    const fallbacks = [...resolved.fallbacks];
+    img.src = current.resourcePath;
     img.alt = "";
-    img.addEventListener("error", () => wrap.remove());
+    img.addEventListener("error", () => {
+      const next = fallbacks.shift();
+      if (next) {
+        current = { resourcePath: next.resourcePath, file: null, vaultPath: next.vaultPath, fallbacks: [] };
+        img.src = next.resourcePath;
+      } else {
+        wrap.remove();
+      }
+    });
     wrap.addEventListener("click", () => {
       new LightboxModal(
         this.app,
         this.plugin,
         this.file,
-        resolved.resourcePath,
-        resolved.file,
-        resolved.vaultPath,
+        current.resourcePath,
+        current.file,
+        current.vaultPath,
       ).open();
     });
   }
 
   private resolveAttachment(
     basename: string,
-  ): { resourcePath: string; file: TFile | null; vaultPath: string } | null {
+  ): { resourcePath: string; file: TFile | null; vaultPath: string; fallbacks: { resourcePath: string; vaultPath: string }[] } | null {
     const dest = this.app.metadataCache.getFirstLinkpathDest(basename, this.file.path);
     if (dest) {
       return {
         resourcePath: this.app.vault.getResourcePath(dest),
         file: dest,
         vaultPath: dest.path,
+        fallbacks: [],
       };
     }
     const noteFolder = this.file.parent?.path ?? "";
-    const candidate = noteFolder ? `${noteFolder}/.attachments/${basename}` : `.attachments/${basename}`;
-    const normalized = normalizePath(candidate);
+    const candidates: string[] = [
+      noteFolder ? `${noteFolder}/.attachments/${basename}` : `.attachments/${basename}`,
+    ];
+    // Archived notes: the .md moved, the attachment stayed in the notes folder.
+    const configured = this.plugin.settings.notesFolder;
+    if (configured && configured !== noteFolder) {
+      candidates.push(`${configured}/.attachments/${basename}`);
+    }
+    const [first, ...rest] = candidates.map((p) => normalizePath(p));
     return {
-      resourcePath: this.app.vault.adapter.getResourcePath(normalized),
+      resourcePath: this.app.vault.adapter.getResourcePath(first),
       file: null,
-      vaultPath: normalized,
+      vaultPath: first,
+      fallbacks: rest.map((p) => ({
+        resourcePath: this.app.vault.adapter.getResourcePath(p),
+        vaultPath: p,
+      })),
     };
   }
 
@@ -530,7 +561,7 @@ export class EditNoteModal extends Modal {
         const fmMatch = current.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
         const fm = fmMatch ? fmMatch[0] : "";
         // Re-attach the title as the leading `# heading`; empty title → none.
-        const merged = joinHeadingTitle(this.state.title, this.state.body);
+        const merged = joinHeadingTitle(this.state.title, this.state.body, this.titleLevel);
         const safeBody = neutralizeInlineHashtags(merged);
         const combined = combineBodyAndEmbeds(safeBody, this.state.embedLines);
         const newContent = `${fm}${combined.replace(/^\n+/, "")}`;
@@ -602,25 +633,28 @@ function isTextFieldElement(target: EventTarget | null): boolean {
  * and the whole text stays as the body — the card then derives a title from the
  * first words of the body (the long-standing fallback behavior, kept intact).
  */
-export function splitHeadingTitle(text: string): { title: string; body: string } {
+export function splitHeadingTitle(text: string): { title: string; body: string; level: number } {
   const lines = text.split("\n");
   let i = 0;
   while (i < lines.length && lines[i].trim() === "") i++;
-  const heading = i < lines.length ? lines[i].match(/^#{1,6}\s+(.*\S)\s*$/) : null;
-  if (!heading) return { title: "", body: text };
+  const heading = i < lines.length ? lines[i].match(/^(#{1,6})\s+(.*\S)\s*$/) : null;
+  if (!heading) return { title: "", body: text, level: 1 };
   const body = lines.slice(i + 1).join("\n").replace(/^\n+/, "");
-  return { title: heading[1].trim(), body };
+  return { title: heading[2].trim(), body, level: heading[1].length };
 }
 
 /**
  * Re-joins an explicit title and body. An empty title yields the body only (no
- * heading), so the card falls back to auto-deriving its title.
+ * heading), so the card falls back to auto-deriving its title. [level] keeps
+ * the original heading depth on round-trip — saving a `## title` note must not
+ * silently demote it to `#`.
  */
-export function joinHeadingTitle(title: string, body: string): string {
+export function joinHeadingTitle(title: string, body: string, level = 1): string {
   const t = title.trim();
   const b = body.replace(/^\n+/, "").replace(/\n+$/, "");
   if (!t) return b;
-  return b ? `# ${t}\n\n${b}` : `# ${t}`;
+  const marker = "#".repeat(Math.min(Math.max(level, 1), 6));
+  return b ? `${marker} ${t}\n\n${b}` : `${marker} ${t}`;
 }
 
 const EMBED_LINE_REGEX = /^\s*!\[\[[^\]]+\]\]\s*$/;

@@ -86,7 +86,11 @@ data class ParsedNote(
  */
 object FrontmatterParser {
 
-    private val frontmatterRegex = Regex("^---\\r?\\n([\\s\\S]*?)\\r?\\n---\\r?\\n?", RegexOption.MULTILINE)
+    // \A ankert op het BEGIN van de string. De oude MULTILINE-variant matchte
+    // ook een '---'-paar midden in een notitie (twee horizontal rules!) en
+    // substring(match.range.last + 1) gooide dan alle tekst erboven weg —
+    // één pin-tap kon zo stilletjes body-tekst vernietigen.
+    private val frontmatterRegex = Regex("\\A---\\r?\\n([\\s\\S]*?)\\r?\\n---\\r?\\n?")
 
     fun parse(content: String): ParsedNote {
         val match = frontmatterRegex.find(content)
@@ -187,8 +191,22 @@ object FrontmatterParser {
     }
 
     private fun splitInlineList(input: String): List<String> {
-        // Eenvoudige split op komma; ondersteunt geen geneste structuren — niet nodig.
-        return input.split(',').map { it.trim() }.filter { it.isNotEmpty() }
+        // Split op komma's BUITEN quotes: een tag mag zelf een komma bevatten
+        // (FrontmatterWriter schrijft 'tags: ["foo, bar"]'). Naïef splitsen
+        // leverde halve tags op die bij elke volgende write verder corrumpeerden.
+        val parts = mutableListOf<String>()
+        val sb = StringBuilder()
+        var quote: Char? = null
+        for (ch in input) {
+            when {
+                quote == null && (ch == '"' || ch == '\'') -> { quote = ch; sb.append(ch) }
+                quote == ch -> { quote = null; sb.append(ch) }
+                quote == null && ch == ',' -> { parts.add(sb.toString()); sb.setLength(0) }
+                else -> sb.append(ch)
+            }
+        }
+        parts.add(sb.toString())
+        return parts.map { it.trim() }.filter { it.isNotEmpty() }
     }
 
     private fun addUnique(target: MutableList<String>, seen: MutableSet<String>, value: String) {

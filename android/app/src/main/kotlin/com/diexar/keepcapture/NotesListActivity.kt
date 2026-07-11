@@ -1394,7 +1394,9 @@ private fun NoteCard(
                         // frame-tijd bij het scrollen door veel kaarten.
                         model = ImageRequest.Builder(LocalContext.current)
                             .data(thumbnailUri)
-                            .size(720)
+                            // 480 dekt een 2-koloms cel (~180dp) ook op hoge density
+                            // ruim; 720 decodeerde onnodig groot via de trage SAF-laag.
+                            .size(480)
                             .crossfade(false)
                             .build(),
                         contentDescription = null,

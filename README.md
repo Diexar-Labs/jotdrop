@@ -109,12 +109,12 @@ JotDrop is a private, open-source **Google Keep alternative**. Google Keep is gr
 
 ### Android app
 
-1. Download `jotdrop-debug.apk` from the [latest release](https://github.com/Diexar-Labs/jotdrop/releases/latest).
+1. Download `jotdrop.apk` from the [latest release](https://github.com/Diexar-Labs/jotdrop/releases/latest).
 2. Open the file on your phone → Android will ask permission to install from unknown sources → grant it.
 3. Open JotDrop → first screen lets you pick the vault folder (the same one you sync to your laptop).
 4. From now on, the share-sheet in any app includes JotDrop.
 
-> **Note:** the APK is debug-signed (so you can install over a previous version without uninstalling). It's safe - built by GitHub Actions in this repo, you can see the build log on the releases page.
+> **Note:** the APK keeps the same signing key across releases (so you can install over a previous version, including older `jotdrop-debug.apk` installs, without uninstalling). It's safe - built by GitHub Actions in this repo, you can see the build log on the releases page.
 
 ### Syncing the two
 

@@ -1,7 +1,7 @@
 import { Notice } from "obsidian";
 import type JotDropPlugin from "./main";
 import { createNoteInFolder } from "./capture";
-import { fetchOg } from "./ogfetch";
+import { fetchOg, safeMarkdownLink } from "./ogfetch";
 import { neutralizeBodyHashtags, updateMeta, ColorName, isColorName } from "./metadata";
 import { t } from "./i18n";
 
@@ -96,13 +96,23 @@ export class ClipServer {
   }
 
   private handle(req: IncomingMessageLike, res: ServerResponseLike): void {
+    // DNS-rebinding guard: a hostile page pointing its own domain at 127.0.0.1
+    // reaches this server with its domain in the Host header. We only ever
+    // serve loopback hosts, so anything else is rejected outright.
+    const host = headerValue(req.headers["host"]).split(":")[0].toLowerCase();
+    if (host !== "127.0.0.1" && host !== "localhost" && host !== "[::1]") {
+      res.writeHead(403);
+      res.end();
+      return;
+    }
+
     // CORS — only browser extensions (chrome- and moz-extension:) get ACAO;
-    // other origins get nothing so a random tab cannot probe our port.
+    // other origins (including "null" from sandboxed iframes) get nothing so
+    // a random tab cannot probe our port.
     const origin = headerValue(req.headers["origin"]);
     const isExtension =
       origin.startsWith("chrome-extension://") ||
-      origin.startsWith("moz-extension://") ||
-      origin === "null";
+      origin.startsWith("moz-extension://");
     if (isExtension) {
       res.setHeader("Access-Control-Allow-Origin", origin || "*");
       res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
@@ -169,7 +179,7 @@ export class ClipServer {
 
     let content = `# ${title}\n\n`;
     if (selection) content += `> ${selection.replace(/\n/g, "\n> ")}\n\n`;
-    content += `[${title}](${url})`;
+    content += safeMarkdownLink(title, url);
 
     const attachmentsFolder = `${this.plugin.settings.notesFolder}/.attachments`;
     try {
