@@ -351,6 +351,7 @@ function generateFilename(content: string): string {
 
   const firstLine = content.split("\n")[0].trim();
   const slug = firstLine
+    .replace(/^- \[[ xX]\]\s*/, "")
     .replace(/[#*_`>[\]()]/g, "")
     .replace(/[\\/:*?"<>|]/g, "")
     .trim()

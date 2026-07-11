@@ -40,7 +40,11 @@ class ReminderReceiver : BroadcastReceiver() {
                 .map { it.trim() }
                 .filter { it.isNotEmpty() && !wikiEmbed.matches(it) && !mdImage.matches(it) }
                 .firstOrNull().orEmpty()
-            firstLine.trimStart('#').trim().ifEmpty { context.getString(R.string.reminder_default_title) }
+            firstLine
+                .replace(Regex("^- \\[[ xX]]\\s*"), "")
+                .trimStart('#')
+                .trim()
+                .ifEmpty { context.getString(R.string.reminder_default_title) }
         } catch (_: Throwable) {
             context.getString(R.string.reminder_default_title)
         }

@@ -745,7 +745,12 @@ object Storage {
             .map { it.trim() }
             .filter { it.isNotEmpty() && !wikiEmbed.matches(it) && !mdImage.matches(it) }
             .firstOrNull().orEmpty()
-        val cleaned = firstLine.trimStart('#').trim()
+        // Checklist-syntax strippen zodat `- [ ] melk` als titel "melk" wordt,
+        // niet de rauwe tick-box-syntax (issue #1, plugin-pariteit).
+        val cleaned = firstLine
+            .replace(Regex("^- \\[[ xX]]\\s*"), "")
+            .trimStart('#')
+            .trim()
         return cleaned.ifBlank { fallbackFilename.removeSuffix(".md") }
     }
 
@@ -824,6 +829,7 @@ object Storage {
         val parsed = FrontmatterParser.parse(content)
         val firstLine = parsed.body.lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
         val slug = firstLine
+            .replace(Regex("""^- \[[ xX]]\s*"""), "")
             .replace(Regex("""[#*_`>\[\]()]"""), "")
             .replace(Regex("""[\\/:*?"<>|]"""), "")
             .trim()

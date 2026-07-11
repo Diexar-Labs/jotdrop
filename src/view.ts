@@ -15,6 +15,7 @@ import {
   NoteMeta,
   parseReminderMs,
   readMeta,
+  checklistToGlyphs,
   renderInlinePreview,
   stripFrontmatter,
   updateMeta,
@@ -1526,8 +1527,9 @@ function sortFiles(files: TFile[], mode: string): TFile[] {
 
 /**
  * Title source: first non-blank, non-embed line. Markdown heading markers
- * (`#`, `*`, `_`, `` ` ``, `>`) are stripped. Result is truncated to
- * `TITLE_MAX_WORDS` with "…". Empty title → fall back to `fallback` (filename).
+ * (`#`, `*`, `_`, `` ` ``, `>`) and checklist syntax (`- [ ]` / `- [x]`,
+ * issue #1) are stripped. Result is truncated to `TITLE_MAX_WORDS` with "…".
+ * Empty title → fall back to `fallback` (filename).
  */
 function extractTitle(content: string, fallback: string): string {
   const body = stripFrontmatter(content);
@@ -1536,7 +1538,11 @@ function extractTitle(content: string, fallback: string): string {
     if (/^!\[\[[^\]]+\]\]$/.test(line)) continue;
     if (/^!\[[^\]]*\]\([^)]+\)$/.test(line)) continue;
     if (/^<!--/.test(line)) continue;
-    const cleaned = line.replace(/^#+\s*/, "").replace(/^[*_`>]+\s*/, "").trim();
+    const cleaned = line
+      .replace(/^- \[[ xX]\]\s*/, "")
+      .replace(/^#+\s*/, "")
+      .replace(/^[*_`>]+\s*/, "")
+      .trim();
     if (!cleaned) continue;
     return truncateWords(cleaned, TITLE_MAX_WORDS);
   }
@@ -1561,15 +1567,30 @@ function extractPreview(content: string): string {
     .split("\n")
     .map((l) => l.trim())
     .filter((l) => l.length > 0);
-  const rest = lines.join("\n");
+  const rest = checklistToGlyphs(lines.join("\n"));
   if (!rest) return "";
   return truncateWords(rest, PREVIEW_MAX_WORDS);
 }
 
+/**
+ * Truncates after `maxWords` words while preserving the original whitespace,
+ * newlines included: the card preview renders with `white-space: pre-wrap`,
+ * and `renderInlinePreview` matches checklist syntax against line starts —
+ * collapsing newlines here would leave every checklist item after the first
+ * as raw `- [ ]` text (issue #1).
+ */
 function truncateWords(text: string, maxWords: number): string {
-  const words = text.split(/\s+/).filter((w) => w.length > 0);
-  if (words.length <= maxWords) return words.join(" ");
-  return `${words.slice(0, maxWords).join(" ")}…`;
+  const re = /\S+/g;
+  let count = 0;
+  let end = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    count++;
+    end = m.index + m[0].length;
+    if (count === maxWords) break;
+  }
+  if (count < maxWords || re.exec(text) === null) return text;
+  return `${text.slice(0, end)}…`;
 }
 
 /**

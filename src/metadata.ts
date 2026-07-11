@@ -230,6 +230,19 @@ export function neutralizeBodyHashtags(content: string): string {
 }
 
 /**
+ * Converts checklist syntax at the start of a line into a shape glyph — shape,
+ * not colour, so it stays readable without colour distinction (color-blind
+ * friendly). Idempotent: glyph lines no longer match the syntax. Called both
+ * when extracting the card preview (before word-truncation, so the syntax
+ * neither eats the word budget nor gets cut mid-marker) and when rendering.
+ */
+export function checklistToGlyphs(text: string): string {
+  return text
+    .replace(/^- \[ \] /gm, "☐ ")
+    .replace(/^- \[[xX]\] /gm, "☑ ");
+}
+
+/**
  * Renders a limited inline preview into `parent` as real DOM nodes — never via
  * innerHTML, so user text is inserted as text content and can never inject
  * markup. Handles checklist glyphs, `[[wikilink]]` / `[[link|alias]]` as styled
@@ -237,11 +250,7 @@ export function neutralizeBodyHashtags(content: string): string {
  * anchors. Clicks are caught by the view via delegation on the data-href attr.
  */
 export function renderInlinePreview(parent: HTMLElement, text: string): void {
-  // Checklist syntax at the start of a line becomes a shape glyph — shape, not
-  // colour, so it stays readable without colour distinction (color-blind friendly).
-  const src = text
-    .replace(/^- \[ \] /gm, "☐ ")
-    .replace(/^- \[[xX]\] /gm, "☑ ");
+  const src = checklistToGlyphs(text);
 
   // Single ordered scan: wikilink | markdown-link | bare-url. Alternation consumes
   // a markdown link whole, so its href is never re-matched as a separate bare URL.
