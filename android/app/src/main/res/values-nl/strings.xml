@@ -41,6 +41,8 @@
     <string name="action_new_note">Nieuwe notitie</string>
     <string name="action_save">Opslaan</string>
     <string name="action_back">Terug</string>
+    <string name="nav_prev_note">Vorige notitie</string>
+    <string name="nav_next_note">Volgende notitie</string>
     <string name="action_delete">Verwijderen</string>
     <string name="action_archive">Archiveren</string>
     <string name="action_cancel">Annuleren</string>

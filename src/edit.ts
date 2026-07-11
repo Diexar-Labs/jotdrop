@@ -1,4 +1,4 @@
-import { App, Modal, Notice, SuggestModal, TFile, normalizePath } from "obsidian";
+import { App, Modal, Notice, SuggestModal, TFile, normalizePath, setIcon } from "obsidian";
 import type JotDropPlugin from "./main";
 import { toggleOrInsertChecklistOnTextArea } from "./capture";
 import { LightboxModal } from "./lightbox";
@@ -14,6 +14,19 @@ import {
   stripFrontmatter,
   updateMeta,
 } from "./metadata";
+
+/**
+ * Snapshot of the card grid at the moment a note was opened: the files in
+ * display order (pinned first, then the rest) plus the opened note's position.
+ * Lets the modal step to the previous/next card without going back to the grid.
+ */
+export interface NoteNavContext {
+  files: TFile[];
+  index: number;
+}
+
+/** Minimum horizontal swipe distance (px) before it counts as navigation. */
+const SWIPE_MIN_DISTANCE = 60;
 
 interface EditableNote {
   file?: TFile;
@@ -34,24 +47,37 @@ interface EditableNote {
 export class EditNoteModal extends Modal {
   private plugin: JotDropPlugin;
   private file: TFile;
+  private nav: NoteNavContext | null;
   private state!: EditableNote;
   private originalTitle = "";
   private originalBody = "";
   private originalEmbeds: string[] = [];
+  private originalTags: string[] = [];
   private titleInputEl!: HTMLInputElement;
   private bodyEl!: HTMLTextAreaElement;
   private chipsEl!: HTMLElement;
   private tagInputEl: HTMLInputElement | null = null;
+  private touchStartX: number | null = null;
+  private touchStartY: number | null = null;
+  private touchOnTextField = false;
 
-  constructor(app: App, plugin: JotDropPlugin, file: TFile) {
+  constructor(app: App, plugin: JotDropPlugin, file: TFile, nav?: NoteNavContext) {
     super(app);
     this.plugin = plugin;
     this.file = file;
+    this.nav = nav ?? null;
   }
 
   async onOpen(): Promise<void> {
-    this.titleEl.setText(this.file.basename);
     this.contentEl.addClass("jotdrop-edit-modal");
+    this.registerNavHandlers();
+    await this.loadNote(this.file);
+  }
+
+  /** Loads a note into the modal. Called on open and again on prev/next navigation. */
+  private async loadNote(file: TFile): Promise<void> {
+    this.file = file;
+    this.titleEl.setText(this.file.basename);
 
     const raw = await this.app.vault.read(this.file);
     const rawBody = stripFrontmatter(raw).replace(/^\n+/, "");
@@ -74,13 +100,112 @@ export class EditNoteModal extends Modal {
     this.originalTitle = title;
     this.originalBody = body;
     this.originalEmbeds = [...embeds];
+    this.originalTags = [...meta.tags];
 
     this.buildLayout();
+  }
+
+  /**
+   * Keyboard (arrow keys) and touch (swipe) handlers for prev/next navigation.
+   * Registered once on the modal element; they no-op without a nav context.
+   */
+  private registerNavHandlers(): void {
+    if (!this.nav || this.nav.files.length < 2) return;
+
+    // Keys go through the modal's keymap scope, not a DOM listener — right
+    // after opening, focus sits outside the modal content, so keydown events
+    // would never reach the modal element itself.
+    const arrowHandler = (delta: number, fromAlt: boolean) => (evt: KeyboardEvent): boolean | void => {
+      // Plain arrows must keep moving the caret inside text fields;
+      // Alt+arrow navigates from anywhere.
+      if (!fromAlt && isTextFieldElement(evt.target)) return;
+      void this.navigate(delta);
+      return false;
+    };
+    this.scope.register([], "ArrowLeft", arrowHandler(-1, false));
+    this.scope.register([], "ArrowRight", arrowHandler(1, false));
+    this.scope.register(["Alt"], "ArrowLeft", arrowHandler(-1, true));
+    this.scope.register(["Alt"], "ArrowRight", arrowHandler(1, true));
+
+    this.modalEl.addEventListener(
+      "touchstart",
+      (e) => {
+        if (e.touches.length !== 1) {
+          this.touchStartX = null;
+          this.touchStartY = null;
+          return;
+        }
+        this.touchStartX = e.touches[0].clientX;
+        this.touchStartY = e.touches[0].clientY;
+        // Swiping inside a text field selects text — never treat it as navigation.
+        this.touchOnTextField = isTextFieldElement(e.target);
+      },
+      { passive: true },
+    );
+
+    this.modalEl.addEventListener(
+      "touchend",
+      (e) => {
+        const startX = this.touchStartX;
+        const startY = this.touchStartY;
+        this.touchStartX = null;
+        this.touchStartY = null;
+        if (startX === null || startY === null) return;
+        if (this.touchOnTextField || e.touches.length > 0) return;
+        const touch = e.changedTouches[0];
+        if (!touch) return;
+        const dx = touch.clientX - startX;
+        const dy = touch.clientY - startY;
+        // Require a clearly horizontal gesture so vertical scrolling never triggers it.
+        if (Math.abs(dx) < SWIPE_MIN_DISTANCE || Math.abs(dx) < Math.abs(dy) * 2) return;
+        // Swipe left = next card (card-swipe pattern), swipe right = previous.
+        void this.navigate(dx < 0 ? 1 : -1);
+      },
+      { passive: true },
+    );
+  }
+
+  /**
+   * Moves to the previous/next note from the grid snapshot. Unsaved title/body/tag
+   * edits are saved first (same as pressing Save); a failed save cancels navigation.
+   * Files deleted since the snapshot are skipped.
+   */
+  private async navigate(delta: number): Promise<void> {
+    if (!this.nav) return;
+    let target = this.nav.index + delta;
+    while (
+      target >= 0 &&
+      target < this.nav.files.length &&
+      this.app.vault.getAbstractFileByPath(this.nav.files[target].path) === null
+    ) {
+      target += delta;
+    }
+    if (target < 0 || target >= this.nav.files.length) return;
+    if (this.isDirty() && !(await this.persist())) return;
+    this.nav.index = target;
+    await this.loadNote(this.nav.files[target]);
+  }
+
+  private isDirty(): boolean {
+    const embedsChanged =
+      this.state.embedLines.length !== this.originalEmbeds.length ||
+      this.state.embedLines.some((e, i) => e !== this.originalEmbeds[i]);
+    const tagsChanged =
+      this.state.tags.length !== this.originalTags.length ||
+      this.state.tags.some((t, i) => t !== this.originalTags[i]);
+    return (
+      this.state.title !== this.originalTitle ||
+      this.state.body !== this.originalBody ||
+      embedsChanged ||
+      tagsChanged
+    );
   }
 
   private buildLayout(): void {
     const root = this.contentEl;
     root.empty();
+
+    this.renderNavHeader(root);
 
     const controls = root.createDiv({ cls: "jotdrop-edit-controls" });
     this.renderControls(controls);
@@ -117,6 +242,37 @@ export class EditNoteModal extends Modal {
         void this.save();
       }
     });
+  }
+
+  /**
+   * Prev/next buttons plus a "3 / 12" position counter at the top of the modal.
+   * Only rendered when the modal was opened from the grid with ≥2 notes; the
+   * buttons make the navigation discoverable (arrows/swipe have no visual cue).
+   */
+  private renderNavHeader(parent: HTMLElement): void {
+    if (!this.nav || this.nav.files.length < 2) return;
+    const bar = parent.createDiv({ cls: "jotdrop-edit-nav" });
+
+    const prev = bar.createEl("button", {
+      cls: "jotdrop-edit-nav-btn",
+      attr: { "aria-label": t("nav_prev_note"), title: t("nav_prev_note") },
+    });
+    setIcon(prev, "chevron-left");
+    prev.disabled = this.nav.index <= 0;
+    prev.addEventListener("click", () => void this.navigate(-1));
+
+    bar.createSpan({
+      cls: "jotdrop-edit-nav-counter",
+      text: `${this.nav.index + 1} / ${this.nav.files.length}`,
+    });
+
+    const next = bar.createEl("button", {
+      cls: "jotdrop-edit-nav-btn",
+      attr: { "aria-label": t("nav_next_note"), title: t("nav_next_note") },
+    });
+    setIcon(next, "chevron-right");
+    next.disabled = this.nav.index >= this.nav.files.length - 1;
+    next.addEventListener("click", () => void this.navigate(1));
   }
 
   private renderControls(parent: HTMLElement): void {
@@ -349,6 +505,11 @@ export class EditNoteModal extends Modal {
   }
 
   private async save(): Promise<void> {
+    if (await this.persist()) this.close();
+  }
+
+  /** Writes the current state to the file without closing (also used by [navigate]). */
+  private async persist(): Promise<boolean> {
     try {
       const embedsChanged =
         this.state.embedLines.length !== this.originalEmbeds.length ||
@@ -375,12 +536,17 @@ export class EditNoteModal extends Modal {
         const newContent = `${fm}${combined.replace(/^\n+/, "")}`;
         await this.app.vault.modify(this.file, newContent);
       }
+      this.originalTitle = this.state.title;
+      this.originalBody = this.state.body;
+      this.originalEmbeds = [...this.state.embedLines];
+      this.originalTags = [...this.state.tags];
       new Notice(t("notice_saved", this.file.basename));
       this.plugin.refreshViews();
-      this.close();
+      return true;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       new Notice(t("notice_save_failed", message));
+      return false;
     }
   }
 
@@ -422,6 +588,12 @@ export class InsertLinkModal extends SuggestModal<TFile> {
     const linkPath = matches.length === 1 ? item.basename : item.path.replace(/\.md$/, "");
     this.onPick(linkPath);
   }
+}
+
+/** True when the event target is a text-editing element (input/textarea/contenteditable). */
+function isTextFieldElement(target: EventTarget | null): boolean {
+  if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return true;
+  return target instanceof HTMLElement && target.isContentEditable;
 }
 
 /**

@@ -218,8 +218,8 @@ class NotesListActivity : ComponentActivity() {
                     onToggleRecord = { handleRecordToggle() },
                     onSaveMemo = { memo -> saveMemo(memo) },
                     onDiscardMemo = { discardPendingMemo() },
-                    onOpenNote = { note ->
-                        startActivity(EditorActivity.openNoteIntent(this, note.uri))
+                    onOpenNote = { note, orderedUris ->
+                        startActivity(EditorActivity.openNoteIntent(this, note.uri, orderedUris))
                     },
                     onTogglePin = { note ->
                         togglePin(note)
@@ -525,7 +525,7 @@ private fun NotesListScreen(
     onToggleRecord: () -> Unit,
     onSaveMemo: (VoiceMemoRecorder.RecordedMemo) -> Unit,
     onDiscardMemo: () -> Unit,
-    onOpenNote: (NoteSummary) -> Unit,
+    onOpenNote: (NoteSummary, List<Uri>) -> Unit,
     onTogglePin: (NoteSummary) -> Unit,
 ) {
     val isRecording by isRecordingFlow.collectAsState()
@@ -605,7 +605,14 @@ private fun NotesListScreen(
         selectedNoteUris = filtered.map { it.uri }.toSet()
     }
     val onCardClick: (NoteSummary) -> Unit = { note ->
-        if (selectionMode) toggleSelect(note.uri) else onOpenNote(note)
+        if (selectionMode) {
+            toggleSelect(note.uri)
+        } else {
+            // Kaartvolgorde zoals het grid rendert (gepind eerst, dan de rest) —
+            // daarmee kan de editor naar de vorige/volgende notitie navigeren.
+            val ordered = filtered.filter { it.meta.pinned } + filtered.filter { !it.meta.pinned }
+            onOpenNote(note, ordered.map { it.uri })
+        }
     }
     val onCardLongClick: (NoteSummary) -> Unit = { note ->
         if (selectionMode) toggleSelect(note.uri) else enterSelection(note.uri)

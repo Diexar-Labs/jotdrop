@@ -846,6 +846,43 @@
   text-decoration: underline;
 }
 
+/* Prev/next navigation header in the edit modal */
+
+.jotdrop-edit-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.jotdrop-edit-nav-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-secondary);
+  color: var(--text-normal);
+  cursor: pointer;
+}
+
+.jotdrop-edit-nav-btn:hover:not(:disabled) {
+  background: var(--background-modifier-hover);
+}
+
+.jotdrop-edit-nav-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.jotdrop-edit-nav-counter {
+  font-size: 0.85em;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
 /* Quick capture modal */
 
 .jotdrop-capture-controls,

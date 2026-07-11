@@ -707,6 +707,25 @@ export class JotDropView extends ItemView {
   }
 
   /**
+   * Opens the edit modal with a navigation snapshot of the current grid in
+   * display order (pinned section first, then the rest), so the modal can step
+   * to the previous/next card with arrows, swipe or the header buttons.
+   */
+  private openEditModal(file: TFile): void {
+    const ordered = [
+      ...this.lastFiltered.filter((c) => c.meta.pinned),
+      ...this.lastFiltered.filter((c) => !c.meta.pinned),
+    ].map((c) => c.file);
+    const index = ordered.findIndex((f) => f.path === file.path);
+    new EditNoteModal(
+      this.app,
+      this.plugin,
+      file,
+      index >= 0 ? { files: ordered, index } : undefined,
+    ).open();
+  }
+
+  /**
    * Builds the tag-chip strip below the toolbar: top-N by frequency + always
    * also any selected tags that fall outside the top (otherwise a selected tag
    * would disappear after a new note with different tags is added).
@@ -883,7 +902,7 @@ export class JotDropView extends ItemView {
     // otherwise the user can no longer reach the card's text.
     body.addEventListener("click", () => {
       if (this.selectionMode) { this.toggleSelect(file.path); return; }
-      new EditNoteModal(this.app, this.plugin, file).open();
+      this.openEditModal(file);
     });
 
     if (attachment) {
@@ -1014,7 +1033,7 @@ export class JotDropView extends ItemView {
     setIcon(editBtn, "pencil");
     editBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      new EditNoteModal(this.app, this.plugin, file).open();
+      this.openEditModal(file);
     });
 
     const archiveBtn = actions.createEl("button", {

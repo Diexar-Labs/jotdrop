@@ -43,6 +43,8 @@
     <string name="action_new_note">New note</string>
     <string name="action_save">Save</string>
     <string name="action_back">Back</string>
+    <string name="nav_prev_note">Previous note</string>
+    <string name="nav_next_note">Next note</string>
     <string name="action_delete">Delete</string>
     <string name="action_archive">Archive</string>
     <string name="action_cancel">Cancel</string>

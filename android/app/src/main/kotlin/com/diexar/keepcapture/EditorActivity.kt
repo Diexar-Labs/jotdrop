@@ -52,7 +52,10 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import coil.compose.AsyncImage
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AddAPhoto
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.CameraAlt
@@ -100,16 +103,19 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
@@ -130,11 +136,13 @@ class EditorActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         val noteUri: Uri? = intent.getStringExtra(EXTRA_NOTE_URI)?.let(Uri::parse)
+        val navUris: List<String> = intent.getStringArrayListExtra(EXTRA_NAV_URIS) ?: emptyList()
 
         setContent {
             JotDropTheme {
                 EditorScreen(
                     initialUri = noteUri,
+                    navUris = navUris,
                     onClose = { finish() },
                 )
             }
@@ -143,23 +151,47 @@ class EditorActivity : ComponentActivity() {
 
     companion object {
         private const val EXTRA_NOTE_URI = "note_uri"
+        private const val EXTRA_NAV_URIS = "nav_uris"
+
+        // Intent-extra's lopen via de Binder (limiet ~500KB) en SAF-URI's zijn lang.
+        // Beperk de nav-lijst daarom tot een venster rond de geopende notitie.
+        private const val NAV_WINDOW = 150
 
         fun newNoteIntent(context: Context): Intent =
             Intent(context, EditorActivity::class.java)
 
-        fun openNoteIntent(context: Context, uri: Uri): Intent =
-            Intent(context, EditorActivity::class.java).putExtra(EXTRA_NOTE_URI, uri.toString())
+        /**
+         * Opent een notitie in de editor. [orderedUris] is optioneel de zichtbare
+         * kaartvolgorde (gepind eerst, dan de rest, met actieve filters) — daarmee
+         * kan de editor met swipe/knoppen naar de vorige/volgende notitie.
+         */
+        fun openNoteIntent(context: Context, uri: Uri, orderedUris: List<Uri> = emptyList()): Intent {
+            val intent = Intent(context, EditorActivity::class.java).putExtra(EXTRA_NOTE_URI, uri.toString())
+            val idx = orderedUris.indexOf(uri)
+            if (orderedUris.size >= 2 && idx >= 0) {
+                val from = (idx - NAV_WINDOW).coerceAtLeast(0)
+                val to = (idx + NAV_WINDOW + 1).coerceAtMost(orderedUris.size)
+                intent.putStringArrayListExtra(
+                    EXTRA_NAV_URIS,
+                    ArrayList(orderedUris.subList(from, to).map { it.toString() }),
+                )
+            }
+            return intent
+        }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun EditorScreen(initialUri: Uri?, onClose: () -> Unit) {
+private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val dark = isSystemInDarkTheme()
 
     var currentUri by remember { mutableStateOf(initialUri?.toString()) }
+    // Positie binnen de meegegeven kaartvolgorde; -1 = geen navigatie mogelijk.
+    var navIndex by remember { mutableStateOf(navUris.indexOf(initialUri?.toString())) }
+    val navEnabled = navUris.size >= 2 && navIndex >= 0
     var loaded by remember { mutableStateOf(initialUri == null) }
     var loadError by remember { mutableStateOf<String?>(null) }
     var bodyText by remember { mutableStateOf(TextFieldValue("")) }
@@ -384,40 +416,49 @@ private fun EditorScreen(initialUri: Uri?, onClose: () -> Unit) {
         }
     }
 
+    // Laadt een notitie in alle editor-state. Ook gebruikt door de
+    // prev/next-navigatie, vandaar losgetrokken uit de LaunchedEffect.
+    suspend fun loadInto(uriString: String) {
+        loaded = false
+        loadError = null
+        val result = withContext(Dispatchers.IO) {
+            runCatching {
+                Storage.readNote(context, Uri.parse(uriString)).getOrThrow()
+            }
+        }
+        result.onSuccess { raw ->
+            try {
+                val parsed = FrontmatterParser.parse(raw)
+                val cleanBody = parsed.body.removePrefix("\n")
+                val (textPart, embeds) = splitBodyAndEmbeds(cleanBody)
+                val (loadedTitle, loadedBody) = splitHeadingTitle(textPart)
+                titleText = loadedTitle
+                originalTitle = loadedTitle
+                bodyText = TextFieldValue(loadedBody)
+                originalBody = loadedBody
+                embedLines.clear()
+                embedLines.addAll(embeds)
+                originalEmbeds = embeds.toList()
+                color = parsed.meta.color
+                pinned = parsed.meta.pinned
+                tags.clear()
+                tags.addAll(parsed.meta.tags)
+                reminder = parsed.meta.reminder
+                originalReminder = parsed.meta.reminder
+                currentUri = uriString
+            } catch (e: Throwable) {
+                loadError = context.getString(R.string.parse_error, e.message ?: e.javaClass.simpleName)
+            }
+            loaded = true
+        }.onFailure { err ->
+            loadError = err.message ?: context.getString(R.string.error_unknown)
+            loaded = true
+        }
+    }
+
     LaunchedEffect(initialUri) {
         if (initialUri != null && !loaded) {
-            val result = withContext(Dispatchers.IO) {
-                runCatching {
-                    Storage.readNote(context, initialUri).getOrThrow()
-                }
-            }
-            result.onSuccess { raw ->
-                try {
-                    val parsed = FrontmatterParser.parse(raw)
-                    val cleanBody = parsed.body.removePrefix("\n")
-                    val (textPart, embeds) = splitBodyAndEmbeds(cleanBody)
-                    val (loadedTitle, loadedBody) = splitHeadingTitle(textPart)
-                    titleText = loadedTitle
-                    originalTitle = loadedTitle
-                    bodyText = TextFieldValue(loadedBody)
-                    originalBody = loadedBody
-                    embedLines.clear()
-                    embedLines.addAll(embeds)
-                    originalEmbeds = embeds.toList()
-                    color = parsed.meta.color
-                    pinned = parsed.meta.pinned
-                    tags.clear()
-                    tags.addAll(parsed.meta.tags)
-                    reminder = parsed.meta.reminder
-                    originalReminder = parsed.meta.reminder
-                } catch (e: Throwable) {
-                    loadError = context.getString(R.string.parse_error, e.message ?: e.javaClass.simpleName)
-                }
-                loaded = true
-            }.onFailure { err ->
-                loadError = err.message ?: context.getString(R.string.error_unknown)
-                loaded = true
-            }
+            loadInto(initialUri.toString())
         }
     }
 
@@ -498,6 +539,59 @@ private fun EditorScreen(initialUri: Uri?, onClose: () -> Unit) {
             onClose = onClose,
         )
     }
+
+    // Vorige/volgende notitie uit de kaartvolgorde. Onopgeslagen wijzigingen
+    // worden eerst opgeslagen (zelfde pad als de save-knop); een save-fout
+    // annuleert de navigatie zodat er niets verloren gaat.
+    fun navigateTo(delta: Int) {
+        if (!navEnabled || saving || !loaded) return
+        val target = navIndex + delta
+        if (target < 0 || target >= navUris.size) return
+        val proceed: () -> Unit = {
+            navIndex = target
+            scope.launch { loadInto(navUris[target]) }
+        }
+        if (isDirty && currentUri != null) {
+            val reminderAtSave = reminder
+            attemptSaveAndClose(
+                scope = scope,
+                context = context,
+                bodyText = bodyText.text,
+                title = titleText,
+                embedLines = embedLines.toList(),
+                currentUri = currentUri,
+                color = color,
+                pinned = pinned,
+                tags = tags.toList(),
+                reminder = reminderAtSave,
+                isDirty = true,
+                onSavingChange = { saving = it },
+                onSaved = {
+                    // Reminder herschedulen zoals de save-knop dat doet.
+                    val finalUri = currentUri?.let { Uri.parse(it) }
+                    if (finalUri != null) {
+                        ReminderScheduler.cancel(context, finalUri)
+                        if (!reminderAtSave.isNullOrBlank()) {
+                            ReminderScheduler.schedule(context, finalUri, reminderAtSave)
+                        }
+                        originalReminder = reminderAtSave
+                    }
+                    proceed()
+                },
+                onError = { msg ->
+                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                },
+                closeWhenClean = false,
+                onClose = {},
+            )
+        } else {
+            proceed()
+        }
+    }
+
+    // pointerInput-blokken worden niet bij elke recomposition ververst; via
+    // rememberUpdatedState leest de swipe-handler altijd de actuele closure.
+    val onSwipeNavigate by rememberUpdatedState<(Int) -> Unit> { delta -> navigateTo(delta) }
 
     BackHandler(enabled = true) { closeWithSaveIfNeeded() }
 
@@ -639,7 +733,39 @@ private fun EditorScreen(initialUri: Uri?, onClose: () -> Unit) {
             )
         },
     ) { padding ->
-        Box(modifier = Modifier.fillMaxSize().padding(padding)) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                // Horizontale swipe = vorige/volgende notitie. detectHorizontalDragGestures
+                // orientation-lockt pas ná horizontale touch-slop, dus verticaal scrollen
+                // en de horizontaal scrollende titel/embed-strip (die de drag zelf
+                // consumeren) triggeren dit nooit.
+                .pointerInput(navEnabled) {
+                    if (!navEnabled) return@pointerInput
+                    var totalDx = 0f
+                    detectHorizontalDragGestures(
+                        onDragStart = { totalDx = 0f },
+                        onHorizontalDrag = { _, dragAmount -> totalDx += dragAmount },
+                        onDragEnd = {
+                            val threshold = 60.dp.toPx()
+                            // Swipe naar links = volgende kaart, naar rechts = vorige.
+                            if (totalDx <= -threshold) onSwipeNavigate(1)
+                            else if (totalDx >= threshold) onSwipeNavigate(-1)
+                        },
+                    )
+                },
+        ) {
+            if (navEnabled) {
+                EditorNavHeader(
+                    index = navIndex,
+                    total = navUris.size,
+                    foreground = fg,
+                    onPrev = { navigateTo(-1) },
+                    onNext = { navigateTo(1) },
+                )
+            }
+            Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
             when {
                 !loaded -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
@@ -677,6 +803,7 @@ private fun EditorScreen(initialUri: Uri?, onClose: () -> Unit) {
                     },
                     foreground = fg,
                 )
+            }
             }
         }
     }
@@ -875,6 +1002,52 @@ private fun EditorBody(
                 unfocusedIndicatorColor = Color.Transparent,
             ),
         )
+    }
+}
+
+/**
+ * Kop met vorige/volgende-knoppen en een "3 / 12"-positieteller boven de editor.
+ * Alleen zichtbaar wanneer er een kaartvolgorde is meegegeven (≥2 notities).
+ * De knoppen maken de navigatie ontdekbaar; disabled-staat aan de uiteinden
+ * via zowel enabled-attribuut als lagere alpha (niet alleen kleur).
+ */
+@Composable
+private fun EditorNavHeader(
+    index: Int,
+    total: Int,
+    foreground: Color,
+    onPrev: () -> Unit,
+    onNext: () -> Unit,
+) {
+    val hasPrev = index > 0
+    val hasNext = index < total - 1
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        IconButton(onClick = onPrev, enabled = hasPrev) {
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                contentDescription = stringResource(R.string.nav_prev_note),
+                tint = foreground.copy(alpha = if (hasPrev) 1f else 0.35f),
+            )
+        }
+        Text(
+            text = "${index + 1} / $total",
+            modifier = Modifier.weight(1f),
+            textAlign = TextAlign.Center,
+            style = MaterialTheme.typography.labelLarge,
+            color = foreground.copy(alpha = 0.8f),
+        )
+        IconButton(onClick = onNext, enabled = hasNext) {
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = stringResource(R.string.nav_next_note),
+                tint = foreground.copy(alpha = if (hasNext) 1f else 0.35f),
+            )
+        }
     }
 }
 
