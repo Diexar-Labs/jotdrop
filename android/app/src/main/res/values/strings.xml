@@ -50,6 +50,7 @@
     <string name="action_cancel">Cancel</string>
     <string name="action_close">Close</string>
     <string name="action_open_external">Open externally</string>
+    <string name="action_open_image">Open image</string>
     <string name="lightbox_load_failed">Could not load image.</string>
     <string name="reminder_channel_name">Reminders</string>
     <string name="reminder_channel_desc">Notifications for note reminders.</string>

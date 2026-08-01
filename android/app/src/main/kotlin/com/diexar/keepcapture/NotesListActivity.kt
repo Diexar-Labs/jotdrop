@@ -59,6 +59,7 @@ import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PushPin
+import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Stop
@@ -117,8 +118,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.lifecycleScope
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
@@ -133,6 +132,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.withLock
 
 class NotesListActivity : ComponentActivity() {
 
@@ -223,6 +223,9 @@ class NotesListActivity : ComponentActivity() {
                     },
                     onTogglePin = { note ->
                         togglePin(note)
+                    },
+                    onToggleChecklist = { note, index ->
+                        toggleChecklist(note, index)
                     },
                 )
             }
@@ -418,10 +421,30 @@ class NotesListActivity : ComponentActivity() {
         lifecycleScope.launch {
             val newMeta = note.meta.copy(pinned = !note.meta.pinned)
             val result = withContext(Dispatchers.IO) {
-                Storage.updateNoteMeta(this@NotesListActivity, note.uri, newMeta)
+                Storage.noteWriteMutex.withLock {
+                    Storage.updateNoteMeta(this@NotesListActivity, note.uri, newMeta)
+                }
             }
             result.onFailure { err ->
                 Toast.makeText(this@NotesListActivity, err.message ?: getString(R.string.error_generic), Toast.LENGTH_SHORT).show()
+            }
+            reload()
+        }
+    }
+
+    private fun toggleChecklist(note: NoteSummary, index: Int) {
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                Storage.noteWriteMutex.withLock {
+                    Storage.toggleChecklistItem(this@NotesListActivity, note.uri, index)
+                }
+            }
+            result.onFailure { err ->
+                Toast.makeText(
+                    this@NotesListActivity,
+                    err.message ?: getString(R.string.error_generic),
+                    Toast.LENGTH_SHORT,
+                ).show()
             }
             reload()
         }
@@ -527,6 +550,7 @@ private fun NotesListScreen(
     onDiscardMemo: () -> Unit,
     onOpenNote: (NoteSummary, List<Uri>) -> Unit,
     onTogglePin: (NoteSummary) -> Unit,
+    onToggleChecklist: (NoteSummary, Int) -> Unit,
 ) {
     val isRecording by isRecordingFlow.collectAsState()
     val pendingMemo by pendingMemoFlow.collectAsState()
@@ -537,8 +561,6 @@ private fun NotesListScreen(
     val openLinkLabel = stringResource(R.string.action_open_link)
     val dark = isSystemInDarkTheme()
     val bgBrush = remember(dark) { screenBackgroundBrush(dark) }
-    // Bij niet-null: lightbox is open en toont deze afbeelding op volle scherm.
-    var lightboxUri by remember { mutableStateOf<Uri?>(null) }
     var searchQuery by remember { mutableStateOf("") }
     var selectedTags by remember { mutableStateOf<Set<String>>(emptySet()) }
     var tagSheetOpen by remember { mutableStateOf(false) }
@@ -851,8 +873,8 @@ private fun NotesListScreen(
                                         onCardClick = onCardClick,
                                         onCardLongClick = onCardLongClick,
                                         onTogglePin = onTogglePin,
+                                        onToggleChecklist = onToggleChecklist,
                                         onUrlClick = onUrlClick,
-                                        onThumbnailClick = { uri -> lightboxUri = uri },
                                     )
                                 }
                             }
@@ -861,9 +883,6 @@ private fun NotesListScreen(
                 }
             }
         }
-    }
-    lightboxUri?.let { uri ->
-        ImageLightbox(uri = uri, onClose = { lightboxUri = null })
     }
     if (tagSheetOpen) {
         TagPickerSheet(
@@ -995,8 +1014,8 @@ private fun NotesGrid(
     onCardClick: (NoteSummary) -> Unit,
     onCardLongClick: (NoteSummary) -> Unit,
     onTogglePin: (NoteSummary) -> Unit,
+    onToggleChecklist: (NoteSummary, Int) -> Unit,
     onUrlClick: (String) -> Unit,
-    onThumbnailClick: (Uri) -> Unit,
 ) {
     val pinned = notes.filter { it.meta.pinned }
     val rest = notes.filter { !it.meta.pinned }
@@ -1026,8 +1045,8 @@ private fun NotesGrid(
                     onClick = { onCardClick(note) },
                     onLongClick = { onCardLongClick(note) },
                     onPinClick = { onTogglePin(note) },
+                    onChecklistClick = { index -> onToggleChecklist(note, index) },
                     onUrlClick = onUrlClick,
-                    onThumbnailClick = onThumbnailClick,
                 )
             }
             item(span = StaggeredGridItemSpan.FullLine) {
@@ -1043,8 +1062,8 @@ private fun NotesGrid(
                 onClick = { onCardClick(note) },
                 onLongClick = { onCardLongClick(note) },
                 onPinClick = { onTogglePin(note) },
+                onChecklistClick = { index -> onToggleChecklist(note, index) },
                 onUrlClick = onUrlClick,
-                onThumbnailClick = onThumbnailClick,
             )
         }
     }
@@ -1340,8 +1359,8 @@ private fun NoteCard(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onPinClick: () -> Unit,
+    onChecklistClick: (Int) -> Unit,
     onUrlClick: (String) -> Unit,
-    onThumbnailClick: (Uri) -> Unit,
 ) {
     val bg = noteBackground(note.meta.color, darkTheme)
     val fg = contentColorOn(note.meta.color, darkTheme)
@@ -1385,9 +1404,8 @@ private fun NoteCard(
         Box(modifier = Modifier.fillMaxSize().background(brush = brush)) {
             Column {
                 if (thumbnailUri != null) {
-                    // In selection-mode: thumbnail-tap toggelt de kaart i.p.v. de
-                    // lightbox openen. Anders zou je nooit een kaart met thumb kunnen
-                    // (de)selecteren via z'n bovenste helft.
+                    // De thumbnail hoort bij de kaart: een tap opent eerst de editor.
+                    // Daar kan de gebruiker vervolgens de afbeelding groot openen.
                     AsyncImage(
                         // Decode begrenzen tot ~kaartgrootte i.p.v. de volledige
                         // foto-resolutie, en geen crossfade: scheelt geheugen en
@@ -1405,10 +1423,7 @@ private fun NoteCard(
                         modifier = Modifier
                             .fillMaxWidth()
                             .aspectRatio(16f / 9f)
-                            .clickable {
-                                if (selectionMode) onClick()
-                                else onThumbnailClick(thumbnailUri)
-                            },
+                            .clickable(onClick = onClick),
                     )
                 } else if (note.audioBasename != null) {
                     VoiceMemoBanner(foreground = fg)
@@ -1436,6 +1451,13 @@ private fun NoteCard(
                             overflow = TextOverflow.Ellipsis,
                             onClick = { offset ->
                                 if (selectionMode) { onClick(); return@ClickableText }
+                                val checklistAnn = annotated
+                                    .getStringAnnotations(tag = "CHECKLIST", start = offset, end = offset)
+                                    .firstOrNull()
+                                if (checklistAnn != null) {
+                                    checklistAnn.item.toIntOrNull()?.let(onChecklistClick)
+                                    return@ClickableText
+                                }
                                 val urlAnn = annotated
                                     .getStringAnnotations(tag = "URL", start = offset, end = offset)
                                     .firstOrNull()
@@ -1482,7 +1504,7 @@ private fun NoteCard(
                         .padding(8.dp)
                         .size(24.dp),
                 )
-            } else if (note.meta.pinned) {
+            } else {
                 IconButton(
                     onClick = onPinClick,
                     modifier = Modifier
@@ -1491,8 +1513,10 @@ private fun NoteCard(
                         .size(28.dp),
                 ) {
                     Icon(
-                        Icons.Filled.PushPin,
-                        contentDescription = stringResource(R.string.action_unpin),
+                        imageVector = if (note.meta.pinned) Icons.Filled.PushPin else Icons.Outlined.PushPin,
+                        contentDescription = stringResource(
+                            if (note.meta.pinned) R.string.action_unpin else R.string.action_pin
+                        ),
                         tint = fg,
                     )
                 }
@@ -1688,7 +1712,13 @@ internal fun renderPreviewAnnotated(
     text: String,
     accent: Color,
 ): androidx.compose.ui.text.AnnotatedString {
-    data class Match(val start: Int, val end: Int, val display: String, val href: String?)
+    data class Match(
+        val start: Int,
+        val end: Int,
+        val display: String,
+        val href: String? = null,
+        val checklistIndex: Int? = null,
+    )
 
     // Checklist-syntax (`- [ ]` / `- [x]`) wordt voor de preview vervangen door
     // unicode-glyphs. Vorm-gebaseerd (leeg vs. gevuld), dus ook leesbaar zonder
@@ -1700,8 +1730,12 @@ internal fun renderPreviewAnnotated(
     val wikiRegex = Regex("\\[\\[([^\\]\\|\\n]+)(?:\\|([^\\]\\n]+))?\\]\\]")
     val mdRegex = Regex("\\[([^\\]\\n]+)\\]\\((https?://[^)\\s]+)\\)")
     val urlRegex = Regex("https?://\\S+")
+    val checklistRegex = Regex("(?m)^[☐☑](?=\\s|$)")
 
     val matches = mutableListOf<Match>()
+    checklistRegex.findAll(source).forEachIndexed { index, match ->
+        matches.add(Match(match.range.first, match.range.last + 1, match.value, checklistIndex = index))
+    }
     for (m in wikiRegex.findAll(source)) {
         val target = m.groupValues[1].trim()
         val alias = m.groupValues.getOrNull(2)?.trim().orEmpty()
@@ -1729,7 +1763,13 @@ internal fun renderPreviewAnnotated(
         for (m in matches) {
             if (m.start < i) continue // overlappende match, sla over
             if (m.start > i) append(source.substring(i, m.start))
-            if (m.href != null) {
+            if (m.checklistIndex != null) {
+                pushStringAnnotation(tag = "CHECKLIST", annotation = m.checklistIndex.toString())
+                withStyle(SpanStyle(color = accent, fontWeight = FontWeight.Bold)) {
+                    append(m.display)
+                }
+                pop()
+            } else if (m.href != null) {
                 pushStringAnnotation(tag = "URL", annotation = m.href)
                 withStyle(
                     SpanStyle(
@@ -1755,69 +1795,5 @@ internal fun renderPreviewAnnotated(
             i = m.end
         }
         if (i < source.length) append(source.substring(i))
-    }
-}
-
-/**
- * Volledig-scherm-dialog die de gegeven afbeelding op groot formaat toont.
- * Buiten tap of "Sluiten" sluit de dialog; "Extern openen" geeft het bestand
- * door aan de standaard-gallery via ACTION_VIEW met read-permission.
- */
-@Composable
-private fun ImageLightbox(uri: Uri, onClose: () -> Unit) {
-    val context = LocalContext.current
-    Dialog(
-        onDismissRequest = onClose,
-        properties = DialogProperties(
-            usePlatformDefaultWidth = false,
-            dismissOnClickOutside = true,
-        ),
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color(0xCC000000))
-                .clickable(onClick = onClose),
-            contentAlignment = Alignment.Center,
-        ) {
-            AsyncImage(
-                model = uri,
-                contentDescription = null,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-            )
-            Column(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-            ) {
-                Button(onClick = {
-                    try {
-                        val intent = Intent(Intent.ACTION_VIEW).apply {
-                            setDataAndType(uri, "image/*")
-                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        }
-                        context.startActivity(intent)
-                        onClose()
-                    } catch (e: Throwable) {
-                        Toast.makeText(
-                            context,
-                            context.getString(R.string.toast_error, e.message ?: ""),
-                            Toast.LENGTH_SHORT,
-                        ).show()
-                    }
-                }) {
-                    Text(stringResource(R.string.action_open_external))
-                }
-                Spacer(Modifier.height(8.dp))
-                Button(onClick = onClose) {
-                    Text(stringResource(R.string.action_close))
-                }
-            }
-        }
     }
 }

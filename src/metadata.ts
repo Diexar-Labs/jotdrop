@@ -246,40 +246,55 @@ export function checklistToGlyphs(text: string): string {
  * Renders a limited inline preview into `parent` as real DOM nodes — never via
  * innerHTML, so user text is inserted as text content and can never inject
  * markup. Handles checklist glyphs, `[[wikilink]]` / `[[link|alias]]` as styled
- * spans, and `[text](url)` plus bare http(s) URLs as clickable `.jotdrop-url`
- * anchors. Clicks are caught by the view via delegation on the data-href attr.
+ * spans, `[text](url)` plus bare http(s) URLs as clickable `.jotdrop-url`
+ * anchors, and checklist glyphs as buttons. Clicks are caught by the view via
+ * delegation on data attributes.
  */
 export function renderInlinePreview(parent: HTMLElement, text: string): void {
   const src = checklistToGlyphs(text);
 
-  // Single ordered scan: wikilink | markdown-link | bare-url. Alternation consumes
-  // a markdown link whole, so its href is never re-matched as a separate bare URL.
+  // Single ordered scan: checklist glyph | wikilink | markdown-link | bare-url.
+  // Alternation consumes a markdown link whole, so its href is never re-matched
+  // as a separate bare URL.
   const tokenRe =
-    /\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\]|\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)|(https?:\/\/\S+)/g;
+    /^([☐☑])(?=\s|$)|\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\]|\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)|(https?:\/\/\S+)/gm;
 
   let lastIndex = 0;
+  let checklistIndex = 0;
   let m: RegExpExecArray | null;
   while ((m = tokenRe.exec(src)) !== null) {
     if (m.index > lastIndex) parent.appendText(src.slice(lastIndex, m.index));
 
     if (m[1] !== undefined) {
+      const checked = m[1] === "☑";
+      const button = parent.createEl("button", {
+        cls: "jotdrop-checklist-toggle",
+        text: m[1],
+        attr: {
+          type: "button",
+          "aria-label": t(checked ? "checklist_mark_unchecked" : "checklist_mark_checked"),
+          "aria-checked": String(checked),
+        },
+      });
+      button.dataset.checklistIndex = String(checklistIndex++);
+    } else if (m[2] !== undefined) {
       // [[target]] or [[target|alias]]
       const span = parent.createSpan({
         cls: "jotdrop-wikilink",
-        text: (m[2] ?? m[1]).trim(),
+        text: (m[3] ?? m[2]).trim(),
       });
-      span.dataset.href = m[1].trim();
-    } else if (m[3] !== undefined) {
+      span.dataset.href = m[2].trim();
+    } else if (m[4] !== undefined) {
       // [label](https://url)
       const a = parent.createEl("a", {
         cls: "jotdrop-url",
-        text: m[3],
+        text: m[4],
         attr: { rel: "noopener noreferrer" },
       });
-      a.dataset.href = m[4];
-    } else if (m[5] !== undefined) {
+      a.dataset.href = m[5];
+    } else if (m[6] !== undefined) {
       // Bare URL — strip trailing sentence punctuation back into plain text.
-      const raw = m[5];
+      const raw = m[6];
       const trail = raw.match(/[).,;:!?\]"']+$/)?.[0] ?? "";
       const clean = trail ? raw.slice(0, raw.length - trail.length) : raw;
       if (clean) {
@@ -298,4 +313,28 @@ export function renderInlinePreview(parent: HTMLElement, text: string): void {
     lastIndex = tokenRe.lastIndex;
   }
   if (lastIndex < src.length) parent.appendText(src.slice(lastIndex));
+}
+
+/**
+ * Toggles the Nth Markdown checklist item in the note body. Frontmatter is
+ * deliberately skipped so YAML list values that resemble checkboxes are never
+ * changed. Returns the original content when the requested item no longer
+ * exists, for example after a concurrent external edit.
+ */
+export function toggleChecklistItem(content: string, targetIndex: number): string {
+  if (!Number.isInteger(targetIndex) || targetIndex < 0) return content;
+
+  const frontmatter = content.match(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/);
+  const bodyStart = frontmatter?.[0].length ?? 0;
+  const head = content.slice(0, bodyStart);
+  const body = content.slice(bodyStart);
+  let currentIndex = 0;
+  const updated = body.replace(
+    /^(\s*-\s+\[)([ xX])(\](?:\s|$))/gm,
+    (full, before: string, state: string, after: string) => {
+      if (currentIndex++ !== targetIndex) return full;
+      return `${before}${state === " " ? "x" : " "}${after}`;
+    },
+  );
+  return head + updated;
 }

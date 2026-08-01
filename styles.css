@@ -180,7 +180,7 @@
   display: none;
 }
 
-.is-selecting .jotdrop-card.is-pinned::before {
+.is-selecting .jotdrop-card-quick-pin {
   display: none;
 }
 
@@ -489,13 +489,50 @@
   opacity: 0.7;
 }
 
-.jotdrop-card.is-pinned::before {
-  content: "📌";
+.jotdrop-card-quick-pin {
   position: absolute;
   top: 8px;
   right: 8px;
-  font-size: 0.9em;
-  opacity: 0.85;
+  z-index: 2;
+  width: 30px;
+  height: 30px;
+  padding: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--kc-bg) 82%, transparent);
+  color: inherit;
+  opacity: 0.72;
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+}
+
+.jotdrop-card-quick-pin:hover,
+.jotdrop-card-quick-pin:focus-visible,
+.jotdrop-card-quick-pin.is-active {
+  opacity: 1;
+}
+
+.jotdrop-checklist-toggle {
+  min-width: 1.35em;
+  min-height: 1.35em;
+  margin: -0.1em 0.15em -0.1em -0.1em;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+  vertical-align: baseline;
+}
+
+.jotdrop-checklist-toggle:hover,
+.jotdrop-checklist-toggle:focus-visible {
+  background: color-mix(in srgb, currentColor 12%, transparent);
 }
 
 .jotdrop-card-body {
@@ -560,6 +597,7 @@
   font-size: 1em;
   font-weight: 600;
   margin: 0 0 6px;
+  padding-right: 32px;
   color: var(--text-normal);
   word-break: break-word;
 }
@@ -1222,6 +1260,25 @@
   .jotdrop-card-actions {
     opacity: 1;
   }
+
+}
+
+/* Obsidian Mobile can report a CSS viewport wider than the physical phone,
+   so a width media query alone is unreliable. Its own `.is-mobile` class is
+   the authoritative signal. Keep the in-card preview compact; the lightbox
+   remains full-size after a tap. */
+.is-mobile .jotdrop-edit-thumbnail {
+  height: 160px;
+  min-height: 160px;
+  max-height: 160px;
+}
+
+.is-mobile .jotdrop-edit-thumbnail img {
+  width: auto;
+  max-width: 100%;
+  height: 100%;
+  max-height: 160px;
+  object-fit: contain;
 }
 
 /* Trio-callout bovenaan settings — zelfde look als de steun-sectie */

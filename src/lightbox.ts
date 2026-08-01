@@ -6,8 +6,8 @@ import { t } from "./i18n";
 
 /**
  * Modal that shows the card's associated image at full size. Opened when the
- * user clicks a card with a thumbnail; provides buttons to edit the note or
- * open the image in an Obsidian tab.
+ * user clicks the image inside an already opened card; provides buttons to
+ * edit the note or open the image in an Obsidian tab.
  */
 export class LightboxModal extends Modal {
   private plugin: JotDropPlugin;

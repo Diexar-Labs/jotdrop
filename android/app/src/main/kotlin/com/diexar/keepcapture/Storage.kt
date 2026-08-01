@@ -404,6 +404,17 @@ object Storage {
         return result
     }
 
+    /**
+     * Eén gecachte attachment-index voor de editor. Een losse [findAttachmentUri]
+     * doet meerdere SAF-queries per afbeelding; bij swipen blokkeerde dat eerder
+     * de Compose UI-thread. Deze snapshot wordt op Dispatchers.IO opgebouwd en
+     * daarna voor alle notities binnen dezelfde editorsessie hergebruikt.
+     */
+    fun listAttachmentUris(context: Context): Map<String, Uri> {
+        val vaultUri = getVaultUri(context) ?: return emptyMap()
+        return snapshotAttachments(context, vaultUri)
+    }
+
     private data class ChildDoc(val uri: Uri, val name: String, val lastModified: Long)
 
     fun readNote(context: Context, uri: Uri): Result<String> {
@@ -436,6 +447,34 @@ object Storage {
         val current = readNote(context, uri).getOrElse { return Result.failure(it) }
         val newContent = FrontmatterWriter.apply(current, meta)
         return updateNote(context, uri, newContent)
+    }
+
+    /** Schakelt exact het N-de Markdown-checklist-item in de body om. */
+    fun toggleChecklistItem(context: Context, uri: Uri, targetIndex: Int): Result<Unit> {
+        if (targetIndex < 0) {
+            return Result.failure(IllegalArgumentException("Ongeldig checklist-item."))
+        }
+        val current = readNote(context, uri).getOrElse { return Result.failure(it) }
+        val frontmatter = Regex("\\A---\\r?\\n[\\s\\S]*?\\r?\\n---(?:\\r?\\n|$)").find(current)
+        val bodyStart = frontmatter?.range?.last?.plus(1) ?: 0
+        val head = current.substring(0, bodyStart)
+        val body = current.substring(bodyStart)
+        val itemRegex = Regex("(?m)^(\\s*-\\s+\\[)([ xX])(\\](?:\\s|$))")
+        var currentIndex = 0
+        var toggled = false
+        val updatedBody = itemRegex.replace(body) { match ->
+            if (currentIndex++ != targetIndex) {
+                match.value
+            } else {
+                toggled = true
+                val state = match.groupValues[2]
+                match.groupValues[1] + (if (state == " ") "x" else " ") + match.groupValues[3]
+            }
+        }
+        if (!toggled) {
+            return Result.failure(IllegalStateException("Checklist-item bestaat niet meer."))
+        }
+        return updateNote(context, uri, head + updatedBody)
     }
 
     fun deleteNote(context: Context, uri: Uri): Result<Unit> {
@@ -762,7 +801,13 @@ object Storage {
             .map { it.trim() }
             .filter { it.isNotBlank() && !wikiEmbed.matches(it) && !mdImage.matches(it) }
             .toList()
-        val rest = if (lines.size > 1) lines.drop(1).joinToString("\n") else ""
+        // Een gewone eerste regel is al de kaarttitel en hoeft niet dubbel in de
+        // snippet. Een checklist-regel blijft juist staan: de checkbox moet vanuit
+        // het overzicht zichtbaar en klikbaar zijn, inclusief het eerste item.
+        val firstIsChecklist = lines.firstOrNull()?.matches(Regex("^- \\[[ xX]](?:\\s|$).*$")) == true
+        val rest = if (firstIsChecklist) lines.joinToString("\n")
+        else if (lines.size > 1) lines.drop(1).joinToString("\n")
+        else ""
         // URLs strippen — die worden als chips onderaan getoond (plugin-pariteit).
         // Markdown-link-syntax behoudt het label, losse URLs verdwijnen volledig.
         val stripped = rest

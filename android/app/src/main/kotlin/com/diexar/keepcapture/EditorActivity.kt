@@ -241,6 +241,10 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
     var pendingCameraUri by rememberSaveable { mutableStateOf<Uri?>(null) }
     var pendingCameraFile by rememberSaveable { mutableStateOf<File?>(null) }
     var pendingOcr by rememberSaveable { mutableStateOf(false) }
+    // Eén SAF-snapshot per editorsessie. Voorheen zocht EditorBody elk embed via
+    // DocumentFile op de UI-thread; dat veroorzaakte de merkbare pauze na swipen.
+    var attachmentUris by remember { mutableStateOf<Map<String, Uri>>(emptyMap()) }
+    var attachmentIndexLoaded by remember { mutableStateOf(false) }
 
     fun insertImageEmbed(basename: String) {
         // Embed leeft in een aparte lijst — pas bij opslaan plakken we hem
@@ -297,13 +301,28 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
                 Storage.copyImageToAttachments(context, uri)
             }
             cleanupFile?.delete()
-            result.onSuccess { basename ->
+            val basename = result.getOrNull()
+            if (basename != null) {
+                val hadCompleteIndex = attachmentIndexLoaded
+                val refreshed = withContext(Dispatchers.IO) {
+                    if (hadCompleteIndex) {
+                        Storage.findAttachmentUri(context, basename)?.let { mapOf(basename to it) }.orEmpty()
+                    } else {
+                        Storage.listAttachmentUris(context)
+                    }
+                }
+                attachmentUris = if (hadCompleteIndex) attachmentUris + refreshed else refreshed
+                attachmentIndexLoaded = true
                 if (withOcr) insertOcrAndEmbed(basename, ocrText)
                 else insertImageEmbed(basename)
-            }.onFailure { err ->
+            } else {
+                val err = result.exceptionOrNull()
                 Toast.makeText(
                     context,
-                    context.getString(R.string.photo_error, err.message ?: err.javaClass.simpleName),
+                    context.getString(
+                        R.string.photo_error,
+                        err?.message ?: err?.javaClass?.simpleName ?: context.getString(R.string.error_unknown),
+                    ),
                     Toast.LENGTH_SHORT,
                 ).show()
             }
@@ -443,13 +462,23 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
     suspend fun loadInto(uriString: String) {
         loaded = false
         loadError = null
+        val cachedAttachments = attachmentUris.takeIf { attachmentIndexLoaded }
         val result = withContext(Dispatchers.IO) {
             runCatching {
-                Storage.readNote(context, Uri.parse(uriString)).getOrThrow()
+                val raw = Storage.readNote(context, Uri.parse(uriString)).getOrThrow()
+                val needsAttachments = Storage.findEmbeddedAttachmentBasenames(raw).isNotEmpty()
+                val shouldBuildIndex = cachedAttachments == null && needsAttachments
+                Triple(
+                    raw,
+                    cachedAttachments ?: if (shouldBuildIndex) Storage.listAttachmentUris(context) else emptyMap(),
+                    cachedAttachments != null || shouldBuildIndex,
+                )
             }
         }
-        result.onSuccess { raw ->
+        result.onSuccess { (raw, attachments, indexReady) ->
             try {
+                attachmentUris = attachments
+                attachmentIndexLoaded = indexReady
                 val parsed = FrontmatterParser.parse(raw)
                 val cleanBody = parsed.body.removePrefix("\n")
                 val (textPart, embeds) = splitBodyAndEmbeds(cleanBody)
@@ -494,6 +523,10 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
     // doorloopt in de editor. Memoizen voorkomt nieuwe Brush per recomposition.
     val editorBrush = remember(color, dark, bg) {
         if (color == NoteColor.DEFAULT) screenBackgroundBrush(dark) else noteCardBrush(bg, dark)
+    }
+    val embedBasenames = embedLines.mapNotNull { extractEmbedBasename(it) }
+    val embedItems = remember(embedBasenames, attachmentUris) {
+        embedBasenames.mapNotNull { name -> attachmentUris[name]?.let { uri -> name to uri } }
     }
 
     fun applyMetaAsync(
@@ -812,7 +845,7 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
                     onValueChange = { bodyText = it },
                     title = titleText,
                     onTitleChange = { titleText = it },
-                    embedBasenames = embedLines.mapNotNull { extractEmbedBasename(it) },
+                    embedItems = embedItems,
                     tags = tags,
                     onAddTag = { tag ->
                         val clean = tag.removePrefix("#").trim()
@@ -932,7 +965,7 @@ private fun EditorBody(
     onValueChange: (TextFieldValue) -> Unit,
     title: String,
     onTitleChange: (String) -> Unit,
-    embedBasenames: List<String>,
+    embedItems: List<Pair<String, Uri>>,
     tags: List<String>,
     onAddTag: (String) -> Unit,
     onRemoveTag: (String) -> Unit,
@@ -940,12 +973,7 @@ private fun EditorBody(
     onReminderChange: (String?) -> Unit,
     foreground: Color,
 ) {
-    val context = LocalContext.current
-    val embedItems = remember(embedBasenames) {
-        embedBasenames.mapNotNull { name ->
-            Storage.findAttachmentUri(context, name)?.let { uri -> name to uri }
-        }
-    }
+    var lightboxUri by remember { mutableStateOf<Uri?>(null) }
 
     Column(
         modifier = Modifier
@@ -961,12 +989,13 @@ private fun EditorBody(
             if (soloImage != null) {
                 AsyncImage(
                     model = soloImage.second,
-                    contentDescription = null,
+                    contentDescription = stringResource(R.string.action_open_image),
                     contentScale = ContentScale.Fit,
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(min = 140.dp, max = 260.dp)
-                        .clip(RoundedCornerShape(8.dp)),
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { lightboxUri = soloImage.second },
                 )
             } else {
                 // Horizontaal scrollbare strip: audio-embeds krijgen een
@@ -984,12 +1013,13 @@ private fun EditorBody(
                         } else {
                             AsyncImage(
                                 model = uri,
-                                contentDescription = null,
+                                contentDescription = stringResource(R.string.action_open_image),
                                 contentScale = ContentScale.Crop,
                                 modifier = Modifier
                                     .height(140.dp)
                                     .aspectRatio(4f / 3f)
-                                    .clip(RoundedCornerShape(8.dp)),
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .clickable { lightboxUri = uri },
                             )
                         }
                     }
@@ -1048,6 +1078,9 @@ private fun EditorBody(
                 unfocusedIndicatorColor = Color.Transparent,
             ),
         )
+    }
+    lightboxUri?.let { uri ->
+        ImageLightbox(uri = uri, onClose = { lightboxUri = null })
     }
 }
 
@@ -1792,4 +1825,3 @@ private fun formatReminderDisplay(iso: String?): String? {
         iso
     }
 }
-

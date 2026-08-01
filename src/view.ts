@@ -1,8 +1,7 @@
 import { ItemView, Menu, Notice, TFile, WorkspaceLeaf, normalizePath, setIcon } from "obsidian";
 import type JotDropPlugin from "./main";
 import { QuickCaptureModal } from "./capture";
-import { EditNoteModal } from "./edit";
-import { LightboxModal } from "./lightbox";
+import { AttachmentPreviewHint, EditNoteModal } from "./edit";
 import { FolderPickerModal } from "./folderPicker";
 import { TagPickerModal, TagItem } from "./tagPicker";
 import { ConfirmModal } from "./confirmModal";
@@ -18,6 +17,7 @@ import {
   checklistToGlyphs,
   renderInlinePreview,
   stripFrontmatter,
+  toggleChecklistItem,
   updateMeta,
 } from "./metadata";
 import { voidAsync } from "./asyncUtil";
@@ -841,7 +841,7 @@ export class JotDropView extends ItemView {
    * display order (pinned section first, then the rest), so the modal can step
    * to the previous/next card with arrows, swipe or the header buttons.
    */
-  private openEditModal(file: TFile): void {
+  private openEditModal(file: TFile, attachment?: AttachmentResource | null): void {
     const ordered = [
       ...this.lastFiltered.filter((c) => c.meta.pinned),
       ...this.lastFiltered.filter((c) => !c.meta.pinned),
@@ -852,6 +852,13 @@ export class JotDropView extends ItemView {
       this.plugin,
       file,
       index >= 0 ? { files: ordered, index } : undefined,
+      attachment ? {
+        notePath: file.path,
+        resourcePath: attachment.resourcePath,
+        file: attachment.file,
+        vaultPath: attachment.vaultPath,
+        fallbacks: [...attachment.fallbacks],
+      } satisfies AttachmentPreviewHint : undefined,
     ).open();
   }
 
@@ -1015,6 +1022,24 @@ export class JotDropView extends ItemView {
     const marker = cardEl.createSpan({ cls: "jotdrop-card-select-marker" });
     setIcon(marker, isSelected ? "check-circle-2" : "circle");
 
+    // Pinning is a primary card action: keep it directly available instead of
+    // hiding it in the hover-only action row. The icon changes shape as well as
+    // state, so the distinction does not rely on colour.
+    const quickPinBtn = cardEl.createEl("button", {
+      cls: `jotdrop-card-quick-pin${meta.pinned ? " is-active" : ""}`,
+      attr: {
+        "aria-label": meta.pinned ? t("action_unpin") : t("action_pin"),
+        "aria-pressed": String(meta.pinned),
+      },
+    });
+    setIcon(quickPinBtn, meta.pinned ? "pin-off" : "pin");
+    quickPinBtn.addEventListener("click", voidAsync(async (e) => {
+      e.stopPropagation();
+      await updateMeta(this.app, file, { pinned: !meta.pinned });
+      this.plugin.refreshViews();
+    }));
+    quickPinBtn.addEventListener("pointerdown", (e) => e.stopPropagation());
+
     const titleText = extractTitle(content, file.basename);
     const previewText = extractPreview(content);
     const urls = extractUrls(content);
@@ -1029,18 +1054,17 @@ export class JotDropView extends ItemView {
     // show an equalizer banner so the card type is visually recognizable.
     const audioBasename = attachment ? null : extractFirstEmbeddedAudio(content);
 
-    // Body click = always edit (or toggle when in selection mode).
-    // Thumbnail gets its own handler with stopPropagation for the lightbox,
-    // otherwise the user can no longer reach the card's text.
+    // Every part of the card body, including the thumbnail, opens the editor.
+    // The full image is available by clicking it inside the opened editor.
+    let openedAttachment = attachment;
     body.addEventListener("click", () => {
       if (this.selectionMode) { this.toggleSelect(file.path); return; }
-      this.openEditModal(file);
+      this.openEditModal(file, openedAttachment);
     });
 
     if (attachment) {
       const thumbWrap = body.createDiv({ cls: "jotdrop-card-thumbnail" });
       const img = thumbWrap.createEl("img");
-      // The lightbox must follow whichever candidate actually loaded.
       let current = attachment;
       const fallbacks = [...attachment.fallbacks];
       img.src = current.resourcePath;
@@ -1054,22 +1078,11 @@ export class JotDropView extends ItemView {
         const next = fallbacks.shift();
         if (next) {
           current = { resourcePath: next.resourcePath, file: null, vaultPath: next.vaultPath, fallbacks: [] };
+          openedAttachment = current;
           img.src = next.resourcePath;
         } else {
           thumbWrap.remove();
         }
-      });
-      thumbWrap.addEventListener("click", (e) => {
-        e.stopPropagation();
-        if (this.selectionMode) { this.toggleSelect(file.path); return; }
-        new LightboxModal(
-          this.app,
-          this.plugin,
-          file,
-          current.resourcePath,
-          current.file,
-          current.vaultPath,
-        ).open();
       });
     } else if (audioBasename) {
       const banner = body.createDiv({ cls: "jotdrop-card-voice-banner" });
@@ -1105,6 +1118,14 @@ export class JotDropView extends ItemView {
         if (this.selectionMode) {
           e.stopPropagation();
           this.toggleSelect(file.path);
+          return;
+        }
+        const toggle = (e.target as HTMLElement).closest<HTMLElement>(".jotdrop-checklist-toggle");
+        if (toggle) {
+          e.preventDefault();
+          e.stopPropagation();
+          const index = Number(toggle.dataset.checklistIndex);
+          void this.toggleChecklist(file, index);
           return;
         }
         this.handlePreviewClick(e);
@@ -1151,17 +1172,6 @@ export class JotDropView extends ItemView {
 
     const actions = cardEl.createDiv({ cls: "jotdrop-card-actions" });
 
-    const pinBtn = actions.createEl("button", {
-      cls: `jotdrop-card-action${meta.pinned ? " is-active" : ""}`,
-      attr: { "aria-label": meta.pinned ? t("action_unpin") : t("action_pin") },
-    });
-    setIcon(pinBtn, meta.pinned ? "pin-off" : "pin");
-    pinBtn.addEventListener("click", voidAsync(async (e) => {
-      e.stopPropagation();
-      await updateMeta(this.app, file, { pinned: !meta.pinned });
-      this.plugin.refreshViews();
-    }));
-
     const colorBtn = actions.createEl("button", {
       cls: "jotdrop-card-action",
       attr: { "aria-label": t("action_color") },
@@ -1179,7 +1189,7 @@ export class JotDropView extends ItemView {
     setIcon(editBtn, "pencil");
     editBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      this.openEditModal(file);
+      this.openEditModal(file, openedAttachment);
     });
 
     const archiveBtn = actions.createEl("button", {
@@ -1247,6 +1257,16 @@ export class JotDropView extends ItemView {
       );
       menu.showAtMouseEvent(e);
     });
+  }
+
+  private async toggleChecklist(file: TFile, index: number): Promise<void> {
+    if (!Number.isInteger(index) || index < 0) return;
+    try {
+      await this.app.vault.process(file, (content) => toggleChecklistItem(content, index));
+      this.plugin.refreshViews();
+    } catch (err) {
+      new Notice(t("notice_error", err instanceof Error ? err.message : String(err)));
+    }
   }
 
   private handlePreviewClick(e: MouseEvent): void {

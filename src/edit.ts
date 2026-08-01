@@ -25,6 +25,15 @@ export interface NoteNavContext {
   index: number;
 }
 
+/** A resource path already resolved by the card grid, including fallbacks. */
+export interface AttachmentPreviewHint {
+  notePath: string;
+  resourcePath: string;
+  file: TFile | null;
+  vaultPath: string;
+  fallbacks: { resourcePath: string; vaultPath: string }[];
+}
+
 /** Minimum horizontal swipe distance (px) before it counts as navigation. */
 const SWIPE_MIN_DISTANCE = 60;
 
@@ -48,6 +57,7 @@ export class EditNoteModal extends Modal {
   private plugin: JotDropPlugin;
   private file: TFile;
   private nav: NoteNavContext | null;
+  private attachmentHint: AttachmentPreviewHint | null;
   private state!: EditableNote;
   private originalTitle = "";
   private originalBody = "";
@@ -64,11 +74,18 @@ export class EditNoteModal extends Modal {
   private touchStartY: number | null = null;
   private touchOnTextField = false;
 
-  constructor(app: App, plugin: JotDropPlugin, file: TFile, nav?: NoteNavContext) {
+  constructor(
+    app: App,
+    plugin: JotDropPlugin,
+    file: TFile,
+    nav?: NoteNavContext,
+    attachmentHint?: AttachmentPreviewHint,
+  ) {
     super(app);
     this.plugin = plugin;
     this.file = file;
     this.nav = nav ?? null;
+    this.attachmentHint = attachmentHint ?? null;
   }
 
   async onOpen(): Promise<void> {
@@ -454,10 +471,20 @@ export class EditNoteModal extends Modal {
    */
   private renderEmbedThumbnail(parent: HTMLElement): void {
     if (this.state.embedLines.length === 0) return;
-    const match = this.state.embedLines[0].match(/!\[\[([^\]|]+?)(?:\|[^\]]*)?\]\]/);
-    if (!match) return;
-    const basename = match[1].trim();
-    const resolved = this.resolveAttachment(basename);
+    const basename = extractEmbedBasename(this.state.embedLines[0]);
+    if (!basename) return;
+    // On mobile, adapter URLs for dot-folders can be expensive or unreliable to
+    // reconstruct. Prefer the exact path that already rendered successfully in
+    // the grid for the initially opened card, then use normal resolution for
+    // keyboard/swipe navigation to another card.
+    const resolved = this.attachmentHint?.notePath === this.file.path
+      ? {
+          resourcePath: this.attachmentHint.resourcePath,
+          file: this.attachmentHint.file,
+          vaultPath: this.attachmentHint.vaultPath,
+          fallbacks: [...this.attachmentHint.fallbacks],
+        }
+      : this.resolveAttachment(basename);
     if (!resolved) return;
 
     if (/\.(m4a|mp3|wav|ogg|aac|flac|3gp|amr|webm)$/i.test(basename)) {
@@ -657,7 +684,22 @@ export function joinHeadingTitle(title: string, body: string, level = 1): string
   return b ? `${marker} ${t}\n\n${b}` : `${marker} ${t}`;
 }
 
-const EMBED_LINE_REGEX = /^\s*!\[\[[^\]]+\]\]\s*$/;
+const EMBED_LINE_REGEX = /^\s*(?:!\[\[[^\]]+\]\]|!\[[^\]]*\]\([^)]+\))\s*$/;
+
+/**
+ * Gets the filename from either an Obsidian embed (`![[path/name.jpg|alias]]`)
+ * or a standard Markdown image (`![alt](path/name.jpg "title")`). The grid
+ * accepts both forms, so the opened editor must do the same or mobile users can
+ * see a thumbnail on the card that disappears as soon as they open it.
+ */
+function extractEmbedBasename(line: string): string | null {
+  const wiki = line.match(/!\[\[([^\]|]+?)(?:\|[^\]]*)?\]\]/);
+  const standard = line.match(/!\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/);
+  const target = (wiki?.[1] ?? standard?.[1])?.trim();
+  if (!target) return null;
+  const withoutQuery = target.split(/[?#]/, 1)[0];
+  return withoutQuery.split("/").pop() || null;
+}
 
 /**
  * Splits the body into text (without embed-only lines) and the embed lines separately.

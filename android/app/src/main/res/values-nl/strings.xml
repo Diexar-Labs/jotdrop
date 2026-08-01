@@ -48,6 +48,7 @@
     <string name="action_cancel">Annuleren</string>
     <string name="action_close">Sluiten</string>
     <string name="action_open_external">Extern openen</string>
+    <string name="action_open_image">Afbeelding openen</string>
     <string name="lightbox_load_failed">Afbeelding kan niet geladen worden.</string>
     <string name="reminder_channel_name">Herinneringen</string>
     <string name="reminder_channel_desc">Notificaties voor notitie-herinneringen.</string>
