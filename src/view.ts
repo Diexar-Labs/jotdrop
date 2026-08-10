@@ -27,6 +27,8 @@ export const VIEW_TYPE_JOTDROP = "jotdrop-view";
 
 const TITLE_MAX_WORDS = 10;
 const PREVIEW_MAX_WORDS = 25;
+const TITLE_MAX_CHARS = 80;
+const PREVIEW_MAX_CHARS = 240;
 const LINK_CHIPS_VISIBLE = 3;
 const TAG_CHIPS_TOP_N = 8;
 const LONG_PRESS_MS = 500;
@@ -1564,7 +1566,7 @@ function extractTitle(content: string, fallback: string): string {
       .replace(/^[*_`>]+\s*/, "")
       .trim();
     if (!cleaned) continue;
-    return truncateWords(cleaned, TITLE_MAX_WORDS);
+    return truncateWords(cleaned, TITLE_MAX_WORDS, TITLE_MAX_CHARS);
   }
   return fallback;
 }
@@ -1589,28 +1591,61 @@ function extractPreview(content: string): string {
     .filter((l) => l.length > 0);
   const rest = checklistToGlyphs(lines.join("\n"));
   if (!rest) return "";
-  return truncateWords(rest, PREVIEW_MAX_WORDS);
+  return truncateWords(rest, PREVIEW_MAX_WORDS, PREVIEW_MAX_CHARS);
 }
 
 /**
- * Truncates after `maxWords` words while preserving the original whitespace,
- * newlines included: the card preview renders with `white-space: pre-wrap`,
- * and `renderInlinePreview` matches checklist syntax against line starts —
- * collapsing newlines here would leave every checklist item after the first
- * as raw `- [ ]` text (issue #1).
+ * Truncates after `maxWords` words or `maxChars` characters, whichever comes
+ * first, while preserving the original whitespace (newlines included). The card
+ * preview renders with `white-space: pre-wrap`, and `renderInlinePreview` matches
+ * checklist syntax against line starts — collapsing newlines here would leave
+ * every checklist item after the first as raw `- [ ]` text (issue #1).
+ *
+ * Uses `Array.from(text)` for Unicode-safe character counting so surrogate pairs
+ * (emoji) are never split mid-codepoint. At most one ellipsis is appended.
  */
-function truncateWords(text: string, maxWords: number): string {
+function truncateWords(text: string, maxWords: number, maxChars: number): string {
+  const chars = Array.from(text);
   const re = /\S+/g;
-  let count = 0;
-  let end = 0;
+  let wordCount = 0;
+  let wordEnd = 0;
+  let charIdx = 0;
+  let bytePos = 0;
   let m: RegExpExecArray | null;
+
   while ((m = re.exec(text)) !== null) {
-    count++;
-    end = m.index + m[0].length;
-    if (count === maxWords) break;
+    wordCount++;
+    const endByte = m.index + m[0].length;
+    wordEnd = endByte;
+    // Advance charIdx past the characters covered by this match + gap
+    while (bytePos < endByte && charIdx < chars.length) {
+      bytePos += chars[charIdx].length;
+      charIdx++;
+    }
+    if (wordCount >= maxWords) break;
   }
-  if (count < maxWords || re.exec(text) === null) return text;
-  return `${text.slice(0, end)}…`;
+
+  const wordTruncated = wordCount >= maxWords && re.exec(text) !== null;
+  const charTruncated = chars.length > maxChars;
+
+  if (!wordTruncated && !charTruncated) return text;
+
+  // Pick whichever cut is tighter, preferring the earlier byte position
+  if (charTruncated) {
+    // Walk the char array to find the byte offset of the maxChars boundary
+    let b = 0;
+    let c = 0;
+    for (const ch of chars) {
+      if (c >= maxChars) break;
+      b += ch.length;
+      c++;
+    }
+    if (b < wordEnd || !wordTruncated) {
+      return `${chars.slice(0, maxChars).join("")}…`;
+    }
+  }
+
+  return `${text.slice(0, wordEnd)}…`;
 }
 
 /**
