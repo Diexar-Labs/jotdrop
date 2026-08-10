@@ -49,6 +49,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.consumeWindowInsets
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -800,6 +802,8 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
+                .consumeWindowInsets(padding)
+                .imePadding()
                 // Horizontale swipe = vorige/volgende notitie. detectHorizontalDragGestures
                 // orientation-lockt pas ná horizontale touch-slop, dus verticaal scrollen
                 // en de horizontaal scrollende titel/embed-strip (die de drag zelf
