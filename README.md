@@ -10,7 +10,7 @@ JotDrop is a free, open-source **Google Keep alternative** for [Obsidian](https:
 
 > **For the full Google Keep experience, install all three.** The plugin shows and organises your notes; the [Android app](#android-app) and [Chrome extension](#chrome-extension-web-clipper) are what give you Google Keep's capture-from-anywhere. Grab them from the [latest release](https://github.com/Diexar-Labs/jotdrop/releases/latest).
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: PolyForm Noncommercial 1.0.0](https://img.shields.io/badge/License-PolyForm%20Noncommercial%201.0.0-lightgrey.svg)](LICENSE)
 [![Obsidian plugin](https://img.shields.io/badge/Obsidian-plugin-7c3aed)](https://github.com/Diexar-Labs/jotdrop/releases)
 [![Android APK](https://img.shields.io/badge/Android-APK-3ddc84)](https://github.com/Diexar-Labs/jotdrop/releases)
 [![Build APK](https://github.com/Diexar-Labs/jotdrop/actions/workflows/android-build.yml/badge.svg)](https://github.com/Diexar-Labs/jotdrop/actions/workflows/android-build.yml)
@@ -29,7 +29,7 @@ JotDrop is a private, open-source **Google Keep alternative**. Google Keep is gr
 - **Card grid in Obsidian.** A dedicated view shows your notes as Keep-style cards: titles, colors, tags, archived, pinned-on-top. Filter, sort, search.
 - **Plain Markdown, always.** Notes are `.md` files with YAML frontmatter. They live in your vault. You can edit them anywhere - Obsidian, VS Code, Vim, mobile.
 - **Offline by default.** No server. No account. Works on a plane.
-- **Open source, free, no premium tier.** MIT-licensed.
+- **Source available, free for noncommercial use.** [PolyForm Noncommercial 1.0.0](LICENSE).
 
 ## Screenshots
 
@@ -211,7 +211,7 @@ For larger ideas, open an issue first to chat about it. No CLA, no commit-messag
 
 ## Support
 
-Open source, MIT-licensed, no premium tiers. If JotDrop saves you time and you feel like saying thanks:
+Source available, free for noncommercial use, no premium tiers. If JotDrop saves you time and you feel like saying thanks:
 
 <a href="https://ko-fi.com/L3L11ZETB9"><img src="https://img.shields.io/badge/Ko--fi-Support%20me-FF5E5B?logo=ko-fi&logoColor=white" alt="Ko-fi" /></a>
 &nbsp;
@@ -247,4 +247,4 @@ Inspired by Google Keep (the good parts) and by [the Obsidian community's](https
 
 ## License
 
-[MIT](LICENSE) - do whatever you want with it.
+[PolyForm Noncommercial License 1.0.0](LICENSE) — free for noncommercial use.
