@@ -229,7 +229,7 @@ export class QuickCaptureModal extends Modal {
     if (urls.length > 0) {
       const notice = new Notice(t("notice_fetching_preview"), 0);
       try {
-        const attachmentsFolder = `${this.plugin.settings.notesFolder}/.attachments`;
+        const attachmentsFolder = this.plugin.resolveAssetsFolder();
         let chosenUrl: string | null = null;
         let chosenPreview: OgPreview | null = null;
         for (const candidate of urls) {

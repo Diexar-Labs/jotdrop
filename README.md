@@ -153,6 +153,7 @@ Manual installs don't auto-update, so here's how to get notified of new releases
 JotDrop is intentionally simple plumbing:
 
 - Each note is a plain Markdown file in `<vault>/Mini Notes/` (folder configurable).
+- Attachments (photos, voice memos, link-preview thumbnails) are stored in a **configurable vault-relative folder**. By default that is `.attachments` inside the notes folder; set an explicit folder (e.g. `assets`) in the plugin settings and the Android app. Set the same value on both devices. Changing the folder only affects new captures — existing files are not moved, and JotDrop still finds them via the legacy location.
 - Metadata lives in YAML frontmatter at the top:
   ```yaml
   ---

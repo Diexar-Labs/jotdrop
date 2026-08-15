@@ -6,6 +6,7 @@ import { PreviewRescue } from "./previewRescue";
 import { ReminderScheduler } from "./reminderScheduler";
 import { ClipServer } from "./clipServer";
 import { fetchOg, safeMarkdownLink } from "./ogfetch";
+import { legacyAssetsPath } from "./attachments";
 import {
   ColorName,
   isColorName,
@@ -149,7 +150,7 @@ export default class JotDropPlugin extends Plugin {
     if (selection) content += `> ${selection.replace(/\n/g, "\n> ")}\n\n`;
     content += safeMarkdownLink(title, url);
     try {
-      const attachmentsFolder = `${this.settings.notesFolder}/.attachments`;
+      const attachmentsFolder = this.resolveAssetsFolder();
       const preview = await fetchOg(this.app, attachmentsFolder, url, this.settings.downloadImages);
       if (preview?.imageBasename) {
         content = `![[${preview.imageBasename}]]\n\n${content}`;
@@ -189,6 +190,56 @@ export default class JotDropPlugin extends Plugin {
 
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
+  }
+
+  /**
+   * The effective assets folder: the explicit, normalized `assetsFolder` when
+   * set, otherwise the dynamic legacy `<notesFolder>/.attachments`.
+   */
+  resolveAssetsFolder(): string {
+    const explicit = (this.settings.assetsFolder || "").trim();
+    if (explicit) return normalizePath(explicit);
+    return legacyAssetsPath(this.settings.notesFolder);
+  }
+
+  /**
+   * Ordered, deduplicated candidate locations for an embedded attachment
+   * basename. Deterministic on purpose (mirrored by the Android app) so that
+   * identical basenames in visible and hidden folders resolve consistently:
+   *
+   * 1. the effective assets folder (explicit setting, or `<notesFolder>/.attachments`),
+   * 2. Obsidian-resolved visible attachment (metadataCache),
+   * 3. legacy `.attachments` next to the note (its pre-archive location),
+   * 4. legacy `<notesFolder>/.attachments`.
+   */
+  resolveAssetCandidates(
+    noteFile: TFile,
+    basename: string,
+  ): { vaultPath: string; file: TFile | null }[] {
+    const out: { vaultPath: string; file: TFile | null }[] = [];
+    const byPath = new Map<string, { vaultPath: string; file: TFile | null }>();
+    const push = (vaultPath: string, file: TFile | null): void => {
+      const np = normalizePath(vaultPath);
+      const existing = byPath.get(np);
+      if (existing) {
+        // Upgrade a raw adapter path with the resolved TFile when Obsidian's
+        // metadataCache points at the same (visible) file — keeps the lightbox
+        // "open in tab" working without duplicating the candidate.
+        if (file && !existing.file) existing.file = file;
+        return;
+      }
+      const entry = { vaultPath: np, file };
+      byPath.set(np, entry);
+      out.push(entry);
+    };
+
+    push(`${this.resolveAssetsFolder()}/${basename}`, null);
+    const dest = this.app.metadataCache.getFirstLinkpathDest(basename, noteFile.path);
+    if (dest) push(dest.path, dest);
+    const noteFolder = noteFile.parent?.path ?? "";
+    push(noteFolder ? `${noteFolder}/.attachments/${basename}` : `.attachments/${basename}`, null);
+    push(`${legacyAssetsPath(this.settings.notesFolder)}/${basename}`, null);
+    return out;
   }
 
   async activateView(): Promise<void> {

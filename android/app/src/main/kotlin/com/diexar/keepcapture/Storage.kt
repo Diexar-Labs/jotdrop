@@ -22,6 +22,7 @@ object Storage {
 
     private const val KEY_VAULT_URI = "vault_tree_uri"
     private const val KEY_SUBFOLDER = "subfolder"
+    private const val KEY_ASSETS_FOLDER = "assets_folder"
     private const val KEY_SPEECH_LANG = "speech_language"
     private const val KEY_DOWNLOAD_IMAGES = "download_images"
     const val DEFAULT_SUBFOLDER = "Mini Notes"
@@ -63,6 +64,56 @@ object Storage {
             .edit()
             .putString(KEY_SUBFOLDER, subfolder.ifBlank { DEFAULT_SUBFOLDER })
             .apply()
+    }
+
+    /** De expliciet ingestelde assets-map, of "" (lege string) als niet ingesteld. */
+    fun getAssetsFolder(context: Context): String {
+        val prefs = PreferenceManager.getDefaultSharedPreferences(context)
+        return prefs.getString(KEY_ASSETS_FOLDER, "").orEmpty()
+    }
+
+    /**
+     * Valideert en slaat de assets-map op. Retourneert `true` bij succes.
+     * Lege invoer herstelt de dynamische default; ongeldige invoer (vault-escape,
+     * drive-/URI-pad, absolute pad) wordt geweigerd zonder de oude waarde te
+     * overschrijven. Spiegelt `normalizeAssetsFolder` in `src/attachments.ts`.
+     */
+    fun saveAssetsFolder(context: Context, raw: String): Boolean {
+        val normalized = normalizeAssetsFolder(raw) ?: return false
+        PreferenceManager.getDefaultSharedPreferences(context)
+            .edit()
+            .putString(KEY_ASSETS_FOLDER, normalized)
+            .apply()
+        return true
+    }
+
+    /** Normaliseert een vault-relatieve assets-map. "" = reset, null = ongeldig. */
+    private fun normalizeAssetsFolder(input: String): String? {
+        val trimmed = input.replace('\\', '/').trim()
+        if (trimmed.isEmpty()) return ""
+        if (trimmed.contains(':')) return null // drive (C:) of URI/scheme (https:, app:)
+        if (trimmed.startsWith('/')) return null
+        if (trimmed.startsWith('~')) return null
+        val segments = trimmed.split('/').filter { it.isNotEmpty() }
+        if (segments.isEmpty()) return null
+        if (segments.any { it == "." || it == ".." }) return null
+        if (Regex("[<>\"|?*\u0000-\u001f]").containsMatchIn(trimmed)) return null
+        return segments.joinToString("/")
+    }
+
+    /**
+     * De effectieve assets-map: de expliciete instelling wanneer aanwezig,
+     * anders de legacy `<subfolder>/.attachments`. Spiegelt
+     * `JotDropPlugin.resolveAssetsFolder()` in de plugin.
+     */
+    fun resolveAssetsFolder(context: Context): String {
+        val explicit = getAssetsFolder(context)
+        return if (explicit.isNotBlank()) explicit else legacyAssetsPath(context)
+    }
+
+    /** Legacy-locatie: `.attachments` binnen de notitiemap. */
+    private fun legacyAssetsPath(context: Context): String {
+        return getSubfolder(context).trimEnd('/') + "/.attachments"
     }
 
     fun getSpeechLanguage(context: Context): String {
@@ -179,7 +230,7 @@ object Storage {
     }
 
     /**
-     * Kopieert een via share-intent ontvangen afbeelding naar `.attachments` en
+     * Kopieert een via share-intent ontvangen afbeelding naar de assets-map en
      * maakt een notitie aan met een Obsidian-style image-embed. Werkt voor zowel
      * lokale (camera roll) als cloud-URI's (Google Photos), zolang de share-intent
      * tijdens deze call leesrechten geeft.
@@ -208,7 +259,7 @@ object Storage {
     }
 
     /**
-     * Kopieert een lokaal opgenomen voicememo (cache-bestand) naar `.attachments`
+     * Kopieert een lokaal opgenomen voicememo (cache-bestand) naar de assets-map
      * en maakt een notitie met een Obsidian-style audio-embed + duur-regel.
      * Het bron-bestand wordt na succesvolle kopie verwijderd.
      */
@@ -258,7 +309,7 @@ object Storage {
     }
 
     /**
-     * Kopieert een afbeelding (lokaal of via content-URI) naar `.attachments` en
+     * Kopieert een afbeelding (lokaal of via content-URI) naar de assets-map en
      * retourneert de basename voor gebruik in een `![[…]]`-embed. Gebruikt door
      * zowel saveImageNote (nieuwe foto-notitie) als de editor (foto invoegen in
      * bestaande notitie).
@@ -338,8 +389,8 @@ object Storage {
         val children = queryChildren(context, vaultUri, subfolder.uri)
             .filter { !it.name.startsWith(".") && it.name.endsWith(".md", ignoreCase = true) }
 
-        // Snapshot van de .attachments-map: één listing → Map<basename, Uri>. Hierdoor
-        // hoeft NoteCard niet meer per kaart te zoeken.
+        // Snapshot van de assets-map (effectief + legacy): één listing → Map<basename, Uri>.
+        // Hierdoor hoeft NoteCard niet meer per kaart te zoeken.
         val attachments = snapshotAttachments(context, vaultUri)
 
         val notes = children.map { child ->
@@ -395,13 +446,42 @@ object Storage {
 
     private fun snapshotAttachments(context: Context, vaultUri: Uri): Map<String, Uri> {
         val tree = DocumentFile.fromTreeUri(context, vaultUri) ?: return emptyMap()
-        val path = getSubfolder(context).trimEnd('/') + "/.attachments"
-        val folder = traverseSubfolder(tree, path) ?: return emptyMap()
         val result = HashMap<String, Uri>()
-        for (child in queryChildren(context, vaultUri, folder.uri)) {
-            result[child.name] = child.uri
+        // Legacy-locatie eerst; de effectieve map overschrijft daarna bij gelijke
+        // basenames (deterministische volgorde, pariteit met de plugin). Zo blijven
+        // oude notities die naar `.attachments` wijzen renderen én wint de
+        // ingestelde map wanneer dezelfde basename op beide plekken bestaat.
+        val legacyFolder = traverseSubfolder(tree, legacyAssetsPath(context))
+        if (legacyFolder != null) {
+            for (child in queryChildren(context, vaultUri, legacyFolder.uri)) {
+                result[child.name] = child.uri
+            }
+        }
+        val effectiveFolder = traverseSubfolder(tree, resolveAssetsFolder(context))
+        if (effectiveFolder != null) {
+            for (child in queryChildren(context, vaultUri, effectiveFolder.uri)) {
+                result[child.name] = child.uri
+            }
         }
         return result
+    }
+
+    /**
+     * Alle exemplaren van [basename] in zowel de effectieve als de legacy
+     * assets-map. Gebruikt queryChildren (niet DocumentFile.findFile), wat
+     * betrouwbaarder is op SAF-mappen die Syncthing extern aanpast. Voor
+     * refcount-aware delete, waar élke orphan-kopie verwijderd mag worden.
+     */
+    private fun allAttachmentUris(context: Context, vaultUri: Uri, basename: String): List<Uri> {
+        val tree = DocumentFile.fromTreeUri(context, vaultUri) ?: return emptyList()
+        val result = LinkedHashSet<Uri>()
+        for (path in listOf(resolveAssetsFolder(context), legacyAssetsPath(context)).distinct()) {
+            val folder = traverseSubfolder(tree, path) ?: continue
+            for (child in queryChildren(context, vaultUri, folder.uri)) {
+                if (child.name == basename) result.add(child.uri)
+            }
+        }
+        return result.toList()
     }
 
     /**
@@ -491,16 +571,18 @@ object Storage {
                     val stillReferenced = collectReferencedAttachments(context, vaultUri, uri)
                     val toRemove = embeddedImages.filter { it !in stillReferenced }
                     if (toRemove.isNotEmpty()) {
-                        // Cursor-based snapshot — DocumentFile.findFile() bleek
-                        // onbetrouwbaar op SAF-mappen die Syncthing extern aanpast.
-                        val snapshot = snapshotAttachments(context, vaultUri)
+                        // queryChildren-gebaseerde listing — DocumentFile.findFile()
+                        // bleek onbetrouwbaar op SAF-mappen die Syncthing extern
+                        // aanpast. Elke orphan-kopie uit effectieve én legacy
+                        // locatie mag weg.
                         for (name in toRemove) {
-                            val attUri = snapshot[name] ?: continue
-                            try {
-                                DocumentsContract.deleteDocument(context.contentResolver, attUri)
-                            } catch (_: Exception) {
-                                // Individuele attachment-failure mag het verwijderen
-                                // van de .md niet blokkeren.
+                            for (attUri in allAttachmentUris(context, vaultUri, name)) {
+                                try {
+                                    DocumentsContract.deleteDocument(context.contentResolver, attUri)
+                                } catch (_: Exception) {
+                                    // Individuele attachment-failure mag het verwijderen
+                                    // van de .md niet blokkeren.
+                                }
                             }
                         }
                     }
@@ -557,7 +639,9 @@ object Storage {
     }
 
     /**
-     * Vindt of maakt de `.attachments`-submap onder de notitiemap. Gebruikt voor OG-images.
+     * Vindt of maakt de effectieve assets-map (expliciete instelling, of de
+     * legacy `.attachments`-submap onder de notitiemap). Gebruikt voor OG-images,
+     * foto-import en voicememo's.
      */
     fun getOrCreateAttachmentsFolder(context: Context): Result<DocumentFile> {
         val vaultUri = getVaultUri(context)
@@ -567,7 +651,7 @@ object Storage {
         if (!tree.canWrite()) {
             return Result.failure(IllegalStateException("Geen schrijfrechten op de vault-map."))
         }
-        val path = getSubfolder(context).trimEnd('/') + "/.attachments"
+        val path = resolveAssetsFolder(context)
         val folder = findOrCreateSubfolder(tree, path)
             ?: return Result.failure(IllegalStateException("Attachments-map kon niet worden aangemaakt."))
         return Result.success(folder)
@@ -575,14 +659,20 @@ object Storage {
 
     /**
      * Zoekt een attachment-bestand op basename. Gebruikt voor het renderen van
-     * `![[image.jpg]]`-embeds in de UI.
+     * `![[image.jpg]]`-embeds in de UI. Zoekt eerst de effectieve map, daarna de
+     * legacy-locatie, zodat oude notities blijven werken na een mapwissel.
      */
     fun findAttachmentUri(context: Context, basename: String): Uri? {
         val vaultUri = getVaultUri(context) ?: return null
         val tree = DocumentFile.fromTreeUri(context, vaultUri) ?: return null
-        val path = getSubfolder(context).trimEnd('/') + "/.attachments"
-        val folder = traverseSubfolder(tree, path) ?: return null
-        return folder.findFile(basename)?.uri
+        val effective = resolveAssetsFolder(context)
+        val effectiveFolder = traverseSubfolder(tree, effective)
+        val effectiveHit = effectiveFolder?.findFile(basename)
+        if (effectiveHit != null) return effectiveHit.uri
+        val legacy = legacyAssetsPath(context)
+        if (legacy == effective) return null
+        val legacyFolder = traverseSubfolder(tree, legacy) ?: return null
+        return legacyFolder.findFile(basename)?.uri
     }
 
     /**

@@ -146,6 +146,11 @@ const EN: Record<string, string> = {
   // Settings
   settings_notes_folder: "Notes folder",
   settings_notes_folder_desc: "Folder where new Keep notes are stored.",
+  settings_assets_folder: "Assets folder",
+  settings_assets_folder_desc:
+    "Vault-relative folder for image, audio and preview files. Enter a simple path like `assets` or `Media/JotDrop`: no leading or trailing slash, no `#`. Leave empty for the default `.attachments` inside the notes folder. Set the same value in the Android app. Changing this does not move existing files.",
+  notice_assets_folder_invalid:
+    "Invalid assets folder — use a vault-relative path like `assets`.",
   settings_archive_folder: "Archive folder",
   settings_archive_folder_desc:
     "Folder where archived notes are moved to.",
@@ -334,6 +339,11 @@ const NL: Record<string, string> = {
 
   settings_notes_folder: "Notitie-map",
   settings_notes_folder_desc: "Map waarin nieuwe Keep-notities komen.",
+  settings_assets_folder: "Assets-map",
+  settings_assets_folder_desc:
+    "Vault-relatieve map voor afbeeldingen, audio en preview-bestanden. Vul een eenvoudig pad in zoals `assets` of `Media/JotDrop`: geen slash aan begin of eind, geen `#`. Laat leeg voor de standaard `.attachments` in de notitiemap. Stel dezelfde waarde in de Android-app in. Bestaande bestanden worden niet verplaatst.",
+  notice_assets_folder_invalid:
+    "Ongeldige assets-map — gebruik een vault-relatief pad zoals `assets`.",
   settings_archive_folder: "Archief-map",
   settings_archive_folder_desc:
     "Map waarheen gearchiveerde notities verplaatst worden.",

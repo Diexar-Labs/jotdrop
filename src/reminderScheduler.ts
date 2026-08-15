@@ -90,11 +90,22 @@ export class ReminderScheduler {
     const m = content.match(/!\[\[([^\]|]+?)\]\]/);
     if (m) {
       const basename = m[1].trim().split("|")[0].trim();
-      const resourcePath = this.plugin.app.vault.adapter.getResourcePath(
-        normalizePath(`${file.parent?.path ?? ""}/.attachments/${basename}`),
-      );
-      new LightboxModal(this.plugin.app, this.plugin, file, resourcePath, null).open();
-      return;
+      const candidates = this.plugin.resolveAssetCandidates(file, basename);
+      const first = candidates[0];
+      if (first) {
+        const resourcePath = first.file
+          ? this.plugin.app.vault.getResourcePath(first.file)
+          : this.plugin.app.vault.adapter.getResourcePath(first.vaultPath);
+        new LightboxModal(
+          this.plugin.app,
+          this.plugin,
+          file,
+          resourcePath,
+          first.file,
+          first.vaultPath,
+        ).open();
+        return;
+      }
     }
     new EditNoteModal(this.plugin.app, this.plugin, file).open();
   }

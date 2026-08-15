@@ -1,5 +1,6 @@
 import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import type JotDropPlugin from "./main";
+import { legacyAssetsPath, normalizeAssetsFolder } from "./attachments";
 import { t } from "./i18n";
 
 function generateToken(): string {
@@ -13,6 +14,12 @@ export type SortMode = "modified-desc" | "modified-asc" | "created-desc" | "crea
 export interface JotDropSettings {
   notesFolder: string;
   archiveFolder: string;
+  /**
+   * Vault-relative folder for image/audio/preview attachments. Empty means the
+   * dynamic default `<notesFolder>/.attachments` — kept dynamic on purpose so a
+   * later notesFolder change keeps following it.
+   */
+  assetsFolder: string;
   sortMode: SortMode;
   cardWidth: number;
   showArchived: boolean;
@@ -36,6 +43,7 @@ export interface JotDropSettings {
 export const DEFAULT_SETTINGS: JotDropSettings = {
   notesFolder: "Mini Notes",
   archiveFolder: "Mini Notes/Archive",
+  assetsFolder: "",
   sortMode: "created-desc",
   cardWidth: 240,
   showArchived: false,
@@ -48,10 +56,19 @@ export const DEFAULT_SETTINGS: JotDropSettings = {
 
 export class JotDropSettingTab extends PluginSettingTab {
   plugin: JotDropPlugin;
+  private lastInvalidNotice = 0;
 
   constructor(app: App, plugin: JotDropPlugin) {
     super(app, plugin);
     this.plugin = plugin;
+  }
+
+  /** Throttled notice so invalid typing does not flood the user with popups. */
+  private flashAssetsFolderInvalid(): void {
+    const now = Date.now();
+    if (now - this.lastInvalidNotice < 1500) return;
+    this.lastInvalidNotice = now;
+    new Notice(t("notice_assets_folder_invalid"));
   }
 
   display(): void {
@@ -84,6 +101,32 @@ export class JotDropSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.notesFolder)
           .onChange(async (value) => {
             this.plugin.settings.notesFolder = value.trim() || "Mini Notes";
+            await this.plugin.saveSettings();
+            this.plugin.refreshViews();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName(t("settings_assets_folder"))
+      .setDesc(t("settings_assets_folder_desc"))
+      .addText((text) =>
+        text
+          .setPlaceholder(this.plugin.resolveAssetsFolder())
+          .setValue(this.plugin.settings.assetsFolder)
+          .onChange(async (value) => {
+            const normalized = normalizeAssetsFolder(value);
+            if (normalized === null) {
+              // Leave the previously saved value intact while the user types.
+              this.flashAssetsFolderInvalid();
+              return;
+            }
+            // Blank or the legacy default restores the dynamic default, so a
+            // later notesFolder change keeps following it.
+            if (normalized === "" || normalized === legacyAssetsPath(this.plugin.settings.notesFolder)) {
+              this.plugin.settings.assetsFolder = "";
+            } else {
+              this.plugin.settings.assetsFolder = normalized;
+            }
             await this.plugin.saveSettings();
             this.plugin.refreshViews();
           })

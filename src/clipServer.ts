@@ -181,7 +181,7 @@ export class ClipServer {
     if (selection) content += `> ${selection.replace(/\n/g, "\n> ")}\n\n`;
     content += safeMarkdownLink(title, url);
 
-    const attachmentsFolder = `${this.plugin.settings.notesFolder}/.attachments`;
+    const attachmentsFolder = this.plugin.resolveAssetsFolder();
     try {
       const preview = await withTimeout(
         fetchOg(this.plugin.app, attachmentsFolder, url, this.plugin.settings.downloadImages),

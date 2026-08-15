@@ -14,6 +14,13 @@
     <string name="subfolder_hint">e.g. Mini Notes</string>
     <string name="save_subfolder">Save subfolder</string>
 
+    <string name="section_assets_folder">Attachments folder</string>
+    <string name="assets_folder_hint">e.g. assets (empty = default .attachments)</string>
+    <string name="save_assets_folder">Save attachments folder</string>
+    <string name="assets_folder_desc">Vault-relative folder for image, audio and preview files. Enter a simple path like assets or Media/JotDrop: no leading or trailing slash, no #. Leave empty for the default .attachments inside the notes folder. Set the same value in the plugin. Changing this does not move existing files.</string>
+    <string name="toast_assets_folder_saved">Attachments folder saved.</string>
+    <string name="toast_assets_folder_invalid">Invalid folder. Use a vault-relative path like assets.</string>
+
     <string name="test_button">Test: write sample note</string>
     <string name="test_note_body">Test from JotDrop\n\nIf you see this, it works.</string>
 

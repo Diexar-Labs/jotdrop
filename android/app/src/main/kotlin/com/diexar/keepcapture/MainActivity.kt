@@ -42,6 +42,16 @@ class MainActivity : AppCompatActivity() {
             toast(getString(R.string.toast_subfolder_saved))
         }
 
+        binding.saveAssetsFolderButton.setOnClickListener {
+            val raw = binding.assetsFolderInput.text?.toString().orEmpty()
+            if (Storage.saveAssetsFolder(this, raw)) {
+                updateUi()
+                toast(getString(R.string.toast_assets_folder_saved))
+            } else {
+                toast(getString(R.string.toast_assets_folder_invalid))
+            }
+        }
+
         binding.testButton.setOnClickListener {
             val result = Storage.saveNote(this, getString(R.string.test_note_body))
             result.onSuccess { name ->
@@ -111,6 +121,7 @@ class MainActivity : AppCompatActivity() {
             getString(R.string.no_vault_picked)
         }
         binding.subfolderInput.setText(Storage.getSubfolder(this))
+        binding.assetsFolderInput.setText(Storage.getAssetsFolder(this))
         binding.testButton.isEnabled = vaultUri != null
     }
 

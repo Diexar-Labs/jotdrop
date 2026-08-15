@@ -148,7 +148,7 @@ export class PreviewRescue {
     const url = detectUrl(content);
     if (!url) return;
 
-    const attachmentsFolder = `${this.plugin.settings.notesFolder}/.attachments`;
+    const attachmentsFolder = this.plugin.resolveAssetsFolder();
     const preview = await fetchOg(this.plugin.app, attachmentsFolder, url, this.plugin.settings.downloadImages);
     if (!preview) return;
 

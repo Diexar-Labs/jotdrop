@@ -390,7 +390,7 @@ export class JotDropView extends ItemView {
     const stamp = formatStamp(new Date());
     const basename = `diexar-${stamp}.${result.extension}`;
     const notesFolder = this.plugin.settings.notesFolder;
-    const attachmentsDir = normalizePath(`${notesFolder}/.attachments`);
+    const attachmentsDir = this.plugin.resolveAssetsFolder();
     const attachmentPath = normalizePath(`${attachmentsDir}/${basename}`);
     try {
       if (!(await this.app.vault.adapter.exists(attachmentsDir))) {
@@ -568,29 +568,18 @@ export class JotDropView extends ItemView {
   }
 
   private async trashAttachmentByBasename(noteFile: TFile, basename: string): Promise<void> {
-    const dest = this.app.metadataCache.getFirstLinkpathDest(basename, noteFile.path);
-    if (dest) {
+    // After the vault-wide refcount check, every orphan copy of this basename
+    // (effective assets folder AND legacy `.attachments` locations) may go to
+    // the trash. Identical basenames can legitimately exist in both a visible
+    // folder and the hidden `.attachments/`, so we must not stop at the first
+    // hit. A failure on one candidate must not block the others or the note.
+    const candidates = this.plugin.resolveAssetCandidates(noteFile, basename);
+    for (const c of candidates) {
       try {
-        await this.app.fileManager.trashFile(dest);
-        return;
-      } catch {
-        // fall through to adapter lookup
-      }
-    }
-    const candidates: string[] = [];
-    const noteFolder = noteFile.parent?.path ?? "";
-    if (noteFolder) candidates.push(`${noteFolder}/.attachments/${basename}`);
-    else candidates.push(`.attachments/${basename}`);
-    const configured = this.plugin.settings.notesFolder;
-    if (configured && configured !== noteFolder) {
-      candidates.push(`${configured}/.attachments/${basename}`);
-    }
-    for (const p of candidates) {
-      const np = normalizePath(p);
-      try {
-        if (await this.app.vault.adapter.exists(np)) {
-          await this.app.vault.adapter.trashSystem(np);
-          return;
+        if (c.file) {
+          await this.app.fileManager.trashFile(c.file);
+        } else if (await this.app.vault.adapter.exists(c.vaultPath)) {
+          await this.app.vault.adapter.trashSystem(c.vaultPath);
         }
       } catch {
         // try next candidate
@@ -1374,45 +1363,30 @@ export class JotDropView extends ItemView {
   /**
    * Resolves an embedded image to a resource path usable as `<img src>`.
    *
-   * 1. Try Obsidian's metadataCache (finds standard attachments via vault lookup).
-   * 2. Fall back to `<note-folder>/.attachments/<basename>` — Obsidian's metadataCache
-   *    skips dot-prefixed folders (`.attachments/`, `.trash/`), but the adapter itself
-   *    can read them. The Android share flow uses this convention.
-   * 3. Fall back to `<notesFolder>/.attachments/<basename>` (configured notes folder).
+   * Candidates are produced by `JotDropPlugin.resolveAssetCandidates()` and are
+   * deterministic (effective folder first, then Obsidian-resolved, then legacy
+   * `.attachments` locations). Existence checks are async, so the `<img>` error
+   * handler walks the fallback list instead — an archived note's attachment
+   * still lives in the configured assets folder (archiving moves only the .md).
    */
   private resolveAttachmentResource(
     noteFile: TFile,
     basename: string,
   ): AttachmentResource | null {
-    const dest = this.app.metadataCache.getFirstLinkpathDest(basename, noteFile.path);
-    if (dest) {
-      return {
-        resourcePath: this.app.vault.getResourcePath(dest),
-        file: dest,
-        vaultPath: dest.path,
-        fallbacks: [],
-      };
-    }
-    const candidates: string[] = [];
-    const noteFolder = noteFile.parent?.path ?? "";
-    if (noteFolder) candidates.push(`${noteFolder}/.attachments/${basename}`);
-    else candidates.push(`.attachments/${basename}`);
-    const configured = this.plugin.settings.notesFolder;
-    if (configured && configured !== noteFolder) {
-      candidates.push(`${configured}/.attachments/${basename}`);
-    }
-    // Adapter resources also work for dot-prefixed folders that metadataCache
-    // skips. Existence checks are async, so the <img> error handler walks the
-    // fallback list instead: an archived note's attachment still lives in the
-    // configured notes folder (archiving moves only the .md).
-    const [first, ...rest] = candidates.map((p) => normalizePath(p));
+    const candidates = this.plugin.resolveAssetCandidates(noteFile, basename);
+    if (candidates.length === 0) return null;
+    const [first, ...rest] = candidates;
     return {
-      resourcePath: this.app.vault.adapter.getResourcePath(first),
-      file: null,
-      vaultPath: first,
-      fallbacks: rest.map((p) => ({
-        resourcePath: this.app.vault.adapter.getResourcePath(p),
-        vaultPath: p,
+      resourcePath: first.file
+        ? this.app.vault.getResourcePath(first.file)
+        : this.app.vault.adapter.getResourcePath(first.vaultPath),
+      file: first.file,
+      vaultPath: first.vaultPath,
+      fallbacks: rest.map((c) => ({
+        resourcePath: c.file
+          ? this.app.vault.getResourcePath(c.file)
+          : this.app.vault.adapter.getResourcePath(c.vaultPath),
+        vaultPath: c.vaultPath,
       })),
     };
   }

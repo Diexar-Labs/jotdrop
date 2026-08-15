@@ -1,4 +1,4 @@
-import { App, Modal, Notice, SuggestModal, TFile, normalizePath, setIcon } from "obsidian";
+import { App, Modal, Notice, SuggestModal, TFile, setIcon } from "obsidian";
 import type JotDropPlugin from "./main";
 import { toggleOrInsertChecklistOnTextArea } from "./capture";
 import { LightboxModal } from "./lightbox";
@@ -532,32 +532,20 @@ export class EditNoteModal extends Modal {
   private resolveAttachment(
     basename: string,
   ): { resourcePath: string; file: TFile | null; vaultPath: string; fallbacks: { resourcePath: string; vaultPath: string }[] } | null {
-    const dest = this.app.metadataCache.getFirstLinkpathDest(basename, this.file.path);
-    if (dest) {
-      return {
-        resourcePath: this.app.vault.getResourcePath(dest),
-        file: dest,
-        vaultPath: dest.path,
-        fallbacks: [],
-      };
-    }
-    const noteFolder = this.file.parent?.path ?? "";
-    const candidates: string[] = [
-      noteFolder ? `${noteFolder}/.attachments/${basename}` : `.attachments/${basename}`,
-    ];
-    // Archived notes: the .md moved, the attachment stayed in the notes folder.
-    const configured = this.plugin.settings.notesFolder;
-    if (configured && configured !== noteFolder) {
-      candidates.push(`${configured}/.attachments/${basename}`);
-    }
-    const [first, ...rest] = candidates.map((p) => normalizePath(p));
+    const candidates = this.plugin.resolveAssetCandidates(this.file, basename);
+    if (candidates.length === 0) return null;
+    const [first, ...rest] = candidates;
     return {
-      resourcePath: this.app.vault.adapter.getResourcePath(first),
-      file: null,
-      vaultPath: first,
-      fallbacks: rest.map((p) => ({
-        resourcePath: this.app.vault.adapter.getResourcePath(p),
-        vaultPath: p,
+      resourcePath: first.file
+        ? this.app.vault.getResourcePath(first.file)
+        : this.app.vault.adapter.getResourcePath(first.vaultPath),
+      file: first.file,
+      vaultPath: first.vaultPath,
+      fallbacks: rest.map((c) => ({
+        resourcePath: c.file
+          ? this.app.vault.getResourcePath(c.file)
+          : this.app.vault.adapter.getResourcePath(c.vaultPath),
+        vaultPath: c.vaultPath,
       })),
     };
   }

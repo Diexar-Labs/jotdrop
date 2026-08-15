@@ -6,9 +6,10 @@ import { App, normalizePath, requestUrl } from "obsidian";
  * via the share flow on the phone.
  *
  * Uses Obsidian's `requestUrl` (no CORS in Electron) and writes downloaded
- * images to `<notesFolder>/.attachments/<hash>.<ext>` — the exact same
- * convention and SHA-1 naming as Android, so Syncthing deduplicates
- * automatically and the plugin's display flow finds the file.
+ * images to the caller-supplied attachments folder (the effective assets
+ * folder) as `<hash>.<ext>` — the exact same convention and SHA-1 naming as
+ * Android, so Syncthing deduplicates automatically and the plugin's display
+ * flow finds the file.
  */
 
 // Desktop Chrome — Cloudflare/WAF stacks score mobile UAs higher as bots
