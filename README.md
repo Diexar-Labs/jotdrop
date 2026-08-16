@@ -1,12 +1,12 @@
 <div align="center">
 
-<img src="docs/banner.png" alt="JotDrop — a private, open-source Google Keep alternative for Obsidian and Android" width="720" />
+<img src="docs/banner.png" alt="JotDrop: a private, open-source Google Keep alternative for Obsidian and Android" width="720" />
 
 # JotDrop
 
 **Google Keep, on your own files.**
 
-JotDrop is a free, open-source **Google Keep alternative** for [Obsidian](https://obsidian.md/) — a **trio**: the plugin (the card grid in your vault), a companion **Android app** (share-sheet capture, OCR, voice memos), and a **Chrome web clipper**. Sync them with [Syncthing](https://syncthing.net/) and you have Google Keep — fully offline, fully yours.
+JotDrop is a free, open-source **Google Keep alternative** for [Obsidian](https://obsidian.md/). It's a **trio**: the plugin (the card grid in your vault), a companion **Android app** (share-sheet capture, OCR, voice memos), and a **Chrome web clipper**. Sync them with [Syncthing](https://syncthing.net/) and you have Google Keep, fully offline, fully yours.
 
 > **For the full Google Keep experience, install all three.** The plugin shows and organises your notes; the [Android app](#android-app) and [Chrome extension](#chrome-extension-web-clipper) are what give you Google Keep's capture-from-anywhere. Grab them from the [latest release](https://github.com/Diexar-Labs/jotdrop/releases/latest).
 
@@ -73,11 +73,11 @@ JotDrop is a private, open-source **Google Keep alternative**. Google Keep is gr
 ### Edit
 - Inline **`- [ ]` checklists** with smart toolbar toggle
 - **Image embeds** (`![[image.jpg]]`) shown as thumbnails on the card
-- **Audio embeds** (`![[memo.m4a]]`) — inline player in both the Android editor and the Obsidian edit modal; tap a voice-memo card to play it back
+- **Audio embeds** (`![[memo.m4a]]`): inline player in both the Android editor and the Obsidian edit modal; tap a voice-memo card to play it back
 - **Lightbox** - tap a thumbnail to view full-screen, with "Open externally" fallback
 - **Auto-saves** as you type (and on back-button)
 - **Live preview** of pasted links
-- **Refcount-aware delete** — when you remove a card, its embedded image/audio is moved to the OS recycle bin too, but only if no other card (incl. Archive) still references it (so shared OG-thumbnails stay safe)
+- **Refcount-aware delete**: when you remove a card, its embedded image/audio is moved to the OS recycle bin too, but only if no other card (incl. Archive) still references it (so shared OG-thumbnails stay safe)
 
 ### Clip the web
 - **Chrome extension** companion - one-click clip of the current page into your vault as a Markdown note, tags included
@@ -100,7 +100,7 @@ JotDrop is a **trio**. Each part works on its own, but you only get the full Goo
 
 ### Obsidian plugin (desktop + mobile)
 
-**Easiest — via Community plugins (recommended):**
+**Easiest (via Community plugins, recommended):**
 
 1. Open Obsidian → Settings → Community plugins → **Browse**.
 2. Search for **JotDrop** and click Install, then Enable.
@@ -126,7 +126,7 @@ JotDrop is a **trio**. Each part works on its own, but you only get the full Goo
 
 Install [Syncthing](https://syncthing.net/) on phone + laptop, point both at your vault folder. Within 30 seconds of capturing on your phone, the note shows up in Obsidian. That's the entire setup.
 
-> **Recommended Syncthing setting:** enable **File Versioning** on the shared folder (Simple Versioning is fine), on both devices. Deleted and overwritten files are kept in `.stversions/` so an accidental delete — or a sync race, see [Known issues](#known-issues) — is recoverable instead of permanent.
+> **Recommended Syncthing setting:** enable **File Versioning** on the shared folder (Simple Versioning is fine), on both devices. Deleted and overwritten files are kept in `.stversions/` so an accidental delete (or a sync race, see [Known issues](#known-issues)) is recoverable instead of permanent.
 
 ### Chrome extension (web clipper)
 
@@ -143,9 +143,9 @@ The clip server only binds to `127.0.0.1` and never exposes itself on the networ
 
 Manual installs don't auto-update, so here's how to get notified of new releases:
 
-- **Obsidian plugin — via Community plugins:** once installed from Browse, Obsidian checks daily and shows an "Update available" badge in Settings → Community plugins. One click updates it.
-- **Obsidian plugin — manual / pre-release:** use [BRAT](https://github.com/TfTHacker/obsidian42-brat) ("Obsidian42 - BRAT"). Add `Diexar-Labs/jotdrop` as a beta plugin; BRAT watches this repo's releases and updates the plugin for you.
-- **Android app:** the sideloaded APK won't update itself. The easiest fix is [Obtainium](https://github.com/ImranR98/Obtainium) — add `https://github.com/Diexar-Labs/jotdrop` as an app and it tracks releases and installs new APKs automatically (the debug signature is stable, so updates install cleanly over the old version).
+- **Obsidian plugin (via Community plugins):** once installed from Browse, Obsidian checks daily and shows an "Update available" badge in Settings → Community plugins. One click updates it.
+- **Obsidian plugin (manual / pre-release):** use [BRAT](https://github.com/TfTHacker/obsidian42-brat) ("Obsidian42 - BRAT"). Add `Diexar-Labs/jotdrop` as a beta plugin; BRAT watches this repo's releases and updates the plugin for you.
+- **Android app:** the sideloaded APK won't update itself. The easiest fix is [Obtainium](https://github.com/ImranR98/Obtainium): add `https://github.com/Diexar-Labs/jotdrop` as an app and it tracks releases and installs new APKs automatically (the debug signature is stable, so updates install cleanly over the old version).
 - **Anyone:** on [this repository](https://github.com/Diexar-Labs/jotdrop), click **Watch → Custom → Releases** to get a notification on every new release.
 
 ## How it works
@@ -153,7 +153,7 @@ Manual installs don't auto-update, so here's how to get notified of new releases
 JotDrop is intentionally simple plumbing:
 
 - Each note is a plain Markdown file in `<vault>/Mini Notes/` (folder configurable).
-- Attachments (photos, voice memos, link-preview thumbnails) are stored in a **configurable vault-relative folder**. By default that is `.attachments` inside the notes folder; set an explicit folder (e.g. `assets`) in the plugin settings and the Android app. Set the same value on both devices. Changing the folder only affects new captures — existing files are not moved, and JotDrop still finds them via the legacy location.
+- Attachments (photos, voice memos, link-preview thumbnails) are stored in a **configurable vault-relative folder**. By default that is `.attachments` inside the notes folder; set an explicit folder (e.g. `assets`) in the plugin settings and the Android app. Set the same value on both devices. Changing the folder only affects new captures; existing files are not moved, and JotDrop still finds them via the legacy location.
 - Metadata lives in YAML frontmatter at the top:
   ```yaml
   ---
@@ -174,11 +174,11 @@ This is why JotDrop **needs no server, no account, no API key** - and why anythi
 
 If you bulk-delete many notes in the plugin while another device (phone or laptop) running Syncthing is **offline**, the deletes may be "resurrected" when that peer reconnects: the offline peer still has those files with valid version metadata, and on reconnect Syncthing can side with the peer and push the files back to the device that deleted them.
 
-This is Syncthing reconciliation behavior, not specific to JotDrop — single deletes you do while everything is online propagate fine. It's the combination of *bulk* delete and an *offline* peer that triggers it. Mitigations:
+This is Syncthing reconciliation behavior, not specific to JotDrop; single deletes you do while everything is online propagate fine. It's the combination of *bulk* delete and an *offline* peer that triggers it. Mitigations:
 
 - Make sure Syncthing is **running on every device** before bulk-deleting, and stays running for ~30s after so the deletes propagate.
 - Enable **File Versioning** in Syncthing (see [Syncing the two](#syncing-the-two)). Even if files do come back, you have copies in `.stversions/` to delete from properly.
-- The bulk-delete confirmation dialog reminds you of this — it's not paranoia, it's avoiding this exact failure mode.
+- The bulk-delete confirmation dialog reminds you of this: it's not paranoia, it's avoiding this exact failure mode.
 
 ## Languages
 
