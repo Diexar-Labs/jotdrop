@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const target = process.env.JOTDROP_VAULT_PLUGIN_DIR || process.env.DIEXAR_VAULT_PLUGIN_DIR;
+const target = process.env.JOTDROP_VAULT_PLUGIN_DIR;
 
 if (!target) {
   console.error("Set JOTDROP_VAULT_PLUGIN_DIR before running deploy:local.");

@@ -1,21 +1,28 @@
 {
   "name": "jotdrop",
-  "version": "0.1.0",
+  "version": "0.20.1",
   "description": "A private, open-source Google Keep alternative for Obsidian: a trio of quick-capture card grid, companion Android app, and Chrome web clipper. Install all three for the full Keep experience.",
   "main": "main.js",
   "scripts": {
-    "dev": "node esbuild.config.mjs",
-    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+    "dev": "npm run verify:base && node esbuild.config.mjs",
+    "build": "npm run verify:base && npm run build:plugin",
+    "build:plugin": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
     "verify:base": "node scripts/verify-release-source.mjs base",
     "verify:deploy": "node scripts/verify-release-source.mjs deploy",
     "verify:release": "node scripts/verify-release-source.mjs release",
+    "verify:tag": "node scripts/verify-release-tag.mjs",
     "deploy:local": "node scripts/deploy-local.mjs",
     "android:release": "node scripts/build-android-release.mjs",
     "android:test-release": "node scripts/build-android-release.mjs --test",
     "android:verify": "node scripts/verify-android-apk.mjs",
     "android:install": "node scripts/install-android-release.mjs"
   },
-  "keywords": ["obsidian", "plugin", "notes", "keep"],
+  "keywords": [
+    "obsidian",
+    "plugin",
+    "notes",
+    "keep"
+  ],
   "author": "Diexar Labs",
   "license": "MIT",
   "repository": {
@@ -28,7 +35,7 @@
   "homepage": "https://github.com/Diexar-Labs/jotdrop#readme",
   "devDependencies": {
     "@types/node": "^20.11.0",
-    "esbuild": "^0.20.2",
+    "esbuild": "^0.28.2",
     "obsidian": "latest",
     "tslib": "^2.6.2",
     "typescript": "^5.4.5"

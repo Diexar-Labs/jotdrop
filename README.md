@@ -8,11 +8,11 @@
 
 JotDrop is a free, open-source **Google Keep alternative** for [Obsidian](https://obsidian.md/). It's a **trio**: the plugin (the card grid in your vault), a companion **Android app** (share-sheet capture, OCR, voice memos), and a **Chrome web clipper**. Sync them with [Syncthing](https://syncthing.net/) and you have Google Keep, fully offline, fully yours.
 
-> **For the full Google Keep experience, install all three.** The plugin shows and organises your notes; the [Android app](#android-app) and [Chrome extension](#chrome-extension-web-clipper) are what give you Google Keep's capture-from-anywhere. Grab them from the [latest release](https://github.com/Diexar-Labs/jotdrop/releases/latest).
+> **For the full Google Keep experience, install all three.** Install the plugin from Obsidian Community plugins, download the [Android APK](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.1/jotdrop.apk), and load the [Chrome extension](#chrome-extension-web-clipper).
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Obsidian plugin](https://img.shields.io/badge/Obsidian-plugin-7c3aed)](https://github.com/Diexar-Labs/jotdrop/releases)
-[![Android APK](https://img.shields.io/badge/Android-APK-3ddc84)](https://github.com/Diexar-Labs/jotdrop/releases)
+[![Android APK](https://img.shields.io/badge/Android-APK-3ddc84)](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.1/jotdrop.apk)
 [![Build APK](https://github.com/Diexar-Labs/jotdrop/actions/workflows/android-build.yml/badge.svg)](https://github.com/Diexar-Labs/jotdrop/actions/workflows/android-build.yml)
 
 [Download](#install) · [Screenshots](#screenshots) · [How it works](#how-it-works) · [Roadmap](#roadmap)
@@ -90,7 +90,7 @@ JotDrop is a private, open-source **Google Keep alternative**. Google Keep is gr
 
 ## Install
 
-> **TL;DR:** grab the files from the [latest release](https://github.com/Diexar-Labs/jotdrop/releases/latest), drop them in the right place, done. No build tools needed.
+> **TL;DR:** install the plugin from Obsidian, use the versioned Android APK link below, and load the Chrome extension from this repository. No build tools needed.
 
 JotDrop is a **trio**. Each part works on its own, but you only get the full Google Keep experience when all three are installed:
 
@@ -108,19 +108,19 @@ JotDrop is a **trio**. Each part works on its own, but you only get the full Goo
 
 **Manual install (for offline / pre-release versions):**
 
-1. Go to the [latest release](https://github.com/Diexar-Labs/jotdrop/releases/latest).
+1. Go to the [current plugin release](https://github.com/Diexar-Labs/jotdrop/releases/tag/0.20.1).
 2. Download `manifest.json`, `main.js`, and `styles.css`.
 3. Put them in `<your-vault>/.obsidian/plugins/jotdrop/` (create the folder if it doesn't exist).
 4. Open Obsidian → Settings → Community plugins → enable **JotDrop**.
 
 ### Android app
 
-1. Download `jotdrop.apk` from the [latest release](https://github.com/Diexar-Labs/jotdrop/releases/latest).
+1. Download [`jotdrop.apk` for Android 0.28.1](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.1/jotdrop.apk).
 2. Open the file on your phone → Android will ask permission to install from unknown sources → grant it.
 3. Open JotDrop → first screen lets you pick the vault folder (the same one you sync to your laptop).
 4. From now on, the share-sheet in any app includes JotDrop.
 
-> **Note:** the APK keeps the same repository signing key across releases, so you can install over previous versions without uninstalling. It's safe - built by GitHub Actions in this repo, you can see the build log on the releases page.
+> **Signing note:** GitHub APKs currently use the repository's published compatibility key so they can update existing sideloaded installations. Because that key is public, it is not proof of authenticity. Download APKs only from the versioned `Diexar-Labs/jotdrop` release URL above and verify the linked Actions build.
 
 ### Syncing the two
 
@@ -145,7 +145,7 @@ Manual installs don't auto-update, so here's how to get notified of new releases
 
 - **Obsidian plugin (via Community plugins):** once installed from Browse, Obsidian checks daily and shows an "Update available" badge in Settings → Community plugins. One click updates it.
 - **Obsidian plugin (manual / pre-release):** use [BRAT](https://github.com/TfTHacker/obsidian42-brat) ("Obsidian42 - BRAT"). Add `Diexar-Labs/jotdrop` as a beta plugin; BRAT watches this repo's releases and updates the plugin for you.
-- **Android app:** the sideloaded APK won't update itself. The easiest fix is [Obtainium](https://github.com/ImranR98/Obtainium): add `https://github.com/Diexar-Labs/jotdrop` as an app and it tracks releases and installs new APKs automatically (the repository signing key is stable, so updates install cleanly over the old version).
+- **Android app:** the sideloaded APK won't update itself. With [Obtainium](https://github.com/ImranR98/Obtainium), add `https://github.com/Diexar-Labs/jotdrop`, select only releases tagged `v*`, and select the `jotdrop.apk` asset.
 - **Anyone:** on [this repository](https://github.com/Diexar-Labs/jotdrop), click **Watch → Custom → Releases** to get a notification on every new release.
 
 ## How it works
@@ -246,9 +246,9 @@ optimized release variant with the feature-branch base check. It is for local
 testing only; production release builds still require `npm run android:release`.
 
 The release command requires a clean checkout at live `origin/main`, JDK 17,
-Android SDK 34, and Gradle 8.7 (the wrapper jar isn't committed - set
-`GRADLE_BIN` if Gradle is not on PATH). `compileDebugKotlin` is available for
-CI compile validation, but it does not produce an installable APK.
+and Android SDK 34. The committed Gradle wrapper pins Gradle 8.7.
+`compileDebugKotlin` is available for CI compile validation, but it does not
+produce an installable APK.
 
 ## Credits
 

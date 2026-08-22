@@ -61,6 +61,17 @@ if (expectedSha && !/^[0-9a-f]{40}$/.test(expectedSha)) {
 }
 
 if (mode !== "base" && status) errors.push("working tree is dirty.");
+if (mode === "base") {
+  if (expectedSha) {
+    if (head !== expectedSha) errors.push("build HEAD must equal the GitHub Actions event SHA.");
+  } else {
+    const currentBase = spawnSync("git", ["merge-base", "--is-ancestor", liveMain, head], {
+      cwd: root,
+      stdio: "ignore",
+    }).status === 0;
+    if (!currentBase) errors.push("checkout is stale: build HEAD is not based on live origin/main.");
+  }
+}
 if (mode === "release") {
   const releaseSha = expectedSha || liveMain;
   if (head !== releaseSha) {

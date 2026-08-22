@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,7 +18,8 @@ const versionCode = Number(
 const state = execFileSync("adb", ["get-state"], { encoding: "utf8" }).trim();
 if (state !== "device") throw new Error(`ADB device is not ready: ${state || "no device"}`);
 
-const installed = execFileSync("adb", ["shell", "dumpsys", "package", packageName], { encoding: "utf8" });
+const installedResult = spawnSync("adb", ["shell", "dumpsys", "package", packageName], { encoding: "utf8" });
+const installed = installedResult.status === 0 ? installedResult.stdout : "";
 const installedVersion = installed.match(/versionCode=(\d+)/)?.[1];
 if (installedVersion && Number(installedVersion) > versionCode) {
   throw new Error(`Installed versionCode ${installedVersion} is newer than APK versionCode ${versionCode}.`);

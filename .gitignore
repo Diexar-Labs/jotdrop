@@ -6,6 +6,8 @@ main.js
 Thumbs.db
 desktop.ini
 release-staging/
+BUILD-INFO.txt
 
-# Sessie-werkbestand (Claude Code handoff) — niet voor publieke repo
+# Local agent handoffs contain machine-specific paths and operational notes.
+Hand-off/
 handoff.md
