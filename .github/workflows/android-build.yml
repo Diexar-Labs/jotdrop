@@ -39,6 +39,10 @@ defaults:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      # Verify the commit that triggered this run. A later push may move
+      # origin/main while this build is still running.
+      JOTDROP_EXPECTED_SHA: ${{ github.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4

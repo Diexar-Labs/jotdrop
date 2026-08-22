@@ -5,6 +5,7 @@ import path from "node:path";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const mode = process.argv[2] || "release";
+const expectedSha = process.env.JOTDROP_EXPECTED_SHA?.trim() || "";
 
 if (!["base", "deploy", "release"].includes(mode)) {
   console.error(`Usage: node scripts/verify-release-source.mjs <base|deploy|release>`);
@@ -55,9 +56,19 @@ if (versionName === "unknown" || versionCode === "unknown") errors.push("Android
 if (appId !== "com.diexar.keepcapture" || namespace !== "com.diexar.keepcapture") {
   errors.push("Android package identity is not com.diexar.keepcapture.");
 }
+if (expectedSha && !/^[0-9a-f]{40}$/.test(expectedSha)) {
+  errors.push("JOTDROP_EXPECTED_SHA is not a full commit SHA.");
+}
 
 if (mode !== "base" && status) errors.push("working tree is dirty.");
-if (mode === "release" && head !== liveMain) errors.push("release HEAD must equal live origin/main.");
+if (mode === "release") {
+  const releaseSha = expectedSha || liveMain;
+  if (head !== releaseSha) {
+    errors.push(expectedSha
+      ? "release HEAD must equal the GitHub Actions event SHA."
+      : "release HEAD must equal live origin/main.");
+  }
+}
 if (mode === "deploy") {
   const ancestor = spawnSync("git", ["merge-base", "--is-ancestor", liveMain, head], {
     cwd: root,
