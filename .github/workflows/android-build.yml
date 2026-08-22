@@ -3,15 +3,30 @@ name: Build Android APK
 on:
   push:
     branches: [main]
-    paths:
-      - "android/**"
-      - ".github/workflows/android-build.yml"
     tags:
       - "v*"
+    paths:
+      - "android/**"
+      - "src/**"
+      - "manifest.json"
+      - "styles.css"
+      - "package.json"
+      - "package-lock.json"
+      - "esbuild.config.mjs"
+      - "scripts/**"
+      - ".github/workflows/android-build.yml"
   pull_request:
     branches: [main]
     paths:
       - "android/**"
+      - "src/**"
+      - "manifest.json"
+      - "styles.css"
+      - "package.json"
+      - "package-lock.json"
+      - "esbuild.config.mjs"
+      - "scripts/**"
+      - ".github/workflows/android-build.yml"
   workflow_dispatch:
 
 permissions:
@@ -28,46 +43,75 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install plugin dependencies
+        working-directory: .
+        run: npm ci
+
+      - name: Build plugin assets
+        working-directory: .
+        run: npm run build
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: "17"
 
-      - name: Cache stable debug keystore
-        uses: actions/cache@v4
-        with:
-          path: ~/.android/debug.keystore
-          key: android-debug-keystore-v1
-
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: "8.7"
 
-      # Release-variant (R8-geminificeerd): debug-builds van Compose scrollen
-      # merkbaar slechter. Gesigneerd met dezelfde gecommite keystore, dus
-      # updates installeren gewoon over oudere (debug-)installaties heen.
+      - name: Validate debug build on pull request
+        if: github.event_name == 'pull_request'
+        run: gradle :app:compileDebugKotlin --no-daemon --stacktrace
+
+      - name: Verify release source
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+        working-directory: .
+        run: npm run verify:release
+
       - name: Build release APK
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
         run: gradle :app:assembleRelease --no-daemon --stacktrace
 
-      - name: Rename APK
+      - name: Stage release assets
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
         run: |
-          mkdir -p artifacts
+          mkdir -p artifacts/plugin
           cp app/build/outputs/apk/release/app-release.apk artifacts/jotdrop.apk
+          cp ../main.js ../manifest.json ../styles.css artifacts/plugin/
+          node ../scripts/write-build-info.mjs artifacts/BUILD-INFO.txt
 
-      - name: Upload APK artifact
+      - name: Upload release artifacts
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
         uses: actions/upload-artifact@v4
         with:
-          name: jotdrop
-          path: android/artifacts/jotdrop.apk
+          name: jotdrop-release
+          path: |
+            android/artifacts/jotdrop.apk
+            android/artifacts/plugin/main.js
+            android/artifacts/plugin/manifest.json
+            android/artifacts/plugin/styles.css
+            android/artifacts/BUILD-INFO.txt
           retention-days: 30
 
       - name: Create release on tag
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: android/artifacts/jotdrop.apk
+          files: |
+            android/artifacts/jotdrop.apk
+            android/artifacts/plugin/main.js
+            android/artifacts/plugin/manifest.json
+            android/artifacts/plugin/styles.css
+            android/artifacts/BUILD-INFO.txt
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

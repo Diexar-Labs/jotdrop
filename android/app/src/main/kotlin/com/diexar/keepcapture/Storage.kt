@@ -381,7 +381,10 @@ object Storage {
     fun listNotes(context: Context): Result<List<NoteSummary>> {
         val vaultUri = getVaultUri(context)
             ?: return Result.failure(IllegalStateException("Geen vault-map gekozen."))
-        val subfolder = openNotesFolder(context).getOrElse { return Result.failure(it) }
+        // Opening the list is also the first-run path. Create the configured
+        // notes folder here so a fresh vault does not get stuck on a missing
+        // default "Mini Notes" directory.
+        val subfolder = openOrCreateNotesFolder(context).getOrElse { return Result.failure(it) }
 
         // Eén cursor-query haalt name/mime/mtime voor álle kinderen op — veel sneller
         // dan DocumentFile.listFiles() + per-item .name/.lastModified() (elk een aparte
@@ -811,9 +814,6 @@ object Storage {
             ?: return Result.failure(IllegalStateException("Geen vault-map gekozen."))
         val tree = DocumentFile.fromTreeUri(context, vaultUri)
             ?: return Result.failure(IllegalStateException("Vault-map kan niet worden geopend."))
-        if (!tree.canWrite()) {
-            return Result.failure(IllegalStateException("Geen schrijfrechten op de vault-map."))
-        }
         val subfolderName = getSubfolder(context)
         val subfolder = findOrCreateSubfolder(tree, subfolderName)
             ?: return Result.failure(IllegalStateException("Submap '$subfolderName' kon niet worden aangemaakt."))

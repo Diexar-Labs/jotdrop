@@ -5,15 +5,6 @@ import { fetchOg, safeMarkdownLink } from "./ogfetch";
 import { neutralizeBodyHashtags, updateMeta, ColorName, isColorName } from "./metadata";
 import { t } from "./i18n";
 
-// Node's http module via Electron's CommonJS bridge (desktop-only clip server).
-// 'http' is not part of Obsidian's plugin TS types, so type just the bit we use.
-// We do NOT disable import/no-nodejs-modules: the review bot forbids disabling it,
-// and it stays a harmless warning — a loopback server genuinely needs Node's http.
-// eslint-disable-next-line @typescript-eslint/no-require-imports -- loopback clip server needs Node's http; Obsidian exposes no typed equivalent
-const http = require("http") as {
-  createServer(handler: (req: IncomingMessageLike, res: ServerResponseLike) => void): ServerLike;
-};
-
 interface IncomingMessageLike {
   method?: string;
   url?: string;
@@ -64,6 +55,12 @@ export class ClipServer {
   start(): void {
     if (this.server) return;
     const port = this.plugin.settings.clipServerPort;
+    // Node's http module is desktop-only and must not be evaluated while the
+    // plugin is loading in Obsidian Mobile.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- loopback clip server needs Node's http; Obsidian exposes no typed equivalent
+    const http = require("http") as {
+      createServer(handler: (req: IncomingMessageLike, res: ServerResponseLike) => void): ServerLike;
+    };
     const srv: ServerLike = http.createServer(
       (req: IncomingMessageLike, res: ServerResponseLike) => this.handle(req, res),
     );

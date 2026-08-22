@@ -1,3 +1,5 @@
+import org.gradle.api.tasks.Exec
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -11,8 +13,8 @@ android {
         applicationId = "com.diexar.keepcapture"
         minSdk = 26
         targetSdk = 34
-        versionCode = 54
-        versionName = "0.28.0"
+        versionCode = 55
+        versionName = "0.28.1"
     }
 
     // Stabiele debug-keystore in de repo. AGP's default genereert per CI-runner
@@ -66,6 +68,38 @@ android {
 
     composeOptions {
         kotlinCompilerExtensionVersion = "1.5.14"
+    }
+}
+
+val verifyReleaseSource = tasks.register<Exec>("verifyReleaseSource") {
+    workingDir(rootProject.projectDir.parentFile)
+    val verificationMode = if (System.getenv("JOTDROP_ANDROID_TEST_RELEASE") == "true") "base" else "release"
+    commandLine("node", "scripts/verify-release-source.mjs", verificationMode)
+}
+
+tasks.matching {
+    it.name == "assembleRelease" ||
+        it.name == "bundleRelease" ||
+        it.name == "packageRelease" ||
+        it.name == "installRelease"
+}.configureEach {
+    dependsOn(verifyReleaseSource)
+}
+
+// Debug APKs have no R8 optimization and make Compose scrolling appear broken.
+// Keep compileDebugKotlin available for CI validation, but make every debug APK
+// or debug install fail instead of silently becoming a test artifact.
+tasks.matching {
+    it.name == "assembleDebug" ||
+        it.name == "bundleDebug" ||
+        it.name == "packageDebug" ||
+        it.name == "installDebug"
+}.configureEach {
+    outputs.upToDateWhen { false }
+    doFirst {
+        throw GradleException(
+            "Debug APKs are disabled for JotDrop. Build the R8 release variant instead.",
+        )
     }
 }
 

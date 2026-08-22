@@ -120,7 +120,7 @@ JotDrop is a **trio**. Each part works on its own, but you only get the full Goo
 3. Open JotDrop → first screen lets you pick the vault folder (the same one you sync to your laptop).
 4. From now on, the share-sheet in any app includes JotDrop.
 
-> **Note:** the APK keeps the same signing key across releases (so you can install over a previous version, including older `jotdrop-debug.apk` installs, without uninstalling). It's safe - built by GitHub Actions in this repo, you can see the build log on the releases page.
+> **Note:** the APK keeps the same repository signing key across releases, so you can install over previous versions without uninstalling. It's safe - built by GitHub Actions in this repo, you can see the build log on the releases page.
 
 ### Syncing the two
 
@@ -145,7 +145,7 @@ Manual installs don't auto-update, so here's how to get notified of new releases
 
 - **Obsidian plugin (via Community plugins):** once installed from Browse, Obsidian checks daily and shows an "Update available" badge in Settings → Community plugins. One click updates it.
 - **Obsidian plugin (manual / pre-release):** use [BRAT](https://github.com/TfTHacker/obsidian42-brat) ("Obsidian42 - BRAT"). Add `Diexar-Labs/jotdrop` as a beta plugin; BRAT watches this repo's releases and updates the plugin for you.
-- **Android app:** the sideloaded APK won't update itself. The easiest fix is [Obtainium](https://github.com/ImranR98/Obtainium): add `https://github.com/Diexar-Labs/jotdrop` as an app and it tracks releases and installs new APKs automatically (the debug signature is stable, so updates install cleanly over the old version).
+- **Android app:** the sideloaded APK won't update itself. The easiest fix is [Obtainium](https://github.com/ImranR98/Obtainium): add `https://github.com/Diexar-Labs/jotdrop` as an app and it tracks releases and installs new APKs automatically (the repository signing key is stable, so updates install cleanly over the old version).
 - **Anyone:** on [this repository](https://github.com/Diexar-Labs/jotdrop), click **Watch → Custom → Releases** to get a notification on every new release.
 
 ## How it works
@@ -222,7 +222,9 @@ No subscriptions, no obligations, no DMs. Totally optional.
 
 ## Build from source
 
-If you'd rather build yourself than trust a debug APK:
+If you build from source, always use the optimized release APK. Debug APK
+generation and installation are disabled because Compose debug builds have
+unusable scroll performance.
 
 **Plugin:**
 ```bash
@@ -233,12 +235,20 @@ npm run build
 
 **Android:**
 ```bash
-cd android
-gradle :app:assembleDebug
-# APK at android/app/build/outputs/apk/debug/app-debug.apk
+npm run android:release
+# APK at android/app/build/outputs/apk/release/app-release.apk
+npm run android:verify -- android/app/build/outputs/apk/release/app-release.apk
+npm run android:install -- android/app/build/outputs/apk/release/app-release.apk
 ```
 
-Requires JDK 17, Android SDK 34, and Gradle 8.7 (the wrapper jar isn't committed - either install Gradle system-wide or run `gradle wrapper` once to generate `./gradlew`).
+Before merging a port, use `npm run android:test-release` for the same R8
+optimized release variant with the feature-branch base check. It is for local
+testing only; production release builds still require `npm run android:release`.
+
+The release command requires a clean checkout at live `origin/main`, JDK 17,
+Android SDK 34, and Gradle 8.7 (the wrapper jar isn't committed - set
+`GRADLE_BIN` if Gradle is not on PATH). `compileDebugKotlin` is available for
+CI compile validation, but it does not produce an installable APK.
 
 ## Credits
 

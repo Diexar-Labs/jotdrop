@@ -5,7 +5,15 @@
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
-    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production"
+    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+    "verify:base": "node scripts/verify-release-source.mjs base",
+    "verify:deploy": "node scripts/verify-release-source.mjs deploy",
+    "verify:release": "node scripts/verify-release-source.mjs release",
+    "deploy:local": "node scripts/deploy-local.mjs",
+    "android:release": "node scripts/build-android-release.mjs",
+    "android:test-release": "node scripts/build-android-release.mjs --test",
+    "android:verify": "node scripts/verify-android-apk.mjs",
+    "android:install": "node scripts/install-android-release.mjs"
   },
   "keywords": ["obsidian", "plugin", "notes", "keep"],
   "author": "Diexar Labs",

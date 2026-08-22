@@ -118,6 +118,8 @@ import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -1146,10 +1148,34 @@ private fun TagEditor(
     foreground: Color,
 ) {
     var input by remember { mutableStateOf("") }
+    var refocusAfterCommit by remember { mutableStateOf(false) }
+    val focusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(tags, refocusAfterCommit) {
+        if (refocusAfterCommit) {
+            focusRequester.requestFocus()
+            refocusAfterCommit = false
+        }
+    }
 
     fun commit() {
         val v = input.removePrefix("#").trim()
-        if (v.isNotEmpty()) onAdd(v)
+        if (v.isNotEmpty()) {
+            onAdd(v)
+            refocusAfterCommit = true
+        }
+        input = ""
+    }
+
+    fun commitSeparated(value: String) {
+        val values = value
+            .split(Regex("[\\s,]+"))
+            .map { it.removePrefix("#").trim() }
+            .filter { it.isNotEmpty() }
+        for (v in values) {
+            onAdd(v)
+            refocusAfterCommit = true
+        }
         input = ""
     }
 
@@ -1166,15 +1192,14 @@ private fun TagEditor(
         BasicTextField(
             value = input,
             onValueChange = { value ->
-                if (value.contains('\n') || value.endsWith(",") || value.endsWith(" ")) {
-                    val toCommit = value.replace("\n", "").trimEnd(',', ' ').trim()
-                    if (toCommit.isNotEmpty()) onAdd(toCommit.removePrefix("#"))
-                    input = ""
+                if (value.any { it == '\n' || it == ',' || it == ' ' || it == '\t' }) {
+                    commitSeparated(value)
                 } else {
                     input = value
                 }
             },
             modifier = Modifier
+                .focusRequester(focusRequester)
                 .defaultMinSize(minWidth = 100.dp)
                 .padding(vertical = 6.dp),
             singleLine = true,

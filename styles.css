@@ -6,11 +6,19 @@
   flex-direction: column;
   gap: 16px;
   height: 100%;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-x: hidden;
   overflow-y: auto;
 }
 
 .jotdrop-toolbar {
   display: flex;
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
   gap: 12px;
   align-items: center;
   position: sticky;
@@ -77,7 +85,8 @@
 }
 
 .jotdrop-search {
-  flex: 1;
+  flex: 1 1 180px;
+  min-width: 0;
   max-width: 360px;
   padding: 6px 12px;
   border-radius: 8px;
@@ -403,6 +412,9 @@
 .jotdrop-grid {
   display: flex;
   flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   gap: 16px;
 }
 
@@ -412,6 +424,9 @@
 .jotdrop-grid-inner {
   --jotdrop-card-width: 240px;
   display: flex;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   align-items: flex-start;
   gap: 12px;
 }

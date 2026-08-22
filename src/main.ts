@@ -1,4 +1,4 @@
-import { Notice, Plugin, TFile, WorkspaceLeaf, normalizePath } from "obsidian";
+import { Notice, Platform, Plugin, TFile, WorkspaceLeaf, normalizePath } from "obsidian";
 import { DEFAULT_SETTINGS, JotDropSettings, JotDropSettingTab } from "./settings";
 import { JotDropView, VIEW_TYPE_JOTDROP } from "./view";
 import { QuickCaptureModal, createNoteInFolder } from "./capture";
@@ -74,7 +74,7 @@ export default class JotDropPlugin extends Plugin {
 
     this.app.workspace.onLayoutReady(() => {
       this.reminderScheduler.scheduleAll();
-      this.applyClipServerState();
+      if (Platform.isDesktopApp) this.applyClipServerState();
     });
 
     // Obsidian-URI fallback for the Chrome extension when the loopback server
@@ -117,7 +117,7 @@ export default class JotDropPlugin extends Plugin {
    * Starts or stops the clip server according to settings; restarts on port change.
    */
   applyClipServerState(): void {
-    if (!this.clipServer) return;
+    if (!this.clipServer || !Platform.isDesktopApp) return;
     const shouldRun = this.settings.clipServerEnabled && !!this.settings.clipServerToken;
     if (shouldRun) {
       if (!this.clipServer.isRunning()) {

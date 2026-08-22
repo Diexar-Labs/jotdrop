@@ -157,27 +157,41 @@ export class QuickCaptureModal extends Modal {
     for (const tag of getAllVaultTags(this.app)) {
       datalist.createEl("option", { attr: { value: tag } });
     }
-    const commit = () => {
-      if (!this.tagInputEl) return;
-      const value = this.tagInputEl.value.replace(/^#/, "").trim();
-      if (value && !this.state.tags.includes(value)) {
-        this.state.tags.push(value);
-        this.renderChips();
+    const commit = (restoreFocus = false) => {
+      const input = this.tagInputEl;
+      if (!input) return;
+      const values = input.value
+        .split(/[\s,]+/)
+        .map((value) => value.replace(/^#/, "").trim())
+        .filter((value) => value.length > 0);
+      let added = false;
+      for (const value of values) {
+        if (!this.state.tags.includes(value)) {
+          this.state.tags.push(value);
+          added = true;
+        }
       }
-      this.tagInputEl.value = "";
+      input.value = "";
+      if (added) this.renderChips();
+      if (restoreFocus) input.focus();
     };
     this.tagInputEl.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" || e.key === "," || e.key === "Tab") {
+      if (e.key === "Enter" || e.key === "," || e.key === "Tab" || e.key === " ") {
         if (this.tagInputEl?.value.trim()) {
           e.preventDefault();
-          commit();
+          commit(true);
+        } else if (e.key === " ") {
+          e.preventDefault();
         }
       } else if (e.key === "Backspace" && this.tagInputEl?.value === "" && this.state.tags.length > 0) {
         this.state.tags.pop();
         this.renderChips();
       }
     });
-    this.tagInputEl.addEventListener("blur", commit);
+    this.tagInputEl.addEventListener("input", () => {
+      if (/[\s,]/.test(this.tagInputEl?.value ?? "")) commit(true);
+    });
+    this.tagInputEl.addEventListener("blur", () => commit());
   }
 
   private renderChips(): void {
