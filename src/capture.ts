@@ -363,7 +363,18 @@ function generateFilename(content: string): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   const stamp = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
 
-  const firstLine = content.split("\n")[0].trim();
+  const lines = content.split("\n");
+  const isEmbedLine = (line: string) =>
+    /^!\[\[[^\r\n]*\]\]$/.test(line) || /^!\[[^\]]*\]\([^)]*\)$/.test(line);
+  // Prefer the first content line; leading blank lines and complete
+  // image-embed lines (web clipper article images) do not name the note.
+  let firstLine = lines[0].trim();
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed === "" || isEmbedLine(trimmed)) continue;
+    firstLine = trimmed;
+    break;
+  }
   const slug = firstLine
     .replace(/^- \[[ xX]\]\s*/, "")
     .replace(/[#*_`>[\]()]/g, "")
