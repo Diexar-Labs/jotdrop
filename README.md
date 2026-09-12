@@ -144,6 +144,19 @@ Part three of the trio - this is what replaces Keep's browser extension.
   <br/><sub><em>Web Clipper popup - title, selection, tags, color, pin, one-click save</em></sub>
 </p>
 
+<table>
+  <tr>
+    <td align="center" width="40%">
+      <img src="docs/screenshots/clipper-popup.webp" alt="Web Clipper popup with selection, tags, color and pin" width="300" />
+      <br/><sub><em>The popup up close</em></sub>
+    </td>
+    <td align="center" width="60%">
+      <img src="docs/screenshots/clipper-background-connection.webp" alt="Optional Background connection page of the Web Clipper" width="500" />
+      <br/><sub><em>Optional Background connection - saving runs silently</em></sub>
+    </td>
+  </tr>
+</table>
+
 **Zero-config quick start:**
 
 1. Install the JotDrop plugin in Obsidian.
