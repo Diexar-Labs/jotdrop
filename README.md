@@ -34,9 +34,22 @@ JotDrop is a private, open-source **Google Keep alternative**. Google Keep is gr
 ## Screenshots
 
 <p align="center">
-  <img src="docs/screenshots/plugin-edit.png" alt="Quick-note editor in Obsidian with color, tags, checklist toolbar" width="820" />
-  <br/><sub><em>Quick-note editor - colors, tags, checklist, pin</em></sub>
+  <img src="docs/screenshots/plugin-grid.webp" alt="JotDrop card grid in Obsidian" width="820" />
+  <br/><sub><em>Obsidian desktop - Keep-style card grid</em></sub>
 </p>
+
+<table>
+  <tr>
+    <td align="center" width="60%">
+      <img src="docs/screenshots/plugin-edit.png" alt="Quick-note editor in Obsidian with color, tags, checklist toolbar" />
+      <br/><sub><em>Quick-note editor - colors, tags, checklist, pin</em></sub>
+    </td>
+    <td align="center" width="40%">
+      <img src="docs/screenshots/android-list.webp" alt="JotDrop Android home screen with 2-column card grid" width="240" />
+      <br/><sub><em>Android - home screen</em></sub>
+    </td>
+  </tr>
+</table>
 
 ## Features
 
@@ -125,6 +138,11 @@ Install [Syncthing](https://syncthing.net/) on phone + laptop, point both at you
 Part three of the trio - this is what replaces Keep's browser extension.
 
 **Recommended: install from the [Chrome Web Store](https://chromewebstore.google.com/detail/obsidrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo).** One click, automatic updates, no configuration needed.
+
+<p align="center">
+  <img src="docs/screenshots/clipper-popup-cnn.webp" alt="JotDrop Web Clipper popup on a news article, with tags, color, pin and Save" width="820" />
+  <br/><sub><em>Web Clipper popup - title, selection, tags, color, pin, one-click save</em></sub>
+</p>
 
 **Zero-config quick start:**
 
