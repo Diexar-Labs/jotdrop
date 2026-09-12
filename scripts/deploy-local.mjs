@@ -19,10 +19,19 @@ try {
 } catch (error) {
   process.exit(error?.status || 1);
 }
-execFileSync(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "build"], {
-  cwd: root,
-  stdio: "inherit",
-});
+// Node 24+ refuses to spawn .cmd files without a shell (EINVAL). When this
+// script already runs under npm, use its JS entry point via node instead.
+const npmExec = process.env.npm_execpath;
+const useNpmJs =
+  process.platform === "win32" && npmExec && npmExec.endsWith(".js");
+execFileSync(
+  useNpmJs ? process.execPath : process.platform === "win32" ? "npm.cmd" : "npm",
+  useNpmJs ? [npmExec, "run", "build"] : ["run", "build"],
+  {
+    cwd: root,
+    stdio: "inherit",
+  },
+);
 
 if (!fs.existsSync(target)) {
   console.error(`Vault plugin directory not found: ${target}`);
