@@ -1,0 +1,54 @@
+name: Release Web Clipper
+
+on:
+  push:
+    tags:
+      - "web-clipper-v*"
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    working-directory: .
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      # Verify the immutable commit that triggered this run.
+      JOTDROP_EXPECTED_SHA: ${{ github.sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Validate release source
+        run: node scripts/verify-release-source.mjs release
+
+      - name: Validate release tag
+        run: node scripts/verify-release-tag.mjs "${GITHUB_REF_NAME}"
+
+      - name: Run focused clipper check
+        run: node scripts/check-web-clipper.mjs
+
+      - name: Package clipper ZIP
+        run: node scripts/package-web-clipper.mjs
+
+      - name: Publish clipper release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#web-clipper-v}"
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" "release-staging/jotdrop-web-clipper-${VERSION}.zip" --clobber
+            gh release edit "${GITHUB_REF_NAME}" --latest=false
+          else
+            gh release create "${GITHUB_REF_NAME}" "release-staging/jotdrop-web-clipper-${VERSION}.zip" --verify-tag --generate-notes --latest=false
+          fi

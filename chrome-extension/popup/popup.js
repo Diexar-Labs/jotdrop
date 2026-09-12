@@ -4,8 +4,10 @@
 // 1. Read the active tab; retrieve title/url + selected text from the page DOM via
 //    chrome.scripting.executeScript (one-time injection, no permanent content-script).
 // 2. Populate the preview block and the selection field.
-// 3. On Save → POST to 127.0.0.1:<port>/clip with Bearer token from storage.
-//    On network error or 401: fall back to obsidian://jotdrop-clip?…
+// 3. On Save → if no token is configured (zero-config default), open an
+//    obsidian://jotdrop-clip URI; Obsidian launches and creates the card.
+//    With a saved token → POST to 127.0.0.1:<port>/clip; on network error or
+//    401 fall back to the same URI helper (shared, no duplicated logic).
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -74,7 +76,13 @@ async function init() {
   const info = await readPageInfo(activeTab.id);
   if (info.title) els.title.textContent = info.title;
   if (info.selection) els.selection.value = info.selection;
-  setStatus("Ready", "idle");
+  const settings = await getSettings();
+  if (!settings.token) {
+    // Zero-config default: saving opens Obsidian via the obsidian:// protocol.
+    setStatus("Direct mode: Save opens Obsidian", "idle");
+  } else {
+    setStatus("Ready", "idle");
+  }
 }
 
 async function getSettings() {
@@ -135,14 +143,23 @@ async function postClip(payload, settings) {
   return await res.json();
 }
 
-function buildObsidianUri(payload) {
-  const qs = new URLSearchParams();
-  qs.set("url", payload.url);
-  if (payload.title) qs.set("title", payload.title);
-  if (payload.selection) qs.set("selection", payload.selection);
-  if (payload.tags && payload.tags.length) qs.set("tags", payload.tags.join(","));
-  if (payload.color && payload.color !== "default") qs.set("color", payload.color);
-  return `obsidian://jotdrop-clip?${qs.toString()}`;
+function openObsidianUri(payload, onOk) {
+  const serialized = JotDropProtocol.serializeDirectClip(payload);
+  if (!serialized.ok) {
+    setStatus(
+      "Selection too long for direct mode — shorten the selection or enable Background connection",
+      "error",
+    );
+    return false;
+  }
+  try {
+    void chrome.tabs.update(activeTab.id, { url: serialized.uri });
+    onOk();
+    return true;
+  } catch {
+    setStatus("Failed to open Obsidian", "error");
+    return false;
+  }
 }
 
 async function save() {
@@ -168,10 +185,15 @@ async function save() {
 
   const settings = await getSettings();
 
-  if (!settings.token) {
-    setStatus("Set token first", "error");
+  // Zero-config: no token → open the clip URI directly; Obsidian creates the card.
+  if (JotDropProtocol.pickRoute(settings) === "direct") {
+    if (openObsidianUri(payload, () => {
+      setStatus("Opened in Obsidian", "ok");
+      setTimeout(() => window.close(), 800);
+    })) {
+      return;
+    }
     els.saveBtn.disabled = false;
-    chrome.runtime.openOptionsPage();
     return;
   }
 
@@ -184,15 +206,13 @@ async function save() {
     // Fallback opens Obsidian via the protocol handler. We cannot be certain the
     // plugin is active — the user will see the note in their vault once Obsidian
     // is open and the plugin is loaded.
-    const uri = buildObsidianUri(payload);
-    try {
-      await chrome.tabs.update(activeTab.id, { url: uri });
+    if (openObsidianUri(payload, () => {
       setStatus("Opened in Obsidian", "ok");
       setTimeout(() => window.close(), 800);
-    } catch {
-      setStatus(`Failed: ${e.message || e}`, "error");
-      els.saveBtn.disabled = false;
+    })) {
+      return;
     }
+    els.saveBtn.disabled = false;
   }
 }
 

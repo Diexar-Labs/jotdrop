@@ -8,7 +8,7 @@
 
 JotDrop is a free, open-source **Google Keep alternative** for [Obsidian](https://obsidian.md/). It's a **trio**: the plugin (the card grid in your vault), a companion **Android app** (share-sheet capture, OCR, voice memos), and a **Chrome web clipper**. Sync them with [Syncthing](https://syncthing.net/) and you have Google Keep, fully offline, fully yours.
 
-> **For the full Google Keep experience, install all three.** Install the plugin from Obsidian Community plugins, download the [Android APK](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.1/jotdrop.apk), and load the [Chrome extension](#chrome-extension-web-clipper).
+> **For the full Google Keep experience, install all three.** Install the plugin from Obsidian Community plugins, download the [Android APK](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.1/jotdrop.apk), and install the [Web Clipper from the Chrome Web Store](https://chromewebstore.google.com/detail/obsidrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo) — one click, automatic updates, works without any configuration.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Obsidian plugin](https://img.shields.io/badge/Obsidian-plugin-7c3aed)](https://github.com/Diexar-Labs/jotdrop/releases)
@@ -34,22 +34,9 @@ JotDrop is a private, open-source **Google Keep alternative**. Google Keep is gr
 ## Screenshots
 
 <p align="center">
-  <img src="docs/screenshots/plugin-grid.png" alt="JotDrop card grid in Obsidian" width="820" />
-  <br/><sub><em>Obsidian desktop - Keep-style card grid</em></sub>
+  <img src="docs/screenshots/plugin-edit.png" alt="Quick-note editor in Obsidian with color, tags, checklist toolbar" width="820" />
+  <br/><sub><em>Quick-note editor - colors, tags, checklist, pin</em></sub>
 </p>
-
-<table>
-  <tr>
-    <td align="center" width="60%">
-      <img src="docs/screenshots/plugin-edit.png" alt="Quick-note editor in Obsidian with color, tags, checklist toolbar" />
-      <br/><sub><em>Quick-note editor - colors, tags, checklist, pin</em></sub>
-    </td>
-    <td align="center" width="40%">
-      <img src="docs/screenshots/android-list.png" alt="JotDrop Android home screen with 2-column card grid" width="240" />
-      <br/><sub><em>Android - home screen</em></sub>
-    </td>
-  </tr>
-</table>
 
 ## Features
 
@@ -80,8 +67,9 @@ JotDrop is a private, open-source **Google Keep alternative**. Google Keep is gr
 - **Refcount-aware delete**: when you remove a card, its embedded image/audio is moved to the OS recycle bin too, but only if no other card (incl. Archive) still references it (so shared OG-thumbnails stay safe)
 
 ### Clip the web
-- **Chrome extension** companion - one-click clip of the current page into your vault as a Markdown note, tags included
-- Talks only to a localhost server inside the plugin (127.0.0.1, token-authenticated) - no cloud relay
+- **Chrome extension** companion - one-click clip of the current page into your vault as a Markdown note, tags, color, pin and selection included
+- **Zero-config by default** - saving opens Obsidian via the local `obsidian://` protocol and creates the card; no token or port setup needed
+- **Optional background connection** - pair once with the plugin's localhost server (127.0.0.1, token-authenticated) for silent background clipping; on any failure the clipper falls back to the direct URI, so a clip is never lost
 
 ### Sync
 - Files written as `<date>-<slug>.md` with YAML frontmatter (color, tags, archived, pinned)
@@ -98,6 +86,10 @@ JotDrop is a **trio**. Each part works on its own, but you only get the full Goo
 2. **[Android app](#android-app)** - capture from anywhere: share-sheet, OCR, voice memos.
 3. **[Chrome extension](#chrome-extension-web-clipper)** - clip web pages straight into your vault.
 
+### Web clipper (recommended route)
+
+Install [JotDrop Web Clipper from the Chrome Web Store](https://chromewebstore.google.com/detail/obsidrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo). That's the recommended route: one-click install from the store, automatic updates, and your existing item/users are preserved.
+
 ### Obsidian plugin (desktop + mobile)
 
 **Easiest (via Community plugins, recommended):**
@@ -108,7 +100,7 @@ JotDrop is a **trio**. Each part works on its own, but you only get the full Goo
 
 **Manual install (for offline / pre-release versions):**
 
-1. Go to the [current plugin release](https://github.com/Diexar-Labs/jotdrop/releases/tag/0.20.2).
+1. Go to the [current plugin release](https://github.com/Diexar-Labs/jotdrop/releases/tag/0.20.3).
 2. Download `manifest.json`, `main.js`, and `styles.css`.
 3. Put them in `<your-vault>/.obsidian/plugins/jotdrop/` (create the folder if it doesn't exist).
 4. Open Obsidian → Settings → Community plugins → enable **JotDrop**.
@@ -132,12 +124,35 @@ Install [Syncthing](https://syncthing.net/) on phone + laptop, point both at you
 
 Part three of the trio - this is what replaces Keep's browser extension.
 
-1. In the Obsidian plugin's settings, enable **Web clipper** under "Clip server" and copy the token.
-2. Load the [`chrome-extension/`](chrome-extension/) folder as an unpacked extension in Chrome (`chrome://extensions` → Developer mode → Load unpacked).
-3. Open the extension's Options page, paste the token, save.
-4. Click the JotDrop icon on any page to clip the URL + title + selection (if any) into your vault as a Markdown note.
+**Recommended: install from the [Chrome Web Store](https://chromewebstore.google.com/detail/obsidrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo).** One click, automatic updates, no configuration needed.
 
-The clip server only binds to `127.0.0.1` and never exposes itself on the network. Off by default.
+**Zero-config quick start:**
+
+1. Install the JotDrop plugin in Obsidian.
+2. Install the [Web Clipper](https://chromewebstore.google.com/detail/obsidrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo) from the Chrome Web Store.
+3. Click the JotDrop icon on any page and press **Save** - Obsidian opens and creates the card.
+
+That's the whole setup. Saving works through the local `obsidian://` protocol, so no token or port is required.
+
+**Optional: Background connection** (after the default path works): pair the clipper with the plugin's clip server once and saves run silently in the background without bringing Obsidian to the foreground. In Obsidian: Settings → JotDrop → Web clipper → enable the clip server and copy the token; in the extension: right-click the icon → **Background connection** → paste the token → **Save and test connection**. The server binds only to `127.0.0.1` and never exposes itself on the network. If the connection fails, the clipper automatically falls back to the direct URI - a clip is never lost.
+
+**Manual ZIP installation (fallback):**
+
+1. Download the ZIP from the [latest clipper release](https://github.com/Diexar-Labs/jotdrop/releases?q=web-clipper-v&expanded=false) and extract it into a permanent folder.
+2. Open `chrome://extensions` in Chrome / Edge / Brave.
+3. Toggle **Developer mode** on.
+4. Click **Load unpacked** and select the extracted folder containing `manifest.json`.
+
+**Manual updates:** replace the files in the same permanent folder with a newer ZIP's contents and click **Reload** on the extension card in `chrome://extensions`. Store installations update automatically.
+
+**Troubleshooting:**
+
+| Problem | Fix |
+| --- | --- |
+| Obsidian does not open on Save | Open Obsidian desktop at least once so the `obsidian://` protocol is registered, then save again. |
+| Background connection test fails | Obsidian desktop, the JotDrop plugin, and its clip server must be running; re-copy the token from the plugin settings. |
+| Wrong port or token | Open **Background connection → Advanced**, correct the port (default 27124), and paste the token again. |
+| "Selection too long for direct mode" | Shorten the selected text, or enable the Background connection (it supports much larger quotes). |
 
 ### Staying up to date
 

@@ -79,7 +79,7 @@ export default class JotDropPlugin extends Plugin {
 
     // Obsidian-URI fallback for the Chrome extension when the loopback server
     // is off or the plugin was not running at send time. Schema:
-    // obsidian://jotdrop-clip?url=…&title=…&selection=…&tags=…&color=…
+    // obsidian://jotdrop-clip?url=…&title=…&selection=…&tags=…&color=…&pinned=true|false
     // Backward-compat: also accept the previous `obsidrop-clip` schema so
     // installed Chrome extensions from before the rename keep working until
     // they auto-update.
@@ -144,6 +144,9 @@ export default class JotDropPlugin extends Plugin {
       .map((s) => s.replace(/^#/, "").trim())
       .filter((s) => s.length > 0 && !/\s/.test(s));
     const color: ColorName = isColorName(params.color) ? params.color : "default";
+    // Only the exact string "true" counts as pinned; anything else (including
+    // absence) is unpinned.
+    const pinned = params.pinned === "true";
 
     const notice = new Notice(t("notice_fetching_preview"), 0);
     let content = `# ${title}\n\n`;
@@ -163,8 +166,8 @@ export default class JotDropPlugin extends Plugin {
 
     const safe = neutralizeBodyHashtags(content);
     const file = await createNoteInFolder(this.app, this.settings.notesFolder, safe);
-    if (color !== "default" || tags.length > 0) {
-      await updateMeta(this.app, file, { color, tags, pinned: false });
+    if (color !== "default" || tags.length > 0 || pinned) {
+      await updateMeta(this.app, file, { color, tags, pinned });
     }
     new Notice(t("notice_clip_saved", file.basename));
     this.refreshViews();
