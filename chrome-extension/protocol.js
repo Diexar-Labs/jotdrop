@@ -29,7 +29,11 @@ const JotDropProtocol = {
     if (payload.tags && payload.tags.length) qs.set("tags", payload.tags.join(","));
     if (payload.color && payload.color !== "default") qs.set("color", payload.color);
     qs.set("pinned", payload.pinned ? "true" : "false");
-    return `obsidian://jotdrop-clip?${qs.toString()}`;
+    // URLSearchParams encodes spaces as "+"; Obsidian decodes %20 but leaves a
+    // literal "+" untouched, so rewrite every "+" (a real "+" is always %2B)
+    // back to "%20".
+    const query = qs.toString().replace(/\+/g, "%20");
+    return `obsidian://jotdrop-clip?${query}`;
   },
 
   /**

@@ -32,6 +32,21 @@ test("pinned is always serialized, also when false", () => {
   assert.equal(qs.get("pinned"), "false");
 });
 
+test("spaces are encoded as %20, never as a literal +", () => {
+  const uri = proto.buildClipUri({
+    url: "https://example.com",
+    title: "Al jaren een doorn in het oog: einde aan asielbonanza?",
+    selection: " regel met\nnieuwe regel ",
+  });
+  assert.equal(uri.includes("+"), false);
+  const qs = new URLSearchParams(uri.split("?")[1]);
+  assert.equal(qs.get("title"), "Al jaren een doorn in het oog: einde aan asielbonanza?");
+  // A real + in a value must survive as %2B and round-trip correctly.
+  const uri2 = proto.buildClipUri({ url: "https://example.com", title: "C++ tips" });
+  assert.equal(uri2.includes("%2B"), true);
+  assert.equal(new URLSearchParams(uri2.split("?")[1]).get("title"), "C++ tips");
+});
+
 test("token present selects localhost mode", () => {
   assert.equal(proto.pickRoute({ token: "abc", port: 27124 }), "server");
 });
