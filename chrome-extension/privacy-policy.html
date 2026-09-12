@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>JotDrop — Privacy Policy</title>
+  <title>JotDrop - Privacy Policy</title>
   <style>
     body {
       font-family: Georgia, serif;
@@ -70,7 +70,7 @@
 <body>
   <div class="container">
 
-    <h1>JotDrop — Privacy Policy</h1>
+    <h1>JotDrop - Privacy Policy</h1>
     <p class="meta">Effective date: 2026-09-12 &nbsp;|&nbsp; Publisher: DiexarLabs &nbsp;|&nbsp; License: MIT</p>
 
     <p>JotDrop is a Chrome extension that clips the current browser tab into a locally-running Obsidian instance. This page explains exactly what the extension does and does not do with your data.</p>
@@ -85,18 +85,18 @@
       <li>The current tab's <strong>title</strong> and <strong>URL</strong></li>
       <li>Any <strong>text you have selected</strong> on the page (if any)</li>
     </ul>
-    <p>This information is read on demand only — not continuously, not in the background.</p>
+    <p>This information is read on demand only - not continuously, not in the background.</p>
 
     <h2>3. What is stored locally</h2>
     <p>JotDrop can store two values in <code>chrome.storage.local</code>, and both are <strong>optional</strong>:</p>
     <ul>
-      <li>A <strong>port number</strong> — the port your local Obsidian plugin listens on</li>
-      <li>A <strong>bearer token</strong> — used to authenticate requests to that local plugin</li>
+      <li>A <strong>port number</strong> - the port your local Obsidian plugin listens on</li>
+      <li>A <strong>bearer token</strong> - used to authenticate requests to that local plugin</li>
     </ul>
     <p>If you never configure a token and port, nothing is stored. <code>chrome.storage.local</code> is stored only on this device and is never synced to your Google account or any remote service. No other data is ever written to storage.</p>
 
     <h2>4. Where your data goes</h2>
-    <p>Your clipped data travels over two possible <strong>local</strong> transports — it never leaves your device:</p>
+    <p>Your clipped data travels over two possible <strong>local</strong> transports - it never leaves your device:</p>
     <ul>
       <li><strong>Background connection (optional):</strong> the title, URL, and selected text are sent in a single HTTP request to <code>http://127.0.0.1</code> (your own computer) on the port you configured, authenticated with the bearer token. The request is received by the JotDrop companion plugin running inside your local Obsidian installation.</li>
       <li><strong>Direct mode (default):</strong> the extension opens a local <code>obsidian://jotdrop-clip</code> protocol URL that is handled directly by the JotDrop plugin in your local Obsidian installation. This URI is processed by your operating system and Obsidian on your own computer; the bearer token is never included in it.</li>
@@ -109,10 +109,10 @@
     <h2>6. Permissions used</h2>
     <p>The extension requests only the permissions it needs:</p>
     <ul>
-      <li><strong>activeTab</strong> — to read the title and URL of the current tab, only after you open or click the extension</li>
-      <li><strong>scripting</strong> — for a one-time read of the text you selected on the active tab when you open the extension</li>
-      <li><strong>storage</strong> — to save the optional port number and bearer token locally in <code>chrome.storage.local</code></li>
-      <li><strong>localhost host permissions</strong> (<code>http://127.0.0.1/*</code>, <code>http://localhost/*</code>) — to send clipped data only to the JotDrop plugin running on this computer</li>
+      <li><strong>activeTab</strong> - to read the title and URL of the current tab, only after you open or click the extension</li>
+      <li><strong>scripting</strong> - for a one-time read of the text you selected on the active tab when you open the extension</li>
+      <li><strong>storage</strong> - to save the optional port number and bearer token locally in <code>chrome.storage.local</code></li>
+      <li><strong>localhost host permissions</strong> (<code>http://127.0.0.1/*</code>, <code>http://localhost/*</code>) - to send clipped data only to the JotDrop plugin running on this computer</li>
     </ul>
 
     <h2>7. Open source</h2>
@@ -122,7 +122,7 @@
     <p>Questions or concerns? Reach out to DiexarLabs at <a href="mailto:eric@diexar.com">eric@diexar.com</a> or open an issue on the project repository.</p>
 
     <footer>
-      JotDrop is developed by DiexarLabs and released under the MIT License. This policy may be updated if the extension's functionality changes — check the repository for the latest version.
+      JotDrop is developed by DiexarLabs and released under the MIT License. This policy may be updated if the extension's functionality changes - check the repository for the latest version.
     </footer>
 
   </div>

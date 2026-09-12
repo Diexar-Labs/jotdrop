@@ -8,7 +8,7 @@
 
 JotDrop is a free, open-source **Google Keep alternative** for [Obsidian](https://obsidian.md/). It's a **trio**: the plugin (the card grid in your vault), a companion **Android app** (share-sheet capture, OCR, voice memos), and a **Chrome web clipper**. Sync them with [Syncthing](https://syncthing.net/) and you have Google Keep, fully offline, fully yours.
 
-> **For the full Google Keep experience, install all three.** Install the plugin from Obsidian Community plugins, download the [Android APK](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.1/jotdrop.apk), and install the [Web Clipper from the Chrome Web Store](https://chromewebstore.google.com/detail/obsidrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo) — one click, automatic updates, works without any configuration.
+> **For the full Google Keep experience, install all three.** Install the plugin from Obsidian Community plugins, download the [Android APK](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.1/jotdrop.apk), and install the [Web Clipper from the Chrome Web Store](https://chromewebstore.google.com/detail/obsidrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo) - one click, automatic updates, works without any configuration.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Obsidian plugin](https://img.shields.io/badge/Obsidian-plugin-7c3aed)](https://github.com/Diexar-Labs/jotdrop/releases)

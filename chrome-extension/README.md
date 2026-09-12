@@ -4,7 +4,7 @@ Save the current browser page as a card in your JotDrop vault.
 
 ## Install from the Chrome Web Store (recommended)
 
-Install directly from the store: [JotDrop Web Clipper](https://chromewebstore.google.com/detail/obsidrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo) — one click to install, and updates arrive automatically.
+Install directly from the store: [JotDrop Web Clipper](https://chromewebstore.google.com/detail/obsidrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo) - one click to install, and updates arrive automatically.
 
 ## Zero-config quick start
 
@@ -12,7 +12,7 @@ No token, no port, no options page needed:
 
 1. Install the JotDrop plugin in Obsidian (Community plugins → **JotDrop**).
 2. Install the [Web Clipper](https://chromewebstore.google.com/detail/obsidrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo) from the Chrome Web Store.
-3. Click the JotDrop icon on any page and press **Save** — Obsidian opens and creates the card.
+3. Click the JotDrop icon on any page and press **Save** - Obsidian opens and creates the card.
 
 ## Optional: Background connection
 
@@ -21,7 +21,7 @@ background clipping, connect the clipper to the plugin:
 
 1. In Obsidian, open **Settings → JotDrop → Web clipper**.
 2. Toggle **Enable clip server** on, then click **Copy** next to the token.
-3. In the extension: right-click the icon → **Background connection**, paste the token, click **Save and test connection** — it should report "Connection OK".
+3. In the extension: right-click the icon → **Background connection**, paste the token, click **Save and test connection** - it should report "Connection OK".
 
 Saves now go straight into the vault without focusing Obsidian. If the
 connection ever fails, the clipper automatically falls back to opening Obsidian
