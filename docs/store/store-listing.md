@@ -1,10 +1,9 @@
 # JotDrop Web Clipper - Chrome Web Store Listing (0.1.3)
 
 Existing item: `mkgcicjljogifeaccaclbcoemllmgjfo` (publisher `DiexarLabs`,
-public contact `eric@diexar.com`). Upload the exact GitHub ZIP
-`jotdrop-web-clipper-0.1.3.zip` from the verified
-`web-clipper-v0.1.3` release. Never create a new item; keep public
-distribution; 0.1.2 stays live while 0.1.3 is pending review.
+public contact `eric@diexar.com`). Version 0.1.3 was published publicly on
+2026-09-13. For future updates, upload the exact GitHub ZIP from the verified
+release, never create a new item, and keep public distribution enabled.
 
 ## Store fields
 

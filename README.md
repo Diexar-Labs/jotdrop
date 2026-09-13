@@ -8,7 +8,7 @@
 
 JotDrop is a free, open-source **Google Keep alternative** for [Obsidian](https://obsidian.md/). It's a **trio**: the plugin (the card grid in your vault), a companion **Android app** (share-sheet capture, OCR, voice memos), and a **Chrome web clipper**. Sync them with [Syncthing](https://syncthing.net/) and you have Google Keep, fully offline, fully yours.
 
-> **For the full Google Keep experience, install all three.** Install the plugin from Obsidian Community plugins, download the [Android APK](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.1/jotdrop.apk), and install the [Web Clipper from the Chrome Web Store](https://chromewebstore.google.com/detail/obsidrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo) - one click, automatic updates, works without any configuration.
+> **For the full Google Keep experience, install all three.** Install the plugin from Obsidian Community plugins, download the [Android APK](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.1/jotdrop.apk), and install the [Web Clipper from the Chrome Web Store](https://chromewebstore.google.com/detail/jotdrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo) - one click, automatic updates, works without any configuration.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Obsidian plugin](https://img.shields.io/badge/Obsidian-plugin-7c3aed)](https://github.com/Diexar-Labs/jotdrop/releases)
@@ -101,7 +101,7 @@ JotDrop is a **trio**. Each part works on its own, but you only get the full Goo
 
 ### Web clipper (recommended route)
 
-Install [JotDrop Web Clipper from the Chrome Web Store](https://chromewebstore.google.com/detail/obsidrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo). That's the recommended route: one-click install from the store, automatic updates, and your existing item/users are preserved.
+Install [JotDrop Web Clipper from the Chrome Web Store](https://chromewebstore.google.com/detail/jotdrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo). That's the recommended route: one-click install from the store, automatic updates, and your existing item/users are preserved.
 
 ### Obsidian plugin (desktop + mobile)
 
@@ -137,7 +137,7 @@ Install [Syncthing](https://syncthing.net/) on phone + laptop, point both at you
 
 Part three of the trio - this is what replaces Keep's browser extension.
 
-**Recommended: install from the [Chrome Web Store](https://chromewebstore.google.com/detail/obsidrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo).** One click, automatic updates, no configuration needed.
+**Recommended: install from the [Chrome Web Store](https://chromewebstore.google.com/detail/jotdrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo).** One click, automatic updates, no configuration needed.
 
 <p align="center">
   <img src="docs/screenshots/clipper-popup-cnn.webp" alt="JotDrop Web Clipper popup on a news article, with tags, color, pin and Save" width="820" />
@@ -160,7 +160,7 @@ Part three of the trio - this is what replaces Keep's browser extension.
 **Zero-config quick start:**
 
 1. Install the JotDrop plugin in Obsidian.
-2. Install the [Web Clipper](https://chromewebstore.google.com/detail/obsidrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo) from the Chrome Web Store.
+2. Install the [Web Clipper](https://chromewebstore.google.com/detail/jotdrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo) from the Chrome Web Store.
 3. Click the JotDrop icon on any page and press **Save** - Obsidian opens and creates the card.
 
 That's the whole setup. Saving works through the local `obsidian://` protocol, so no token or port is required.

@@ -4,14 +4,14 @@ Save the current browser page as a card in your JotDrop vault.
 
 ## Install from the Chrome Web Store (recommended)
 
-Install directly from the store: [JotDrop Web Clipper](https://chromewebstore.google.com/detail/obsidrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo) - one click to install, and updates arrive automatically.
+Install directly from the store: [JotDrop Web Clipper](https://chromewebstore.google.com/detail/jotdrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo) - one click to install, and updates arrive automatically.
 
 ## Zero-config quick start
 
 No token, no port, no options page needed:
 
 1. Install the JotDrop plugin in Obsidian (Community plugins → **JotDrop**).
-2. Install the [Web Clipper](https://chromewebstore.google.com/detail/obsidrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo) from the Chrome Web Store.
+2. Install the [Web Clipper](https://chromewebstore.google.com/detail/jotdrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo) from the Chrome Web Store.
 3. Click the JotDrop icon on any page and press **Save** - Obsidian opens and creates the card.
 
 ## Optional: Background connection
