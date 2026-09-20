@@ -874,10 +874,10 @@ object Storage {
             .map { it.trim() }
             .filter { it.isNotEmpty() && !wikiEmbed.matches(it) && !mdImage.matches(it) }
             .firstOrNull().orEmpty()
-        // Checklist-syntax strippen zodat `- [ ] melk` als titel "melk" wordt,
-        // niet de rauwe tick-box-syntax (issue #1, plugin-pariteit).
+        // Lijstmarkers strippen zodat de kaarttitel niet met rauwe Markdown begint.
         val cleaned = firstLine
-            .replace(Regex("^- \\[[ xX]]\\s*"), "")
+            .replace(Regex("^-[ \\t]+\\[[ xX]\\](?:[ \\t]+|$)"), "")
+            .replace(Regex("^(?:[-*+][ \\t]+|\\d{1,9}[.)][ \\t]+)"), "")
             .trimStart('#')
             .trim()
         return cleaned.ifBlank { fallbackFilename.removeSuffix(".md") }
@@ -888,14 +888,15 @@ object Storage {
         val wikiEmbed = Regex("^\\s*!\\[\\[[^\\]]+]]\\s*$")
         val mdImage = Regex("^\\s*!\\[[^\\]]*]\\([^)]+\\)\\s*$")
         val lines = body.lineSequence()
-            .map { it.trim() }
+            .map { it.trimEnd() }
             .filter { it.isNotBlank() && !wikiEmbed.matches(it) && !mdImage.matches(it) }
             .toList()
         // Een gewone eerste regel is al de kaarttitel en hoeft niet dubbel in de
-        // snippet. Een checklist-regel blijft juist staan: de checkbox moet vanuit
-        // het overzicht zichtbaar en klikbaar zijn, inclusief het eerste item.
-        val firstIsChecklist = lines.firstOrNull()?.matches(Regex("^- \\[[ xX]](?:\\s|$).*$")) == true
-        val rest = if (firstIsChecklist) lines.joinToString("\n")
+        // snippet. Een lijstregel blijft juist staan, inclusief geneste checklists.
+        val firstIsList = lines.firstOrNull()?.matches(
+            Regex("^[ \\t]*(?:-[ \\t]+\\[[ xX]\\](?:[ \\t]|$)|[-*+][ \\t]+|\\d{1,9}[.)][ \\t]+).*$"),
+        ) == true
+        val rest = if (firstIsList) lines.joinToString("\n")
         else if (lines.size > 1) lines.drop(1).joinToString("\n")
         else ""
         // URLs strippen — die worden als chips onderaan getoond (plugin-pariteit).
@@ -903,11 +904,10 @@ object Storage {
         val stripped = rest
             .replace(Regex("\\[([^\\]\\n]+)]\\(https?://[^)\\s]+\\)"), "$1")
             .replace(Regex("https?://\\S+"), "")
-            .replace(Regex("[ \\t]{2,}"), " ")
             .lineSequence()
             .map { it.trimEnd() }
             .joinToString("\n")
-            .trim()
+            .trimEnd()
         return stripped.take(280)
     }
 
