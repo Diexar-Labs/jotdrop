@@ -1116,7 +1116,7 @@ export class JotDropView extends ItemView {
           e.preventDefault();
           e.stopPropagation();
           const index = Number(toggle.dataset.checklistIndex);
-          void this.toggleChecklist(file, index);
+          void this.toggleChecklist(file, index, toggle);
           return;
         }
         this.handlePreviewClick(e);
@@ -1250,11 +1250,17 @@ export class JotDropView extends ItemView {
     });
   }
 
-  private async toggleChecklist(file: TFile, index: number): Promise<void> {
+  private async toggleChecklist(file: TFile, index: number, toggle: HTMLElement): Promise<void> {
     if (!Number.isInteger(index) || index < 0) return;
     try {
+      const wasChecked = toggle.textContent === "☑";
+      this.plugin.suppressModifyOnce(file.path);
       await this.app.vault.process(file, (content) => toggleChecklistItem(content, index));
-      this.plugin.refreshViews();
+      toggle.setText(wasChecked ? "☐" : "☑");
+      toggle.setAttribute(
+        "aria-label",
+        t(wasChecked ? "checklist_mark_checked" : "checklist_mark_unchecked"),
+      );
     } catch (err) {
       new Notice(t("notice_error", err instanceof Error ? err.message : String(err)));
     }
@@ -1523,8 +1529,8 @@ function sortFiles(files: TFile[], mode: string): TFile[] {
 
 /**
  * Title source: first non-blank, non-embed line. Markdown heading markers
- * (`#`, `*`, `_`, `` ` ``, `>`) and checklist syntax (`- [ ]` / `- [x]`,
- * issue #1) are stripped. Result is truncated to `TITLE_MAX_WORDS` with "…".
+ * (`#`, `*`, `_`, `` ` ``, `>`) plus the supported list markers (including
+ * checklists) are stripped. Result is truncated to `TITLE_MAX_WORDS` with "…".
  * Empty title → fall back to `fallback` (filename).
  */
 function extractTitle(content: string, fallback: string): string {
@@ -1535,7 +1541,8 @@ function extractTitle(content: string, fallback: string): string {
     if (/^!\[[^\]]*\]\([^)]+\)$/.test(line)) continue;
     if (/^<!--/.test(line)) continue;
     const cleaned = line
-      .replace(/^- \[[ xX]\]\s*/, "")
+      .replace(/^-[ \t]+\[[ xX]\](?:[ \t]+|$)/, "")
+      .replace(/^(?:[-*+][ \t]+|\d{1,9}[.)][ \t]+)/, "")
       .replace(/^#+\s*/, "")
       .replace(/^[*_`>]+\s*/, "")
       .trim();
@@ -1547,7 +1554,8 @@ function extractTitle(content: string, fallback: string): string {
 
 /**
  * Body for the card: without frontmatter, embeds, heading lines, URLs,
- * preview-comment markers. Truncated to `PREVIEW_MAX_WORDS` with "…".
+ * preview-comment markers. Leading list indentation is preserved. Truncated to
+ * `PREVIEW_MAX_WORDS` with "…".
  * URLs are stripped because they are shown separately as chips at the bottom.
  */
 function extractPreview(content: string): string {
@@ -1561,8 +1569,8 @@ function extractPreview(content: string): string {
     .replace(/https?:\/\/\S+/g, "");
   const lines = stripped
     .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0);
+    .map((l) => l.trimEnd())
+    .filter((l) => l.trim().length > 0);
   const rest = checklistToGlyphs(lines.join("\n"));
   if (!rest) return "";
   return truncateWords(rest, PREVIEW_MAX_WORDS, PREVIEW_MAX_CHARS);

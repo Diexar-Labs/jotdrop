@@ -230,22 +230,24 @@ export function neutralizeBodyHashtags(content: string): string {
 }
 
 /**
- * Converts checklist syntax at the start of a line into a shape glyph — shape,
- * not colour, so it stays readable without colour distinction (color-blind
- * friendly). Idempotent: glyph lines no longer match the syntax. Called both
- * when extracting the card preview (before word-truncation, so the syntax
- * neither eats the word budget nor gets cut mid-marker) and when rendering.
+ * Normalizes the supported Markdown list subset for compact card previews:
+ * checklists become shape glyphs, unordered markers become bullets, and ordered
+ * `N)` markers become `N.`. Leading indentation is preserved. Idempotent: the
+ * preview markers no longer match the source syntax. Called before truncation
+ * so markers neither eat the word budget nor get cut mid-marker.
  */
 export function checklistToGlyphs(text: string): string {
   return text
-    .replace(/^- \[ \] /gm, "☐ ")
-    .replace(/^- \[[xX]\] /gm, "☑ ");
+    .replace(/^([ \t]*)-[ \t]+\[ \]([ \t]|$)/gm, "$1☐$2")
+    .replace(/^([ \t]*)-[ \t]+\[[xX]\]([ \t]|$)/gm, "$1☑$2")
+    .replace(/^([ \t]*)[-*+][ \t]+/gm, "$1• ")
+    .replace(/^([ \t]*)(\d{1,9})[.)][ \t]+/gm, "$1$2. ");
 }
 
 /**
  * Renders a limited inline preview into `parent` as real DOM nodes — never via
  * innerHTML, so user text is inserted as text content and can never inject
- * markup. Handles checklist glyphs, `[[wikilink]]` / `[[link|alias]]` as styled
+ * markup. Handles indented checklist glyphs, `[[wikilink]]` / `[[link|alias]]` as styled
  * spans, `[text](url)` plus bare http(s) URLs as clickable `.jotdrop-url`
  * anchors, and checklist glyphs as buttons. Clicks are caught by the view via
  * delegation on data attributes.
@@ -253,11 +255,11 @@ export function checklistToGlyphs(text: string): string {
 export function renderInlinePreview(parent: HTMLElement, text: string): void {
   const src = checklistToGlyphs(text);
 
-  // Single ordered scan: checklist glyph | wikilink | markdown-link | bare-url.
+  // Single ordered scan: indented checklist glyph | wikilink | markdown-link | bare-url.
   // Alternation consumes a markdown link whole, so its href is never re-matched
   // as a separate bare URL.
   const tokenRe =
-    /^([☐☑])(?=\s|$)|\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\]|\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)|(https?:\/\/\S+)/gm;
+    /^([ \t]*)([☐☑])(?=[ \t]|$)|\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\]|\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)|(https?:\/\/\S+)/gm;
 
   let lastIndex = 0;
   let checklistIndex = 0;
@@ -265,11 +267,12 @@ export function renderInlinePreview(parent: HTMLElement, text: string): void {
   while ((m = tokenRe.exec(src)) !== null) {
     if (m.index > lastIndex) parent.appendText(src.slice(lastIndex, m.index));
 
-    if (m[1] !== undefined) {
-      const checked = m[1] === "☑";
+    if (m[2] !== undefined) {
+      if (m[1]) parent.appendText(m[1]);
+      const checked = m[2] === "☑";
       const button = parent.createEl("button", {
         cls: "jotdrop-checklist-toggle",
-        text: m[1],
+        text: m[2],
         attr: {
           type: "button",
           "aria-label": t(checked ? "checklist_mark_unchecked" : "checklist_mark_checked"),
@@ -277,24 +280,24 @@ export function renderInlinePreview(parent: HTMLElement, text: string): void {
         },
       });
       button.dataset.checklistIndex = String(checklistIndex++);
-    } else if (m[2] !== undefined) {
+    } else if (m[3] !== undefined) {
       // [[target]] or [[target|alias]]
       const span = parent.createSpan({
         cls: "jotdrop-wikilink",
-        text: (m[3] ?? m[2]).trim(),
+        text: (m[4] ?? m[3]).trim(),
       });
-      span.dataset.href = m[2].trim();
-    } else if (m[4] !== undefined) {
+      span.dataset.href = m[3].trim();
+    } else if (m[5] !== undefined) {
       // [label](https://url)
       const a = parent.createEl("a", {
         cls: "jotdrop-url",
-        text: m[4],
+        text: m[5],
         attr: { rel: "noopener noreferrer" },
       });
-      a.dataset.href = m[5];
-    } else if (m[6] !== undefined) {
+      a.dataset.href = m[6];
+    } else if (m[7] !== undefined) {
       // Bare URL — strip trailing sentence punctuation back into plain text.
-      const raw = m[6];
+      const raw = m[7];
       const trail = raw.match(/[).,;:!?\]"']+$/)?.[0] ?? "";
       const clean = trail ? raw.slice(0, raw.length - trail.length) : raw;
       if (clean) {

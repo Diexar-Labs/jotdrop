@@ -1452,21 +1452,27 @@ private fun NoteCard(
                             overflow = TextOverflow.Ellipsis,
                             onClick = { offset ->
                                 if (selectionMode) { onClick(); return@ClickableText }
-                                val checklistAnn = annotated
-                                    .getStringAnnotations(tag = "CHECKLIST", start = offset, end = offset)
-                                    .firstOrNull()
-                                if (checklistAnn != null) {
-                                    checklistAnn.item.toIntOrNull()?.let(onChecklistClick)
-                                    return@ClickableText
-                                }
                                 val urlAnn = annotated
                                     .getStringAnnotations(tag = "URL", start = offset, end = offset)
                                     .firstOrNull()
                                 if (urlAnn != null) {
                                     onUrlClick(urlAnn.item)
-                                } else {
-                                    onClick()
+                                    return@ClickableText
                                 }
+                                // Het glyph zelf is visueel groter dan zijn ene tekst-offset.
+                                // Maak daarom de hele checklistregel klikbaar; URL's op dezelfde
+                                // regel houden hierboven voorrang.
+                                val lineStart = annotated.text.lastIndexOf('\n', offset - 1) + 1
+                                val nextNewline = annotated.text.indexOf('\n', offset)
+                                val lineEnd = if (nextNewline < 0) annotated.length else nextNewline
+                                val checklistAnn = annotated
+                                    .getStringAnnotations(tag = "CHECKLIST", start = lineStart, end = lineEnd)
+                                    .firstOrNull()
+                                if (checklistAnn != null) {
+                                    checklistAnn.item.toIntOrNull()?.let(onChecklistClick)
+                                    return@ClickableText
+                                }
+                                onClick()
                             },
                         )
                     }
@@ -1731,21 +1737,31 @@ internal fun renderPreviewAnnotated(
         val checklistIndex: Int? = null,
     )
 
-    // Checklist-syntax (`- [ ]` / `- [x]`) wordt voor de preview vervangen door
-    // unicode-glyphs. Vorm-gebaseerd (leeg vs. gevuld), dus ook leesbaar zonder
-    // kleur — past bij de UI-richtlijn dat we niet alleen op kleur leunen.
+    // Normaliseer de ondersteunde lijstsubset. Checklists eerst, zodat ze geen
+    // gewone bullets worden; behoud voorloopinspringing voor geneste items.
     val source = text
-        .replace(Regex("(?m)^- \\[ \\] "), "☐ ")
-        .replace(Regex("(?m)^- \\[[xX]\\] "), "☑ ")
+        .replace(Regex("(?m)^([ \\t]*)-[ \\t]+\\[ \\]([ \\t]|$)")) {
+            "${it.groupValues[1]}☐${it.groupValues[2]}"
+        }
+        .replace(Regex("(?m)^([ \\t]*)-[ \\t]+\\[[xX]\\]([ \\t]|$)")) {
+            "${it.groupValues[1]}☑${it.groupValues[2]}"
+        }
+        .replace(Regex("(?m)^([ \\t]*)[-*+][ \\t]+")) {
+            "${it.groupValues[1]}• "
+        }
+        .replace(Regex("(?m)^([ \\t]*)(\\d{1,9})[.)][ \\t]+")) {
+            "${it.groupValues[1]}${it.groupValues[2]}. "
+        }
 
     val wikiRegex = Regex("\\[\\[([^\\]\\|\\n]+)(?:\\|([^\\]\\n]+))?\\]\\]")
     val mdRegex = Regex("\\[([^\\]\\n]+)\\]\\((https?://[^)\\s]+)\\)")
     val urlRegex = Regex("https?://\\S+")
-    val checklistRegex = Regex("(?m)^[☐☑](?=\\s|$)")
+    val checklistRegex = Regex("(?m)^[ \\t]*([☐☑])(?=[ \\t]|$)")
 
     val matches = mutableListOf<Match>()
     checklistRegex.findAll(source).forEachIndexed { index, match ->
-        matches.add(Match(match.range.first, match.range.last + 1, match.value, checklistIndex = index))
+        val glyph = match.groups[1] ?: return@forEachIndexed
+        matches.add(Match(glyph.range.first, glyph.range.last + 1, glyph.value, checklistIndex = index))
     }
     for (m in wikiRegex.findAll(source)) {
         val target = m.groupValues[1].trim()
