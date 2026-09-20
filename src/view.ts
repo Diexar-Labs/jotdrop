@@ -1116,7 +1116,7 @@ export class JotDropView extends ItemView {
           e.preventDefault();
           e.stopPropagation();
           const index = Number(toggle.dataset.checklistIndex);
-          void this.toggleChecklist(file, index);
+          void this.toggleChecklist(file, index, toggle);
           return;
         }
         this.handlePreviewClick(e);
@@ -1250,11 +1250,17 @@ export class JotDropView extends ItemView {
     });
   }
 
-  private async toggleChecklist(file: TFile, index: number): Promise<void> {
+  private async toggleChecklist(file: TFile, index: number, toggle: HTMLElement): Promise<void> {
     if (!Number.isInteger(index) || index < 0) return;
     try {
+      const wasChecked = toggle.textContent === "☑";
+      this.plugin.suppressModifyOnce(file.path);
       await this.app.vault.process(file, (content) => toggleChecklistItem(content, index));
-      this.plugin.refreshViews();
+      toggle.setText(wasChecked ? "☐" : "☑");
+      toggle.setAttribute(
+        "aria-label",
+        t(wasChecked ? "checklist_mark_checked" : "checklist_mark_unchecked"),
+      );
     } catch (err) {
       new Notice(t("notice_error", err instanceof Error ? err.message : String(err)));
     }
