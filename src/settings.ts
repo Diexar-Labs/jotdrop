@@ -9,7 +9,7 @@ function generateToken(): string {
   return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export type SortMode = "modified-desc" | "modified-asc" | "created-desc" | "created-asc" | "title-asc";
+export type SortMode = "modified-desc" | "modified-asc" | "created-desc" | "created-asc" | "title-asc" | "manual";
 
 export interface JotDropSettings {
   notesFolder: string;
@@ -157,6 +157,7 @@ export class JotDropSettingTab extends PluginSettingTab {
             "created-desc": t("sort_created_desc"),
             "created-asc": t("sort_created_asc"),
             "title-asc": t("sort_title_asc"),
+            "manual": t("sort_manual"),
           })
           .setValue(this.plugin.settings.sortMode)
           .onChange(async (value) => {

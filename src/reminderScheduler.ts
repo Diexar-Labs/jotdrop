@@ -2,7 +2,14 @@ import { Notice, TFile, normalizePath } from "obsidian";
 import type JotDropPlugin from "./main";
 import { LightboxModal } from "./lightbox";
 import { EditNoteModal } from "./edit";
-import { parseReminderMs, readMeta } from "./metadata";
+import { parseReminderMs, readMeta, updateMeta } from "./metadata";
+import {
+  advanceRecurrence,
+  isRecurrenceExpired,
+  parseLocalDateTime,
+  parseRepeat,
+  RecurrenceState,
+} from "./recurrence";
 import { t } from "./i18n";
 
 /**
@@ -37,11 +44,50 @@ export class ReminderScheduler {
     if (archive && (file.path === archive || file.path.startsWith(`${archive}/`))) return;
     const meta = readMeta(this.plugin.app, file);
     const ms = parseReminderMs(meta.reminder);
-    if (!Number.isFinite(ms)) return;
+    if (!Number.isFinite(ms) || !meta.reminder) return;
 
-    const delay = ms - Date.now();
-    if (delay <= 0) return; // Already overdue — card shows "Overdue" badge; we do not fire retroactively.
+    if (meta.reminderRepeat) {
+      const spec = parseRepeat(meta.reminderRepeat);
+      const cur = spec ? parseLocalDateTime(meta.reminder) : null;
+      if (!spec || !cur) {
+        // Not a recurrence we can advance (bad repeat or a non-local reminder
+        // format): keep the reminder as one-time, drop the repeat config.
+        void updateMeta(this.plugin.app, file, {
+          reminderRepeat: null,
+          reminderUntil: null,
+          reminderLimit: null,
+          reminderDone: 0,
+        });
+        this.scheduleDelay(file, ms - Date.now());
+        return;
+      }
+      const state: RecurrenceState = {
+        reminder: meta.reminder,
+        repeat: meta.reminderRepeat,
+        until: meta.reminderUntil,
+        limit: meta.reminderLimit,
+        done: meta.reminderDone,
+      };
+      const now = Date.now();
+      if (isRecurrenceExpired(state, now)) {
+        void this.clearSeries(file);
+        return;
+      }
+      if (ms <= now) {
+        // Overdue on startup: fire once, then advance to the next future occurrence.
+        void this.fireAndAdvance(file, state, now);
+        return;
+      }
+      this.scheduleDelay(file, ms - now);
+      return;
+    }
 
+    this.scheduleDelay(file, ms - Date.now());
+  }
+
+  /** Schedules a one-time (or already-advanced) timer; non-positive delay = do nothing. */
+  private scheduleDelay(file: TFile, delay: number): void {
+    if (delay <= 0) return;
     if (delay > ReminderScheduler.MAX_DELAY_MS) {
       // Wait 24 h and re-evaluate; avoids browser setTimeout overflow for
       // far-future dates and makes restart after sleep more robust.
@@ -55,7 +101,7 @@ export class ReminderScheduler {
 
     const id = window.setTimeout(() => {
       this.timers.delete(file.path);
-      this.fire(file);
+      void this.fire(file);
     }, delay);
     this.timers.set(file.path, id);
   }
@@ -73,7 +119,52 @@ export class ReminderScheduler {
     this.timers.clear();
   }
 
-  private fire(file: TFile): void {
+  private async fire(file: TFile): Promise<void> {
+    this.showFireNotice(file);
+    await this.advanceIfRecurring(file);
+  }
+
+  private async fireAndAdvance(file: TFile, state: RecurrenceState, now: number): Promise<void> {
+    this.showFireNotice(file);
+    const result = advanceRecurrence(state, now);
+    if (result.kind === "expired") {
+      await this.clearSeries(file);
+    } else {
+      await updateMeta(this.plugin.app, file, { reminder: result.reminder, reminderDone: result.done });
+      this.scheduleFile(file);
+    }
+    this.plugin.refreshViews();
+  }
+
+  private async advanceIfRecurring(file: TFile): Promise<void> {
+    const meta = readMeta(this.plugin.app, file);
+    if (!meta.reminderRepeat || !meta.reminder) return;
+    const spec = parseRepeat(meta.reminderRepeat);
+    if (!spec) return;
+    const state: RecurrenceState = {
+      reminder: meta.reminder,
+      repeat: meta.reminderRepeat,
+      until: meta.reminderUntil,
+      limit: meta.reminderLimit,
+      done: meta.reminderDone,
+    };
+    const result = advanceRecurrence(state, Date.now());
+    if (result.kind === "expired") {
+      await this.clearSeries(file);
+    } else {
+      await updateMeta(this.plugin.app, file, { reminder: result.reminder, reminderDone: result.done });
+      this.scheduleFile(file);
+    }
+    this.plugin.refreshViews();
+  }
+
+  /** Expiry clears the series (reminder + all repeat keys) — never archives/deletes the note. */
+  private async clearSeries(file: TFile): Promise<void> {
+    await updateMeta(this.plugin.app, file, { reminder: null });
+    this.plugin.refreshViews();
+  }
+
+  private showFireNotice(file: TFile): void {
     // Notice with click handler → opens lightbox if there is an attachment,
     // otherwise the edit modal.
     const notice = new Notice(t("notice_reminder_fired", file.basename), 30_000);

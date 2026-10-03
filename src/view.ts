@@ -11,6 +11,7 @@ import {
   COLOR_NAMES,
   DEFAULT_META,
   formatReminderShort,
+  formatRepeatShort,
   NoteMeta,
   parseReminderMs,
   readMeta,
@@ -21,6 +22,7 @@ import {
   updateMeta,
 } from "./metadata";
 import { voidAsync } from "./asyncUtil";
+import { betweenRank, rankForManualOrder, respaceRanks } from "./manualOrder";
 import { t } from "./i18n";
 
 export const VIEW_TYPE_JOTDROP = "jotdrop-view";
@@ -119,6 +121,7 @@ export class JotDropView extends ItemView {
   private selectedTags = new Set<string>();
   private selectionMode = false;
   private selectedPaths = new Set<string>();
+  private lastCards: CardData[] = [];
   private lastFiltered: CardData[] = [];
   private micBtnEl: HTMLButtonElement | null = null;
   private recorder: VoiceMemoRecorder | null = null;
@@ -131,6 +134,10 @@ export class JotDropView extends ItemView {
   private lastColumnCount = 0;
   private resizeTimer: number | null = null;
   private searchTimer: number | null = null;
+  // Manual drag/drop reorder state. `dragInfo` identifies the card being
+  // dragged; `dropIndicatorCard` is the card showing the insertion indicator.
+  private dragInfo: { path: string; pinned: boolean } | null = null;
+  private dropIndicatorCard: HTMLElement | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: JotDropPlugin) {
     super(leaf);
@@ -193,6 +200,11 @@ export class JotDropView extends ItemView {
     this.filterBarEl = root.createDiv({ cls: "jotdrop-filter-bar" });
     this.gridEl = root.createDiv({ cls: "jotdrop-grid" });
     this.applyCardWidth();
+
+    // Manual-mode drag/drop reorder. dragover/drop bubble from cards up to the
+    // grid, so a single pair of handlers resolves the hovered card via closest().
+    this.gridEl.addEventListener("dragover", (e) => this.handleGridDragOver(e));
+    this.gridEl.addEventListener("drop", (e) => this.handleGridDrop(e));
 
     // Re-render only when the computed column count actually changes —
     // resizing within the same count needs no DOM work (flex handles it).
@@ -648,6 +660,144 @@ export class JotDropView extends ItemView {
     );
   }
 
+  /** Starts a manual reorder drag. Cancels when the pointer is on an interactive
+   * control so buttons, links and checklist toggles keep their click behavior. */
+  private attachDragHandlers(cardEl: HTMLElement, card: CardData): void {
+    let startedOnControl = false;
+    cardEl.addEventListener("pointerdown", (e: PointerEvent) => {
+      startedOnControl = !!(e.target as HTMLElement | null)?.closest(
+        "button, a, input, textarea, select, .jotdrop-checklist-toggle",
+      );
+    }, true);
+    cardEl.addEventListener("pointerup", () => { startedOnControl = false; });
+    cardEl.addEventListener("pointercancel", () => { startedOnControl = false; });
+    cardEl.addEventListener("dragstart", (e: DragEvent) => {
+      // dragstart targets the draggable card, not the child where the pointer
+      // went down, so remember whether that child was an interactive control.
+      if (this.selectionMode || startedOnControl) {
+        e.preventDefault();
+        return;
+      }
+      this.dragInfo = { path: card.file.path, pinned: card.meta.pinned };
+      cardEl.addClass("is-dragging");
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", card.file.path);
+      }
+    });
+    cardEl.addEventListener("dragend", () => {
+      cardEl.removeClass("is-dragging");
+      this.clearDropIndicator();
+      this.dragInfo = null;
+    });
+  }
+
+  private handleGridDragOver(e: DragEvent): void {
+    if (!this.dragInfo) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "move";
+    const target = (e.target as HTMLElement | null)?.closest<HTMLElement>(".jotdrop-card");
+    if (!target || target.dataset.path === this.dragInfo.path) {
+      this.clearDropIndicator();
+      return;
+    }
+    const card = this.lastFiltered.find((c) => c.file.path === target.dataset.path);
+    if (!card || card.meta.pinned !== this.dragInfo.pinned) {
+      this.clearDropIndicator();
+      return;
+    }
+    const rect = target.getBoundingClientRect();
+    const before = e.clientY - rect.top < rect.height / 2;
+    this.showDropIndicator(target, before);
+  }
+
+  private handleGridDrop(e: DragEvent): void {
+    if (!this.dragInfo) return;
+    e.preventDefault();
+    const target = (e.target as HTMLElement | null)?.closest<HTMLElement>(".jotdrop-card");
+    const path = target?.dataset.path;
+    if (!path || path === this.dragInfo.path) {
+      this.clearDropIndicator();
+      this.dragInfo = null;
+      return;
+    }
+    const rect = target!.getBoundingClientRect();
+    const before = e.clientY - rect.top < rect.height / 2;
+    void this.performDrop(path, before);
+  }
+
+  private showDropIndicator(cardEl: HTMLElement, before: boolean): void {
+    if (this.dropIndicatorCard === cardEl) {
+      cardEl.toggleClass("is-drop-before", before);
+      cardEl.toggleClass("is-drop-after", !before);
+      return;
+    }
+    this.clearDropIndicator();
+    this.dropIndicatorCard = cardEl;
+    cardEl.toggleClass("is-drop-before", before);
+    cardEl.toggleClass("is-drop-after", !before);
+  }
+
+  private clearDropIndicator(): void {
+    if (this.dropIndicatorCard) {
+      this.dropIndicatorCard.removeClass("is-drop-before", "is-drop-after");
+      this.dropIndicatorCard = null;
+    }
+  }
+
+  /**
+   * Reorders a card within its pinned bucket (pinned↔pinned, other↔other) by
+   * writing a minimal fractional `order` to only the moved card. When the float
+   * gap between neighbors is exhausted, respaces the whole bucket.
+   */
+  private async performDrop(targetPath: string, before: boolean): Promise<void> {
+    const drag = this.dragInfo;
+    this.clearDropIndicator();
+    this.dragInfo = null;
+    if (!drag) return;
+
+    // Defensive: cards are only draggable in manual mode, but a concurrent
+    // settings change could flip the mode out from under an in-flight drag.
+    if (this.plugin.settings.sortMode !== "manual") {
+      this.plugin.settings.sortMode = "manual";
+      await this.plugin.saveSettings();
+    }
+
+    const dragged = this.lastFiltered.find((c) => c.file.path === drag.path);
+    const target = this.lastFiltered.find((c) => c.file.path === targetPath);
+    if (!dragged || !target) return;
+    if (dragged.meta.pinned !== target.meta.pinned) return;
+
+    // Keep hidden cards in the rank calculation so filtering does not move a
+    // reordered card past unrelated notes when the filter is cleared.
+    const bucket = this.lastCards.filter((c) => c.meta.pinned === dragged.meta.pinned);
+    const others = bucket.filter((c) => c.file.path !== dragged.file.path);
+    let k = others.findIndex((c) => c.file.path === target.file.path);
+    if (k < 0) return;
+    if (!before) k += 1;
+
+    const prev = k > 0 ? manualRank(others[k - 1]) : null;
+    const next = k < others.length ? manualRank(others[k]) : null;
+
+    const newRank = betweenRank(prev, next);
+    if (newRank === null) {
+      // ponytail: whole-bucket respace on exhaustion; per-window respacing if
+      // this ever shows measurable churn on large vaults.
+      const final = [...others];
+      final.splice(k, 0, dragged);
+      const ranks = respaceRanks(final.length);
+      for (let i = 0; i < final.length; i++) {
+        if (final[i].meta.order !== ranks[i]) {
+          await updateMeta(this.app, final[i].file, { order: ranks[i] });
+          final[i].meta.order = ranks[i];
+        }
+      }
+    } else {
+      await updateMeta(this.app, dragged.file, { order: newRank });
+    }
+    void this.render();
+  }
+
   private reportBulkResult(successKey: string, ok: number, fail: number): void {
     if (fail === 0) {
       new Notice(t(successKey, String(ok)));
@@ -685,6 +835,7 @@ export class JotDropView extends ItemView {
     this.gridEl.empty();
 
     const cards = await this.collectCards();
+    this.lastCards = cards;
     this.renderFilterBar(cards);
 
     // Drop selected tags that no longer exist after note mutations, so the
@@ -956,10 +1107,11 @@ export class JotDropView extends ItemView {
       return true;
     });
 
-    const sorted = sortFiles(all, this.plugin.settings.sortMode);
+    const manual = this.plugin.settings.sortMode === "manual";
+    const files = manual ? all : sortFiles(all, this.plugin.settings.sortMode);
 
     const cards: CardData[] = [];
-    for (const file of sorted) {
+    for (const file of files) {
       const content = await this.app.vault.cachedRead(file);
       const meta = readMeta(this.app, file);
       cards.push({
@@ -969,6 +1121,11 @@ export class JotDropView extends ItemView {
         archived: isUnder(file.path, archive),
       });
     }
+
+    // Manual mode sorts by `order` ascending (absent → -noteCreatedMs, so new
+    // notes land on top) with a deterministic filename tie-break. Other modes
+    // are unaffected and keep the pre-sort above via `sortFiles`.
+    if (manual) cards.sort(compareManualCards);
     return cards;
   }
 
@@ -1003,6 +1160,14 @@ export class JotDropView extends ItemView {
     cardEl.dataset.path = file.path;
     if (meta.color !== "default") {
       cardEl.dataset.color = meta.color;
+    }
+
+    // Cards are draggable only in manual sort mode. This is the "clearly
+    // require manual" path: drag/reorder is unavailable until the user selects
+    // "Manual" in settings, so card clicks/checklist/selection stay untouched.
+    if (this.plugin.settings.sortMode === "manual" && !this.selectionMode) {
+      cardEl.draggable = true;
+      this.attachDragHandlers(cardEl, card);
     }
 
     this.attachLongPress(cardEl, file.path);
@@ -1063,6 +1228,8 @@ export class JotDropView extends ItemView {
       img.loading = "lazy";
       // Keep large photo decodes off the main thread during scrolling.
       img.decoding = "async";
+      // Prevent the browser's native image drag from hijacking a card drag.
+      img.draggable = false;
       // On a broken path, walk the fallback locations (e.g. archived note →
       // attachment still in the notes folder) before hiding the wrapper.
       img.addEventListener("error", () => {
@@ -1099,6 +1266,15 @@ export class JotDropView extends ItemView {
           cls: "jotdrop-card-reminder-rel",
           text: formatReminderShort(meta.reminder),
         });
+      }
+    }
+
+    if (meta.reminder && meta.reminderRepeat) {
+      const repeatLabel = formatRepeatShort(meta.reminderRepeat);
+      if (repeatLabel) {
+        const rbadge = body.createDiv({ cls: "jotdrop-card-repeat" });
+        rbadge.createSpan({ cls: "jotdrop-card-repeat-icon", text: "🔁" });
+        rbadge.createSpan({ cls: "jotdrop-card-repeat-label", text: repeatLabel });
       }
     }
 
@@ -1525,6 +1701,23 @@ function sortFiles(files: TFile[], mode: string): TFile[] {
       break;
   }
   return sorted;
+}
+
+/**
+ * Manual-sort rank for a card: its explicit `order`, or the fallback
+ * negative filename stamp for stamped notes (newest first), or zero for unstamped
+ * notes whose mutable filesystem timestamps cannot provide a stable rank.
+ */
+function manualRank(card: CardData): number {
+  return rankForManualOrder(card.meta.order, card.file.basename);
+}
+
+/** Manual order comparison: ascending rank, then deterministic filename tie-break. */
+function compareManualCards(a: CardData, b: CardData): number {
+  const ra = manualRank(a);
+  const rb = manualRank(b);
+  if (ra !== rb) return ra - rb;
+  return a.file.name.localeCompare(b.file.name);
 }
 
 /**

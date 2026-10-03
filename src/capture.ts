@@ -10,6 +10,7 @@ import {
   updateMeta,
 } from "./metadata";
 import { buildLinkNote, detectAllUrls, fetchOg, OgPreview } from "./ogfetch";
+import { RepeatEditor } from "./repeat";
 import { t } from "./i18n";
 
 export class QuickCaptureModal extends Modal {
@@ -23,11 +24,17 @@ export class QuickCaptureModal extends Modal {
     tags: string[];
     pinned: boolean;
     reminder: string | null;
+    reminderRepeat: string | null;
+    reminderUntil: string | null;
+    reminderLimit: number | null;
   } = {
     color: "default",
     tags: [],
     pinned: false,
     reminder: null,
+    reminderRepeat: null,
+    reminderUntil: null,
+    reminderLimit: null,
   };
 
   constructor(app: App, plugin: JotDropPlugin) {
@@ -137,7 +144,13 @@ export class QuickCaptureModal extends Modal {
     clearReminder.addEventListener("click", () => {
       reminderInput.value = "";
       this.state.reminder = null;
+      this.state.reminderRepeat = null;
+      this.state.reminderUntil = null;
+      this.state.reminderLimit = null;
+      this.renderControls(parent);
     });
+
+    this.renderRepeatControls(bar);
 
     // Tags — chips and input share the same flex container so the input always
     // follows directly after the last chip, even when chips wrap to a new line.
@@ -192,6 +205,25 @@ export class QuickCaptureModal extends Modal {
       if (/[\s,]/.test(this.tagInputEl?.value ?? "")) commit(true);
     });
     this.tagInputEl.addEventListener("blur", () => commit());
+  }
+
+  private renderRepeatControls(parent: Element): void {
+    const wrap = parent.createDiv();
+    const editor = new RepeatEditor(
+      wrap,
+      {
+        repeat: this.state.reminderRepeat ?? "",
+        until: this.state.reminderUntil,
+        limit: this.state.reminderLimit,
+      },
+      () => {
+        const cfg = editor.getConfig();
+        this.state.reminderRepeat = cfg.repeat || null;
+        this.state.reminderUntil = cfg.until;
+        this.state.reminderLimit = cfg.limit;
+      },
+    );
+    editor.render();
   }
 
   private renderChips(): void {
@@ -288,6 +320,9 @@ export class QuickCaptureModal extends Modal {
           tags: this.state.tags,
           pinned: this.state.pinned,
           reminder: this.state.reminder,
+          reminderRepeat: this.state.reminder ? this.state.reminderRepeat : null,
+          reminderUntil: this.state.reminder ? this.state.reminderUntil : null,
+          reminderLimit: this.state.reminder ? this.state.reminderLimit : null,
         });
       }
       new Notice(t("notice_saved", file.basename));

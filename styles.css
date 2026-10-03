@@ -459,7 +459,8 @@
   border: 1px solid var(--kc-border);
   border-radius: 10px;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-  transition: box-shadow 0.15s ease, transform 0.15s ease, border-color 0.15s ease;
+  transition: box-shadow 0.15s ease, transform 0.15s ease, border-color 0.15s ease,
+    margin-block 0.15s ease;
   position: relative;
 }
 .jotdrop-card[data-color="red"]    { --kc-bg: #FAAFA8; --kc-border: #E7948C; }
@@ -502,6 +503,45 @@
 
 .jotdrop-card.is-archived {
   opacity: 0.7;
+}
+
+/* Manual reorder drag/drop: the dragged card dims, the drop target shows an
+   accent bar on the edge being inserted at, and shifts to open the slot. */
+.jotdrop-card.is-dragging {
+  opacity: 0.45;
+}
+
+.jotdrop-card.is-drop-before,
+.jotdrop-card.is-drop-after {
+  position: relative;
+}
+
+.jotdrop-card.is-drop-before::before,
+.jotdrop-card.is-drop-after::after {
+  content: "";
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--interactive-accent);
+  z-index: 3;
+}
+
+.jotdrop-card.is-drop-before::before {
+  top: -8px;
+}
+
+.jotdrop-card.is-drop-after::after {
+  bottom: -8px;
+}
+
+.jotdrop-card.is-drop-before {
+  margin-block-start: 12px;
+}
+
+.jotdrop-card.is-drop-after {
+  margin-block-end: 12px;
 }
 
 .jotdrop-card-quick-pin {
@@ -762,6 +802,82 @@
 
 .jotdrop-reminder-notice {
   cursor: pointer;
+}
+
+.jotdrop-card-repeat {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0 0 6px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 0.75em;
+  background: var(--background-modifier-hover);
+  color: var(--text-muted);
+  border: 1px solid var(--background-modifier-border);
+}
+
+.jotdrop-card-repeat-icon {
+  opacity: 0.85;
+}
+
+.jotdrop-repeat-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.jotdrop-repeat-weekdays {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.jotdrop-repeat-weekday {
+  min-width: 34px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-muted);
+  font-size: 0.8em;
+  cursor: pointer;
+}
+
+.jotdrop-repeat-weekday.is-active {
+  background: var(--interactive-accent);
+  color: var(--text-on-accent);
+  border-color: var(--interactive-accent);
+}
+
+.jotdrop-repeat-every,
+.jotdrop-repeat-ordinal {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.jotdrop-edit-repeat-n,
+.jotdrop-edit-repeat-unit,
+.jotdrop-edit-repeat-type,
+.jotdrop-edit-repeat-k,
+.jotdrop-edit-repeat-weekday,
+.jotdrop-edit-repeat-end,
+.jotdrop-edit-repeat-limit,
+.jotdrop-edit-repeat-until {
+  padding: 4px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--background-modifier-border);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-family: inherit;
+  font-size: 0.9em;
+}
+
+.jotdrop-edit-repeat-n,
+.jotdrop-edit-repeat-limit {
+  width: 64px;
 }
 
 .jotdrop-card-links {

@@ -17,6 +17,7 @@ import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.FileProvider
 import java.io.File
+import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -46,6 +47,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.aspectRatio
@@ -55,6 +57,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material.icons.Icons
 import coil.compose.AsyncImage
 import androidx.compose.ui.layout.ContentScale
@@ -124,6 +127,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
@@ -237,6 +241,10 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
     val tags = rememberSaveable(saver = stringStateListSaver) { mutableStateListOf<String>() }
     var reminder by rememberSaveable { mutableStateOf<String?>(null) }
     var originalReminder by rememberSaveable { mutableStateOf<String?>(null) }
+    var reminderRepeat by rememberSaveable { mutableStateOf<String?>(null) }
+    var reminderUntil by rememberSaveable { mutableStateOf<String?>(null) }
+    var reminderLimit by rememberSaveable { mutableStateOf<Int?>(null) }
+    var reminderDone by rememberSaveable { mutableStateOf(0) }
     var saving by remember { mutableStateOf(false) }
     var showArchiveDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
@@ -502,6 +510,10 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
                 tags.addAll(parsed.meta.tags)
                 reminder = parsed.meta.reminder
                 originalReminder = parsed.meta.reminder
+                reminderRepeat = parsed.meta.reminderRepeat
+                reminderUntil = parsed.meta.reminderUntil
+                reminderLimit = parsed.meta.reminderLimit
+                reminderDone = parsed.meta.reminderDone
                 currentUri = uriString
             } catch (e: Throwable) {
                 loadError = context.getString(R.string.parse_error, e.message ?: e.javaClass.simpleName)
@@ -539,11 +551,19 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
         newPinned: Boolean = pinned,
         newTags: List<String> = tags.toList(),
         newReminder: String? = reminder,
+        newRepeat: String? = reminderRepeat,
+        newUntil: String? = reminderUntil,
+        newLimit: Int? = reminderLimit,
+        newDone: Int = reminderDone,
     ) {
         val uri = currentUri ?: return
         val reminderChanged = newReminder != originalReminder
         scope.launch {
-            val newMeta = NoteMeta(color = newColor, tags = newTags, pinned = newPinned, reminder = newReminder)
+            val newMeta = NoteMeta(
+                color = newColor, tags = newTags, pinned = newPinned,
+                reminder = newReminder, reminderRepeat = newRepeat,
+                reminderUntil = newUntil, reminderLimit = newLimit, reminderDone = newDone,
+            )
             withContext(Dispatchers.IO) {
                 // Onder de schrijf-mutex: updateNoteMeta is read-modify-write en
                 // mag niet verweven raken met een gelijktijdige body-save.
@@ -578,6 +598,10 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
             pinned = pinned,
             tags = tags.toList(),
             reminder = reminderAtSave,
+            reminderRepeat = reminderRepeat,
+            reminderUntil = reminderUntil,
+            reminderLimit = reminderLimit,
+            reminderDone = reminderDone,
             isDirty = isDirty,
             onSavingChange = { saving = it },
             onSaved = { newUri ->
@@ -631,6 +655,10 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
                 pinned = pinned,
                 tags = tags.toList(),
                 reminder = reminderAtSave,
+                reminderRepeat = reminderRepeat,
+                reminderUntil = reminderUntil,
+                reminderLimit = reminderLimit,
+                reminderDone = reminderDone,
                 isDirty = true,
                 onSavingChange = { saving = it },
                 onSaved = {
@@ -769,6 +797,10 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
                                 pinned = pinned,
                                 tags = tags.toList(),
                                 reminder = reminderAtSave,
+                                reminderRepeat = reminderRepeat,
+                                reminderUntil = reminderUntil,
+                                reminderLimit = reminderLimit,
+                                reminderDone = reminderDone,
                                 isDirty = true,
                                 onSavingChange = { saving = it },
                                 onSaved = { newUri ->
@@ -867,9 +899,49 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
                         }
                     },
                     reminder = reminder,
+                    repeat = reminderRepeat,
+                    until = reminderUntil,
+                    limit = reminderLimit,
                     onReminderChange = { newIso ->
                         reminder = newIso
-                        if (isExisting) applyMetaAsync(newReminder = newIso)
+                        if (isExisting) {
+                            reminderDone = 0
+                            applyMetaAsync(newReminder = newIso, newDone = 0)
+                        }
+                    },
+                    onRepeatChange = { newRepeat ->
+                        reminderRepeat = newRepeat
+                        if (isExisting) {
+                            reminderDone = 0
+                            applyMetaAsync(newRepeat = newRepeat, newDone = 0)
+                        }
+                    },
+                    onUntilChange = { newUntil ->
+                        reminderUntil = newUntil
+                        if (isExisting) {
+                            reminderDone = 0
+                            applyMetaAsync(newUntil = newUntil, newDone = 0)
+                        }
+                    },
+                    onLimitChange = { newLimit ->
+                        reminderLimit = newLimit
+                        if (isExisting) {
+                            reminderDone = 0
+                            applyMetaAsync(newLimit = newLimit, newDone = 0)
+                        }
+                    },
+                    onClear = {
+                        reminder = null
+                        reminderRepeat = null
+                        reminderUntil = null
+                        reminderLimit = null
+                        reminderDone = 0
+                        if (isExisting) {
+                            applyMetaAsync(
+                                newReminder = null, newRepeat = null,
+                                newUntil = null, newLimit = null, newDone = 0,
+                            )
+                        }
                     },
                     foreground = fg,
                 )
@@ -977,7 +1049,14 @@ private fun EditorBody(
     onAddTag: (String) -> Unit,
     onRemoveTag: (String) -> Unit,
     reminder: String?,
+    repeat: String?,
+    until: String?,
+    limit: Int?,
     onReminderChange: (String?) -> Unit,
+    onRepeatChange: (String?) -> Unit,
+    onUntilChange: (String?) -> Unit,
+    onLimitChange: (Int?) -> Unit,
+    onClear: () -> Unit,
     foreground: Color,
 ) {
     var lightboxUri by remember { mutableStateOf<Uri?>(null) }
@@ -1045,7 +1124,14 @@ private fun EditorBody(
         Spacer(Modifier.height(8.dp))
         ReminderEditor(
             reminder = reminder,
-            onChange = onReminderChange,
+            repeat = repeat,
+            until = until,
+            limit = limit,
+            onReminderChange = onReminderChange,
+            onRepeatChange = onRepeatChange,
+            onUntilChange = onUntilChange,
+            onLimitChange = onLimitChange,
+            onClear = onClear,
             foreground = foreground,
         )
         Spacer(Modifier.height(12.dp))
@@ -1429,6 +1515,10 @@ private fun attemptSaveAndClose(
     pinned: Boolean,
     tags: List<String>,
     reminder: String?,
+    reminderRepeat: String?,
+    reminderUntil: String?,
+    reminderLimit: Int?,
+    reminderDone: Int,
     isDirty: Boolean,
     onSavingChange: (Boolean) -> Unit,
     onSaved: (Uri?) -> Unit,
@@ -1436,7 +1526,11 @@ private fun attemptSaveAndClose(
     closeWhenClean: Boolean,
     onClose: () -> Unit,
 ) {
-    val meta = NoteMeta(color = color, tags = tags, pinned = pinned, reminder = reminder)
+    val meta = NoteMeta(
+        color = color, tags = tags, pinned = pinned,
+        reminder = reminder, reminderRepeat = reminderRepeat,
+        reminderUntil = reminderUntil, reminderLimit = reminderLimit, reminderDone = reminderDone,
+    )
     if (!isDirty && currentUri != null) {
         // Metadata is bij bestaande notities al onmiddellijk gesynct; alleen sluiten.
         if (closeWhenClean) onClose()
@@ -1682,7 +1776,14 @@ private fun formatPlayerTime(ms: Int): String {
 @Composable
 private fun ReminderEditor(
     reminder: String?,
-    onChange: (String?) -> Unit,
+    repeat: String?,
+    until: String?,
+    limit: Int?,
+    onReminderChange: (String?) -> Unit,
+    onRepeatChange: (String?) -> Unit,
+    onUntilChange: (String?) -> Unit,
+    onLimitChange: (Int?) -> Unit,
+    onClear: () -> Unit,
     foreground: Color,
 ) {
     val context = LocalContext.current
@@ -1734,7 +1835,7 @@ private fun ReminderEditor(
                 .clickable(onClick = pick),
         )
         if (reminder != null) {
-            TextButton(onClick = { onChange(null) }) {
+            TextButton(onClick = onClear) {
                 Text(stringResource(R.string.action_clear_reminder))
             }
         } else {
@@ -1806,7 +1907,7 @@ private fun ReminderEditor(
                         timeState.hour, timeState.minute,
                     )
                     showTimePicker = null
-                    onChange(iso)
+                    onReminderChange(iso)
                 }) {
                     Text(stringResource(android.R.string.ok))
                 }
@@ -1818,6 +1919,444 @@ private fun ReminderEditor(
             },
         )
     }
+
+    if (reminder != null) {
+        Spacer(Modifier.height(4.dp))
+        RepeatEditor(repeat = repeat, onChange = onRepeatChange, foreground = foreground)
+        EndEditor(
+            until = until,
+            limit = limit,
+            onUntilChange = onUntilChange,
+            onLimitChange = onLimitChange,
+            foreground = foreground,
+        )
+    }
+}
+
+@Composable
+private fun RepeatEditor(repeat: String?, onChange: (String?) -> Unit, foreground: Color) {
+    var expanded by remember { mutableStateOf(false) }
+    var showWeekdayPicker by remember { mutableStateOf(false) }
+    var showEveryPicker by remember { mutableStateOf(false) }
+    var showOrdinalPicker by remember { mutableStateOf(false) }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Filled.Notifications,
+            contentDescription = null,
+            tint = foreground.copy(alpha = 0.9f),
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = stringResource(R.string.repeat_label),
+            style = MaterialTheme.typography.bodyMedium,
+            color = foreground.copy(alpha = 0.7f),
+            modifier = Modifier.weight(1f),
+        )
+        Box {
+            TextButton(onClick = { expanded = true }) {
+                Text(repeatLabel(repeat))
+            }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                DropdownMenuItem(text = { Text(stringResource(R.string.repeat_none)) }, onClick = {
+                    expanded = false; onChange(null)
+                })
+                DropdownMenuItem(text = { Text(stringResource(R.string.repeat_daily)) }, onClick = {
+                    expanded = false; onChange("daily")
+                })
+                DropdownMenuItem(text = { Text(stringResource(R.string.repeat_weekly)) }, onClick = {
+                    expanded = false; showWeekdayPicker = true
+                })
+                DropdownMenuItem(text = { Text(stringResource(R.string.repeat_monthly)) }, onClick = {
+                    expanded = false; onChange("monthly")
+                })
+                DropdownMenuItem(text = { Text(stringResource(R.string.repeat_yearly)) }, onClick = {
+                    expanded = false; onChange("yearly")
+                })
+                DropdownMenuItem(text = { Text(stringResource(R.string.repeat_every)) }, onClick = {
+                    expanded = false; showEveryPicker = true
+                })
+                DropdownMenuItem(text = { Text(stringResource(R.string.repeat_ordinal)) }, onClick = {
+                    expanded = false; showOrdinalPicker = true
+                })
+            }
+        }
+    }
+
+    if (showWeekdayPicker) {
+        WeekdayPickerDialog(
+            selected = ReminderRecurrence.parseRepeat(repeat)?.let { (it as? RepeatRule.Weekly)?.weekdays.orEmpty() }.orEmpty(),
+            onConfirm = { days ->
+                showWeekdayPicker = false
+                if (days.isEmpty()) onChange(null)
+                else onChange("weekly:" + days.sorted().joinToString(","))
+            },
+            onDismiss = { showWeekdayPicker = false },
+        )
+    }
+    if (showEveryPicker) {
+        EveryPickerDialog(
+            onConfirm = { n, unit ->
+                showEveryPicker = false
+                onChange("every:$n:${unit.key}")
+            },
+            onDismiss = { showEveryPicker = false },
+        )
+    }
+    if (showOrdinalPicker) {
+        OrdinalPickerDialog(
+            onConfirm = { k, weekday ->
+                showOrdinalPicker = false
+                onChange("ordinal:$k:$weekday")
+            },
+            onDismiss = { showOrdinalPicker = false },
+        )
+    }
+}
+
+@Composable
+private fun EndEditor(
+    until: String?,
+    limit: Int?,
+    onUntilChange: (String?) -> Unit,
+    onLimitChange: (Int?) -> Unit,
+    foreground: Color,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    var showLimitPicker by remember { mutableStateOf(false) }
+    var showUntilPicker by remember { mutableStateOf(false) }
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Filled.Notifications,
+            contentDescription = null,
+            tint = foreground.copy(alpha = 0.9f),
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = stringResource(R.string.ends_label),
+            style = MaterialTheme.typography.bodyMedium,
+            color = foreground.copy(alpha = 0.7f),
+            modifier = Modifier.weight(1f),
+        )
+        Box {
+            TextButton(onClick = { expanded = true }) {
+                Text(endLabel(until, limit))
+            }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                DropdownMenuItem(text = { Text(stringResource(R.string.ends_never)) }, onClick = {
+                    expanded = false; onUntilChange(null); onLimitChange(null)
+                })
+                DropdownMenuItem(text = { Text(stringResource(R.string.ends_after)) }, onClick = {
+                    expanded = false; showLimitPicker = true
+                })
+                DropdownMenuItem(text = { Text(stringResource(R.string.ends_on_date)) }, onClick = {
+                    expanded = false; showUntilPicker = true
+                })
+            }
+        }
+    }
+
+    if (showLimitPicker) {
+        LimitPickerDialog(
+            onConfirm = { n -> showLimitPicker = false; onUntilChange(null); onLimitChange(n) },
+            onDismiss = { showLimitPicker = false },
+        )
+    }
+    if (showUntilPicker) {
+        UntilDatePickerDialog(
+            initial = until,
+            onConfirm = { date -> showUntilPicker = false; onLimitChange(null); onUntilChange(date) },
+            onDismiss = { showUntilPicker = false },
+        )
+    }
+}
+
+@Composable
+private fun EveryPickerDialog(onConfirm: (Int, RepeatUnit) -> Unit, onDismiss: () -> Unit) {
+    var text by remember { mutableStateOf("1") }
+    var unit by remember { mutableStateOf(RepeatUnit.DAYS) }
+    var unitExpanded by remember { mutableStateOf(false) }
+    val n = text.toIntOrNull() ?: 1
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.every_title)) },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { if (it.length <= 3 && it.all { c -> c.isDigit() }) text = it },
+                    label = { Text(stringResource(R.string.every_title)) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                )
+                Spacer(Modifier.height(8.dp))
+                Box {
+                    TextButton(onClick = { unitExpanded = true }) {
+                        Text(
+                            when (unit) {
+                                RepeatUnit.DAYS -> stringResource(R.string.every_days)
+                                RepeatUnit.WEEKS -> stringResource(R.string.every_weeks)
+                                RepeatUnit.MONTHS -> stringResource(R.string.every_months)
+                            },
+                        )
+                    }
+                    DropdownMenu(expanded = unitExpanded, onDismissRequest = { unitExpanded = false }) {
+                        DropdownMenuItem(text = { Text(stringResource(R.string.every_days)) }, onClick = {
+                            unitExpanded = false; unit = RepeatUnit.DAYS
+                        })
+                        DropdownMenuItem(text = { Text(stringResource(R.string.every_weeks)) }, onClick = {
+                            unitExpanded = false; unit = RepeatUnit.WEEKS
+                        })
+                        DropdownMenuItem(text = { Text(stringResource(R.string.every_months)) }, onClick = {
+                            unitExpanded = false; unit = RepeatUnit.MONTHS
+                        })
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(n.coerceAtLeast(1), unit) }) {
+                Text(stringResource(android.R.string.ok))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(android.R.string.cancel)) }
+        },
+    )
+}
+
+@Composable
+private fun OrdinalPickerDialog(onConfirm: (Int, Int) -> Unit, onDismiss: () -> Unit) {
+    var occurrence by remember { mutableStateOf(1) }
+    var weekday by remember { mutableStateOf(1) }
+    var occurrenceExpanded by remember { mutableStateOf(false) }
+    var weekdayExpanded by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.ordinal_title)) },
+        text = {
+            Column {
+                Box {
+                    TextButton(onClick = { occurrenceExpanded = true }) {
+                        Text(ordinalLabel(occurrence))
+                    }
+                    DropdownMenu(expanded = occurrenceExpanded, onDismissRequest = { occurrenceExpanded = false }) {
+                        for (k in 1..5) {
+                            DropdownMenuItem(text = { Text(ordinalLabel(k)) }, onClick = {
+                                occurrenceExpanded = false; occurrence = k
+                            })
+                        }
+                    }
+                }
+                Box {
+                    TextButton(onClick = { weekdayExpanded = true }) {
+                        Text(narrowWeekday(weekday))
+                    }
+                    DropdownMenu(expanded = weekdayExpanded, onDismissRequest = { weekdayExpanded = false }) {
+                        for (d in 1..7) {
+                            DropdownMenuItem(text = { Text(narrowWeekday(d)) }, onClick = {
+                                weekdayExpanded = false; weekday = d
+                            })
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(occurrence, weekday) }) {
+                Text(stringResource(android.R.string.ok))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(android.R.string.cancel)) }
+        },
+    )
+}
+
+@Composable
+private fun WeekdayPickerDialog(
+    selected: Set<Int>,
+    onConfirm: (Set<Int>) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var days by remember { mutableStateOf(selected) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.repeat_weekly)) },
+        text = {
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                for (d in 1..7) {
+                    val active = d in days
+                    Box(
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(
+                                if (active) MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
+                                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.10f),
+                            )
+                            .selectable(
+                                selected = active,
+                                role = Role.Checkbox,
+                                onClick = { days = if (active) days - d else days + d },
+                            )
+                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                    ) {
+                        Text(
+                            text = narrowWeekday(d),
+                            color = if (active) MaterialTheme.colorScheme.onPrimary
+                            else MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(days) }) { Text(stringResource(android.R.string.ok)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(android.R.string.cancel)) }
+        },
+    )
+}
+
+@Composable
+private fun LimitPickerDialog(onConfirm: (Int) -> Unit, onDismiss: () -> Unit) {
+    var text by remember { mutableStateOf("3") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.ends_after)) },
+        text = {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { if (it.length <= 3 && it.all { c -> c.isDigit() }) text = it },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                singleLine = true,
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = { onConfirm((text.toIntOrNull() ?: 1).coerceAtLeast(1)) }) {
+                Text(stringResource(android.R.string.ok))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(android.R.string.cancel)) }
+        },
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun UntilDatePickerDialog(
+    initial: String?,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val initialDate = remember(initial) {
+        runCatching { LocalDate.parse(initial) }
+            .getOrNull()
+            ?: LocalDate.now().plusDays(1)
+    }
+    val initialUtc = remember(initialDate) {
+        Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply {
+            clear()
+            set(initialDate.year, initialDate.monthValue - 1, initialDate.dayOfMonth)
+        }.timeInMillis
+    }
+    val state = rememberDatePickerState(initialSelectedDateMillis = initialUtc)
+    DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = {
+                val millis = state.selectedDateMillis ?: return@TextButton
+                val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC")).apply { timeInMillis = millis }
+                onConfirm(
+                    String.format(
+                        Locale.US, "%04d-%02d-%02d",
+                        cal.get(Calendar.YEAR), cal.get(Calendar.MONTH) + 1, cal.get(Calendar.DAY_OF_MONTH),
+                    ),
+                )
+            }) {
+                Text(stringResource(android.R.string.ok))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(android.R.string.cancel)) }
+        },
+    ) {
+        DatePicker(state = state)
+    }
+}
+
+@Composable
+private fun repeatLabel(repeat: String?): String {
+    if (repeat.isNullOrBlank()) return stringResource(R.string.repeat_none)
+    return when {
+        repeat.equals("daily", true) -> stringResource(R.string.repeat_daily)
+        repeat.equals("monthly", true) -> stringResource(R.string.repeat_monthly)
+        repeat.equals("yearly", true) -> stringResource(R.string.repeat_yearly)
+        repeat.startsWith("weekly:", true) -> {
+            val days = repeat.substringAfter(':').split(',')
+                .mapNotNull { it.trim().toIntOrNull() }
+                .filter { it in 1..7 }
+            if (days.isEmpty()) stringResource(R.string.repeat_weekly)
+            else stringResource(R.string.repeat_weekly) + " (" + days.joinToString(", ") { narrowWeekday(it) } + ")"
+        }
+        repeat.startsWith("every:", true) -> {
+            val rule = ReminderRecurrence.parseRepeat(repeat) as? RepeatRule.Every
+            if (rule == null) {
+                stringResource(R.string.repeat_every)
+            } else {
+                val unit = when (rule.unit) {
+                    RepeatUnit.DAYS -> stringResource(R.string.every_days)
+                    RepeatUnit.WEEKS -> stringResource(R.string.every_weeks)
+                    RepeatUnit.MONTHS -> stringResource(R.string.every_months)
+                }
+                stringResource(R.string.every_title) + " ${rule.n} $unit"
+            }
+        }
+        repeat.startsWith("ordinal:", true) -> {
+            val rule = ReminderRecurrence.parseRepeat(repeat) as? RepeatRule.Ordinal
+            if (rule == null) stringResource(R.string.repeat_ordinal)
+            else ordinalLabel(rule.occurrence) + " " + narrowWeekday(rule.weekday)
+        }
+        else -> stringResource(R.string.repeat_none)
+    }
+}
+
+@Composable
+private fun endLabel(until: String?, limit: Int?): String {
+    return when {
+        limit != null && limit > 0 -> stringResource(R.string.ends_after_count, limit)
+        until != null -> until
+        else -> stringResource(R.string.ends_never)
+    }
+}
+
+@Composable
+private fun ordinalLabel(k: Int): String = stringResource(
+    when (k) {
+        2 -> R.string.ordinal_second
+        3 -> R.string.ordinal_third
+        4 -> R.string.ordinal_fourth
+        5 -> R.string.ordinal_last
+        else -> R.string.ordinal_first
+    },
+)
+
+private fun narrowWeekday(iso: Int): String {
+    return java.time.DayOfWeek.of(iso.coerceIn(1, 7))
+        .getDisplayName(java.time.format.TextStyle.NARROW, Locale.getDefault())
 }
 
 /** Tijdelijke staat tussen date- en time-picker: bewaart gekozen datum + initiële tijd. */

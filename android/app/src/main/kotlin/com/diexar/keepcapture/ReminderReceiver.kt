@@ -2,12 +2,10 @@ package com.diexar.keepcapture
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import androidx.core.app.NotificationCompat
 import androidx.core.content.getSystemService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
@@ -15,9 +13,9 @@ import kotlinx.coroutines.launch
 
 /**
  * BroadcastReceiver die door AlarmManager wordt gepingd op de reminder-tijd.
- * Bouwt een notificatie met titel uit het notitie-bestand; tap → opent de
- * notitie in EditorActivity. Notificatie-kanaal wordt hier lazy aangemaakt
- * zodat we geen Application-class hoeven te onderhouden.
+ * Bouwt de notificatie en laat ReminderEngine de reminder afhandelen (one-shot
+ * wissen, of herhaling doorschuiven + herschedulen). Notificatie-kanaal wordt
+ * hier lazy aangemaakt zodat we geen Application-class hoeven te onderhouden.
  */
 class ReminderReceiver : BroadcastReceiver() {
 
@@ -25,71 +23,16 @@ class ReminderReceiver : BroadcastReceiver() {
         val noteUriString = intent.getStringExtra(EXTRA_NOTE_URI) ?: return
         val noteUri = Uri.parse(noteUriString)
 
-        ensureChannel(context)
-
-        // Titel ophalen uit de notitie zelf — als 'ie inmiddels weg is, fall
-        // back op generieke string zodat de notificatie nog steeds verschijnt.
-        // Embed-regels (`![[…]]` of `![](…)`) overslaan, anders zou een
-        // afbeelding-only top van de notitie als notificatie-tekst belanden.
-        val title = try {
-            val raw = Storage.readNote(context, noteUri).getOrNull().orEmpty()
-            val body = FrontmatterParser.parse(raw).body
-            val wikiEmbed = Regex("^!\\[\\[[^\\]]+]]$")
-            val mdImage = Regex("^!\\[[^\\]]*]\\([^)]+\\)$")
-            val firstLine = body.lineSequence()
-                .map { it.trim() }
-                .filter { it.isNotEmpty() && !wikiEmbed.matches(it) && !mdImage.matches(it) }
-                .firstOrNull().orEmpty()
-            firstLine
-                .replace(Regex("^- \\[[ xX]]\\s*"), "")
-                .trimStart('#')
-                .trim()
-                .ifEmpty { context.getString(R.string.reminder_default_title) }
-        } catch (_: Throwable) {
-            context.getString(R.string.reminder_default_title)
-        }
-
-        val openIntent = EditorActivity.openNoteIntent(context, noteUri).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        val pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        val tap = PendingIntent.getActivity(context, requestCodeFor(noteUriString), openIntent, pendingFlags)
-
-        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(context.getString(R.string.reminder_notification_title))
-            .setContentText(title)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(title))
-            .setContentIntent(tap)
-            .setAutoCancel(true)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .build()
-
-        val nm = context.getSystemService<NotificationManager>() ?: return
-        try {
-            nm.notify(notificationIdFor(noteUriString), notification)
-        } catch (_: SecurityException) {
-            // POST_NOTIFICATIONS niet verleend op Android 13+; gebruiker moet
-            // permissie eerst toekennen. Stilletjes negeren.
-        }
-
-        // One-shot consumption: reminder uit frontmatter strippen zodat 'ie
-        // niet als "dode" entry blijft staan na firing. goAsync() geeft tot
-        // 10s om de SAF-write af te ronden voor de receiver gekilled wordt.
+        // goAsync() geeft tot 10s om de SAF-read/write af te ronden voordat de
+        // receiver gekilled wordt.
         val pending = goAsync()
         val appContext = context.applicationContext
         @OptIn(kotlinx.coroutines.DelicateCoroutinesApi::class)
         GlobalScope.launch(Dispatchers.IO) {
             try {
-                val current = Storage.readNote(appContext, noteUri).getOrNull() ?: return@launch
-                val parsed = FrontmatterParser.parse(current)
-                if (parsed.meta.reminder == null) return@launch
-                val cleared = parsed.meta.copy(reminder = null)
-                val newContent = FrontmatterWriter.apply(current, cleared)
-                Storage.updateNote(appContext, noteUri, newContent)
+                ReminderEngine.fireAndAdvance(appContext, noteUri)
             } catch (_: Throwable) {
-                // Best-effort: als de write faalt blijft de reminder in
-                // frontmatter staan; geen crash.
+                // Best-effort: als de write faalt blijft de reminder staan.
             } finally {
                 pending.finish()
             }

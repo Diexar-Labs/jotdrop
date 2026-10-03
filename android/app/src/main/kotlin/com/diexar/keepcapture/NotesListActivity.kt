@@ -61,6 +61,7 @@ import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
+import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.TextFields
@@ -134,6 +135,23 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.withLock
+import androidx.compose.foundation.MutatePriority
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.drag
+import androidx.compose.foundation.lazy.staggeredgrid.LazyStaggeredGridState
+import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.automirrored.filled.Sort
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.zIndex
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withTimeoutOrNull
 
 class NotesListActivity : ComponentActivity() {
 
@@ -143,6 +161,10 @@ class NotesListActivity : ComponentActivity() {
     // OCR-modus blijft staan tot de capture-flow afgerond is. Met deze flag weet
     // de result-callback of er na de copy ook nog OCR moet draaien.
     private var pendingOcr: Boolean = false
+
+    // Sorteermodus (newest/manual), gepersisteerd in prefs. Gedeeld met Compose
+    // zodat de top-bar het actieve vinkje kan tonen en de grid weet of slepen aan staat.
+    private val sortModeFlow = MutableStateFlow(NoteSortMode.NEWEST)
 
     // Voicememo-state — gedeeld met Compose via StateFlow zodat de FAB van
     // icoon kan wisselen (mic ↔ stop) en de confirm-dialog open kan klappen.
@@ -189,10 +211,12 @@ class NotesListActivity : ComponentActivity() {
         installSplashScreen()
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        sortModeFlow.value = Storage.getSortMode(this)
         setContent {
             JotDropTheme {
                 NotesListScreen(
                     stateFlow = notesState.asStateFlow(),
+                    sortModeFlow = sortModeFlow.asStateFlow(),
                     onRefresh = { reload() },
                     onOpenSettings = {
                         startActivity(Intent(this, MainActivity::class.java))
@@ -228,6 +252,8 @@ class NotesListActivity : ComponentActivity() {
                     onToggleChecklist = { note, index ->
                         toggleChecklist(note, index)
                     },
+                    onSetSortMode = { mode -> setSortMode(mode) },
+                    onMoveNote = { moved, finalOrder -> moveNote(moved, finalOrder) },
                 )
             }
         }
@@ -332,9 +358,33 @@ class NotesListActivity : ComponentActivity() {
         lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) { Storage.listNotes(this@NotesListActivity) }
             notesState.value = result.fold(
-                onSuccess = { NotesUiState.Loaded(sortNotes(it)) },
+                onSuccess = { NotesUiState.Loaded(sortNotes(it, sortModeFlow.value)) },
                 onFailure = { NotesUiState.Error(it.message ?: getString(R.string.error_unknown)) },
             )
+        }
+    }
+
+    private fun setSortMode(mode: NoteSortMode) {
+        sortModeFlow.value = mode
+        Storage.saveSortMode(this, mode)
+        reload()
+    }
+
+    private fun moveNote(moved: NoteSummary, finalOrder: List<NoteSummary>) {
+        lifecycleScope.launch {
+            val result = withContext(Dispatchers.IO) {
+                Storage.noteWriteMutex.withLock {
+                    Storage.applyManualOrder(this@NotesListActivity, moved, finalOrder)
+                }
+            }
+            result.onFailure { err ->
+                Toast.makeText(
+                    this@NotesListActivity,
+                    err.message ?: getString(R.string.error_generic),
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+            reload()
         }
     }
 
@@ -453,22 +503,6 @@ class NotesListActivity : ComponentActivity() {
 }
 
 /**
- * Stabiele aanmaaktijd (ms) voor sortering: leest de timestamp uit de
- * bestandsnaam (`yyyy-MM-dd HHmmss …`, geschreven bij capture). Die verandert
- * NIET bij bewerken — i.t.t. lastModified, waardoor kaarten bij elke open/edit
- * naar boven sprongen. Geen geldige stamp → terugval op lastModified.
- */
-private fun noteCreatedMs(note: NoteSummary, fmt: SimpleDateFormat): Long {
-    val name = note.filename
-    if (name.length >= 17) {
-        try {
-            return fmt.parse(name.substring(0, 17))?.time ?: note.lastModified
-        } catch (_: Exception) { /* val terug op lastModified */ }
-    }
-    return note.lastModified
-}
-
-/**
  * Wegklikbare balk bovenaan het dashboard die meldt dat er een nieuwere release
  * is. Toont een update-icoon + tekst (niet alleen kleur — kleurenblind-veilig),
  * een "Bekijken"-knop naar de release-pagina en een ×-knop om te negeren.
@@ -513,17 +547,27 @@ private fun noteContentType(note: NoteSummary): String = when {
     else -> "text"
 }
 
-private fun sortNotes(notes: List<NoteSummary>): List<NoteSummary> {
+private fun sortNotes(notes: List<NoteSummary>, mode: NoteSortMode): List<NoteSummary> {
     // Eén format-instantie, key vooraf berekend (SimpleDateFormat is niet
     // thread-safe en parse() is relatief duur in een comparator).
     val fmt = SimpleDateFormat("yyyy-MM-dd HHmmss", Locale.US)
     return notes
-        .map { it to noteCreatedMs(it, fmt) }
+        .map { it to rankForSort(it, fmt, mode) }
         .sortedWith(
-            compareByDescending<Pair<NoteSummary, Long>> { it.first.meta.pinned }
-                .thenByDescending { it.second }
+            // Gepind eerst, daarna oplopende rang. Bij gelijke rang breekt de
+            // deterministische bestandsnaam de gelijkstand.
+            compareByDescending<Pair<NoteSummary, Double>> { it.first.meta.pinned }
+                .thenBy { it.second }
+                .thenBy { it.first.filename }
         )
         .map { it.first }
+}
+
+private fun rankForSort(note: NoteSummary, fmt: SimpleDateFormat, mode: NoteSortMode): Double {
+    return when (mode) {
+        NoteSortMode.NEWEST -> -NoteOrder.noteCreatedMs(note.filename, note.lastModified, fmt).toDouble()
+        NoteSortMode.MANUAL -> NoteOrder.manualRank(note.meta.order, note.filename)
+    }
 }
 
 sealed interface NotesUiState {
@@ -537,6 +581,7 @@ sealed interface NotesUiState {
 @Composable
 private fun NotesListScreen(
     stateFlow: StateFlow<NotesUiState>,
+    sortModeFlow: StateFlow<NoteSortMode>,
     onRefresh: () -> Unit,
     onOpenSettings: () -> Unit,
     onNewNote: () -> Unit,
@@ -552,10 +597,13 @@ private fun NotesListScreen(
     onOpenNote: (NoteSummary, List<Uri>) -> Unit,
     onTogglePin: (NoteSummary) -> Unit,
     onToggleChecklist: (NoteSummary, Int) -> Unit,
+    onSetSortMode: (NoteSortMode) -> Unit,
+    onMoveNote: (NoteSummary, List<NoteSummary>) -> Unit,
 ) {
     val isRecording by isRecordingFlow.collectAsState()
     val pendingMemo by pendingMemoFlow.collectAsState()
     val state by stateFlow.collectAsState()
+    val sortMode by sortModeFlow.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -571,6 +619,7 @@ private fun NotesListScreen(
     var showBulkDeleteDialog by remember { mutableStateOf(false) }
     var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
     var overflowOpen by remember { mutableStateOf(false) }
+    var sortMenuOpen by remember { mutableStateOf(false) }
 
     // Eenmalige, throttled update-check (max 1x/dag) bij openen van het dashboard.
     // Banner verschijnt alleen als de gevonden versie niet eerder is weggetikt.
@@ -694,6 +743,40 @@ private fun NotesListScreen(
                         )
                     },
                     actions = {
+                        Box {
+                            IconButton(onClick = { sortMenuOpen = true }) {
+                                Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = stringResource(R.string.sort_title))
+                            }
+                            DropdownMenu(
+                                expanded = sortMenuOpen,
+                                onDismissRequest = { sortMenuOpen = false },
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.sort_newest)) },
+                                    leadingIcon = {
+                                        if (sortMode == NoteSortMode.NEWEST) {
+                                            Icon(Icons.Filled.Check, contentDescription = null)
+                                        }
+                                    },
+                                    onClick = {
+                                        sortMenuOpen = false
+                                        onSetSortMode(NoteSortMode.NEWEST)
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.sort_manual)) },
+                                    leadingIcon = {
+                                        if (sortMode == NoteSortMode.MANUAL) {
+                                            Icon(Icons.Filled.Check, contentDescription = null)
+                                        }
+                                    },
+                                    onClick = {
+                                        sortMenuOpen = false
+                                        onSetSortMode(NoteSortMode.MANUAL)
+                                    },
+                                )
+                            }
+                        }
                         IconButton(onClick = onOpenSettings) {
                             Icon(Icons.Filled.Settings, contentDescription = stringResource(R.string.action_settings))
                         }
@@ -871,11 +954,13 @@ private fun NotesListScreen(
                                         notes = filtered,
                                         selectionMode = selectionMode,
                                         selectedUris = selectedNoteUris,
+                                        manualMode = sortMode == NoteSortMode.MANUAL,
                                         onCardClick = onCardClick,
                                         onCardLongClick = onCardLongClick,
                                         onTogglePin = onTogglePin,
                                         onToggleChecklist = onToggleChecklist,
                                         onUrlClick = onUrlClick,
+                                        onMoveNote = onMoveNote,
                                     )
                                 }
                             }
@@ -1012,60 +1097,262 @@ private fun NotesGrid(
     notes: List<NoteSummary>,
     selectionMode: Boolean,
     selectedUris: Set<Uri>,
+    manualMode: Boolean,
     onCardClick: (NoteSummary) -> Unit,
     onCardLongClick: (NoteSummary) -> Unit,
     onTogglePin: (NoteSummary) -> Unit,
     onToggleChecklist: (NoteSummary, Int) -> Unit,
     onUrlClick: (String) -> Unit,
+    onMoveNote: (NoteSummary, List<NoteSummary>) -> Unit,
 ) {
-    val pinned = notes.filter { it.meta.pinned }
-    val rest = notes.filter { !it.meta.pinned }
     val dark = isSystemInDarkTheme()
     // Vast 2 kolommen in portrait (Google Keep-style), 4 in landscape voor tablets/
     // brede telefoons in liggend. Geen Adaptive — consistente look ongeacht zoom.
     val isLandscape = LocalConfiguration.current.screenWidthDp >= 600
     val columnCount = if (isLandscape) 4 else 2
 
+    val gridState = rememberLazyStaggeredGridState()
+    val scope = rememberCoroutineScope()
+
+    // Levende volgorde tijdens een drag; `notes` is de bron bij (her)laden.
+    var ordered by remember(notes) { mutableStateOf(notes) }
+    var draggingUri by remember { mutableStateOf<Uri?>(null) }
+    var dragFingerViewportY by remember { mutableStateOf(0f) }
+    var dragTotalY by remember { mutableStateOf(0f) }
+    var autoScrollJob by remember { mutableStateOf<Job?>(null) }
+
+    // De vinger in content-coördinaten: viewport-start + vingerpositie in de
+    // viewport + opgebouwde beweging. Blijft kloppen terwijl autoscroll de
+    // inhoud onder een stilstaande vinger doorschuift.
+    fun fingerContentY(): Float =
+        gridState.layoutInfo.viewportStartOffset + dragFingerViewportY + dragTotalY
+
+    fun recompute() {
+        val uri = draggingUri ?: return
+        val next = reorderForDrag(gridState, ordered, uri, fingerContentY())
+        // Alleen herschrijven als de volgorde echt veranderde (geen zinloze
+        // recomposities tijdens autoscroll).
+        if (next !== ordered && next.map { it.uri } != ordered.map { it.uri }) {
+            ordered = next
+        }
+    }
+
+    // Eén doorlopende autoscroll-loop voor de hele drag. Herberekent de
+    // doelpositie na elke scrollstap, ook als de vinger stilstaat; stopt pas bij
+    // drag-eind/cancel.
+    fun startAutoScrollLoop() {
+        autoScrollJob?.cancel()
+        val edgeThreshold = 96f
+        val scrollStep = 48f
+        autoScrollJob = scope.launch {
+            while (isActive) {
+                val layout = gridState.layoutInfo
+                val f = fingerContentY()
+                val direction = when {
+                    f < layout.viewportStartOffset + edgeThreshold -> -1f
+                    f > layout.viewportEndOffset - edgeThreshold -> 1f
+                    else -> 0f
+                }
+                if (direction != 0f) {
+                    gridState.scroll(MutatePriority.Default) { scrollBy(direction * scrollStep) }
+                    recompute()
+                }
+                delay(16)
+            }
+        }
+    }
+
+    val handleDragStart: (NoteSummary, Offset) -> Unit = { note, localOffset ->
+        draggingUri = note.uri
+        val layout = gridState.layoutInfo
+        val info = layout.visibleItemsInfo.firstOrNull { (it.key as? String) == noteKey(note) }
+        dragFingerViewportY = if (info != null) {
+            info.offset.y - layout.viewportStartOffset + localOffset.y
+        } else 0f
+        dragTotalY = 0f
+        startAutoScrollLoop()
+    }
+    val handleDragMove: (NoteSummary, Float) -> Unit = { _, totalY ->
+        dragTotalY = totalY
+        recompute()
+    }
+    val handleDragEnd: (NoteSummary) -> Unit = { note ->
+        autoScrollJob?.cancel()
+        autoScrollJob = null
+        draggingUri = null
+        onMoveNote(note, ordered)
+    }
+    val handleDragCancel: () -> Unit = {
+        autoScrollJob?.cancel()
+        autoScrollJob = null
+        draggingUri = null
+    }
+
     LazyVerticalStaggeredGrid(
         columns = StaggeredGridCells.Fixed(columnCount),
         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
         verticalItemSpacing = 10.dp,
         horizontalArrangement = Arrangement.spacedBy(10.dp),
+        state = gridState,
         modifier = Modifier.fillMaxSize(),
     ) {
+        val pinned = ordered.filter { it.meta.pinned }
+        val rest = ordered.filter { !it.meta.pinned }
         if (pinned.isNotEmpty()) {
-            item(span = StaggeredGridItemSpan.FullLine) {
+            item(span = StaggeredGridItemSpan.FullLine, key = "label-pinned") {
                 SectionLabel(stringResource(R.string.section_pinned))
             }
-            items(pinned, key = { "p-" + it.uri.toString() }, contentType = { noteContentType(it) }) { note ->
+            items(pinned, key = { noteKey(it) }, contentType = { noteContentType(it) }) { note ->
                 NoteCard(
                     note = note,
                     darkTheme = dark,
                     selectionMode = selectionMode,
                     isSelected = note.uri in selectedUris,
+                    isDragging = note.uri == draggingUri,
+                    manualMode = manualMode,
                     onClick = { onCardClick(note) },
                     onLongClick = { onCardLongClick(note) },
                     onPinClick = { onTogglePin(note) },
                     onChecklistClick = { index -> onToggleChecklist(note, index) },
                     onUrlClick = onUrlClick,
+                    onDragStart = if (manualMode) ({ offset -> handleDragStart(note, offset) }) else null,
+                    onDragMove = if (manualMode) ({ y -> handleDragMove(note, y) }) else null,
+                    onDragEnd = if (manualMode) ({ handleDragEnd(note) }) else null,
+                    onDragCancel = if (manualMode) handleDragCancel else null,
                 )
             }
-            item(span = StaggeredGridItemSpan.FullLine) {
+            item(span = StaggeredGridItemSpan.FullLine, key = "label-other") {
                 SectionLabel(stringResource(R.string.section_other))
             }
         }
-        items(rest, key = { it.uri.toString() }, contentType = { noteContentType(it) }) { note ->
+        items(rest, key = { noteKey(it) }, contentType = { noteContentType(it) }) { note ->
             NoteCard(
                 note = note,
                 darkTheme = dark,
                 selectionMode = selectionMode,
                 isSelected = note.uri in selectedUris,
+                isDragging = note.uri == draggingUri,
+                manualMode = manualMode,
                 onClick = { onCardClick(note) },
                 onLongClick = { onCardLongClick(note) },
                 onPinClick = { onTogglePin(note) },
                 onChecklistClick = { index -> onToggleChecklist(note, index) },
                 onUrlClick = onUrlClick,
+                onDragStart = if (manualMode) ({ offset -> handleDragStart(note, offset) }) else null,
+                onDragMove = if (manualMode) ({ y -> handleDragMove(note, y) }) else null,
+                onDragEnd = if (manualMode) ({ handleDragEnd(note) }) else null,
+                onDragCancel = if (manualMode) handleDragCancel else null,
             )
+        }
+    }
+}
+
+private fun noteKey(note: NoteSummary): String = "note:" + note.uri.toString()
+
+/**
+ * Bepaalt de levende volgorde tijdens een drag: zet de gesleepte notitie op de
+ * plek waarvoor de zichtbare buurkaarten boven het sleeppunt liggen. Beperkt tot
+ * de eigen sectie (gepind/overige) — een gepinde kaart kan niet de "overige"-
+ * sectie in.
+ */
+private fun reorderForDrag(
+    gridState: LazyStaggeredGridState,
+    ordered: List<NoteSummary>,
+    draggedUri: Uri,
+    draggedContentY: Float,
+): List<NoteSummary> {
+    val from = ordered.indexOfFirst { it.uri == draggedUri }
+    if (from < 0) return ordered
+    val dragged = ordered[from]
+    val pinned = dragged.meta.pinned
+    val pinnedCount = ordered.count { it.meta.pinned }
+
+    // Verticale centra van zichtbare kaarten, op key (uri).
+    val centers = HashMap<String, Float>()
+    for (info in gridState.layoutInfo.visibleItemsInfo) {
+        val key = info.key as? String ?: continue
+        if (!key.startsWith("note:")) continue
+        centers[key.substringAfter("note:")] = info.offset.y + info.size.height / 2f
+    }
+
+    val sectionUris = ordered
+        .filter { it.meta.pinned == pinned && it.uri != draggedUri }
+        .map { it.uri.toString() }
+
+    val visible = sectionUris.mapIndexedNotNull { index, uri ->
+        centers[uri]?.let { center -> index to center }
+    }
+    if (visible.isEmpty()) return ordered
+    // Use global section indices, not a count of only the visible cards:
+    // after autoscroll the cards above the viewport must still be counted.
+    val insertOffset = visible.filter { it.second < draggedContentY }
+        .maxOfOrNull { it.first + 1 } ?: visible.minOf { it.first }
+
+    val result = ordered.toMutableList()
+    result.removeAt(from)
+    val sectionStart = if (pinned) 0 else pinnedCount
+    result.add(sectionStart + insertOffset, dragged)
+    return result
+}
+
+/**
+ * Eén gesture voor tap, long-press (zonder beweging → selectie) en
+ * long-press-drag (verplaatsen). Vervangt combinedClickable in handmatige
+ * modus zodat een lange druk pas selectie start als de vinger wordt losgelaten
+ * zonder te bewegen; beweging schakelt over naar slepen.
+ */
+private fun Modifier.noteCardDragGestures(
+    onClick: () -> Unit,
+    onLongPress: () -> Unit,
+    onDragStart: (initialOffset: Offset) -> Unit,
+    onDragMove: (totalDeltaY: Float) -> Unit,
+    onDragEnd: () -> Unit,
+    onDragCancel: () -> Unit,
+): Modifier = this.pointerInput(Unit) {
+    val longPressTimeout = viewConfiguration.longPressTimeoutMillis
+    val touchSlop = viewConfiguration.touchSlop
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        // Een diepere interactie (snippet ClickableText, thumbnail, chips) heeft
+        // de down al geconsumeerd → die regelt de tap zelf; wij stappen uit.
+        if (down.isConsumed) return@awaitEachGesture
+        down.consume()
+        var releasedWithoutMove = false
+        // Wacht op long-press; vroegtijdig einde = tap (up) of scroll/cancel.
+        val timedOut = withTimeoutOrNull(longPressTimeout) {
+            while (true) {
+                val event = awaitPointerEvent()
+                val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                when {
+                    change.changedToUpIgnoreConsumed() -> { releasedWithoutMove = true; break }
+                    change.isConsumed -> break
+                    (change.position - down.position).getDistance() > touchSlop -> break
+                }
+            }
+        }
+        if (timedOut != null) {
+            // Geen long-press: alleen een tap (up zonder beweging) opent de kaart.
+            if (releasedWithoutMove) onClick()
+            return@awaitEachGesture
+        }
+        // Long-press geslaagd → sleeppad. Meld de kaart-lokale vingerpositie zodat
+        // de lijst de vinger exact in content-coördinaten kan plaatsen.
+        onDragStart(down.position)
+        var moved = false
+        var totalY = 0f
+        val dragOk = drag(down.id) { change ->
+            val delta = change.positionChange()
+            if (delta.x != 0f || delta.y != 0f) {
+                moved = true
+                totalY += delta.y
+                onDragMove(totalY)
+            }
+            change.consume()
+        }
+        when {
+            !dragOk -> onDragCancel()
+            moved -> onDragEnd()
+            else -> onLongPress() // lang ingedrukt, losgelaten zonder beweging → selectie
         }
     }
 }
@@ -1350,6 +1637,20 @@ private fun SelectionTopBar(
     )
 }
 
+@Composable
+private fun repeatIndicatorLabel(repeat: String?): String? {
+    if (repeat.isNullOrBlank()) return null
+    return when {
+        repeat.equals("daily", true) -> stringResource(R.string.repeat_daily)
+        repeat.equals("weekly", true) || repeat.startsWith("weekly:", true) -> stringResource(R.string.repeat_weekly)
+        repeat.equals("monthly", true) -> stringResource(R.string.repeat_monthly)
+        repeat.equals("yearly", true) -> stringResource(R.string.repeat_yearly)
+        repeat.startsWith("every:", true) -> stringResource(R.string.repeat_every)
+        repeat.startsWith("ordinal:", true) -> stringResource(R.string.repeat_ordinal)
+        else -> stringResource(R.string.repeat_every)
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 private fun NoteCard(
@@ -1362,6 +1663,12 @@ private fun NoteCard(
     onPinClick: () -> Unit,
     onChecklistClick: (Int) -> Unit,
     onUrlClick: (String) -> Unit,
+    isDragging: Boolean = false,
+    manualMode: Boolean = false,
+    onDragStart: ((Offset) -> Unit)? = null,
+    onDragMove: ((Float) -> Unit)? = null,
+    onDragEnd: (() -> Unit)? = null,
+    onDragCancel: (() -> Unit)? = null,
 ) {
     val bg = noteBackground(note.meta.color, darkTheme)
     val fg = contentColorOn(note.meta.color, darkTheme)
@@ -1386,21 +1693,44 @@ private fun NoteCard(
 
     val thumbnailUri = note.thumbnailUri
 
+    // In handmatige modus stuurt een lange druk + beweging het slepen aan; zonder
+    // beweging blijft het multi-select (onLongClick). Daarbuiten de oude
+    // combinedClickable zodat ripple + bestaand gedrag exact behouden blijven.
+    val gestureModifier = if (manualMode && onDragStart != null && onDragMove != null) {
+        Modifier
+            .graphicsLayer {
+                scaleX = if (isDragging) 1.03f else 1f
+                scaleY = if (isDragging) 1.03f else 1f
+            }
+            .noteCardDragGestures(
+                onClick = onClick,
+                onLongPress = onLongClick,
+                onDragStart = onDragStart,
+                onDragMove = onDragMove,
+                onDragEnd = { onDragEnd?.invoke() },
+                onDragCancel = { onDragCancel?.invoke() },
+            )
+    } else {
+        Modifier
+            .graphicsLayer { }
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick,
+            )
+    }
+
     Card(
-        // Geen onClick op de Card: combinedClickable hieronder regelt click + long-press.
+        // Geen onClick op de Card: de gesture-modifier hieronder regelt click +
+        // long-press (en in handmatige modus ook long-press-drag).
         colors = CardDefaults.cardColors(containerColor = Color.Transparent, contentColor = fg),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (isDragging) 8.dp else 0.dp),
         shape = CARD_SHAPE,
         border = border,
         // graphicsLayer promoot de kaart naar een eigen render-layer; tijdens
         // scroll wordt de rasterized output gehergebruikt i.p.v. de gradient +
         // text+border opnieuw te tekenen per frame. Voorkomt frame drops.
-        modifier = Modifier
-            .graphicsLayer { }
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = onLongClick,
-            ),
+        modifier = gestureModifier
+            .zIndex(if (isDragging) 1f else 0f),
     ) {
         Box(modifier = Modifier.fillMaxSize().background(brush = brush)) {
             Column {
@@ -1492,11 +1822,34 @@ private fun NoteCard(
                         TagChips(note.meta.tags, foreground = fg)
                     }
                     Spacer(Modifier.height(8.dp))
-                    Text(
-                        text = timestampText,
-                        style = labelStyle,
-                        color = timestampColor,
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = timestampText,
+                            style = labelStyle,
+                            color = timestampColor,
+                        )
+                        val repeatText = repeatIndicatorLabel(note.meta.reminderRepeat)
+                        if (repeatText != null) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Filled.Repeat,
+                                    contentDescription = null,
+                                    tint = timestampColor,
+                                    modifier = Modifier.size(14.dp),
+                                )
+                                Spacer(Modifier.size(3.dp))
+                                Text(
+                                    text = repeatText,
+                                    style = labelStyle,
+                                    color = timestampColor,
+                                )
+                            }
+                        }
+                    }
                 }
             }
             // Rechtsboven: in selection-mode altijd ✓-circle (gevuld als selected,

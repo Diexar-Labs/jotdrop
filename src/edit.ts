@@ -3,6 +3,7 @@ import type JotDropPlugin from "./main";
 import { toggleOrInsertChecklistOnTextArea } from "./capture";
 import { LightboxModal } from "./lightbox";
 import { voidAsync } from "./asyncUtil";
+import { RepeatEditor } from "./repeat";
 import { t } from "./i18n";
 import {
   colorLabel,
@@ -46,6 +47,9 @@ interface EditableNote {
   tags: string[];
   pinned: boolean;
   reminder: string | null;
+  reminderRepeat: string | null;
+  reminderUntil: string | null;
+  reminderLimit: number | null;
 }
 
 /**
@@ -117,6 +121,9 @@ export class EditNoteModal extends Modal {
       tags: [...meta.tags],
       pinned: meta.pinned,
       reminder: meta.reminder,
+      reminderRepeat: meta.reminderRepeat,
+      reminderUntil: meta.reminderUntil,
+      reminderLimit: meta.reminderLimit,
     };
     this.originalTitle = title;
     this.originalBody = body;
@@ -384,6 +391,11 @@ export class EditNoteModal extends Modal {
     clearReminder.addEventListener("click", voidAsync(async () => {
       reminderInput.value = "";
       this.state.reminder = null;
+      this.state.reminderRepeat = null;
+      this.state.reminderUntil = null;
+      this.state.reminderLimit = null;
+      // Re-render so the repeat picker resets to "None" too.
+      this.renderControls(parent);
       try {
         await updateMeta(this.app, this.file, { reminder: null });
         this.plugin.refreshViews();
@@ -391,6 +403,8 @@ export class EditNoteModal extends Modal {
         new Notice(t("notice_error", err instanceof Error ? err.message : String(err)));
       }
     }));
+
+    this.renderRepeatControls(parent);
 
     // Tags + chip input — input lives inside the chips container so it always
     // follows the last chip, even when chips wrap to a new line.
@@ -445,6 +459,41 @@ export class EditNoteModal extends Modal {
       if (/[\s,]/.test(this.tagInputEl?.value ?? "")) commit(true);
     });
     this.tagInputEl.addEventListener("blur", () => commit());
+  }
+
+  /**
+   * Renders the repeat picker bound to the current state. Every change persists
+   * immediately (same as color/pin), matching the live-edit feel of the modal.
+   */
+  private renderRepeatControls(parent: HTMLElement): void {
+    const wrap = parent.createDiv();
+    const editor = new RepeatEditor(
+      wrap,
+      {
+        repeat: this.state.reminderRepeat ?? "",
+        until: this.state.reminderUntil,
+        limit: this.state.reminderLimit,
+      },
+      () => {
+        const cfg = editor.getConfig();
+        this.state.reminderRepeat = cfg.repeat || null;
+        this.state.reminderUntil = cfg.until;
+        this.state.reminderLimit = cfg.limit;
+        void (async () => {
+          try {
+            await updateMeta(this.app, this.file, {
+              reminderRepeat: this.state.reminder ? this.state.reminderRepeat : null,
+              reminderUntil: this.state.reminder ? this.state.reminderUntil : null,
+              reminderLimit: this.state.reminder ? this.state.reminderLimit : null,
+            });
+            this.plugin.refreshViews();
+          } catch (err) {
+            new Notice(t("notice_error", err instanceof Error ? err.message : String(err)));
+          }
+        })();
+      },
+    );
+    editor.render();
   }
 
   private renderChips(): void {
@@ -583,6 +632,9 @@ export class EditNoteModal extends Modal {
         tags: this.state.tags,
         pinned: this.state.pinned,
         reminder: this.state.reminder,
+        reminderRepeat: this.state.reminder ? this.state.reminderRepeat : null,
+        reminderUntil: this.state.reminder ? this.state.reminderUntil : null,
+        reminderLimit: this.state.reminder ? this.state.reminderLimit : null,
       });
       if (bodyChanged) {
         // Re-read so our new frontmatter is preserved

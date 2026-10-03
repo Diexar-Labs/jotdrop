@@ -57,15 +57,29 @@ object ReminderScheduler {
      * Plant alle reminders die in de vault staan opnieuw. Door BootReceiver
      * aangeroepen zodat reminders een reboot overleven (AlarmManager wist alle
      * alarms bij boot).
+     *
+     * Een herhalende reminder die inmiddels overdue is, vuurt één keer en
+     * schuift dan door naar de eerste occurrence in de toekomst (ipv. één
+     * notificatie per gemist moment). Eerst wordt gecontroleerd of de reeks al
+     * verlopen is (done >= limit, of opgeslagen datum voorbij until) — dan
+     * wordt de reeks gewist zonder te vuren. One-shot overdue reminders blijven
+     * bestaand gedrag: overgeslagen.
      */
-    fun rescheduleAll(context: Context) {
+    suspend fun rescheduleAll(context: Context) {
         val notes = Storage.listNotes(context).getOrNull() ?: return
         val now = System.currentTimeMillis()
         for (note in notes) {
             val reminder = note.meta.reminder ?: continue
             val whenMillis = parseToEpochMillis(reminder) ?: continue
-            if (whenMillis <= now) continue
-            schedule(context, note.uri, reminder)
+            if (whenMillis > now) {
+                schedule(context, note.uri, reminder)
+            } else if (note.meta.reminderRepeat != null) {
+                if (ReminderRecurrence.isExpired(note.meta)) {
+                    ReminderEngine.expire(context, note.uri)
+                } else {
+                    ReminderEngine.fireAndAdvance(context, note.uri)
+                }
+            }
         }
     }
 

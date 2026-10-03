@@ -11,6 +11,12 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/**
+ * Sorteermodi voor de notitielijst. NEWEST = aanmaaktijd aflopend (default),
+ * MANUAL = handmatige `order`-volgorde (sleep om te herschikken).
+ */
+enum class NoteSortMode { NEWEST, MANUAL }
+
 object Storage {
     /**
      * Serialiseert read-modify-write-cycli op notitiebestanden. Meta-updates
@@ -25,6 +31,7 @@ object Storage {
     private const val KEY_ASSETS_FOLDER = "assets_folder"
     private const val KEY_SPEECH_LANG = "speech_language"
     private const val KEY_DOWNLOAD_IMAGES = "download_images"
+    private const val KEY_SORT_MODE = "sort_mode"
     const val DEFAULT_SUBFOLDER = "Mini Notes"
     const val DEFAULT_SPEECH_LANG = "nl-NL"
 
@@ -138,6 +145,23 @@ object Storage {
         PreferenceManager.getDefaultSharedPreferences(context)
             .edit()
             .putBoolean(KEY_DOWNLOAD_IMAGES, enabled)
+            .apply()
+    }
+
+    fun getSortMode(context: Context): NoteSortMode {
+        val raw = PreferenceManager.getDefaultSharedPreferences(context)
+            .getString(KEY_SORT_MODE, null)
+        return try {
+            NoteSortMode.valueOf(raw ?: NoteSortMode.NEWEST.name)
+        } catch (_: Exception) {
+            NoteSortMode.NEWEST
+        }
+    }
+
+    fun saveSortMode(context: Context, mode: NoteSortMode) {
+        PreferenceManager.getDefaultSharedPreferences(context)
+            .edit()
+            .putString(KEY_SORT_MODE, mode.name)
             .apply()
     }
 
@@ -530,6 +554,35 @@ object Storage {
         val current = readNote(context, uri).getOrElse { return Result.failure(it) }
         val newContent = FrontmatterWriter.apply(current, meta)
         return updateNote(context, uri, newContent)
+    }
+
+    /** Zet alleen de handmatige `order`-waarde op een bestaande notitie. */
+    fun setNoteOrder(context: Context, uri: Uri, order: Double): Result<Unit> {
+        val current = readNote(context, uri).getOrElse { return Result.failure(it) }
+        val meta = FrontmatterParser.parse(current).meta.copy(order = order)
+        return updateNote(context, uri, FrontmatterWriter.apply(current, meta))
+    }
+
+    /**
+     * Past een handmatige herschikking toe. [finalOrder] is de volledige lijst
+     * in de nieuwe volgorde (gepind eerst); [moved] is de verplaatste notitie.
+     * Berekent de nieuwe `order` ten opzichte van de buren in dezelfde sectie
+     * (gepind/overige), of hernummerd de sectie als er geen numerieke ruimte is.
+     */
+    fun applyManualOrder(context: Context, moved: NoteSummary, finalOrder: List<NoteSummary>): Result<Unit> {
+        val section = finalOrder
+            .filter { it.meta.pinned == moved.meta.pinned }
+            .map { NoteOrder.OrderedNote(it.uri.toString(), NoteOrder.manualRank(it.meta.order, it.filename)) }
+        return when (val plan = NoteOrder.planDrop(section, moved.uri.toString())) {
+            is NoteOrder.DropPlan.Assign -> setNoteOrder(context, moved.uri, plan.order)
+            is NoteOrder.DropPlan.Renumber -> {
+                for ((key, order) in plan.assignments) {
+                    val r = setNoteOrder(context, Uri.parse(key), order)
+                    if (r.isFailure) return r
+                }
+                Result.success(Unit)
+            }
+        }
     }
 
     /** Schakelt exact het N-de Markdown-checklist-item in de body om. */
