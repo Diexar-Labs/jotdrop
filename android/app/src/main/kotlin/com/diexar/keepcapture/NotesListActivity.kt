@@ -18,6 +18,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.FileProvider
 import java.io.File
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,6 +32,8 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -119,7 +123,11 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.lifecycle.lifecycleScope
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
@@ -152,6 +160,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.math.roundToInt
 
 class NotesListActivity : ComponentActivity() {
 
@@ -1092,6 +1101,7 @@ private suspend fun bulkPerform(
     return ok to fail
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun NotesGrid(
     notes: List<NoteSummary>,
@@ -1114,26 +1124,30 @@ private fun NotesGrid(
     val gridState = rememberLazyStaggeredGridState()
     val scope = rememberCoroutineScope()
 
-    // Levende volgorde tijdens een drag; `notes` is de bron bij (her)laden.
+    // Laat de grid staan tijdens de gesture: anders kan Compose de gesleepte
+    // pointerInput afbreken terwijl de tekst tussen vaste kaartvakken wisselt.
     var ordered by remember(notes) { mutableStateOf(notes) }
+    var pendingOrder by remember(notes) { mutableStateOf(notes) }
     var draggingUri by remember { mutableStateOf<Uri?>(null) }
+    var dragOrigin by remember { mutableStateOf(IntOffset.Zero) }
+    var dragSize by remember { mutableStateOf(IntSize.Zero) }
+    var dragOffset by remember { mutableStateOf(Offset.Zero) }
     var dragFingerViewportY by remember { mutableStateOf(0f) }
-    var dragTotalY by remember { mutableStateOf(0f) }
     var autoScrollJob by remember { mutableStateOf<Job?>(null) }
 
     // De vinger in content-coördinaten: viewport-start + vingerpositie in de
     // viewport + opgebouwde beweging. Blijft kloppen terwijl autoscroll de
     // inhoud onder een stilstaande vinger doorschuift.
     fun fingerContentY(): Float =
-        gridState.layoutInfo.viewportStartOffset + dragFingerViewportY + dragTotalY
+        gridState.layoutInfo.viewportStartOffset + dragFingerViewportY + dragOffset.y
 
     fun recompute() {
         val uri = draggingUri ?: return
         val next = reorderForDrag(gridState, ordered, uri, fingerContentY())
         // Alleen herschrijven als de volgorde echt veranderde (geen zinloze
         // recomposities tijdens autoscroll).
-        if (next !== ordered && next.map { it.uri } != ordered.map { it.uri }) {
-            ordered = next
+        if (next.map { it.uri } != pendingOrder.map { it.uri }) {
+            pendingOrder = next
         }
     }
 
@@ -1164,30 +1178,47 @@ private fun NotesGrid(
 
     val handleDragStart: (NoteSummary, Offset) -> Unit = { note, localOffset ->
         draggingUri = note.uri
+        pendingOrder = ordered
         val layout = gridState.layoutInfo
         val info = layout.visibleItemsInfo.firstOrNull { (it.key as? String) == noteKey(note) }
+        dragOrigin = info?.offset ?: IntOffset.Zero
+        dragSize = info?.size ?: IntSize.Zero
         dragFingerViewportY = if (info != null) {
             info.offset.y - layout.viewportStartOffset + localOffset.y
         } else 0f
-        dragTotalY = 0f
+        dragOffset = Offset.Zero
         startAutoScrollLoop()
     }
-    val handleDragMove: (NoteSummary, Float) -> Unit = { _, totalY ->
-        dragTotalY = totalY
+    val handleDragMove: (NoteSummary, Offset) -> Unit = { _, total ->
+        dragOffset = total
         recompute()
     }
     val handleDragEnd: (NoteSummary) -> Unit = { note ->
         autoScrollJob?.cancel()
         autoScrollJob = null
         draggingUri = null
-        onMoveNote(note, ordered)
+        val finalOrder = pendingOrder
+        if (finalOrder.map { it.uri } != ordered.map { it.uri }) {
+            ordered = finalOrder
+            onMoveNote(note, finalOrder)
+        }
     }
     val handleDragCancel: () -> Unit = {
         autoScrollJob?.cancel()
         autoScrollJob = null
         draggingUri = null
+        pendingOrder = ordered
     }
 
+    val draggedNote = ordered.firstOrNull { it.uri == draggingUri }
+    val targetIndex = pendingOrder.indexOfFirst { it.uri == draggingUri }
+    val dropTarget = if (targetIndex >= 0 && pendingOrder.map { it.uri } != ordered.map { it.uri }) {
+        ordered.getOrNull(targetIndex)?.uri
+    } else null
+    val density = LocalDensity.current
+    val placementSpec = remember { tween<IntOffset>(220, easing = FastOutSlowInEasing) }
+
+    Box(Modifier.fillMaxSize()) {
     LazyVerticalStaggeredGrid(
         columns = StaggeredGridCells.Fixed(columnCount),
         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
@@ -1208,7 +1239,11 @@ private fun NotesGrid(
                     darkTheme = dark,
                     selectionMode = selectionMode,
                     isSelected = note.uri in selectedUris,
-                    isDragging = note.uri == draggingUri,
+                    isDragPlaceholder = note.uri == draggingUri,
+                    isDropTarget = note.uri == dropTarget,
+                    modifier = if (manualMode) Modifier.animateItemPlacement(
+                        animationSpec = placementSpec,
+                    ) else Modifier,
                     manualMode = manualMode,
                     onClick = { onCardClick(note) },
                     onLongClick = { onCardLongClick(note) },
@@ -1231,7 +1266,11 @@ private fun NotesGrid(
                 darkTheme = dark,
                 selectionMode = selectionMode,
                 isSelected = note.uri in selectedUris,
-                isDragging = note.uri == draggingUri,
+                isDragPlaceholder = note.uri == draggingUri,
+                isDropTarget = note.uri == dropTarget,
+                modifier = if (manualMode) Modifier.animateItemPlacement(
+                    animationSpec = placementSpec,
+                ) else Modifier,
                 manualMode = manualMode,
                 onClick = { onCardClick(note) },
                 onLongClick = { onCardLongClick(note) },
@@ -1244,6 +1283,33 @@ private fun NotesGrid(
                 onDragCancel = if (manualMode) handleDragCancel else null,
             )
         }
+    }
+    if (draggedNote != null && dragSize.width > 0 && dragSize.height > 0) {
+        NoteCard(
+            note = draggedNote,
+            darkTheme = dark,
+            selectionMode = false,
+            isSelected = false,
+            onClick = {},
+            onLongClick = {},
+            onPinClick = {},
+            onChecklistClick = {},
+            onUrlClick = {},
+            isDragging = true,
+            dragPreview = true,
+            modifier = Modifier
+                .offset {
+                    IntOffset(
+                        dragOrigin.x + dragOffset.x.roundToInt(),
+                        dragOrigin.y + dragOffset.y.roundToInt(),
+                    )
+                }
+                .width(with(density) { dragSize.width.toDp() })
+                .height(with(density) { dragSize.height.toDp() })
+                .zIndex(2f)
+                .clearAndSetSemantics {},
+        )
+    }
     }
 }
 
@@ -1305,7 +1371,7 @@ private fun Modifier.noteCardDragGestures(
     onClick: () -> Unit,
     onLongPress: () -> Unit,
     onDragStart: (initialOffset: Offset) -> Unit,
-    onDragMove: (totalDeltaY: Float) -> Unit,
+    onDragMove: (totalDelta: Offset) -> Unit,
     onDragEnd: () -> Unit,
     onDragCancel: () -> Unit,
 ): Modifier = this.pointerInput(Unit) {
@@ -1339,13 +1405,13 @@ private fun Modifier.noteCardDragGestures(
         // de lijst de vinger exact in content-coördinaten kan plaatsen.
         onDragStart(down.position)
         var moved = false
-        var totalY = 0f
+        var total = Offset.Zero
         val dragOk = drag(down.id) { change ->
             val delta = change.positionChange()
             if (delta.x != 0f || delta.y != 0f) {
                 moved = true
-                totalY += delta.y
-                onDragMove(totalY)
+                total += delta
+                onDragMove(total)
             }
             change.consume()
         }
@@ -1664,9 +1730,13 @@ private fun NoteCard(
     onChecklistClick: (Int) -> Unit,
     onUrlClick: (String) -> Unit,
     isDragging: Boolean = false,
+    isDragPlaceholder: Boolean = false,
+    isDropTarget: Boolean = false,
+    dragPreview: Boolean = false,
     manualMode: Boolean = false,
+    modifier: Modifier = Modifier,
     onDragStart: ((Offset) -> Unit)? = null,
-    onDragMove: ((Float) -> Unit)? = null,
+    onDragMove: ((Offset) -> Unit)? = null,
     onDragEnd: (() -> Unit)? = null,
     onDragCancel: (() -> Unit)? = null,
 ) {
@@ -1678,8 +1748,8 @@ private fun NoteCard(
     // remember-blokken; die laten we Compose zelf afhandelen.
     val brush = remember(bg, darkTheme) { noteCardBrush(bg, darkTheme) }
     val primaryColor = MaterialTheme.colorScheme.primary
-    val border = remember(fg, isSelected, primaryColor) {
-        if (isSelected) androidx.compose.foundation.BorderStroke(2.dp, primaryColor)
+    val border = remember(fg, isSelected, isDropTarget, primaryColor) {
+        if (isSelected || isDropTarget) androidx.compose.foundation.BorderStroke(2.dp, primaryColor)
         else androidx.compose.foundation.BorderStroke(0.7.dp, fg.copy(alpha = 0.08f))
     }
     val accent = remember(note.meta.color, fg) { accentOn(note.meta.color, fg) }
@@ -1696,11 +1766,12 @@ private fun NoteCard(
     // In handmatige modus stuurt een lange druk + beweging het slepen aan; zonder
     // beweging blijft het multi-select (onLongClick). Daarbuiten de oude
     // combinedClickable zodat ripple + bestaand gedrag exact behouden blijven.
-    val gestureModifier = if (manualMode && onDragStart != null && onDragMove != null) {
+    val gestureModifier = if (dragPreview) {
+        Modifier.graphicsLayer { scaleX = 1.03f; scaleY = 1.03f }
+    } else if (manualMode && onDragStart != null && onDragMove != null) {
         Modifier
             .graphicsLayer {
-                scaleX = if (isDragging) 1.03f else 1f
-                scaleY = if (isDragging) 1.03f else 1f
+                alpha = if (isDragPlaceholder) 0.16f else 1f
             }
             .noteCardDragGestures(
                 onClick = onClick,
@@ -1723,13 +1794,14 @@ private fun NoteCard(
         // Geen onClick op de Card: de gesture-modifier hieronder regelt click +
         // long-press (en in handmatige modus ook long-press-drag).
         colors = CardDefaults.cardColors(containerColor = Color.Transparent, contentColor = fg),
-        elevation = CardDefaults.cardElevation(defaultElevation = if (isDragging) 8.dp else 0.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (isDragging) 10.dp else 0.dp),
         shape = CARD_SHAPE,
         border = border,
         // graphicsLayer promoot de kaart naar een eigen render-layer; tijdens
         // scroll wordt de rasterized output gehergebruikt i.p.v. de gradient +
         // text+border opnieuw te tekenen per frame. Voorkomt frame drops.
-        modifier = gestureModifier
+        modifier = modifier
+            .then(gestureModifier)
             .zIndex(if (isDragging) 1f else 0f),
     ) {
         Box(modifier = Modifier.fillMaxSize().background(brush = brush)) {
