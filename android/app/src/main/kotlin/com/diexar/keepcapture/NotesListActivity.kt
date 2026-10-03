@@ -146,7 +146,6 @@ import kotlinx.coroutines.sync.withLock
 import androidx.compose.foundation.MutatePriority
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.lazy.staggeredgrid.LazyStaggeredGridState
 import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import androidx.compose.material.icons.filled.Check
@@ -1221,8 +1220,28 @@ private fun NotesGrid(
     } else null
     val density = LocalDensity.current
     val placementSpec = remember { tween<IntOffset>(220, easing = FastOutSlowInEasing) }
+    val gridGesture = if (manualMode) Modifier.noteGridDragGestures(
+        notes = notes,
+        selectionMode = selectionMode,
+        hitTest = { position ->
+            val item = gridState.layoutInfo.visibleItemsInfo.firstOrNull { info ->
+                info.key is String && (info.key as String).startsWith("note:") &&
+                    position.x >= info.offset.x && position.x <= info.offset.x + info.size.width &&
+                    position.y >= info.offset.y && position.y <= info.offset.y + info.size.height
+            }
+            val note = ordered.firstOrNull { item?.key == noteKey(it) }
+            if (item != null && note != null) note to (position - Offset(item.offset.x.toFloat(), item.offset.y.toFloat()))
+            else null
+        },
+        onClick = onCardClick,
+        onLongPress = onCardLongClick,
+        onDragStart = handleDragStart,
+        onDragMove = handleDragMove,
+        onDragEnd = handleDragEnd,
+        onDragCancel = handleDragCancel,
+    ) else Modifier
 
-    Box(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize().then(gridGesture)) {
     LazyVerticalStaggeredGrid(
         columns = StaggeredGridCells.Fixed(columnCount),
         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
@@ -1254,10 +1273,6 @@ private fun NotesGrid(
                     onPinClick = { onTogglePin(note) },
                     onChecklistClick = { index -> onToggleChecklist(note, index) },
                     onUrlClick = onUrlClick,
-                    onDragStart = if (manualMode) ({ offset -> handleDragStart(note, offset) }) else null,
-                    onDragMove = if (manualMode) ({ y -> handleDragMove(note, y) }) else null,
-                    onDragEnd = if (manualMode) ({ handleDragEnd(note) }) else null,
-                    onDragCancel = if (manualMode) handleDragCancel else null,
                 )
             }
             item(span = StaggeredGridItemSpan.FullLine, key = "label-other") {
@@ -1281,10 +1296,6 @@ private fun NotesGrid(
                 onPinClick = { onTogglePin(note) },
                 onChecklistClick = { index -> onToggleChecklist(note, index) },
                 onUrlClick = onUrlClick,
-                onDragStart = if (manualMode) ({ offset -> handleDragStart(note, offset) }) else null,
-                onDragMove = if (manualMode) ({ y -> handleDragMove(note, y) }) else null,
-                onDragEnd = if (manualMode) ({ handleDragEnd(note) }) else null,
-                onDragCancel = if (manualMode) handleDragCancel else null,
             )
         }
     }
@@ -1377,25 +1388,27 @@ private fun reorderForDrag(
 }
 
 /**
- * Eén gesture voor tap, long-press (zonder beweging → selectie) en
- * long-press-drag (verplaatsen). Vervangt combinedClickable in handmatige
- * modus zodat een lange druk pas selectie start als de vinger wordt losgelaten
- * zonder te bewegen; beweging schakelt over naar slepen.
+ * De grid blijft bestaan wanneer een kaart tijdens autoscroll uit beeld valt.
+ * Daarom bewaakt zij de gesture in plaats van een virtueel kaart-item.
  */
-private fun Modifier.noteCardDragGestures(
-    onClick: () -> Unit,
-    onLongPress: () -> Unit,
-    onDragStart: (initialOffset: Offset) -> Unit,
-    onDragMove: (totalDelta: Offset) -> Unit,
-    onDragEnd: () -> Unit,
+private fun Modifier.noteGridDragGestures(
+    notes: List<NoteSummary>,
+    selectionMode: Boolean,
+    hitTest: (Offset) -> Pair<NoteSummary, Offset>?,
+    onClick: (NoteSummary) -> Unit,
+    onLongPress: (NoteSummary) -> Unit,
+    onDragStart: (NoteSummary, Offset) -> Unit,
+    onDragMove: (NoteSummary, Offset) -> Unit,
+    onDragEnd: (NoteSummary) -> Unit,
     onDragCancel: () -> Unit,
-): Modifier = this.pointerInput(Unit) {
+): Modifier = this.pointerInput(notes, selectionMode) {
     val longPressTimeout = viewConfiguration.longPressTimeoutMillis
     val touchSlop = viewConfiguration.touchSlop
     awaitEachGesture {
         // Initial pass: de hele kaart pakt de lange druk op, ook boven een
         // checklist of thumbnail. Een korte tap blijft voor het kind bestemd.
         val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+        val (note, localOffset) = hitTest(down.position) ?: return@awaitEachGesture
         var releasedWithoutMove = false
         var childHandledTap = false
         var dragActive = false
@@ -1419,35 +1432,41 @@ private fun Modifier.noteCardDragGestures(
             }
             if (timedOut != null) {
                 // Geen long-press: alleen een tap (up zonder beweging) opent de kaart.
-                if (releasedWithoutMove && !childHandledTap) onClick()
+                if (releasedWithoutMove && !childHandledTap) onClick(note)
                 return@awaitEachGesture
             }
 
-            // Long-press geslaagd. Compose's drag helper onderscheidt een echte
-            // release van cancel, zodat een afgebroken gesture niets opslaat.
-            onDragStart(down.position)
+            // Long-press geslaagd. Als ouder van de scrollbare grid lezen we
+            // verdere beweging op Initial en consumeren die vóór de grid.
+            onDragStart(note, localOffset)
             dragActive = true
             var moved = false
             var total = Offset.Zero
-            val dragOk = drag(down.id) { change ->
+            while (true) {
+                val change = awaitPointerEvent(PointerEventPass.Initial).changes
+                    .firstOrNull { it.id == down.id }
+                if (change == null || change.isConsumed) {
+                    onDragCancel()
+                    dragFinished = true
+                    break
+                }
+                if (change.changedToUpIgnoreConsumed()) {
+                    change.consume()
+                    if (moved) onDragEnd(note)
+                    else {
+                        onDragCancel()
+                        onLongPress(note)
+                    }
+                    dragFinished = true
+                    break
+                }
                 val delta = change.positionChange()
                 if (delta.x != 0f || delta.y != 0f) {
                     moved = true
                     total += delta
-                    onDragMove(total)
+                    onDragMove(note, total)
                 }
                 change.consume()
-            }
-            if (!dragOk) {
-                onDragCancel()
-                dragFinished = true
-            } else if (moved) {
-                onDragEnd()
-                dragFinished = true
-            } else {
-                onDragCancel()
-                dragFinished = true
-                onLongPress()
             }
         } finally {
             if (dragActive && !dragFinished) onDragCancel()
@@ -1767,10 +1786,6 @@ private fun NoteCard(
     dragPreview: Boolean = false,
     manualMode: Boolean = false,
     modifier: Modifier = Modifier,
-    onDragStart: ((Offset) -> Unit)? = null,
-    onDragMove: ((Offset) -> Unit)? = null,
-    onDragEnd: (() -> Unit)? = null,
-    onDragCancel: (() -> Unit)? = null,
 ) {
     val bg = noteBackground(note.meta.color, darkTheme)
     val fg = contentColorOn(note.meta.color, darkTheme)
@@ -1795,24 +1810,12 @@ private fun NoteCard(
 
     val thumbnailUri = note.thumbnailUri
 
-    // In handmatige modus stuurt een lange druk + beweging het slepen aan; zonder
-    // beweging blijft het multi-select (onLongClick). Daarbuiten de oude
-    // combinedClickable zodat ripple + bestaand gedrag exact behouden blijven.
+    // De grid bewaakt handmatige gestures, ook wanneer deze kaart uit beeld
+    // scrollt. Buiten Manual behoudt combinedClickable de bestaande ripple.
     val gestureModifier = if (dragPreview) {
         Modifier.graphicsLayer { scaleX = 1.03f; scaleY = 1.03f }
-    } else if (manualMode && onDragStart != null && onDragMove != null) {
-        Modifier
-            .graphicsLayer {
-                alpha = if (isDragPlaceholder) 0.16f else 1f
-            }
-            .noteCardDragGestures(
-                onClick = onClick,
-                onLongPress = onLongClick,
-                onDragStart = onDragStart,
-                onDragMove = onDragMove,
-                onDragEnd = { onDragEnd?.invoke() },
-                onDragCancel = { onDragCancel?.invoke() },
-            )
+    } else if (manualMode) {
+        Modifier.graphicsLayer { alpha = if (isDragPlaceholder) 0.16f else 1f }
     } else {
         Modifier
             .graphicsLayer { }
@@ -1823,8 +1826,8 @@ private fun NoteCard(
     }
 
     Card(
-        // Geen onClick op de Card: de gesture-modifier hieronder regelt click +
-        // long-press (en in handmatige modus ook long-press-drag).
+        // Geen onClick op de Card: in Manual handelt de grid de gesture af,
+        // anders combinedClickable hieronder.
         colors = CardDefaults.cardColors(containerColor = Color.Transparent, contentColor = fg),
         elevation = CardDefaults.cardElevation(defaultElevation = if (isDragging) 10.dp else 0.dp),
         shape = CARD_SHAPE,
