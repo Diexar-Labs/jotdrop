@@ -1391,6 +1391,7 @@ private fun Modifier.noteCardDragGestures(
     onDragCancel: () -> Unit,
 ): Modifier = this.pointerInput(Unit) {
     val longPressTimeout = viewConfiguration.longPressTimeoutMillis
+    val touchSlop = viewConfiguration.touchSlop
     awaitEachGesture {
         // Initial pass: de hele kaart pakt de lange druk op, ook boven een
         // checklist of thumbnail. Een korte tap blijft voor het kind bestemd.
@@ -1400,12 +1401,13 @@ private fun Modifier.noteCardDragGestures(
         var dragActive = false
         var dragFinished = false
         try {
-            // Kleine bewegingen tijdens de lange druk zijn normaal bij een
-            // vinger. Alleen loslaten beëindigt de wachtfase.
+            // Kleine vingerbewegingen blijven een druk; voorbij touch slop
+            // neemt de grid het scrollen over en mag een latere up niet klikken.
             val timedOut = withTimeoutOrNull(longPressTimeout) {
                 while (true) {
                     val event = awaitPointerEvent(PointerEventPass.Initial)
                     val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                    if ((change.position - down.position).getDistance() > touchSlop) break
                     if (change.changedToUpIgnoreConsumed()) {
                         releasedWithoutMove = true
                         val finalEvent = awaitPointerEvent(PointerEventPass.Final)
