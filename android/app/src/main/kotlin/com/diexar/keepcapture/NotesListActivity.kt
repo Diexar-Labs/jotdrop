@@ -153,6 +153,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.zIndex
@@ -1132,6 +1133,7 @@ private fun NotesGrid(
     var dragOrigin by remember { mutableStateOf(IntOffset.Zero) }
     var dragSize by remember { mutableStateOf(IntSize.Zero) }
     var dragOffset by remember { mutableStateOf(Offset.Zero) }
+    var dragFingerViewportX by remember { mutableStateOf(0f) }
     var dragFingerViewportY by remember { mutableStateOf(0f) }
     var autoScrollJob by remember { mutableStateOf<Job?>(null) }
 
@@ -1140,10 +1142,11 @@ private fun NotesGrid(
     // inhoud onder een stilstaande vinger doorschuift.
     fun fingerContentY(): Float =
         gridState.layoutInfo.viewportStartOffset + dragFingerViewportY + dragOffset.y
+    fun fingerContentX(): Float = dragFingerViewportX + dragOffset.x
 
     fun recompute() {
         val uri = draggingUri ?: return
-        val next = reorderForDrag(gridState, ordered, uri, fingerContentY())
+        val next = reorderForDrag(gridState, ordered, uri, fingerContentX(), fingerContentY())
         // Alleen herschrijven als de volgorde echt veranderde (geen zinloze
         // recomposities tijdens autoscroll).
         if (next.map { it.uri } != pendingOrder.map { it.uri }) {
@@ -1183,6 +1186,7 @@ private fun NotesGrid(
         val info = layout.visibleItemsInfo.firstOrNull { (it.key as? String) == noteKey(note) }
         dragOrigin = info?.offset ?: IntOffset.Zero
         dragSize = info?.size ?: IntSize.Zero
+        dragFingerViewportX = (info?.offset?.x ?: 0) + localOffset.x
         dragFingerViewportY = if (info != null) {
             info.offset.y - layout.viewportStartOffset + localOffset.y
         } else 0f
@@ -1325,6 +1329,7 @@ private fun reorderForDrag(
     gridState: LazyStaggeredGridState,
     ordered: List<NoteSummary>,
     draggedUri: Uri,
+    draggedContentX: Float,
     draggedContentY: Float,
 ): List<NoteSummary> {
     val from = ordered.indexOfFirst { it.uri == draggedUri }
@@ -1333,26 +1338,36 @@ private fun reorderForDrag(
     val pinned = dragged.meta.pinned
     val pinnedCount = ordered.count { it.meta.pinned }
 
-    // Verticale centra van zichtbare kaarten, op key (uri).
-    val centers = HashMap<String, Float>()
-    for (info in gridState.layoutInfo.visibleItemsInfo) {
-        val key = info.key as? String ?: continue
-        if (!key.startsWith("note:")) continue
-        centers[key.substringAfter("note:")] = info.offset.y + info.size.height / 2f
-    }
-
     val sectionUris = ordered
         .filter { it.meta.pinned == pinned && it.uri != draggedUri }
         .map { it.uri.toString() }
-
-    val visible = sectionUris.mapIndexedNotNull { index, uri ->
-        centers[uri]?.let { center -> index to center }
+    val visible = gridState.layoutInfo.visibleItemsInfo
+    val source = visible.firstOrNull { it.key == noteKey(dragged) }
+    if (source != null && draggedContentX >= source.offset.x &&
+        draggedContentX <= source.offset.x + source.size.width &&
+        draggedContentY >= source.offset.y &&
+        draggedContentY <= source.offset.y + source.size.height
+    ) return ordered
+    val target = visible.mapNotNull { info ->
+        val key = (info.key as? String)?.removePrefix("note:") ?: return@mapNotNull null
+        val index = sectionUris.indexOf(key)
+        if (index < 0) return@mapNotNull null
+        val centerX = info.offset.x + info.size.width / 2f
+        val centerY = info.offset.y + info.size.height / 2f
+        val dx = ((draggedContentX - centerX) / (info.size.width / 2f)).let { it * it }
+        val dy = ((draggedContentY - centerY) / (info.size.height / 2f)).let { it * it }
+        Triple(index, info, dx + dy)
+    }.minByOrNull { it.third } ?: return ordered
+    val (index, info) = target
+    val centerX = info.offset.x + info.size.width / 2f
+    val centerY = info.offset.y + info.size.height / 2f
+    val horizontal = (draggedContentX - centerX) / info.size.width
+    val vertical = (draggedContentY - centerY) / info.size.height
+    val insertOffset = index + if (kotlin.math.abs(horizontal) > kotlin.math.abs(vertical)) {
+        if (horizontal > 0) 1 else 0
+    } else {
+        if (vertical > 0) 1 else 0
     }
-    if (visible.isEmpty()) return ordered
-    // Use global section indices, not a count of only the visible cards:
-    // after autoscroll the cards above the viewport must still be counted.
-    val insertOffset = visible.filter { it.second < draggedContentY }
-        .maxOfOrNull { it.first + 1 } ?: visible.minOf { it.first }
 
     val result = ordered.toMutableList()
     result.removeAt(from)
@@ -1376,49 +1391,64 @@ private fun Modifier.noteCardDragGestures(
     onDragCancel: () -> Unit,
 ): Modifier = this.pointerInput(Unit) {
     val longPressTimeout = viewConfiguration.longPressTimeoutMillis
-    val touchSlop = viewConfiguration.touchSlop
     awaitEachGesture {
-        val down = awaitFirstDown(requireUnconsumed = false)
-        // Een diepere interactie (snippet ClickableText, thumbnail, chips) heeft
-        // de down al geconsumeerd → die regelt de tap zelf; wij stappen uit.
-        if (down.isConsumed) return@awaitEachGesture
-        down.consume()
+        // Initial pass: de hele kaart pakt de lange druk op, ook boven een
+        // checklist of thumbnail. Een korte tap blijft voor het kind bestemd.
+        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
         var releasedWithoutMove = false
-        // Wacht op long-press; vroegtijdig einde = tap (up) of scroll/cancel.
-        val timedOut = withTimeoutOrNull(longPressTimeout) {
-            while (true) {
-                val event = awaitPointerEvent()
-                val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                when {
-                    change.changedToUpIgnoreConsumed() -> { releasedWithoutMove = true; break }
-                    change.isConsumed -> break
-                    (change.position - down.position).getDistance() > touchSlop -> break
+        var childHandledTap = false
+        var dragActive = false
+        var dragFinished = false
+        try {
+            // Kleine bewegingen tijdens de lange druk zijn normaal bij een
+            // vinger. Alleen loslaten beëindigt de wachtfase.
+            val timedOut = withTimeoutOrNull(longPressTimeout) {
+                while (true) {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                    if (change.changedToUpIgnoreConsumed()) {
+                        releasedWithoutMove = true
+                        val finalEvent = awaitPointerEvent(PointerEventPass.Final)
+                        childHandledTap = finalEvent.changes
+                            .firstOrNull { it.id == down.id }?.isConsumed == true
+                        break
+                    }
                 }
             }
-        }
-        if (timedOut != null) {
-            // Geen long-press: alleen een tap (up zonder beweging) opent de kaart.
-            if (releasedWithoutMove) onClick()
-            return@awaitEachGesture
-        }
-        // Long-press geslaagd → sleeppad. Meld de kaart-lokale vingerpositie zodat
-        // de lijst de vinger exact in content-coördinaten kan plaatsen.
-        onDragStart(down.position)
-        var moved = false
-        var total = Offset.Zero
-        val dragOk = drag(down.id) { change ->
-            val delta = change.positionChange()
-            if (delta.x != 0f || delta.y != 0f) {
-                moved = true
-                total += delta
-                onDragMove(total)
+            if (timedOut != null) {
+                // Geen long-press: alleen een tap (up zonder beweging) opent de kaart.
+                if (releasedWithoutMove && !childHandledTap) onClick()
+                return@awaitEachGesture
             }
-            change.consume()
-        }
-        when {
-            !dragOk -> onDragCancel()
-            moved -> onDragEnd()
-            else -> onLongPress() // lang ingedrukt, losgelaten zonder beweging → selectie
+
+            // Long-press geslaagd. Compose's drag helper onderscheidt een echte
+            // release van cancel, zodat een afgebroken gesture niets opslaat.
+            onDragStart(down.position)
+            dragActive = true
+            var moved = false
+            var total = Offset.Zero
+            val dragOk = drag(down.id) { change ->
+                val delta = change.positionChange()
+                if (delta.x != 0f || delta.y != 0f) {
+                    moved = true
+                    total += delta
+                    onDragMove(total)
+                }
+                change.consume()
+            }
+            if (!dragOk) {
+                onDragCancel()
+                dragFinished = true
+            } else if (moved) {
+                onDragEnd()
+                dragFinished = true
+            } else {
+                onDragCancel()
+                dragFinished = true
+                onLongPress()
+            }
+        } finally {
+            if (dragActive && !dragFinished) onDragCancel()
         }
     }
 }
