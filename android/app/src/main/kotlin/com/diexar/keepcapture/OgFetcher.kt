@@ -78,6 +78,8 @@ object OgFetcher {
      */
     fun fetch(context: Context, url: String, downloadImages: Boolean = true): Result<OgPreview> {
         return try {
+            var oembed: OgPreview? = null
+            var fetchUrl = rewriteForScraping(url)
             // Speciale gevallen: sites die JS-renderen en hun OG via oEmbed serveren.
             if (url.contains("tiktok.com", ignoreCase = true)) {
                 // TikTok's oEmbed accepteert alleen de canonieke `/@user/video/<id>`-URL.
@@ -87,12 +89,12 @@ object OgFetcher {
                     url.contains("vt.tiktok.com", ignoreCase = true)) {
                     resolveRedirects(url)
                 } else url
-                return fetchViaOEmbed(context, canonical, "https://www.tiktok.com/oembed?url=", downloadImages)
+                oembed = fetchViaOEmbed(context, canonical, "https://www.tiktok.com/oembed?url=", downloadImages).getOrNull()
+                if (oembed?.imageBasename != null) return Result.success(oembed)
+                fetchUrl = canonical
             }
             // Twitter/X blokkeert scrapers voor uitgelogde clients. fxtwitter.com is een mirror
             // die wél nette OG-meta serveert (gebruikt door Discord/Telegram embeds).
-            val fetchUrl = rewriteForScraping(url)
-
             // Probeer eerst met Chrome desktop UA. Als dat een 4xx geeft (Telegraaf 403't bv.)
             // óf geen image-kandidaten levert (cookie-wall HTML), retry met crawler-UAs in volgorde.
             var html: String? = null
@@ -116,15 +118,18 @@ object OgFetcher {
             }
 
             if (html == null) {
+                if (oembed != null) return Result.success(oembed)
                 return Result.failure(lastError ?: IllegalStateException("Geen HTML opgehaald"))
             }
 
             val title = extractMeta(html, "og:title")
                 ?: extractMeta(html, "twitter:title")
                 ?: extractTitleTag(html)
+                ?: oembed?.title
             val description = extractMeta(html, "og:description")
                 ?: extractMeta(html, "twitter:description")
                 ?: extractMeta(html, "description")
+                ?: oembed?.description
 
             // Probeer elke kandidaat tot er één daadwerkelijk downloadbaar is.
             // Hola Gestoría heeft bijvoorbeeld een og:image die 404't — dan vallen
@@ -384,7 +389,7 @@ object OgFetcher {
             a >= 224 // multicast/reserved
     }
 
-    private fun downloadHtml(urlString: String, userAgent: String = USER_AGENT): Result<String> {
+    private fun downloadHtml(urlString: String, userAgent: String = USER_AGENT, redirectsRemaining: Int = 6): Result<String> {
         if (isForbiddenTarget(urlString)) {
             return Result.failure(IllegalArgumentException("Geweigerd: niet-publiek doel."))
         }
@@ -403,6 +408,13 @@ object OgFetcher {
         )
         return try {
             val code = conn.responseCode
+            // HttpURLConnection volgt 301/302/307, maar geen permanente 308.
+            if (code == 308 && redirectsRemaining > 0) {
+                val location = conn.getHeaderField("Location")
+                if (location != null) {
+                    return downloadHtml(URL(url, location).toString(), userAgent, redirectsRemaining - 1)
+                }
+            }
             if (code !in 200..299) {
                 return Result.failure(IllegalStateException("HTTP $code"))
             }

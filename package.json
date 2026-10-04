@@ -13,6 +13,7 @@
     "verify:tag": "node scripts/verify-release-tag.mjs",
     "check:list-preview": "node scripts/check-list-preview.cjs",
     "check:manual-order": "node scripts/check-manual-order.cjs",
+    "check:preview-fallback": "node scripts/check-preview-fallback.cjs",
     "check:recurrence": "node scripts/check-recurrence.cjs",
     "check:web-clipper": "node scripts/check-web-clipper.mjs",
     "package:web-clipper": "node scripts/package-web-clipper.mjs",

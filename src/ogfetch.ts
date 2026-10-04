@@ -109,6 +109,8 @@ export async function fetchOg(
   downloadImages = true,
 ): Promise<OgPreview | null> {
   try {
+    let oembed: OgPreview | null = null;
+    let fetchUrl = rewriteForScraping(url);
     if (/tiktok\.com/i.test(url)) {
       // vm./vt. shortlinks do not accept the oEmbed endpoint — it hangs for
       // 10+ seconds before giving up. Resolve to the canonical URL first via
@@ -116,9 +118,10 @@ export async function fetchOg(
       const canonical = /vm\.tiktok\.com|vt\.tiktok\.com/i.test(url)
         ? await resolveCanonicalUrl(url)
         : url;
-      return await fetchTikTokOEmbed(app, attachmentsFolder, canonical, downloadImages);
+      oembed = await fetchTikTokOEmbed(app, attachmentsFolder, canonical, downloadImages);
+      if (oembed?.imageBasename) return oembed;
+      fetchUrl = canonical;
     }
-    const fetchUrl = rewriteForScraping(url);
 
     let html: string | null = null;
     let rawImageCandidates: string[] = [];
@@ -141,17 +144,19 @@ export async function fetchOg(
 
     if (!html) {
       console.warn(`JotDrop: could not fetch HTML for ${url} (${errors.join("; ")})`);
-      return null;
+      return oembed;
     }
 
     const title =
       extractMeta(html, "og:title") ||
       extractMeta(html, "twitter:title") ||
-      extractTitleTag(html);
+      extractTitleTag(html) ||
+      oembed?.title || null;
     const description =
       extractMeta(html, "og:description") ||
       extractMeta(html, "twitter:description") ||
-      extractMeta(html, "description");
+      extractMeta(html, "description") ||
+      oembed?.description || null;
     let imageBasename: string | null = null;
     if (downloadImages) {
       for (const candidate of rawImageCandidates) {
