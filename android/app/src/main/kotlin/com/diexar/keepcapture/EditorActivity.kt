@@ -1922,7 +1922,7 @@ private fun ReminderEditor(
 
     if (reminder != null) {
         Spacer(Modifier.height(4.dp))
-        RepeatEditor(repeat = repeat, onChange = onRepeatChange, foreground = foreground)
+        RepeatEditor(reminder = reminder, repeat = repeat, onChange = onRepeatChange, foreground = foreground)
         EndEditor(
             until = until,
             limit = limit,
@@ -1934,7 +1934,7 @@ private fun ReminderEditor(
 }
 
 @Composable
-private fun RepeatEditor(repeat: String?, onChange: (String?) -> Unit, foreground: Color) {
+private fun RepeatEditor(reminder: String, repeat: String?, onChange: (String?) -> Unit, foreground: Color) {
     var expanded by remember { mutableStateOf(false) }
     var showWeekdayPicker by remember { mutableStateOf(false) }
     var showEveryPicker by remember { mutableStateOf(false) }
@@ -1989,11 +1989,11 @@ private fun RepeatEditor(repeat: String?, onChange: (String?) -> Unit, foregroun
 
     if (showWeekdayPicker) {
         WeekdayPickerDialog(
-            selected = ReminderRecurrence.parseRepeat(repeat)?.let { (it as? RepeatRule.Weekly)?.weekdays.orEmpty() }.orEmpty(),
+            selected = (ReminderRecurrence.parseRepeat(repeat) as? RepeatRule.Weekly)?.weekdays
+                ?: setOf(ReminderRecurrence.parseIso(reminder)?.dayOfWeek?.value ?: LocalDate.now().dayOfWeek.value),
             onConfirm = { days ->
                 showWeekdayPicker = false
-                if (days.isEmpty()) onChange(null)
-                else onChange("weekly:" + days.sorted().joinToString(","))
+                onChange("weekly:" + days.sorted().joinToString(","))
             },
             onDismiss = { showWeekdayPicker = false },
         )
@@ -2222,7 +2222,9 @@ private fun WeekdayPickerDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(days) }) { Text(stringResource(android.R.string.ok)) }
+            TextButton(onClick = { onConfirm(days) }, enabled = days.isNotEmpty()) {
+                Text(stringResource(android.R.string.ok))
+            }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text(stringResource(android.R.string.cancel)) }
