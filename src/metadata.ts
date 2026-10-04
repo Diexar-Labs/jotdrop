@@ -154,6 +154,13 @@ export async function updateMeta(
   patch: Partial<NoteMeta>,
 ): Promise<void> {
   await app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+    // An edited schedule starts over; advancement supplies reminderDone explicitly.
+    if (patch.reminderDone === undefined && (
+      (patch.reminder !== undefined && patch.reminder !== (fm.reminder ?? null)) ||
+      (patch.reminderRepeat !== undefined && patch.reminderRepeat !== (fm.reminder_repeat ?? null)) ||
+      (patch.reminderUntil !== undefined && patch.reminderUntil !== (fm.reminder_until ?? null)) ||
+      (patch.reminderLimit !== undefined && patch.reminderLimit !== (fm.reminder_limit ?? null))
+    )) delete fm.reminder_done;
     if (patch.color !== undefined) {
       if (patch.color === "default") delete fm.color;
       else fm.color = patch.color;

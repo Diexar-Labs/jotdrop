@@ -226,7 +226,7 @@ class NotesListActivity : ComponentActivity() {
                 NotesListScreen(
                     stateFlow = notesState.asStateFlow(),
                     sortModeFlow = sortModeFlow.asStateFlow(),
-                    onRefresh = { reload() },
+                    onRefresh = { reload(rescheduleReminders = true) },
                     onOpenSettings = {
                         startActivity(Intent(this, MainActivity::class.java))
                     },
@@ -355,17 +355,20 @@ class NotesListActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        reload()
+        reload(rescheduleReminders = true)
     }
 
-    private fun reload() {
+    private fun reload(rescheduleReminders: Boolean = false) {
         if (Storage.getVaultUri(this) == null) {
             notesState.value = NotesUiState.NoVault
             return
         }
         notesState.value = NotesUiState.Loading
         lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) { Storage.listNotes(this@NotesListActivity) }
+            val result = withContext(Dispatchers.IO) {
+                if (rescheduleReminders) ReminderScheduler.rescheduleAll(this@NotesListActivity)
+                Storage.listNotes(this@NotesListActivity)
+            }
             notesState.value = result.fold(
                 onSuccess = { NotesUiState.Loaded(sortNotes(it, sortModeFlow.value)) },
                 onFailure = { NotesUiState.Error(it.message ?: getString(R.string.error_unknown)) },

@@ -54,9 +54,9 @@ object ReminderScheduler {
     }
 
     /**
-     * Plant alle reminders die in de vault staan opnieuw. Door BootReceiver
-     * aangeroepen zodat reminders een reboot overleven (AlarmManager wist alle
-     * alarms bij boot).
+     * Plant alle reminders die in de vault staan opnieuw. BootReceiver doet dit
+     * na reboot (AlarmManager wist dan de alarms); de lijst doet het ook bij
+     * openen of handmatig verversen, voor via sync gewijzigde reminders.
      *
      * Een herhalende reminder die inmiddels overdue is, vuurt één keer en
      * schuift dan door naar de eerste occurrence in de toekomst (ipv. één

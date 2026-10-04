@@ -83,6 +83,22 @@ const esbuild = require("esbuild");
   eq(fm.order, -20260105090001.5, "order survives reminder clear");
   eq(fm.other_property, "keep me", "unrelated frontmatter survives update");
 
+  fm.reminder = "2026-01-06T09:00";
+  fm.reminder_repeat = "daily";
+  fm.reminder_done = 2;
+  await updateMeta(app, file, { color: "blue" });
+  eq(fm.reminder_done, 2, "unrelated metadata edit keeps completed count");
+  await updateMeta(app, file, { reminder: "2026-01-06T09:00" });
+  eq(fm.reminder_done, 2, "unchanged reminder keeps completed count");
+  await updateMeta(app, file, { reminder: "2026-01-07T09:00" });
+  eq(fm.reminder_done, undefined, "changing reminder restarts occurrence count");
+  fm.reminder_done = 2;
+  await updateMeta(app, file, { reminderRepeat: "weekly:1,3" });
+  eq(fm.reminder_done, undefined, "changing repeat restarts occurrence count");
+  fm.reminder_done = 2;
+  await updateMeta(app, file, { reminder: "2026-01-08T09:00", reminderDone: 3 });
+  eq(fm.reminder_done, 3, "scheduler advancement keeps its explicit count");
+
   // ---- parseRepeat ----
   eq(parseRepeat("daily").type, "daily", "daily type");
   eq(parseRepeat("weekly:1,3,5").weekdays.join(","), "1,3,5", "weekly weekdays");
