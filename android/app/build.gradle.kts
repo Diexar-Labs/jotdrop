@@ -12,9 +12,9 @@ android {
     defaultConfig {
         applicationId = "com.diexar.keepcapture"
         minSdk = 26
-        targetSdk = 34
-        versionCode = 60
-        versionName = "0.28.6"
+        targetSdk = 36
+        versionCode = 61
+        versionName = "0.28.7"
     }
 
     // Stabiele debug-keystore in de repo. AGP's default genereert per CI-runner
@@ -22,13 +22,22 @@ android {
     // signatures hebben en Android weigert ze over elkaar te installeren
     // ("App not installed"). Met deze gecommite keystore krijgt elke release
     // dezelfde signature en updaten APK's gewoon netjes over elkaar heen.
-    // Veilig om te committen: het is debug-signing, geen productie-key.
+    // Dit is geen geheime productiesleutel: gebruik hem nooit voor Play App Signing.
     signingConfigs {
         getByName("debug") {
             storeFile = file("debug.keystore")
             storePassword = "android"
             keyAlias = "androiddebugkey"
             keyPassword = "android"
+        }
+        if (System.getenv("JOTDROP_PLAY_UPLOAD_KEYSTORE") != null) {
+            create("playUpload") {
+                storeFile = file(System.getenv("JOTDROP_PLAY_UPLOAD_KEYSTORE"))
+                storeType = "pkcs12"
+                storePassword = System.getenv("JOTDROP_PLAY_UPLOAD_PASSWORD")
+                keyAlias = "jotdrop-play-upload"
+                keyPassword = System.getenv("JOTDROP_PLAY_UPLOAD_PASSWORD")
+            }
         }
     }
 
@@ -42,9 +51,9 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             // Bewust dezelfde (gecommite debug-)keystore als de debug-build:
             // identieke signature, dus bestaande installaties updaten gewoon
-            // door zonder uninstall. Play Store vergt later alsnog een echte
-            // release-key; voor GitHub-distributie is dit de juiste afweging.
-            signingConfig = signingConfigs.getByName("debug")
+            // door zonder uninstall. Play-bundels gebruiken de aparte upload-key
+            // via omgevingsvariabelen; Google beheert de geheime app-signing-key.
+            signingConfig = signingConfigs.findByName("playUpload") ?: signingConfigs.getByName("debug")
         }
         debug {
             isDebuggable = true

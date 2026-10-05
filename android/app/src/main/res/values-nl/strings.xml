@@ -123,6 +123,7 @@
     <string name="section_support">Over JotDrop</string>
     <string name="support_blurb">JotDrop is gratis en open-source. Vind je het waardevol? Een koffie of sponsorship maakt mijn dag — geen verplichting, geen lock-ins.</string>
     <string name="support_kofi">☕ Trakteer op Ko-fi</string>
+    <string name="privacy_policy">Privacybeleid</string>
     <string name="support_sponsors">❤ Word sponsor op GitHub</string>
 
     <string name="action_ocr_camera">Tekst uit foto (camera)</string>

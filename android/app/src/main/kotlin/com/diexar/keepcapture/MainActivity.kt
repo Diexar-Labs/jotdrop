@@ -64,6 +64,9 @@ class MainActivity : AppCompatActivity() {
         binding.kofiButton.setOnClickListener {
             openExternalUrl("https://ko-fi.com/L3L11ZETB9")
         }
+        binding.privacyButton.setOnClickListener {
+            openExternalUrl("https://github.com/Diexar-Labs/jotdrop/blob/main/docs/android-privacy-policy.md")
+        }
 
         setupSpeechLangSpinner()
         setupDownloadImagesSwitch()

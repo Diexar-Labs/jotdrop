@@ -236,6 +236,14 @@
             android:layout_marginTop="12dp"
             android:text="@string/support_kofi" />
 
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/privacyButton"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:text="@string/privacy_policy" />
+
     </LinearLayout>
 
 </ScrollView>
