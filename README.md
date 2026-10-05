@@ -75,6 +75,7 @@ JotDrop is a private, open-source **Google Keep alternative**. Google Keep is gr
 - **Bulk-select** - long-press a card to enter multi-select; bulk archive or delete with confirmation
 - **Archive** with one tap, restore anytime
 - **Pinned** notes float to the top
+- **Drag to reorder on Android.** Tap the sort icon in the top bar, choose **Manual** (renamed **Drag cards** in the next update), then touch and hold a card to move it. Pinned and other cards can each be reordered within their own section; choose **Newest first** to switch back to automatic sorting.
 - **Search & filter** across body, title, tags
 - **Reminders** - per-note due-date with Android notifications; "Due" / "Overdue" badges on the card; survives reboot
 
