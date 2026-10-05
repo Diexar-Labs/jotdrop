@@ -91,6 +91,16 @@ export class JotDropSettingTab extends PluginSettingTab {
       },
     });
     releasesLink.setText(t("companions_download"));
+    companions.createEl("p", { text: t("companions_tester_blurb") });
+    const testerLink = companionsRow.createEl("a", {
+      cls: "jotdrop-support-button",
+      attr: {
+        href: "https://github.com/Diexar-Labs/jotdrop/issues/10",
+        target: "_blank",
+        rel: "noopener noreferrer",
+      },
+    });
+    testerLink.setText(t("companions_tester_link"));
 
     new Setting(containerEl)
       .setName(t("settings_notes_folder"))

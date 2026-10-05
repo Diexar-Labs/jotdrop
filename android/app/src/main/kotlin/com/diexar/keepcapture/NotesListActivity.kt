@@ -13,6 +13,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.preference.PreferenceManager
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.FileProvider
@@ -619,6 +620,19 @@ private fun NotesListScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val prefs = remember(context) { PreferenceManager.getDefaultSharedPreferences(context) }
+    var showTesterInvite by remember { mutableStateOf(!prefs.getBoolean("play_tester_invite_seen", false)) }
+    val dismissTesterInvite: () -> Unit = {
+        prefs.edit().putBoolean("play_tester_invite_seen", true).apply()
+        showTesterInvite = false
+    }
+    val openTesterInvite: () -> Unit = {
+        try {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/Diexar-Labs/jotdrop/issues/10")))
+        } catch (e: Exception) {
+            Toast.makeText(context, context.getString(R.string.toast_error, e.message ?: ""), Toast.LENGTH_SHORT).show()
+        }
+    }
     val openLinkLabel = stringResource(R.string.action_open_link)
     val dark = isSystemInDarkTheme()
     val bgBrush = remember(dark) { screenBackgroundBrush(dark) }
@@ -801,6 +815,13 @@ private fun NotesListScreen(
                                 onDismissRequest = { overflowOpen = false },
                             ) {
                                 DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.play_tester_menu)) },
+                                    onClick = {
+                                        overflowOpen = false
+                                        openTesterInvite()
+                                    },
+                                )
+                                DropdownMenuItem(
                                     text = { Text(stringResource(R.string.update_check)) },
                                     leadingIcon = { Icon(Icons.Filled.SystemUpdate, contentDescription = null) },
                                     onClick = {
@@ -981,6 +1002,22 @@ private fun NotesListScreen(
                 }
             }
         }
+    }
+    if (showTesterInvite && state is NotesUiState.Loaded && !selectionMode && pendingMemo == null) {
+        AlertDialog(
+            onDismissRequest = dismissTesterInvite,
+            title = { Text(stringResource(R.string.play_tester_title)) },
+            text = { Text(stringResource(R.string.play_tester_message)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    dismissTesterInvite()
+                    openTesterInvite()
+                }) { Text(stringResource(R.string.play_tester_join)) }
+            },
+            dismissButton = {
+                TextButton(onClick = dismissTesterInvite) { Text(stringResource(R.string.play_tester_later)) }
+            },
+        )
     }
     if (tagSheetOpen) {
         TagPickerSheet(

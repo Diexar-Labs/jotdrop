@@ -21,6 +21,14 @@ JotDrop is a free, open-source **Google Keep alternative** for [Obsidian](https:
 
 ---
 
+## Help test JotDrop on Google Play
+
+We're looking for Android users willing to join JotDrop's closed Google Play test. This is not a second job: keep using JotDrop as you normally do, stay opted in for 14 days, and let us know if you find a bug or something confusing. There is no checklist or requirement to create test notes. Joining is voluntary, and the GitHub APK will remain available.
+
+**[Volunteer for the Android Play test](https://github.com/Diexar-Labs/jotdrop/issues/10).** The Play build is still being prepared. If you already have the GitHub APK installed, don't uninstall it yet: Play signing may require a different installation step, which we'll explain before sending invitations. Your Markdown notes remain in your vault.
+
+---
+
 ## Why JotDrop?
 
 JotDrop is a private, open-source **Google Keep alternative**. Google Keep is great - until you remember Google reads everything you put in there. JotDrop gives you the same fast, friction-free "dump a thought" experience, but every note is a plain Markdown file in your own Obsidian vault. No cloud account, no ads, no telemetry, no lock-in. Sync between phone and laptop with Syncthing (free) or any folder-sync you already use.
