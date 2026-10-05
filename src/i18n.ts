@@ -206,8 +206,8 @@ const EN: Record<string, string> = {
     "This plugin is one third of JotDrop. For the full Google Keep experience, also install the free Android app (share-sheet capture, OCR, voice memos) and the Chrome web clipper. All three meet in your vault.",
   companions_download: "⬇ Get the Android app & web clipper",
   companions_tester_blurb:
-    "Help bring JotDrop to Google Play. Play testers can use the app normally; just stay opted in for 14 days and share feedback if something goes wrong. The Play test is being prepared, and the GitHub APK stays available.",
-  companions_tester_link: "Join the Android Play test",
+    "Help bring JotDrop to Google Play. Keep using the app normally and join our tester group to get the official Play opt-in link when the test opens. Group membership does not start the 14 days; keep your GitHub APK for now.",
+  companions_tester_link: "Join the Android tester group",
 
   // Clip server (Chrome extension)
   settings_clip_server_section: "Web clipper (Chrome extension)",
@@ -430,8 +430,8 @@ const NL: Record<string, string> = {
     "Deze plugin is een derde van JotDrop. Installeer voor de volledige Google Keep-ervaring ook de gratis Android-app (delen vanuit elke app, OCR, spraakmemo's) en de Chrome-web-clipper. Alle drie komen samen in je vault.",
   companions_download: "⬇ Download de Android-app & web-clipper",
   companions_tester_blurb:
-    "Help JotDrop naar Google Play. Als Play-tester gebruik je de app gewoon zoals altijd; blijf 14 dagen aangemeld en geef feedback als iets niet goed werkt. De Play-test wordt voorbereid en de GitHub-APK blijft beschikbaar.",
-  companions_tester_link: "Doe mee aan de Android Play-test",
+    "Help JotDrop naar Google Play. Gebruik de app gewoon zoals altijd en word lid van de testgroep voor de officiële Play-aanmeldlink zodra de test begint. Groepslid worden start de 14 dagen nog niet; laat de GitHub-APK voorlopig staan.",
+  companions_tester_link: "Word lid van de Android-testgroep",
 
   settings_clip_server_section: "Web-clipper (Chrome-extensie)",
   settings_clip_server_desc:

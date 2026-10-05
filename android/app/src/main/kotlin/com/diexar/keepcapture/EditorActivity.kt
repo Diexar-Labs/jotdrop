@@ -152,12 +152,16 @@ class EditorActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val noteUri: Uri? = intent.getStringExtra(EXTRA_NOTE_URI)?.let(Uri::parse)
         val navUris: List<String> = intent.getStringArrayListExtra(EXTRA_NAV_URIS) ?: emptyList()
+        val thumbnail = intent.getStringExtra(EXTRA_THUMBNAIL_NAME)?.let { name ->
+            intent.getStringExtra(EXTRA_THUMBNAIL_URI)?.let { name to Uri.parse(it) }
+        }
 
         setContent {
             JotDropTheme {
                 EditorScreen(
                     initialUri = noteUri,
                     navUris = navUris,
+                    initialThumbnail = thumbnail,
                     onClose = { finish() },
                 )
             }
@@ -167,6 +171,8 @@ class EditorActivity : ComponentActivity() {
     companion object {
         private const val EXTRA_NOTE_URI = "note_uri"
         private const val EXTRA_NAV_URIS = "nav_uris"
+        private const val EXTRA_THUMBNAIL_NAME = "thumbnail_name"
+        private const val EXTRA_THUMBNAIL_URI = "thumbnail_uri"
 
         // Intent-extra's lopen via de Binder (limiet ~500KB) en SAF-URI's zijn lang.
         // Beperk de nav-lijst daarom tot een venster rond de geopende notitie.
@@ -180,8 +186,18 @@ class EditorActivity : ComponentActivity() {
          * kaartvolgorde (gepind eerst, dan de rest, met actieve filters) — daarmee
          * kan de editor met swipe/knoppen naar de vorige/volgende notitie.
          */
-        fun openNoteIntent(context: Context, uri: Uri, orderedUris: List<Uri> = emptyList()): Intent {
+        fun openNoteIntent(
+            context: Context,
+            uri: Uri,
+            orderedUris: List<Uri> = emptyList(),
+            thumbnailName: String? = null,
+            thumbnailUri: Uri? = null,
+        ): Intent {
             val intent = Intent(context, EditorActivity::class.java).putExtra(EXTRA_NOTE_URI, uri.toString())
+            if (thumbnailName != null && thumbnailUri != null) {
+                intent.putExtra(EXTRA_THUMBNAIL_NAME, thumbnailName)
+                intent.putExtra(EXTRA_THUMBNAIL_URI, thumbnailUri.toString())
+            }
             val idx = orderedUris.indexOf(uri)
             if (orderedUris.size >= 2 && idx >= 0) {
                 val from = (idx - NAV_WINDOW).coerceAtLeast(0)
@@ -204,7 +220,12 @@ private val stringStateListSaver = listSaver<SnapshotStateList<String>, String>(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () -> Unit) {
+private fun EditorScreen(
+    initialUri: Uri?,
+    navUris: List<String>,
+    initialThumbnail: Pair<String, Uri>?,
+    onClose: () -> Unit,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val dark = isSystemInDarkTheme()
@@ -479,11 +500,14 @@ private fun EditorScreen(initialUri: Uri?, navUris: List<String>, onClose: () ->
         val result = withContext(Dispatchers.IO) {
             runCatching {
                 val raw = Storage.readNote(context, Uri.parse(uriString)).getOrThrow()
-                val needsAttachments = Storage.findEmbeddedAttachmentBasenames(raw).isNotEmpty()
-                val shouldBuildIndex = cachedAttachments == null && needsAttachments
+                val embedded = Storage.findEmbeddedAttachmentBasenames(raw)
+                val fromList = initialThumbnail?.takeIf {
+                    uriString == initialUri?.toString() && embedded.size == 1 && embedded[0] == it.first
+                }?.let { mapOf(it) }
+                val shouldBuildIndex = cachedAttachments == null && embedded.isNotEmpty() && fromList == null
                 Triple(
                     raw,
-                    cachedAttachments ?: if (shouldBuildIndex) Storage.listAttachmentUris(context) else emptyMap(),
+                    cachedAttachments ?: fromList ?: if (shouldBuildIndex) Storage.listAttachmentUris(context) else emptyMap(),
                     cachedAttachments != null || shouldBuildIndex,
                 )
             }

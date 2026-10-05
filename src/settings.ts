@@ -95,7 +95,7 @@ export class JotDropSettingTab extends PluginSettingTab {
     const testerLink = companionsRow.createEl("a", {
       cls: "jotdrop-support-button",
       attr: {
-        href: "https://github.com/Diexar-Labs/jotdrop/issues/10",
+        href: "https://groups.google.com/g/jotdrop-play-testers/about",
         target: "_blank",
         rel: "noopener noreferrer",
       },

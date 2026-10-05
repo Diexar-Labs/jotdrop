@@ -45,10 +45,10 @@
     <string name="retry">Opnieuw proberen</string>
 
     <string name="action_settings">Instellingen</string>
-    <string name="play_tester_menu">Doe mee aan de Google Play-test</string>
+    <string name="play_tester_menu">Help mee met de Play-test</string>
     <string name="play_tester_title">Help JotDrop naar Google Play</string>
-    <string name="play_tester_message">Wil je Play-tester worden? Je kunt JotDrop gewoon blijven gebruiken zoals je gewend bent. Geen testlijst: blijf 14 dagen aangemeld en laat weten als iets niet goed werkt. De Play-test wordt voorbereid; de GitHub-APK blijft beschikbaar. Lees hoe je kunt meedoen.</string>
-    <string name="play_tester_join">Bekijk hoe je meedoet</string>
+    <string name="play_tester_message">Gebruik JotDrop gewoon zoals altijd: geen testlijst. Word lid van de testgroep en ontvang de officiële Play-aanmeldlink zodra de test begint. Laat de GitHub-APK voorlopig staan. Groepslid worden start de 14 dagen nog niet.</string>
+    <string name="play_tester_join">Word lid van de testgroep</string>
     <string name="play_tester_later">Niet nu</string>
     <string name="action_new_note">Nieuwe notitie</string>
     <string name="action_save">Opslaan</string>
@@ -176,7 +176,7 @@
     <string name="more_options">Meer opties</string>
     <string name="sort_title">Sortering</string>
     <string name="sort_newest">Nieuwste eerst</string>
-    <string name="sort_manual">Handmatig</string>
+    <string name="sort_manual">Kaarten slepen</string>
     <string name="update_check">Check op updates</string>
     <string name="update_available">Nieuwe versie %1$s beschikbaar</string>
     <string name="update_view">Bekijken</string>

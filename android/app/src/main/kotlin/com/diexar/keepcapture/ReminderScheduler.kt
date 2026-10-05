@@ -65,15 +65,17 @@ object ReminderScheduler {
      * wordt de reeks gewist zonder te vuren. One-shot overdue reminders blijven
      * bestaand gedrag: overgeslagen.
      */
-    suspend fun rescheduleAll(context: Context) {
-        val notes = Storage.listNotes(context).getOrNull() ?: return
+    suspend fun rescheduleAll(context: Context, loadedNotes: List<NoteSummary>? = null): Boolean {
+        val notes = loadedNotes ?: Storage.listNotes(context).getOrNull() ?: return false
         val now = System.currentTimeMillis()
+        var changed = false
         for (note in notes) {
             val reminder = note.meta.reminder ?: continue
             val whenMillis = parseToEpochMillis(reminder) ?: continue
             if (whenMillis > now) {
                 schedule(context, note.uri, reminder)
             } else if (note.meta.reminderRepeat != null) {
+                changed = true
                 if (ReminderRecurrence.isExpired(note.meta)) {
                     ReminderEngine.expire(context, note.uri)
                 } else {
@@ -81,6 +83,7 @@ object ReminderScheduler {
                 }
             }
         }
+        return changed
     }
 
     private fun buildIntent(context: Context, noteUri: Uri): Intent {

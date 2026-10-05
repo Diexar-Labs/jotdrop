@@ -47,10 +47,10 @@
     <string name="retry">Try again</string>
 
     <string name="action_settings">Settings</string>
-    <string name="play_tester_menu">Join the Google Play test</string>
+    <string name="play_tester_menu">Volunteer for the Play test</string>
     <string name="play_tester_title">Help bring JotDrop to Google Play</string>
-    <string name="play_tester_message">Want to be a Play tester? You can keep using JotDrop as you normally do. No test checklist: stay opted in for 14 days and tell us if anything feels off. The Play test is being prepared; your GitHub APK stays available. See how to volunteer.</string>
-    <string name="play_tester_join">See how to join</string>
+    <string name="play_tester_message">Keep using JotDrop as usual: no test checklist. Join our tester group to receive the official Play opt-in link when the test opens. Until then, keep your GitHub APK installed. Joining the group does not start the 14-day test.</string>
+    <string name="play_tester_join">Join tester group</string>
     <string name="play_tester_later">Not now</string>
     <string name="action_new_note">New note</string>
     <string name="action_save">Save</string>
@@ -182,7 +182,7 @@
     <string name="more_options">More options</string>
     <string name="sort_title">Sort order</string>
     <string name="sort_newest">Newest first</string>
-    <string name="sort_manual">Manual</string>
+    <string name="sort_manual">Drag cards</string>
     <string name="update_check">Check for updates</string>
     <string name="update_available">New version %1$s available</string>
     <string name="update_view">View</string>

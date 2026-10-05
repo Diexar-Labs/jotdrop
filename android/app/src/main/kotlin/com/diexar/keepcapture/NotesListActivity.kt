@@ -166,6 +166,7 @@ import kotlin.math.roundToInt
 class NotesListActivity : ComponentActivity() {
 
     private val notesState = MutableStateFlow<NotesUiState>(NotesUiState.Loading)
+    private var stateEpoch = 0L
     private var pendingCameraUri: Uri? = null
     private var pendingCameraFile: File? = null
     // OCR-modus blijft staan tot de capture-flow afgerond is. Met deze flag weet
@@ -254,7 +255,9 @@ class NotesListActivity : ComponentActivity() {
                     onSaveMemo = { memo -> saveMemo(memo) },
                     onDiscardMemo = { discardPendingMemo() },
                     onOpenNote = { note, orderedUris ->
-                        startActivity(EditorActivity.openNoteIntent(this, note.uri, orderedUris))
+                        startActivity(EditorActivity.openNoteIntent(
+                            this, note.uri, orderedUris, note.thumbnailBasename, note.thumbnailUri,
+                        ))
                     },
                     onTogglePin = { note ->
                         togglePin(note)
@@ -306,6 +309,7 @@ class NotesListActivity : ComponentActivity() {
     }
 
     private fun saveCapturedImage(uri: Uri, deleteSourceAfter: File?, withOcr: Boolean) {
+        stateEpoch++
         lifecycleScope.launch {
             if (withOcr) {
                 Toast.makeText(this@NotesListActivity, R.string.ocr_running, Toast.LENGTH_SHORT).show()
@@ -364,12 +368,17 @@ class NotesListActivity : ComponentActivity() {
             notesState.value = NotesUiState.NoVault
             return
         }
-        notesState.value = NotesUiState.Loading
+        val requestEpoch = ++stateEpoch
+        if (notesState.value !is NotesUiState.Loaded) notesState.value = NotesUiState.Loading
         lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
-                if (rescheduleReminders) ReminderScheduler.rescheduleAll(this@NotesListActivity)
-                Storage.listNotes(this@NotesListActivity)
+                val loaded = Storage.listNotes(this@NotesListActivity)
+                if (rescheduleReminders && loaded.isSuccess &&
+                    ReminderScheduler.rescheduleAll(this@NotesListActivity, loaded.getOrThrow())) {
+                    Storage.listNotes(this@NotesListActivity)
+                } else loaded
             }
+            if (requestEpoch != stateEpoch) return@launch
             notesState.value = result.fold(
                 onSuccess = { NotesUiState.Loaded(sortNotes(it, sortModeFlow.value)) },
                 onFailure = { NotesUiState.Error(it.message ?: getString(R.string.error_unknown)) },
@@ -380,24 +389,40 @@ class NotesListActivity : ComponentActivity() {
     private fun setSortMode(mode: NoteSortMode) {
         sortModeFlow.value = mode
         Storage.saveSortMode(this, mode)
-        reload()
+        val loaded = notesState.value as? NotesUiState.Loaded
+        if (loaded != null) notesState.value = NotesUiState.Loaded(sortNotes(loaded.notes, mode)) else reload()
+    }
+
+    private fun updateLoadedNotes(change: (List<NoteSummary>) -> List<NoteSummary>) {
+        val loaded = notesState.value as? NotesUiState.Loaded
+        if (loaded != null) {
+            stateEpoch++
+            notesState.value = NotesUiState.Loaded(sortNotes(change(loaded.notes), sortModeFlow.value))
+        } else reload()
     }
 
     private fun moveNote(moved: NoteSummary, finalOrder: List<NoteSummary>) {
+        stateEpoch++
         lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
                 Storage.noteWriteMutex.withLock {
                     Storage.applyManualOrder(this@NotesListActivity, moved, finalOrder)
                 }
             }
-            result.onFailure { err ->
+            result.onSuccess { assignments ->
+                updateLoadedNotes { notes -> notes.map { note ->
+                    val order = assignments[note.uri.toString()]
+                    if (order != null) note.copy(meta = note.meta.copy(order = order))
+                    else note
+                } }
+            }.onFailure { err ->
                 Toast.makeText(
                     this@NotesListActivity,
                     err.message ?: getString(R.string.error_generic),
                     Toast.LENGTH_SHORT,
                 ).show()
+                reload()
             }
-            reload()
         }
     }
 
@@ -444,6 +469,7 @@ class NotesListActivity : ComponentActivity() {
 
     private fun saveMemo(memo: VoiceMemoRecorder.RecordedMemo) {
         pendingMemo.value = null
+        stateEpoch++
         lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
                 Storage.saveVoiceMemoNote(this@NotesListActivity, memo.file, memo.durationMs)
@@ -482,35 +508,49 @@ class NotesListActivity : ComponentActivity() {
     }
 
     private fun togglePin(note: NoteSummary) {
+        stateEpoch++
         lifecycleScope.launch {
             val newMeta = note.meta.copy(pinned = !note.meta.pinned)
             val result = withContext(Dispatchers.IO) {
                 Storage.noteWriteMutex.withLock {
                     Storage.updateNoteMeta(this@NotesListActivity, note.uri, newMeta)
+                        .map { Storage.lastModified(this@NotesListActivity, note.uri, note.lastModified) }
                 }
             }
-            result.onFailure { err ->
+            result.onSuccess { lastModified ->
+                updateLoadedNotes { notes -> notes.map {
+                    if (it.uri == note.uri) it.copy(
+                        meta = newMeta,
+                        lastModified = lastModified,
+                    )
+                    else it
+                } }
+            }.onFailure { err ->
                 Toast.makeText(this@NotesListActivity, err.message ?: getString(R.string.error_generic), Toast.LENGTH_SHORT).show()
             }
-            reload()
         }
     }
 
     private fun toggleChecklist(note: NoteSummary, index: Int) {
+        stateEpoch++
         lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
                 Storage.noteWriteMutex.withLock {
-                    Storage.toggleChecklistItem(this@NotesListActivity, note.uri, index)
+                    Storage.toggleChecklistItem(this@NotesListActivity, note.uri, index).map {
+                        Storage.refreshNoteSummary(this@NotesListActivity, note)
+                    }
                 }
             }
-            result.onFailure { err ->
+            result.onSuccess { updated ->
+                if (updated == null) reload()
+                else updateLoadedNotes { notes -> notes.map { if (it.uri == note.uri) updated else it } }
+            }.onFailure { err ->
                 Toast.makeText(
                     this@NotesListActivity,
                     err.message ?: getString(R.string.error_generic),
                     Toast.LENGTH_SHORT,
                 ).show()
             }
-            reload()
         }
     }
 }
@@ -628,7 +668,7 @@ private fun NotesListScreen(
     }
     val openTesterInvite: () -> Unit = {
         try {
-            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/Diexar-Labs/jotdrop/issues/10")))
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://groups.google.com/g/jotdrop-play-testers/about")))
         } catch (e: Exception) {
             Toast.makeText(context, context.getString(R.string.toast_error, e.message ?: ""), Toast.LENGTH_SHORT).show()
         }

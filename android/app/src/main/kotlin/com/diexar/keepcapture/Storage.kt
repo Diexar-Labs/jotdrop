@@ -443,6 +443,26 @@ object Storage {
         return Result.success(notes)
     }
 
+    /** Refresh one changed card without reopening every note in the vault. */
+    fun refreshNoteSummary(context: Context, note: NoteSummary): NoteSummary? {
+        val preview = readPreview(context, note.uri)
+        if (preview.isEmpty()) return null
+        val parsed = FrontmatterParser.parse(preview)
+        return note.copy(
+            title = extractTitle(parsed.body, note.filename),
+            snippet = extractSnippet(parsed.body),
+            urls = extractUrls(parsed.body),
+            meta = parsed.meta,
+            lastModified = lastModified(context, note.uri, note.lastModified),
+        )
+    }
+
+    fun lastModified(context: Context, uri: Uri, fallback: Long): Long = try {
+        DocumentFile.fromSingleUri(context, uri)?.lastModified()?.takeIf { it > 0 } ?: fallback
+    } catch (_: Exception) {
+        fallback
+    }
+
     private fun queryChildren(context: Context, treeUri: Uri, parentUri: Uri): List<ChildDoc> {
         val docId = DocumentsContract.getDocumentId(parentUri)
         val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, docId)
@@ -569,18 +589,19 @@ object Storage {
      * Berekent de nieuwe `order` ten opzichte van de buren in dezelfde sectie
      * (gepind/overige), of hernummerd de sectie als er geen numerieke ruimte is.
      */
-    fun applyManualOrder(context: Context, moved: NoteSummary, finalOrder: List<NoteSummary>): Result<Unit> {
+    fun applyManualOrder(context: Context, moved: NoteSummary, finalOrder: List<NoteSummary>): Result<Map<String, Double>> {
         val section = finalOrder
             .filter { it.meta.pinned == moved.meta.pinned }
             .map { NoteOrder.OrderedNote(it.uri.toString(), NoteOrder.manualRank(it.meta.order, it.filename)) }
         return when (val plan = NoteOrder.planDrop(section, moved.uri.toString())) {
             is NoteOrder.DropPlan.Assign -> setNoteOrder(context, moved.uri, plan.order)
+                .map { mapOf(moved.uri.toString() to plan.order) }
             is NoteOrder.DropPlan.Renumber -> {
                 for ((key, order) in plan.assignments) {
                     val r = setNoteOrder(context, Uri.parse(key), order)
-                    if (r.isFailure) return r
+                    if (r.isFailure) return Result.failure(r.exceptionOrNull()!!)
                 }
-                Result.success(Unit)
+                Result.success(plan.assignments)
             }
         }
     }
