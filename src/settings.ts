@@ -3,7 +3,7 @@ import type JotDropPlugin from "./main";
 import { legacyAssetsPath, normalizeAssetsFolder } from "./attachments";
 import { t } from "./i18n";
 
-const PLAY_TEST_GROUP_URL = "https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fgroups.google.com%2Fg%2Fjotdrop-play-testers%2Fabout";
+const PLAY_TEST_EMAIL_URL = "mailto:eric@diexar.com?subject=JotDrop%20Play%20test%20access&body=Please%20add%20my%20Google%20Play%20account%20to%20the%20JotDrop%20closed%20test.%0A%0AGoogle%20account%20email%20used%20in%20Play%3A%20";
 const PLAY_TEST_URL = "https://play.google.com/apps/testing/com.diexar.keepcapture";
 
 function generateToken(): string {
@@ -65,7 +65,7 @@ export async function notifyPlayTest(plugin: JotDropPlugin): Promise<void> {
   const text = document.createElement("p");
   text.textContent = t("play_tester_live_notice");
   message.appendChild(text);
-  for (const [href, label] of [[PLAY_TEST_GROUP_URL, "companions_tester_link"], [PLAY_TEST_URL, "companions_tester_play"]] as const) {
+  for (const [href, label] of [[PLAY_TEST_EMAIL_URL, "companions_tester_link"], [PLAY_TEST_URL, "companions_tester_play"]] as const) {
     const step = document.createElement("p");
     const action = document.createElement("a");
     action.href = href;
@@ -137,7 +137,7 @@ export class JotDropSettingTab extends PluginSettingTab {
     const testerLink = testerRow.createEl("a", {
       cls: "jotdrop-support-button",
       attr: {
-        href: PLAY_TEST_GROUP_URL,
+        href: PLAY_TEST_EMAIL_URL,
         target: "_blank",
         rel: "noopener noreferrer",
       },

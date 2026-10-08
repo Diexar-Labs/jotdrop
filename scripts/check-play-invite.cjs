@@ -36,9 +36,15 @@ const esbuild = require("esbuild");
   assert.equal(notices[0].timeout, 0);
   const links = notices[0].message.children.flatMap((child) => child.href ? [child] : child.children.filter((nested) => nested.href));
   assert.equal(links.length, 3, "signup must expose both direct steps and optional switching help");
-  const login = new URL(links[0].href);
-  assert.equal(login.origin, "https://accounts.google.com");
-  assert.equal(login.searchParams.get("continue"), "https://groups.google.com/g/jotdrop-play-testers/about");
+  const step1 = new URL(links[0].href);
+  assert.equal(step1.protocol, "mailto:", "step 1 must be an email route, not a group/login URL");
+  assert.equal(step1.pathname, "eric@diexar.com");
+  assert.equal(step1.searchParams.get("subject"), "JotDrop Play test access");
+  assert.equal(
+    step1.searchParams.get("body"),
+    "Please add my Google Play account to the JotDrop closed test.\n\nGoogle account email used in Play: ",
+  );
+  assert.ok(!/ServiceLogin|groups\.google\.com/.test(links[0].href), "step 1 must not reference the Google Group or ServiceLogin");
   assert.equal(links[1].href, "https://play.google.com/apps/testing/com.diexar.keepcapture");
   assert.match(links[2].href, /#help-test-jotdrop-on-google-play$/);
   assert.match(links[0].textContent, /^1\./);
@@ -53,5 +59,5 @@ const esbuild = require("esbuild");
   await assert.rejects(notifyPlayTest(failed), /storage error/);
   assert.equal(failed.settings.playTestLiveNoticeSeen, false, "failed save must allow a retry");
   assert.equal(notices.length, 1);
-  console.log("Play invitation: first load, dismissal, persistence and save failure checks passed");
+  console.log("Play invitation: email-first step 1, Play step 2, first load, dismissal, persistence and save failure checks passed");
 })().catch((error) => { console.error(error); process.exit(1); });

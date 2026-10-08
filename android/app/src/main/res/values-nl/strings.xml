@@ -46,12 +46,13 @@
 
     <string name="action_settings">Instellingen</string>
     <string name="play_tester_menu">Doe mee aan de Google Play-test</string>
-    <string name="play_tester_title">De Google Play-test is live!</string>
-    <string name="play_tester_message">Gebruik je bestaande Google-account van Play.\n\n1. Kies Lid worden van groep en kom hier terug. Al groepslid? Sla deze stap over.\n2. Kies Become a tester in Play en download.\n\nGebruik JotDrop gewoon en blijf 14 dagen groepslid en aangemeld als tester. Bevestig Play-toegang en maak een vaultback-up voordat je deze APK vervangt. De overstaphulp legt de herinstallatie uit.</string>
-    <string name="play_tester_join">1. Testtoegang krijgen (groepslid worden)</string>
-    <string name="play_tester_download">2. Aanmelden en downloaden in Play</string>
+    <string name="play_tester_title">Vrijblijvend: test JotDrop in Play</string>
+    <string name="play_tester_message">Deze GitHub-APK werkt zonder aanmelding. De Play-test is vrijblijvend; geen Google Groep nodig.\n\n1. Mail eric@diexar.com het e-mailadres van je Google-account in Play. Wij voegen het toe en sturen een bevestiging. Heb je al toegang? Sla deze stap over.\n2. Kies na bevestiging Become a tester en download in Play.\n\nGebruik JotDrop gewoon en blijf 14 opeenvolgende dagen aangemeld. APK/Obtainium telt niet mee. Bevestig Play-toegang en maak een vaultback-up voordat je overstapt; zie de overstaphulp.</string>
+    <string name="play_tester_join">1. Mail je Play-account om toegang te vragen</string>
+    <string name="play_tester_download">2. Na bevestiging aanmelden en downloaden in Play</string>
     <string name="play_tester_help">Overstaphulp</string>
     <string name="play_tester_later">Niet nu</string>
+    <string name="toast_mail_open_failed">Geen e-mailapp gevonden. Mail direct naar eric@diexar.com om toegang te vragen.</string>
     <string name="action_new_note">Nieuwe notitie</string>
     <string name="action_save">Opslaan</string>
     <string name="action_back">Terug</string>

@@ -8,11 +8,11 @@
 
 JotDrop is a free, open-source **Google Keep alternative** for [Obsidian](https://obsidian.md/). It's a **trio**: the plugin (the card grid in your vault), a companion **Android app** (share-sheet capture, OCR, voice memos), and a **Chrome web clipper**. Sync them with [Syncthing](https://syncthing.net/) and you have Google Keep, fully offline, fully yours.
 
-> **For the full Google Keep experience, install all three.** Install the plugin from Obsidian Community plugins, download the [Android APK](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.9/jotdrop.apk) or [join the Google Play test](#help-test-jotdrop-on-google-play), and install the [Web Clipper from the Chrome Web Store](https://chromewebstore.google.com/detail/jotdrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo) - one click, automatic updates, works without any configuration.
+> **For the full Google Keep experience, install all three.** Install the plugin from Obsidian Community plugins, download the [Android APK](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.10/jotdrop.apk) or [join the Google Play test](#help-test-jotdrop-on-google-play), and install the [Web Clipper from the Chrome Web Store](https://chromewebstore.google.com/detail/jotdrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo) - one click, automatic updates, works without any configuration.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Obsidian plugin](https://img.shields.io/badge/Obsidian-plugin-7c3aed)](https://github.com/Diexar-Labs/jotdrop/releases)
-[![Android APK](https://img.shields.io/badge/Android-APK-3ddc84)](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.9/jotdrop.apk)
+[![Android APK](https://img.shields.io/badge/Android-APK-3ddc84)](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.10/jotdrop.apk)
 [![Build APK](https://github.com/Diexar-Labs/jotdrop/actions/workflows/android-build.yml/badge.svg)](https://github.com/Diexar-Labs/jotdrop/actions/workflows/android-build.yml)
 
 [Download](#install) · [Screenshots](#screenshots) · [How it works](#how-it-works) · [Roadmap](#roadmap)
@@ -25,14 +25,22 @@ JotDrop is a free, open-source **Google Keep alternative** for [Obsidian](https:
 
 **The Google Play test is live! We need at least 12 Android testers.** Keep using JotDrop normally, remain opted in for **14 consecutive days**, and share any bugs or confusing behavior. No scripted checklist or daily chores. Joining is voluntary, and the GitHub APK remains available.
 
-Use your **existing Google account from Play**. No new account or signup form is needed. Already a group member? Go straight to step 2.
+The GitHub APK works without any registration; the Play test is an optional invitation. Use your **existing Google account from Play**: no new account or signup form is needed, and you do not have to join a Google Group. Sending the request email does **not** grant access automatically; wait for our confirmation.
 
-1. **[Get test access](https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fgroups.google.com%2Fg%2Fjotdrop-play-testers%2Fabout)**: choose **Join group**, then return here. If asked to sign in, use your Play Google account; this link returns you to the right group. Only the owner can see member addresses. This step gives access but does not yet register you as a Play tester.
-2. **[Join and download in Google Play](https://play.google.com/apps/testing/com.diexar.keepcapture)**: choose **Become a tester**, then follow the download link. Stay in the group and opted in for at least 14 days. If Play says unavailable, check that both pages use the same Google account and allow time for group access to update.
+1. **[Email your Play account to request access](mailto:eric@diexar.com?subject=JotDrop%20Play%20test%20access&body=Please%20add%20my%20Google%20Play%20account%20to%20the%20JotDrop%20closed%20test.%0A%0AGoogle%20account%20email%20used%20in%20Play%3A%20)**: send the exact Google account address you use in Play. Diexar adds you to the closed-test allowlist and replies with the Play link. This only requests access; it does not yet register you as a Play tester.
+2. **[After confirmation, join and download in Google Play](https://play.google.com/apps/testing/com.diexar.keepcapture)**: choose **Become a tester**, then follow the download link. Stay opted in as a Play tester for at least 14 days. If Play says unavailable, check that both pages use the same Google account and allow time for access to update.
 
-**Already using the GitHub APK? Read this before uninstalling:** Play uses a different signing key and cannot update that APK in place. First confirm that Play offers the test to your account/device. Back up your vault and record its folder, note/attachment folder settings and other app preferences. Only then uninstall the GitHub JotDrop app, install from Play and select the same vault and folder settings. App preferences reset; external Markdown files are separate from the app, but keep a verified backup before switching. If Play says the test is unavailable, do not uninstall: check the Google account and group membership, allow time for membership changes to propagate, then retry or ask for help.
+Already have Play access? Skip the email and go straight to step 2.
+
+**Already using the GitHub APK? Read this before uninstalling:** Play uses a different signing key and cannot update that APK in place. First confirm that Play offers the test to your account/device. Back up your vault and record its folder, note/attachment folder settings and other app preferences. Only then uninstall the GitHub JotDrop app, install from Play and select the same vault and folder settings. App preferences reset; external Markdown files are separate from the app, but keep a verified backup before switching. If Play says the test is unavailable, do not uninstall: check the Google account, allow time for access to propagate, then retry or ask for help.
 
 Feedback/help: [issue #10](https://github.com/Diexar-Labs/jotdrop/issues/10). Please share this invitation with another interested Android user. GitHub/Obtainium installs and extra phones using the same account do not count as additional Play testers.
+
+**Manual access handling:** verify the requested Google account address, then edit **JotDrop Play testers** in the existing Alpha track's Testers tab. Add the address without replacing existing entries. Before sending a confirmation, verify that the email-list configuration is published and the account is included. No automated inbox processing or reply service is configured.
+
+Reply only after access is available:
+
+> Your Google Play account has been added to the JotDrop test. Open https://play.google.com/apps/testing/com.diexar.keepcapture with that account, choose **Become a tester**, then install from Play. No Google Group is needed. Please stay opted in for 14 consecutive days. If you use the GitHub APK, confirm Play access and back up your vault before switching: https://github.com/Diexar-Labs/jotdrop/issues/10.
 
 ---
 
@@ -129,14 +137,14 @@ Install [JotDrop Web Clipper from the Chrome Web Store](https://chromewebstore.g
 
 **Manual install (for offline / pre-release versions):**
 
-1. Go to the [current plugin release](https://github.com/Diexar-Labs/jotdrop/releases/tag/0.20.9).
+1. Go to the [current plugin release](https://github.com/Diexar-Labs/jotdrop/releases/tag/0.20.10).
 2. Download `manifest.json`, `main.js`, and `styles.css`.
 3. Put them in `<your-vault>/.obsidian/plugins/jotdrop/` (create the folder if it doesn't exist).
 4. Open Obsidian → Settings → Community plugins → enable **JotDrop**.
 
 ### Android app
 
-1. Download [`jotdrop.apk` for Android 0.28.9](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.9/jotdrop.apk).
+1. Download [`jotdrop.apk` for Android 0.28.10](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.10/jotdrop.apk).
 2. Open the file on your phone → Android will ask permission to install from unknown sources → grant it.
 3. Open JotDrop → first screen lets you pick the vault folder (the same one you sync to your laptop).
 4. From now on, the share-sheet in any app includes JotDrop.

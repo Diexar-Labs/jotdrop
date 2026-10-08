@@ -670,10 +670,21 @@ private fun NotesListScreen(
         showTesterInvite = false
     }
     val openTesterLink: (String) -> Unit = { url ->
+        val isMailto = url.startsWith("mailto:")
+        val intent = if (isMailto) {
+            Intent(Intent.ACTION_SENDTO, Uri.parse(url))
+        } else {
+            Intent(Intent.ACTION_VIEW, Uri.parse(url))
+        }
         try {
-            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+            context.startActivity(intent)
         } catch (e: Exception) {
-            Toast.makeText(context, context.getString(R.string.toast_error, e.message ?: ""), Toast.LENGTH_SHORT).show()
+            val message = if (isMailto) {
+                context.getString(R.string.toast_mail_open_failed)
+            } else {
+                context.getString(R.string.toast_error, e.message ?: "")
+            }
+            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
         }
     }
     val openLinkLabel = stringResource(R.string.action_open_link)
@@ -1062,7 +1073,7 @@ private fun NotesListScreen(
                 Column(Modifier.verticalScroll(rememberScrollState())) {
                     Text(stringResource(R.string.play_tester_message))
                     TextButton(onClick = {
-                        openTesterLink("https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fgroups.google.com%2Fg%2Fjotdrop-play-testers%2Fabout")
+                        openTesterLink("mailto:eric@diexar.com?subject=JotDrop%20Play%20test%20access&body=Please%20add%20my%20Google%20Play%20account%20to%20the%20JotDrop%20closed%20test.%0A%0AGoogle%20account%20email%20used%20in%20Play%3A%20")
                     }) { Text(stringResource(R.string.play_tester_join)) }
                     TextButton(onClick = {
                         openTesterLink("https://play.google.com/apps/testing/com.diexar.keepcapture")
