@@ -8,11 +8,11 @@
 
 JotDrop is a free, open-source **Google Keep alternative** for [Obsidian](https://obsidian.md/). It's a **trio**: the plugin (the card grid in your vault), a companion **Android app** (share-sheet capture, OCR, voice memos), and a **Chrome web clipper**. Sync them with [Syncthing](https://syncthing.net/) and you have Google Keep, fully offline, fully yours.
 
-> **For the full Google Keep experience, install all three.** Install the plugin from Obsidian Community plugins, download the [Android APK](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.6/jotdrop.apk), and install the [Web Clipper from the Chrome Web Store](https://chromewebstore.google.com/detail/jotdrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo) - one click, automatic updates, works without any configuration.
+> **For the full Google Keep experience, install all three.** Install the plugin from Obsidian Community plugins, download the [Android APK](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.8/jotdrop.apk) or [join the Google Play test](#help-test-jotdrop-on-google-play), and install the [Web Clipper from the Chrome Web Store](https://chromewebstore.google.com/detail/jotdrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo) - one click, automatic updates, works without any configuration.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Obsidian plugin](https://img.shields.io/badge/Obsidian-plugin-7c3aed)](https://github.com/Diexar-Labs/jotdrop/releases)
-[![Android APK](https://img.shields.io/badge/Android-APK-3ddc84)](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.6/jotdrop.apk)
+[![Android APK](https://img.shields.io/badge/Android-APK-3ddc84)](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.8/jotdrop.apk)
 [![Build APK](https://github.com/Diexar-Labs/jotdrop/actions/workflows/android-build.yml/badge.svg)](https://github.com/Diexar-Labs/jotdrop/actions/workflows/android-build.yml)
 
 [Download](#install) · [Screenshots](#screenshots) · [How it works](#how-it-works) · [Roadmap](#roadmap)
@@ -23,9 +23,14 @@ JotDrop is a free, open-source **Google Keep alternative** for [Obsidian](https:
 
 ## Help test JotDrop on Google Play
 
-We're looking for Android users willing to join JotDrop's closed Google Play test. This is not a second job: keep using JotDrop as you normally do, stay opted in for 14 days, and let us know if you find a bug or something confusing. There is no checklist or requirement to create test notes. Joining is voluntary, and the GitHub APK will remain available.
+**The Google Play test is live! We need at least 12 Android testers.** Keep using JotDrop normally, remain opted in for **14 consecutive days**, and share any bugs or confusing behavior. No scripted checklist or daily chores. Joining is voluntary, and the GitHub APK remains available.
 
-**[Join the JotDrop Android tester group](https://groups.google.com/g/jotdrop-play-testers/about).** Membership is open and your email address is visible only to the group owner, not to other testers. We'll share the official Play opt-in link there after Google approves a closed-test release. Joining the group does **not** start the 14-day Play test yet. If you have the GitHub APK installed, don't uninstall it now: Play will use a different signing key and will need a guided reinstall before Play can install the app. Your Markdown notes remain in your vault; back them up before switching. Feedback stays on [issue #10](https://github.com/Diexar-Labs/jotdrop/issues/10).
+1. **[Join the tester group](https://groups.google.com/g/jotdrop-play-testers/about)** using the Google account you use in Play. The member list is visible only to the group owner; do not post your address publicly.
+2. **[Become a tester on Google Play](https://play.google.com/apps/testing/com.diexar.keepcapture)** and follow the Play download link. Group membership alone does **not** count as Play opt-in. Stay in the group as well as opted in for at least 14 days.
+
+**Already using the GitHub APK? Read this before uninstalling:** Play uses a different signing key and cannot update that APK in place. First confirm that Play offers the test to your account/device. Back up your vault and record its folder, note/attachment folder settings and other app preferences. Only then uninstall the GitHub JotDrop app, install from Play and select the same vault and folder settings. App preferences reset; external Markdown files are separate from the app, but keep a verified backup before switching. If Play says the test is unavailable, do not uninstall: check the Google account and group membership, allow time for membership changes to propagate, then retry or ask for help.
+
+Feedback/help: [issue #10](https://github.com/Diexar-Labs/jotdrop/issues/10). Please share this invitation with another interested Android user. GitHub/Obtainium installs and extra phones using the same account do not count as additional Play testers.
 
 ---
 
@@ -122,14 +127,14 @@ Install [JotDrop Web Clipper from the Chrome Web Store](https://chromewebstore.g
 
 **Manual install (for offline / pre-release versions):**
 
-1. Go to the [current plugin release](https://github.com/Diexar-Labs/jotdrop/releases/tag/0.20.7).
+1. Go to the [current plugin release](https://github.com/Diexar-Labs/jotdrop/releases/tag/0.20.8).
 2. Download `manifest.json`, `main.js`, and `styles.css`.
 3. Put them in `<your-vault>/.obsidian/plugins/jotdrop/` (create the folder if it doesn't exist).
 4. Open Obsidian → Settings → Community plugins → enable **JotDrop**.
 
 ### Android app
 
-1. Download [`jotdrop.apk` for Android 0.28.6](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.6/jotdrop.apk).
+1. Download [`jotdrop.apk` for Android 0.28.8](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.8/jotdrop.apk).
 2. Open the file on your phone → Android will ask permission to install from unknown sources → grant it.
 3. Open JotDrop → first screen lets you pick the vault folder (the same one you sync to your laptop).
 4. From now on, the share-sheet in any app includes JotDrop.

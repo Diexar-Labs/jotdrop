@@ -661,14 +661,15 @@ private fun NotesListScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val prefs = remember(context) { PreferenceManager.getDefaultSharedPreferences(context) }
-    var showTesterInvite by remember { mutableStateOf(!prefs.getBoolean("play_tester_invite_seen", false)) }
+    val isPlayInstall = remember(context) { UpdateChecker.isPlayInstall(context) }
+    var showTesterInvite by remember { mutableStateOf(!isPlayInstall && !prefs.getBoolean("play_tester_live_invite_seen", false)) }
     val dismissTesterInvite: () -> Unit = {
-        prefs.edit().putBoolean("play_tester_invite_seen", true).apply()
+        prefs.edit().putBoolean("play_tester_live_invite_seen", true).apply()
         showTesterInvite = false
     }
     val openTesterInvite: () -> Unit = {
         try {
-            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://groups.google.com/g/jotdrop-play-testers/about")))
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/Diexar-Labs/jotdrop#help-test-jotdrop-on-google-play")))
         } catch (e: Exception) {
             Toast.makeText(context, context.getString(R.string.toast_error, e.message ?: ""), Toast.LENGTH_SHORT).show()
         }
@@ -867,6 +868,14 @@ private fun NotesListScreen(
                                     onClick = {
                                         overflowOpen = false
                                         scope.launch {
+                                            if (isPlayInstall) {
+                                                try {
+                                                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=com.diexar.keepcapture")))
+                                                } catch (e: Exception) {
+                                                    snackbarHostState.showSnackbar(context.getString(R.string.toast_error, e.message ?: ""))
+                                                }
+                                                return@launch
+                                            }
                                             val info = UpdateChecker.check(context, force = true)
                                             if (info != null) {
                                                 updateInfo = info

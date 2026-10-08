@@ -28,6 +28,7 @@ object UpdateChecker {
      * netwerk-verkeer (throttle via prefs).
      */
     suspend fun check(context: Context, force: Boolean): UpdateInfo? {
+        if (isPlayInstall(context)) return null
         val prefs = PreferenceManager.getDefaultSharedPreferences(context)
         val now = System.currentTimeMillis()
         if (!force && now - prefs.getLong(KEY_LAST_CHECK, 0L) < CHECK_INTERVAL_MS) return null
@@ -50,6 +51,13 @@ object UpdateChecker {
         context.packageManager.getPackageInfo(context.packageName, 0).versionName
     } catch (_: Exception) {
         null
+    }
+
+    @Suppress("DEPRECATION")
+    fun isPlayInstall(context: Context): Boolean = try {
+        context.packageManager.getInstallerPackageName(context.packageName) == "com.android.vending"
+    } catch (_: Exception) {
+        false
     }
 
     private fun fetchLatest(): UpdateInfo? {

@@ -206,8 +206,12 @@ const EN: Record<string, string> = {
     "This plugin is one third of JotDrop. For the full Google Keep experience, also install the free Android app (share-sheet capture, OCR, voice memos) and the Chrome web clipper. All three meet in your vault.",
   companions_download: "⬇ Get the Android app & web clipper",
   companions_tester_blurb:
-    "Help bring JotDrop to Google Play. Keep using the app normally and join our tester group to get the official Play opt-in link when the test opens. Group membership does not start the 14 days; keep your GitHub APK for now.",
-  companions_tester_link: "Join the Android tester group",
+    "The Android Play test is live! Use the same Google account for both steps: join the group, then tap Become a tester in Play. Keep using JotDrop normally and stay opted in for 14 days. Switching from a GitHub APK needs a vault backup and app reinstall; read the instructions first.",
+  companions_tester_link: "1. Join tester group",
+  companions_tester_play: "2. Become a tester in Play",
+  play_tester_live_notice: "JotDrop's Android Play test is live! Help us reach 12 testers: use the app normally and stay opted in for 14 days. Joining the group alone is not enough. Read the two-step signup and safe APK switching instructions.",
+  play_tester_instructions: "Signup and safe switching instructions",
+  play_tester_not_now: "Not now",
 
   // Clip server (Chrome extension)
   settings_clip_server_section: "Web clipper (Chrome extension)",
@@ -430,8 +434,12 @@ const NL: Record<string, string> = {
     "Deze plugin is een derde van JotDrop. Installeer voor de volledige Google Keep-ervaring ook de gratis Android-app (delen vanuit elke app, OCR, spraakmemo's) en de Chrome-web-clipper. Alle drie komen samen in je vault.",
   companions_download: "⬇ Download de Android-app & web-clipper",
   companions_tester_blurb:
-    "Help JotDrop naar Google Play. Gebruik de app gewoon zoals altijd en word lid van de testgroep voor de officiële Play-aanmeldlink zodra de test begint. Groepslid worden start de 14 dagen nog niet; laat de GitHub-APK voorlopig staan.",
-  companions_tester_link: "Word lid van de Android-testgroep",
+    "De Android Play-test is live! Gebruik hetzelfde Google-account voor beide stappen: word groepslid en kies daarna Become a tester in Play. Gebruik JotDrop gewoon en blijf 14 dagen aangemeld. Overstappen van een GitHub-APK vereist een vaultback-up en herinstallatie; lees eerst de instructies.",
+  companions_tester_link: "1. Word groepslid",
+  companions_tester_play: "2. Word tester in Play",
+  play_tester_live_notice: "De Android Play-test van JotDrop is live! Help ons aan 12 testers: gebruik de app gewoon en blijf 14 dagen aangemeld. Alleen groepslid worden telt niet. Lees de twee aanmeldstappen en hoe je veilig van de APK overstapt.",
+  play_tester_instructions: "Aanmelden en veilig overstappen",
+  play_tester_not_now: "Niet nu",
 
   settings_clip_server_section: "Web-clipper (Chrome-extensie)",
   settings_clip_server_desc:

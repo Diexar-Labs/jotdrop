@@ -1,5 +1,5 @@
 import { Notice, Platform, Plugin, TFile, WorkspaceLeaf, normalizePath } from "obsidian";
-import { DEFAULT_SETTINGS, JotDropSettings, JotDropSettingTab } from "./settings";
+import { DEFAULT_SETTINGS, JotDropSettings, JotDropSettingTab, notifyPlayTest } from "./settings";
 import { JotDropView, VIEW_TYPE_JOTDROP } from "./view";
 import { QuickCaptureModal, createNoteInFolder } from "./capture";
 import { PreviewRescue } from "./previewRescue";
@@ -75,6 +75,7 @@ export default class JotDropPlugin extends Plugin {
     this.app.workspace.onLayoutReady(() => {
       this.reminderScheduler.scheduleAll();
       if (Platform.isDesktopApp) this.applyClipServerState();
+      void notifyPlayTest(this).catch((error) => console.error("JotDrop tester invitation:", error));
     });
 
     // Obsidian-URI fallback for the Chrome extension when the loopback server

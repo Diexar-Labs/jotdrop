@@ -38,6 +38,7 @@ export interface JotDropSettings {
    * choice of "modified-desc" by the user.
    */
   sortMigratedToCreated: boolean;
+  playTestLiveNoticeSeen: boolean;
 }
 
 export const DEFAULT_SETTINGS: JotDropSettings = {
@@ -52,7 +53,34 @@ export const DEFAULT_SETTINGS: JotDropSettings = {
   clipServerPort: 27124,
   clipServerToken: "",
   sortMigratedToCreated: false,
+  playTestLiveNoticeSeen: false,
 };
+
+export async function notifyPlayTest(plugin: JotDropPlugin): Promise<void> {
+  if (plugin.settings.playTestLiveNoticeSeen) return;
+  const message = document.createDocumentFragment();
+  const text = document.createElement("p");
+  text.textContent = t("play_tester_live_notice");
+  message.appendChild(text);
+  const link = document.createElement("a");
+  link.href = "https://github.com/Diexar-Labs/jotdrop#help-test-jotdrop-on-google-play";
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.textContent = t("play_tester_instructions");
+  message.appendChild(link);
+  const dismiss = document.createElement("button");
+  dismiss.textContent = t("play_tester_not_now");
+  message.appendChild(dismiss);
+  plugin.settings.playTestLiveNoticeSeen = true;
+  try {
+    await plugin.saveSettings();
+  } catch (error) {
+    plugin.settings.playTestLiveNoticeSeen = false;
+    throw error;
+  }
+  const notice = new Notice(message, 0);
+  dismiss.addEventListener("click", () => notice.hide());
+}
 
 export class JotDropSettingTab extends PluginSettingTab {
   plugin: JotDropPlugin;
@@ -101,6 +129,23 @@ export class JotDropSettingTab extends PluginSettingTab {
       },
     });
     testerLink.setText(t("companions_tester_link"));
+    companionsRow.createEl("a", {
+      cls: "jotdrop-support-button",
+      text: t("companions_tester_play"),
+      attr: {
+        href: "https://play.google.com/apps/testing/com.diexar.keepcapture",
+        target: "_blank",
+        rel: "noopener noreferrer",
+      },
+    });
+    companions.createEl("p").createEl("a", {
+      text: t("play_tester_instructions"),
+      attr: {
+        href: "https://github.com/Diexar-Labs/jotdrop#help-test-jotdrop-on-google-play",
+        target: "_blank",
+        rel: "noopener noreferrer",
+      },
+    });
 
     new Setting(containerEl)
       .setName(t("settings_notes_folder"))
