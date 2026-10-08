@@ -206,11 +206,11 @@ const EN: Record<string, string> = {
     "This plugin is one third of JotDrop. For the full Google Keep experience, also install the free Android app (share-sheet capture, OCR, voice memos) and the Chrome web clipper. All three meet in your vault.",
   companions_download: "⬇ Get the Android app & web clipper",
   companions_tester_blurb:
-    "The Android Play test is live! Use the same Google account for both steps: join the group, then tap Become a tester in Play. Keep using JotDrop normally and stay opted in for 14 days. Switching from a GitHub APK needs a vault backup and app reinstall; read the instructions first.",
-  companions_tester_link: "1. Join tester group",
-  companions_tester_play: "2. Become a tester in Play",
-  play_tester_live_notice: "JotDrop's Android Play test is live! Help us reach 12 testers: use the app normally and stay opted in for 14 days. Joining the group alone is not enough. Read the two-step signup and safe APK switching instructions.",
-  play_tester_instructions: "Signup and safe switching instructions",
+    "Use your existing Play Google account. Open step 1, choose Join group, then return here for step 2: Become a tester and download in Play. Already a group member? Skip to step 2. Stay in the group and opted in for 14 days. Before replacing a GitHub APK, confirm Play access and back up your vault; see switching help.",
+  companions_tester_link: "1. Get test access (join group)",
+  companions_tester_play: "2. Join and download in Play",
+  play_tester_live_notice: "Help test JotDrop on Google Play with your existing Google account. Step 1: choose Join group, then return here. Step 2: choose Become a tester and download. Already a group member? Go straight to step 2. Stay in the group and opted in for 14 days. Replacing the GitHub APK? Confirm Play access and back up your vault before uninstalling; see switching help.",
+  play_tester_instructions: "Help switching from the GitHub APK",
   play_tester_not_now: "Not now",
 
   // Clip server (Chrome extension)
@@ -434,11 +434,11 @@ const NL: Record<string, string> = {
     "Deze plugin is een derde van JotDrop. Installeer voor de volledige Google Keep-ervaring ook de gratis Android-app (delen vanuit elke app, OCR, spraakmemo's) en de Chrome-web-clipper. Alle drie komen samen in je vault.",
   companions_download: "⬇ Download de Android-app & web-clipper",
   companions_tester_blurb:
-    "De Android Play-test is live! Gebruik hetzelfde Google-account voor beide stappen: word groepslid en kies daarna Become a tester in Play. Gebruik JotDrop gewoon en blijf 14 dagen aangemeld. Overstappen van een GitHub-APK vereist een vaultback-up en herinstallatie; lees eerst de instructies.",
-  companions_tester_link: "1. Word groepslid",
-  companions_tester_play: "2. Word tester in Play",
-  play_tester_live_notice: "De Android Play-test van JotDrop is live! Help ons aan 12 testers: gebruik de app gewoon en blijf 14 dagen aangemeld. Alleen groepslid worden telt niet. Lees de twee aanmeldstappen en hoe je veilig van de APK overstapt.",
-  play_tester_instructions: "Aanmelden en veilig overstappen",
+    "Gebruik je bestaande Google-account van Play. Open stap 1, kies Lid worden van groep en kom hier terug voor stap 2: Become a tester en downloaden in Play. Al groepslid? Ga meteen naar stap 2. Blijf 14 dagen groepslid en aangemeld als tester. Bevestig Play-toegang en maak een vaultback-up voordat je een GitHub-APK vervangt; zie de overstaphulp.",
+  companions_tester_link: "1. Testtoegang krijgen (groepslid worden)",
+  companions_tester_play: "2. Aanmelden en downloaden in Play",
+  play_tester_live_notice: "Test JotDrop via Google Play met je bestaande Google-account. Stap 1: kies Lid worden van groep en kom hier terug. Stap 2: kies Become a tester en download. Al groepslid? Ga meteen naar stap 2. Blijf 14 dagen groepslid en aangemeld als tester. GitHub-APK vervangen? Bevestig Play-toegang en maak een vaultback-up voordat je de app verwijdert; zie de overstaphulp.",
+  play_tester_instructions: "Hulp bij overstappen van de GitHub-APK",
   play_tester_not_now: "Niet nu",
 
   settings_clip_server_section: "Web-clipper (Chrome-extensie)",

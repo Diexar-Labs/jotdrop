@@ -1,12 +1,14 @@
 # JotDrop Android Privacy Policy
 
-Last updated: October 5, 2026
+Last updated: October 8, 2026
 
 JotDrop (`com.diexar.keepcapture`) is a local-first Android notes app from Diexar Labs. Contact us at [eric@diexar.com](mailto:eric@diexar.com) about privacy questions.
 
 ## Your notes and media
 
-JotDrop does not require an account and does not send your notes, photos, voice memos, or OCR results to a Diexar Labs server. Markdown notes and their attachments are stored in the vault folder you select on your device. Photos you capture or share are saved there in their original quality; voice memos are recorded there as audio files. OCR runs on the device. JotDrop does not include analytics, advertising, or a crash-reporting service.
+JotDrop does not require an account and does not send your notes, photos, voice memos, or OCR results to a Diexar Labs server. Markdown notes and their attachments are stored in the vault folder you select on your device. Photos you capture or share are saved there in their original quality; voice memos are recorded there as audio files. OCR runs on the device. JotDrop does not include advertising, its own analytics, or a crash-reporting service.
+
+OCR uses Google's bundled ML Kit SDK. Google documents that this SDK sends limited device and app information, a per-installation identifier, and performance and usage metrics to Google over HTTPS for diagnostics and usage analytics. Images supplied for OCR and the recognized text are processed on-device, not sent to Google. See [ML Kit's data disclosure](https://developers.google.com/ml-kit/android-data-disclosure) and [privacy terms](https://developers.google.com/ml-kit/terms).
 
 If you choose to sync your vault with another app or service, such as Syncthing or Obsidian Sync, that service handles your files under its own privacy policy. The vault is not automatically encrypted by JotDrop. You can edit, export, or delete your files in your chosen folder at any time.
 
@@ -16,9 +18,11 @@ If you choose to sync your vault with another app or service, such as Syncthing 
 - JotDrop checks the public GitHub releases API for updates, at most once per day unless you request another check. GitHub receives the connection's IP address and the `JotDrop-Android` user-agent. No note contents are included.
 - Links to the voluntary Google Play tester group or Ko-fi open in your external browser only when you tap them. Those services process visits under their own policies; joining the tester group shares your Google account address with the group owner, not with other members.
 
+Starting with Android 0.28.9, JotDrop enforces HTTPS for preview requests, including redirects and preview images, and explicitly blocks cleartext traffic on all supported Android versions. Plain HTTP links can still be saved as notes, but their previews are not fetched. Version 0.28.8 and earlier builds may fetch HTTP previews without transport encryption on Android 8; update to 0.28.9 or later for this protection. GitHub update checks and ML Kit diagnostics use HTTPS. Device storage encryption does not encrypt network traffic. External browsers, speech services and vault-sync providers manage their own connections.
+
 ## Speech recognition
 
-Recording a voice memo stores audio in your vault without uploading it through JotDrop. Separately, if you tap speech-to-text, JotDrop hands your speech to the recognition service installed on your device. That service, often provided by Google, may process audio online under its own privacy policy. Speech-to-text is optional; JotDrop does not receive an audio copy from that service, only the recognized text you choose to put in your note.
+Recording a voice memo stores audio in your vault without uploading it through JotDrop. Separately, if you tap speech-to-text, JotDrop opens the recognition app installed on your device. That app, often provided by Google, captures your speech directly and may process audio online under its own privacy policy. Speech-to-text is optional; JotDrop does not send audio to that app or receive an audio copy from it, only the recognized text you choose to put in your note.
 
 ## Device access and backups
 

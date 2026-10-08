@@ -19,6 +19,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.FileProvider
 import java.io.File
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
@@ -667,9 +669,9 @@ private fun NotesListScreen(
         prefs.edit().putBoolean("play_tester_live_invite_seen", true).apply()
         showTesterInvite = false
     }
-    val openTesterInvite: () -> Unit = {
+    val openTesterLink: (String) -> Unit = { url ->
         try {
-            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/Diexar-Labs/jotdrop#help-test-jotdrop-on-google-play")))
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
         } catch (e: Exception) {
             Toast.makeText(context, context.getString(R.string.toast_error, e.message ?: ""), Toast.LENGTH_SHORT).show()
         }
@@ -859,7 +861,7 @@ private fun NotesListScreen(
                                     text = { Text(stringResource(R.string.play_tester_menu)) },
                                     onClick = {
                                         overflowOpen = false
-                                        openTesterInvite()
+                                        showTesterInvite = true
                                     },
                                 )
                                 DropdownMenuItem(
@@ -1056,15 +1058,24 @@ private fun NotesListScreen(
         AlertDialog(
             onDismissRequest = dismissTesterInvite,
             title = { Text(stringResource(R.string.play_tester_title)) },
-            text = { Text(stringResource(R.string.play_tester_message)) },
+            text = {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    Text(stringResource(R.string.play_tester_message))
+                    TextButton(onClick = {
+                        openTesterLink("https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fgroups.google.com%2Fg%2Fjotdrop-play-testers%2Fabout")
+                    }) { Text(stringResource(R.string.play_tester_join)) }
+                    TextButton(onClick = {
+                        openTesterLink("https://play.google.com/apps/testing/com.diexar.keepcapture")
+                    }) { Text(stringResource(R.string.play_tester_download)) }
+                }
+            },
             confirmButton = {
-                TextButton(onClick = {
-                    dismissTesterInvite()
-                    openTesterInvite()
-                }) { Text(stringResource(R.string.play_tester_join)) }
+                TextButton(onClick = dismissTesterInvite) { Text(stringResource(R.string.play_tester_later)) }
             },
             dismissButton = {
-                TextButton(onClick = dismissTesterInvite) { Text(stringResource(R.string.play_tester_later)) }
+                TextButton(onClick = {
+                    openTesterLink("https://github.com/Diexar-Labs/jotdrop#help-test-jotdrop-on-google-play")
+                }) { Text(stringResource(R.string.play_tester_help)) }
             },
         )
     }

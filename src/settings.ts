@@ -3,6 +3,9 @@ import type JotDropPlugin from "./main";
 import { legacyAssetsPath, normalizeAssetsFolder } from "./attachments";
 import { t } from "./i18n";
 
+const PLAY_TEST_GROUP_URL = "https://accounts.google.com/ServiceLogin?continue=https%3A%2F%2Fgroups.google.com%2Fg%2Fjotdrop-play-testers%2Fabout";
+const PLAY_TEST_URL = "https://play.google.com/apps/testing/com.diexar.keepcapture";
+
 function generateToken(): string {
   const bytes = new Uint8Array(24);
   crypto.getRandomValues(bytes);
@@ -62,6 +65,16 @@ export async function notifyPlayTest(plugin: JotDropPlugin): Promise<void> {
   const text = document.createElement("p");
   text.textContent = t("play_tester_live_notice");
   message.appendChild(text);
+  for (const [href, label] of [[PLAY_TEST_GROUP_URL, "companions_tester_link"], [PLAY_TEST_URL, "companions_tester_play"]] as const) {
+    const step = document.createElement("p");
+    const action = document.createElement("a");
+    action.href = href;
+    action.target = "_blank";
+    action.rel = "noopener noreferrer";
+    action.textContent = t(label);
+    step.appendChild(action);
+    message.appendChild(step);
+  }
   const link = document.createElement("a");
   link.href = "https://github.com/Diexar-Labs/jotdrop#help-test-jotdrop-on-google-play";
   link.target = "_blank";
@@ -120,20 +133,21 @@ export class JotDropSettingTab extends PluginSettingTab {
     });
     releasesLink.setText(t("companions_download"));
     companions.createEl("p", { text: t("companions_tester_blurb") });
-    const testerLink = companionsRow.createEl("a", {
+    const testerRow = companions.createDiv({ cls: "jotdrop-support-buttons" });
+    const testerLink = testerRow.createEl("a", {
       cls: "jotdrop-support-button",
       attr: {
-        href: "https://groups.google.com/g/jotdrop-play-testers/about",
+        href: PLAY_TEST_GROUP_URL,
         target: "_blank",
         rel: "noopener noreferrer",
       },
     });
     testerLink.setText(t("companions_tester_link"));
-    companionsRow.createEl("a", {
+    testerRow.createEl("a", {
       cls: "jotdrop-support-button",
       text: t("companions_tester_play"),
       attr: {
-        href: "https://play.google.com/apps/testing/com.diexar.keepcapture",
+        href: PLAY_TEST_URL,
         target: "_blank",
         rel: "noopener noreferrer",
       },

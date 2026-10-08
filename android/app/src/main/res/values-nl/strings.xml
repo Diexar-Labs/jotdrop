@@ -47,8 +47,10 @@
     <string name="action_settings">Instellingen</string>
     <string name="play_tester_menu">Doe mee aan de Google Play-test</string>
     <string name="play_tester_title">De Google Play-test is live!</string>
-    <string name="play_tester_message">Help ons aan 12 testers. Gebruik JotDrop gewoon en blijf 14 dagen aangemeld; geen testlijst. Word eerst groepslid en kies daarna Become a tester in Play met hetzelfde account. Overstappen van deze APK vereist een vaultback-up en herinstallatie. Lees de stappen voordat je iets verwijdert.</string>
-    <string name="play_tester_join">Bekijk de aanmeldstappen</string>
+    <string name="play_tester_message">Gebruik je bestaande Google-account van Play.\n\n1. Kies Lid worden van groep en kom hier terug. Al groepslid? Sla deze stap over.\n2. Kies Become a tester in Play en download.\n\nGebruik JotDrop gewoon en blijf 14 dagen groepslid en aangemeld als tester. Bevestig Play-toegang en maak een vaultback-up voordat je deze APK vervangt. De overstaphulp legt de herinstallatie uit.</string>
+    <string name="play_tester_join">1. Testtoegang krijgen (groepslid worden)</string>
+    <string name="play_tester_download">2. Aanmelden en downloaden in Play</string>
+    <string name="play_tester_help">Overstaphulp</string>
     <string name="play_tester_later">Niet nu</string>
     <string name="action_new_note">Nieuwe notitie</string>
     <string name="action_save">Opslaan</string>
