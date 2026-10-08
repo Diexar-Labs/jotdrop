@@ -32,6 +32,8 @@ The GitHub APK works without any registration; the Play test is an optional invi
 
 Already have Play access? Skip the email and go straight to step 2.
 
+**Existing group-based testers:** keep your current Play opt-in. While Google processes the access-method change, do not leave the old group or opt out. We have copied the existing group accounts into the email list; no new access request is needed. The group can remain an optional discussion channel after migration.
+
 **Already using the GitHub APK? Read this before uninstalling:** Play uses a different signing key and cannot update that APK in place. First confirm that Play offers the test to your account/device. Back up your vault and record its folder, note/attachment folder settings and other app preferences. Only then uninstall the GitHub JotDrop app, install from Play and select the same vault and folder settings. App preferences reset; external Markdown files are separate from the app, but keep a verified backup before switching. If Play says the test is unavailable, do not uninstall: check the Google account, allow time for access to propagate, then retry or ask for help.
 
 Feedback/help: [issue #10](https://github.com/Diexar-Labs/jotdrop/issues/10). Please share this invitation with another interested Android user. GitHub/Obtainium installs and extra phones using the same account do not count as additional Play testers.
