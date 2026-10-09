@@ -1,7 +1,7 @@
 /* JotDrop — Google Keep-stijl kaartjesweergave */
 
 .jotdrop-view {
-  padding: 16px 20px 32px;
+  padding: 0 20px 32px;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -25,7 +25,7 @@
   top: 0;
   z-index: 10;
   background: var(--background-primary);
-  padding-bottom: 8px;
+  padding: 16px 0 8px;
   border-bottom: 1px solid var(--background-modifier-border);
 }
 
