@@ -118,6 +118,9 @@
     <string name="audio_pause">Audio pauzeren</string>
     <string name="audio_load_failed">Audio niet beschikbaar</string>
     <string name="voice_memo_card_label">Voicememo</string>
+    <string name="recording_notification_title">Opname bezig</string>
+    <string name="recording_notification_channel_name">Voicememo opname</string>
+    <string name="recording_notification_channel_desc">Toont wanneer een voicememo-opname actief is.</string>
     <string name="action_insert_photo">Foto invoegen</string>
     <string name="action_take_photo">Foto maken</string>
     <string name="action_pick_from_gallery">Kies uit galerij</string>
@@ -161,7 +164,7 @@
     <string name="bulk_archive_title">%1$d notities archiveren?</string>
     <string name="bulk_archive_message">De notities worden verplaatst naar de Archive-submap.</string>
     <string name="bulk_delete_title">%1$d notities verwijderen?</string>
-    <string name="bulk_delete_message">Deze actie kan niet ongedaan worden gemaakt.</string>
+    <string name="bulk_delete_message">De notities gaan naar de prullenbak. Je kunt ze daar terugzetten.</string>
     <string name="toast_bulk_archived">%1$d notities gearchiveerd</string>
     <string name="toast_bulk_deleted">%1$d notities verwijderd</string>
     <string name="toast_bulk_partial">%1$d gedaan, %2$d mislukt</string>
@@ -188,7 +191,7 @@
     <string name="update_up_to_date">Je gebruikt de nieuwste versie (%1$s)</string>
 
     <string name="delete_title">Notitie verwijderen?</string>
-    <string name="delete_message">Deze actie kan niet ongedaan worden gemaakt.</string>
+    <string name="delete_message">Deze notitie naar de prullenbak verplaatsen? Je kunt hem daar terugzetten. Notities die al in de prullenbak staan worden definitief verwijderd.</string>
     <string name="archive_title">Notitie archiveren?</string>
     <string name="archive_message">De notitie wordt verplaatst naar de Archive-submap.</string>
 
@@ -211,4 +214,27 @@
     <string name="color_pink">Roze</string>
     <string name="color_brown">Bruin</string>
     <string name="color_gray">Grijs</string>
+    <string name="nav_open_menu">Navigatiemenu openen</string>
+    <string name="nav_notes">Notities</string>
+    <string name="nav_reminders">Herinneringen</string>
+    <string name="nav_labels">Labels</string>
+    <string name="nav_edit_labels">Labels bewerken</string>
+    <string name="nav_create_label">Nieuw label maken</string>
+    <string name="nav_assign_label">Label toevoegen aan geselecteerde notities</string>
+    <string name="nav_archive">Archief</string>
+    <string name="nav_trash">Prullenbak</string>
+    <string name="nav_help">Help en feedback</string>
+    <string name="nav_feedback">Probleem melden</string>
+    <string name="nav_help_message">Maak notities met +, neem voicememo\'s op, leg foto\'s vast of deel vanuit andere apps. Orden je notities met labels. Houd een kaart ingedrukt om notities te selecteren, een label toe te voegen, te archiveren of te verwijderen. Selecteer notities in Archief of Prullenbak en tik op Terugzetten om ze terug te plaatsen bij Notities. De prullenbak bewaart notities totdat je ze definitief verwijdert. Je notities blijven als Markdown-bestanden in je gekozen map staan.</string>
+    <string name="action_restore">Terugzetten naar Notities</string>
+    <string name="empty_collection">Geen notities in deze weergave.</string>
+    <string name="delete_permanent_message">Deze notities definitief verwijderen? Dit kan niet ongedaan worden gemaakt.</string>
+    <string name="label_rename">Label hernoemen</string>
+    <string name="label_delete">Label verwijderen</string>
+    <string name="label_delete_message">Label "%1$s" van alle notities verwijderen, ook in Archief en Prullenbak? De notities zelf blijven bestaan.</string>
+    <string name="label_invalid">Gebruik een niet-lege labelnaam zonder regelafbrekingen of besturingstekens.</string>
+    <string name="label_duplicate">Er bestaat al een label met deze naam.</string>
+    <string name="label_hint">Labels zijn collecties, los van tags. Spaties blijven behouden.</string>
+    <string name="label_search">Label zoeken of aanmaken</string>
+    <string name="label_create_first">Maak eerst een label in het navigatiemenu.</string>
 </resources>

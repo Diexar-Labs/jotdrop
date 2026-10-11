@@ -84,6 +84,7 @@ data class NoteMeta(
     val reminderLimit: Int? = null,
     // Aantal keren al afgegaan (niet-negatief, door de engine bijgehouden).
     val reminderDone: Int = 0,
+    val labels: List<String> = emptyList(),
 )
 
 data class ParsedNote(
@@ -126,6 +127,8 @@ object FrontmatterParser {
         var reminderDone = 0
         val tags = mutableListOf<String>()
         val seen = mutableSetOf<String>()
+        val labels = mutableListOf<String>()
+        val seenLabels = mutableSetOf<String>()
 
         val lines = yaml.split('\n')
         var i = 0
@@ -170,7 +173,10 @@ object FrontmatterParser {
                 "reminder_done" -> {
                     reminderDone = unquote(rawValue).trim().toIntOrNull()?.coerceAtLeast(0) ?: 0
                 }
-                "tags" -> {
+                "tags", "jotdrop_labels" -> {
+                    val isTag = key.equals("tags", true)
+                    val values = if (isTag) tags else labels
+                    val seenValues = if (isTag) seen else seenLabels
                     if (rawValue.isEmpty()) {
                         // Block-style list — kijk naar volgende '- value' regels
                         var j = i + 1
@@ -179,7 +185,7 @@ object FrontmatterParser {
                             val nextTrim = next.trim()
                             if (nextTrim.startsWith("- ")) {
                                 val v = unquote(nextTrim.substring(2).trim())
-                                if (v.isNotBlank()) addUnique(tags, seen, v)
+                                if (v.isNotBlank()) addUnique(values, seenValues, v, isTag)
                                 j++
                             } else if (nextTrim.isEmpty()) {
                                 j++
@@ -193,14 +199,16 @@ object FrontmatterParser {
                         val inner = rawValue.substring(1, rawValue.length - 1)
                         for (part in splitInlineList(inner)) {
                             val v = unquote(part.trim())
-                            if (v.isNotBlank()) addUnique(tags, seen, v)
+                            if (v.isNotBlank()) addUnique(values, seenValues, v, isTag)
                         }
-                    } else {
+                    } else if (isTag) {
                         // Comma- of whitespace-separated string
                         for (part in rawValue.split(Regex("[,\\s]+"))) {
                             val v = unquote(part.trim())
                             if (v.isNotBlank()) addUnique(tags, seen, v)
                         }
+                    } else {
+                        addUnique(labels, seenLabels, unquote(rawValue), false)
                     }
                 }
             }
@@ -216,6 +224,7 @@ object FrontmatterParser {
             reminderUntil = reminderUntil,
             reminderLimit = reminderLimit,
             reminderDone = reminderDone,
+            labels = labels.toList(),
         )
     }
 
@@ -229,7 +238,9 @@ object FrontmatterParser {
             val first = value.first()
             val last = value.last()
             if ((first == '"' && last == '"') || (first == '\'' && last == '\'')) {
-                return value.substring(1, value.length - 1)
+                val inner = value.substring(1, value.length - 1)
+                return if (first == '"') inner.replace(Regex("\\\\([\\\\\"])")) { it.groupValues[1] }
+                else inner.replace("''", "'")
             }
         }
         return value
@@ -242,7 +253,18 @@ object FrontmatterParser {
         val parts = mutableListOf<String>()
         val sb = StringBuilder()
         var quote: Char? = null
+        var escaped = false
         for (ch in input) {
+            if (escaped) {
+                sb.append(ch)
+                escaped = false
+                continue
+            }
+            if (quote == '"' && ch == '\\') {
+                sb.append(ch)
+                escaped = true
+                continue
+            }
             when {
                 quote == null && (ch == '"' || ch == '\'') -> { quote = ch; sb.append(ch) }
                 quote == ch -> { quote = null; sb.append(ch) }
@@ -254,8 +276,8 @@ object FrontmatterParser {
         return parts.map { it.trim() }.filter { it.isNotEmpty() }
     }
 
-    private fun addUnique(target: MutableList<String>, seen: MutableSet<String>, value: String) {
-        val clean = value.removePrefix("#").trim()
+    private fun addUnique(target: MutableList<String>, seen: MutableSet<String>, value: String, isTag: Boolean = true) {
+        val clean = (if (isTag) value.removePrefix("#") else value).trim()
         if (clean.isEmpty()) return
         val k = clean.lowercase()
         if (seen.add(k)) target.add(clean)
@@ -275,7 +297,13 @@ object FrontmatterWriter {
      * blijven, gewijzigde keys worden bijgewerkt, en lege waardes worden
      * verwijderd.
      */
-    fun apply(content: String, meta: NoteMeta): String {
+    fun apply(content: String, meta: NoteMeta, labels: List<String>? = null): String =
+        write(content, meta, labels, labelsOnly = false)
+
+    fun applyLabels(content: String, labels: List<String>): String =
+        write(content, NoteMeta(), labels, labelsOnly = true)
+
+    private fun write(content: String, meta: NoteMeta, labels: List<String>?, labelsOnly: Boolean): String {
         val parsed = FrontmatterParser.parse(content)
         val existingLines = if (parsed.frontmatter.isNotEmpty()) {
             extractYamlLines(parsed.frontmatter)
@@ -284,10 +312,10 @@ object FrontmatterWriter {
         }
 
         val newLines = mutableListOf<String>()
-        val handled = setOf(
+        val handled = if (labelsOnly) setOf("jotdrop_labels") else setOf(
             "color", "tags", "pinned", "order", "reminder",
             "reminder_repeat", "reminder_until", "reminder_limit", "reminder_done",
-        )
+        ) + if (labels != null) setOf("jotdrop_labels") else emptySet()
 
         // Bewaar onbekende keys in originele volgorde, sla blocks voor handled keys over.
         var i = 0
@@ -321,38 +349,42 @@ object FrontmatterWriter {
         }
 
         // Voeg onze velden achteraan toe (alleen als niet default/leeg).
-        if (meta.pinned) {
-            newLines.add("pinned: true")
-        }
-        if (meta.order != null) {
-            newLines.add("order: ${formatOrder(meta.order)}")
-        }
-        if (meta.color != NoteColor.DEFAULT) {
-            newLines.add("color: ${meta.color.key}")
-        }
-        if (meta.tags.isNotEmpty()) {
-            val flat = meta.tags.joinToString(", ") { yamlScalar(it) }
-            newLines.add("tags: [${flat}]")
-        }
-        if (!meta.reminder.isNullOrBlank()) {
-            newLines.add("reminder: ${yamlScalar(meta.reminder)}")
-            if (!meta.reminderRepeat.isNullOrBlank()) {
-                newLines.add("reminder_repeat: ${yamlScalar(meta.reminderRepeat)}")
+        if (!labelsOnly) {
+            if (meta.pinned) {
+                newLines.add("pinned: true")
             }
-            if (!meta.reminderUntil.isNullOrBlank()) {
-                // Geciteerd: ongequote `2026-12-31` parst Obsidian als Date, waardoor
-                // de plugin de eindgrens niet meer als string terugleest.
-                newLines.add("reminder_until: ${yamlString(meta.reminderUntil)}")
+            if (meta.order != null) {
+                newLines.add("order: ${formatOrder(meta.order)}")
             }
-            if (meta.reminderLimit != null && meta.reminderLimit > 0) {
-                newLines.add("reminder_limit: ${meta.reminderLimit}")
+            if (meta.color != NoteColor.DEFAULT) {
+                newLines.add("color: ${meta.color.key}")
             }
-            if (meta.reminderDone > 0) {
-                newLines.add("reminder_done: ${meta.reminderDone}")
+            if (meta.tags.isNotEmpty()) {
+                val flat = meta.tags.joinToString(", ") { yamlScalar(it) }
+                newLines.add("tags: [${flat}]")
+            }
+            if (!meta.reminder.isNullOrBlank()) {
+                newLines.add("reminder: ${yamlScalar(meta.reminder)}")
+                if (!meta.reminderRepeat.isNullOrBlank()) {
+                    newLines.add("reminder_repeat: ${yamlScalar(meta.reminderRepeat)}")
+                }
+                if (!meta.reminderUntil.isNullOrBlank()) {
+                    // Quote dates so Obsidian reads strings, not Date objects.
+                    newLines.add("reminder_until: ${yamlString(meta.reminderUntil)}")
+                }
+                if (meta.reminderLimit != null && meta.reminderLimit > 0) {
+                    newLines.add("reminder_limit: ${meta.reminderLimit}")
+                }
+                if (meta.reminderDone > 0) {
+                    newLines.add("reminder_done: ${meta.reminderDone}")
+                }
             }
         }
-
-        val body = parsed.body.removePrefix("\n")
+        // Only explicit collection edits touch memberships; ordinary metadata edits preserve them.
+        if (!labels.isNullOrEmpty()) {
+            newLines.add("jotdrop_labels: [${labels.joinToString(", ") { yamlString(it) }}]")
+        }
+        val body = if (labelsOnly) parsed.body else parsed.body.removePrefix("\n")
         return if (newLines.isEmpty()) {
             body
         } else {
@@ -392,7 +424,7 @@ object FrontmatterWriter {
     }
 
     /** Forceert dubbele quotes (voor datum-achtige scalars die YAML als Date zou parsen). */
-    private fun yamlString(value: String): String = "\"" + value.replace("\"", "\\\"") + "\""
+    private fun yamlString(value: String): String = "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
     /** Schrijft een eindig Double als schone decimale scalar (nooit scientific notation). */
     private fun formatOrder(value: Double): String {

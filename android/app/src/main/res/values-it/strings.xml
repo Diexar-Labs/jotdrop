@@ -1,8 +1,33 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-  Italian (it) — placeholder. Until translations are added, Android falls back
-  to the default English values/strings.xml. Copy keys from values/strings.xml
-  and translate one by one.
--->
 <resources>
+    <string name="nav_open_menu">Apri menu di navigazione</string>
+    <string name="nav_notes">Note</string>
+    <string name="nav_reminders">Promemoria</string>
+    <string name="nav_labels">Etichette</string>
+    <string name="nav_edit_labels">Modifica etichette</string>
+    <string name="nav_create_label">Crea etichetta</string>
+    <string name="nav_assign_label">Aggiungi etichetta alle note selezionate</string>
+    <string name="nav_archive">Archivio</string>
+    <string name="nav_trash">Cestino</string>
+    <string name="nav_help">Aiuto e feedback</string>
+    <string name="nav_feedback">Segnala un problema</string>
+    <string name="nav_help_message">Crea note con +, registra memo vocali, cattura foto o condividi da altre app. Organizza le tue note con le etichette. Tieni premuta una card per selezionare note, aggiungere un\'etichetta, archiviare o eliminare. Seleziona note in Archivio o Cestino e tocca Ripristina per riportarle nelle Note. Il Cestino conserva le note finché non le elimini permanentemente. Le tue note rimangono nella cartella scelta come file Markdown.</string>
+    <string name="action_restore">Ripristina in Note</string>
+    <string name="empty_collection">Nessuna nota in questa visualizzazione.</string>
+    <string name="delete_title">Elimina nota?</string>
+    <string name="delete_message">Spostare questa nota nel Cestino? Puoi ripristinarla lì. Le note già nel Cestino vengono eliminate permanentemente.</string>
+    <string name="bulk_delete_title">Eliminare %1$d note?</string>
+    <string name="bulk_delete_message">Le note verranno spostate nel Cestino. Puoi ripristinarle lì.</string>
+    <string name="delete_permanent_message">Eliminare permanentemente queste note? Questo non può essere annullato.</string>
+    <string name="label_rename">Rinomina etichetta</string>
+    <string name="label_delete">Elimina etichetta</string>
+    <string name="label_delete_message">Rimuovere l\'etichetta "%1$s" da tutte le note, inclusi Archivio e Cestino? Le note stesse non verranno eliminate.</string>
+    <string name="label_invalid">Inserisci un nome non vuoto, senza interruzioni di riga o caratteri di controllo.</string>
+    <string name="label_duplicate">Esiste già un\'etichetta con questo nome.</string>
+    <string name="label_hint">Le etichette sono raccolte separate dai tag. Gli spazi vengono conservati.</string>
+    <string name="label_search">Cerca o crea una etichetta</string>
+    <string name="label_create_first">Crea prima un\'etichetta nel menu di navigazione.</string>
+    <string name="recording_notification_title">Registrazione attiva</string>
+    <string name="recording_notification_channel_name">Registrazione memo vocale</string>
+    <string name="recording_notification_channel_desc">Viene mostrato quando una registrazione di memo vocale è attiva.</string>
 </resources>

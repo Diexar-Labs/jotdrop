@@ -38,6 +38,7 @@ export function colorLabel(name: ColorName): string {
 export interface NoteMeta {
   color: ColorName;
   tags: string[];
+  labels: string[];
   pinned: boolean;
   /** ISO 8601 local datetime string ("YYYY-MM-DDTHH:mm") for a reminder, or null. */
   reminder: string | null;
@@ -56,6 +57,7 @@ export interface NoteMeta {
 export const DEFAULT_META: NoteMeta = {
   color: "default",
   tags: [],
+  labels: [],
   pinned: false,
   reminder: null,
   reminderRepeat: null,
@@ -67,6 +69,19 @@ export const DEFAULT_META: NoteMeta = {
 
 export function isColorName(value: unknown): value is ColorName {
   return typeof value === "string" && (COLOR_NAMES as string[]).includes(value);
+}
+
+export function readLabels(value: unknown): string[] {
+  const values = Array.isArray(value) ? value : typeof value === "string" ? [value] : [];
+  const seen = new Set<string>();
+  return values.filter((label): label is string => typeof label === "string")
+    .map((label) => label.trim())
+    .filter((label) => {
+      const key = label.toLowerCase();
+      if (!label || /[\x00-\x1f\x7f-\x9f]/.test(label) || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
 }
 
 /**
@@ -98,6 +113,8 @@ export function readMeta(app: App, file: TFile): NoteMeta {
   // social-media posts (#fyp, #trending) pollute the card chips and the
   // vault-wide graph view. User tags come via the capture/edit chip UI
   // and land neatly in frontmatter.
+
+  const labels = readLabels(fm.jotdrop_labels);
 
   const pinned = fm.pinned === true || fm.pinned === "true";
 
@@ -142,7 +159,7 @@ export function readMeta(app: App, file: TFile): NoteMeta {
     order = fm.order;
   }
 
-  return { color, tags, pinned, reminder, reminderRepeat, reminderUntil, reminderLimit, reminderDone, order };
+  return { color, tags, labels, pinned, reminder, reminderRepeat, reminderUntil, reminderLimit, reminderDone, order };
 }
 
 /**
@@ -175,6 +192,11 @@ export async function updateMeta(
         .filter((t) => t.length > 0);
       if (cleaned.length === 0) delete fm.tags;
       else fm.tags = Array.from(new Set(cleaned));
+    }
+    if (patch.labels !== undefined) {
+      const cleaned = readLabels(patch.labels);
+      if (cleaned.length === 0) delete fm.jotdrop_labels;
+      else fm.jotdrop_labels = cleaned;
     }
     if (patch.reminder !== undefined) {
       if (patch.reminder === null || patch.reminder === "") {
@@ -209,6 +231,19 @@ export async function updateMeta(
       if (patch.order === null || !Number.isFinite(patch.order)) delete fm.order;
       else fm.order = patch.order;
     }
+  });
+}
+
+/**
+ * Applies labels to a note via processFrontMatter, preserving all other
+ * frontmatter fields and the body. Only the `jotdrop_labels` field is
+ * touched. YAML serialization may normalize the tag-block representation.
+ */
+export async function applyLabels(app: App, file: TFile, labels: string[]): Promise<void> {
+  await app.fileManager.processFrontMatter(file, (fm: Record<string, unknown>) => {
+    const cleaned = readLabels(labels);
+    if (cleaned.length === 0) delete fm.jotdrop_labels;
+    else fm.jotdrop_labels = cleaned;
   });
 }
 

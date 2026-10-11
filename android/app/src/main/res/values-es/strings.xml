@@ -1,8 +1,33 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-  Spanish (es) — placeholder. Until translations are added, Android falls back
-  to the default English values/strings.xml. Copy keys from values/strings.xml
-  and translate one by one.
--->
 <resources>
+    <string name="nav_open_menu">Abrir menú de navegación</string>
+    <string name="nav_notes">Notas</string>
+    <string name="nav_reminders">Recordatorios</string>
+    <string name="nav_labels">Etiquetas</string>
+    <string name="nav_edit_labels">Editar etiquetas</string>
+    <string name="nav_create_label">Crear etiqueta</string>
+    <string name="nav_assign_label">Añadir etiqueta a notas seleccionadas</string>
+    <string name="nav_archive">Archivo</string>
+    <string name="nav_trash">Papelera</string>
+    <string name="nav_help">Ayuda y comentarios</string>
+    <string name="nav_feedback">Reportar un problema</string>
+    <string name="nav_help_message">Crea notas con +, graba memorias de voz, captura fotos o comparte desde otras apps. Organiza tus notas con etiquetas. Mantén presionada una tarjeta para seleccionar notas, añadir una etiqueta, archivar o eliminar. Selecciona notas en Archivo o Papelera y toca Restaurar para devolverlas a Notas. La Papelera conserva las notas hasta que las elimines permanentemente. Tus notas permanecen en la carpeta elegida como archivos Markdown.</string>
+    <string name="action_restore">Restaurar a Notas</string>
+    <string name="empty_collection">No hay notas en esta vista.</string>
+    <string name="delete_title">¿Eliminar nota?</string>
+    <string name="delete_message">¿Mover esta nota a la Papelera? Puedes restaurarla allí. Las notas ya en la Papelera se eliminan permanentemente.</string>
+    <string name="bulk_delete_title">¿Eliminar %1$d notas?</string>
+    <string name="bulk_delete_message">Las notas se moverán a la Papelera. Puedes restaurarlas allí.</string>
+    <string name="delete_permanent_message">¿Eliminar permanentemente estas notas? Esto no se puede deshacer.</string>
+    <string name="label_rename">Renombrar etiqueta</string>
+    <string name="label_delete">Eliminar etiqueta</string>
+    <string name="label_delete_message">¿Eliminar la etiqueta "%1$s" de todas las notas, incluyendo Archivo y Papelera? Las notas en sí no se eliminarán.</string>
+    <string name="label_invalid">Introduce un nombre no vacío, sin saltos de línea ni caracteres de control.</string>
+    <string name="label_duplicate">Ya existe una etiqueta con este nombre.</string>
+    <string name="label_hint">Las etiquetas son colecciones, separadas de los tags. Los espacios se conservan.</string>
+    <string name="label_search">Buscar o crear una etiqueta</string>
+    <string name="label_create_first">Crea una etiqueta en el menú de navegación primero.</string>
+    <string name="recording_notification_title">Grabación activa</string>
+    <string name="recording_notification_channel_name">Grabación de memorias de voz</string>
+    <string name="recording_notification_channel_desc">Se muestra cuando una grabación de memoria de voz está activa.</string>
 </resources>

@@ -5,11 +5,14 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
+import android.os.SystemClock
+import android.util.Log
 import android.text.format.DateUtils
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.activity.compose.ReportDrawnWhen
 import androidx.activity.enableEdgeToEdge
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
@@ -62,6 +65,9 @@ import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Label
+import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.Mic
@@ -89,6 +95,9 @@ import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.DrawerValue
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -108,6 +117,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -132,6 +142,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import java.text.SimpleDateFormat
@@ -140,6 +152,8 @@ import com.diexar.keepcapture.ui.JotDropTheme
 import com.diexar.keepcapture.ui.noteCardBrush
 import com.diexar.keepcapture.ui.screenBackgroundBrush
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -168,6 +182,9 @@ import kotlin.math.roundToInt
 class NotesListActivity : ComponentActivity() {
 
     private val notesState = MutableStateFlow<NotesUiState>(NotesUiState.Loading)
+    private val folderFlow = MutableStateFlow(NoteFolder.NOTES)
+    private val labelsState = MutableStateFlow<List<String>>(emptyList())
+    private var loadJob: Job? = null
     private var stateEpoch = 0L
     private var pendingCameraUri: Uri? = null
     private var pendingCameraFile: File? = null
@@ -177,12 +194,13 @@ class NotesListActivity : ComponentActivity() {
 
     // Sorteermodus (newest/manual), gepersisteerd in prefs. Gedeeld met Compose
     // zodat de top-bar het actieve vinkje kan tonen en de grid weet of slepen aan staat.
-    private val sortModeFlow = MutableStateFlow(NoteSortMode.NEWEST)
+    private val sortModeFlow = MutableStateFlow(NoteSortMode.MANUAL)
 
     // Voicememo-state — gedeeld met Compose via StateFlow zodat de FAB van
     // icoon kan wisselen (mic ↔ stop) en de confirm-dialog open kan klappen.
-    private val isRecording = MutableStateFlow(false)
-    private val pendingMemo = MutableStateFlow<VoiceMemoRecorder.RecordedMemo?>(null)
+    private val isRecording = VoiceMemoRecordingService.recording
+    private val pendingMemo = VoiceMemoRecordingService.pending
+    private val isSavingMemo = VoiceMemoSave.saving
     private val recorder by lazy { VoiceMemoRecorder(applicationContext) }
 
     private val recordPermissionLauncher = registerForActivityResult(
@@ -224,19 +242,50 @@ class NotesListActivity : ComponentActivity() {
         installSplashScreen()
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        VoiceMemoRecordingService.restorePending(this)
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch {
+                    VoiceMemoRecordingService.failure.collect { message ->
+                        if (message != null) {
+                            Toast.makeText(this@NotesListActivity, getString(R.string.toast_error, message), Toast.LENGTH_LONG).show()
+                            VoiceMemoRecordingService.failure.value = null
+                        }
+                    }
+                }
+                launch {
+                    VoiceMemoSave.saved.collect { filename ->
+                        if (filename != null) {
+                            VoiceMemoSave.saved.value = null
+                            Toast.makeText(this@NotesListActivity, getString(R.string.toast_saved, filename), Toast.LENGTH_SHORT).show()
+                            reload()
+                        }
+                    }
+                }
+            }
+        }
         sortModeFlow.value = Storage.getSortMode(this)
         setContent {
             JotDropTheme {
                 NotesListScreen(
                     stateFlow = notesState.asStateFlow(),
+                    folderFlow = folderFlow.asStateFlow(),
+                    labelsFlow = labelsState.asStateFlow(),
+                    onFolderChange = { next ->
+                        if (folderFlow.value != next) {
+                            folderFlow.value = next
+                            notesState.value = NotesUiState.Loading
+                            reload()
+                        }
+                    },
                     sortModeFlow = sortModeFlow.asStateFlow(),
                     onRefresh = { reload(rescheduleReminders = true) },
                     onOpenSettings = {
                         startActivity(Intent(this, MainActivity::class.java))
                     },
-                    onNewNote = {
+                    onNewNote = { label ->
                         if (requireVaultOrPromptSettings()) {
-                            startActivity(EditorActivity.newNoteIntent(this))
+                            startActivity(EditorActivity.newNoteIntent(this, label))
                         }
                     },
                     onTakePhoto = {
@@ -253,6 +302,7 @@ class NotesListActivity : ComponentActivity() {
                     },
                     isRecordingFlow = isRecording.asStateFlow(),
                     pendingMemoFlow = pendingMemo.asStateFlow(),
+                    isSavingMemoFlow = isSavingMemo.asStateFlow(),
                     onToggleRecord = { handleRecordToggle() },
                     onSaveMemo = { memo -> saveMemo(memo) },
                     onDiscardMemo = { discardPendingMemo() },
@@ -365,26 +415,54 @@ class NotesListActivity : ComponentActivity() {
         reload(rescheduleReminders = true)
     }
 
+    override fun onStop() {
+        loadJob?.cancel()
+        super.onStop()
+    }
+
     private fun reload(rescheduleReminders: Boolean = false) {
+        loadJob?.cancel()
         if (Storage.getVaultUri(this) == null) {
+            labelsState.value = emptyList()
             notesState.value = NotesUiState.NoVault
             return
         }
         val requestEpoch = ++stateEpoch
+        val folder = folderFlow.value
+        val startedAt = SystemClock.elapsedRealtime()
+        labelsState.value = Storage.getLabels(this)
         if (notesState.value !is NotesUiState.Loaded) notesState.value = NotesUiState.Loading
-        lifecycleScope.launch {
+        loadJob = lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
-                val loaded = Storage.listNotes(this@NotesListActivity)
-                if (rescheduleReminders && loaded.isSuccess &&
-                    ReminderScheduler.rescheduleAll(this@NotesListActivity, loaded.getOrThrow())) {
-                    Storage.listNotes(this@NotesListActivity)
-                } else loaded
+                Storage.noteWriteMutex.withLock { Storage.listNotes(this@NotesListActivity, folder) }
             }
             if (requestEpoch != stateEpoch) return@launch
             notesState.value = result.fold(
                 onSuccess = { NotesUiState.Loaded(sortNotes(it, sortModeFlow.value)) },
                 onFailure = { NotesUiState.Error(it.message ?: getString(R.string.error_unknown)) },
             )
+            val notes = result.getOrNull() ?: return@launch
+            Log.i("JotDropStartup", "cards_ready_ms=${SystemClock.elapsedRealtime() - startedAt}; count=${notes.size}")
+
+            // Publish cards first. Discovery and overdue reminders must not hold the spinner open.
+            val maintenanceStarted = SystemClock.elapsedRealtime()
+            val updated = withContext(Dispatchers.IO) {
+                Storage.refreshLabels(this@NotesListActivity)
+                currentCoroutineContext().ensureActive()
+                if (folder == NoteFolder.NOTES && rescheduleReminders &&
+                    ReminderScheduler.rescheduleAll(this@NotesListActivity, notes)) {
+                    Storage.noteWriteMutex.withLock {
+                        notes.map { note ->
+                            if (note.meta.reminderRepeat != null) Storage.refreshNoteSummary(this@NotesListActivity, note) ?: note
+                            else note
+                        }
+                    }
+                } else null
+            }
+            if (requestEpoch != stateEpoch) return@launch
+            labelsState.value = Storage.getLabels(this@NotesListActivity)
+            if (updated != null) notesState.value = NotesUiState.Loaded(sortNotes(updated, sortModeFlow.value))
+            Log.i("JotDropStartup", "maintenance_ms=${SystemClock.elapsedRealtime() - maintenanceStarted}")
         }
     }
 
@@ -457,7 +535,6 @@ class NotesListActivity : ComponentActivity() {
     }
 
     private fun stopAndShowConfirm() {
-        isRecording.value = false
         recorder.stopAndFinalize().onSuccess { memo ->
             pendingMemo.value = memo
         }.onFailure { err ->
@@ -470,43 +547,22 @@ class NotesListActivity : ComponentActivity() {
     }
 
     private fun saveMemo(memo: VoiceMemoRecorder.RecordedMemo) {
-        pendingMemo.value = null
         stateEpoch++
-        lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                Storage.saveVoiceMemoNote(this@NotesListActivity, memo.file, memo.durationMs)
-            }
-            result.onSuccess { filename ->
-                Toast.makeText(
-                    this@NotesListActivity,
-                    getString(R.string.toast_saved, filename),
-                    Toast.LENGTH_SHORT,
-                ).show()
-                reload()
-            }.onFailure { err ->
-                memo.file.delete()
-                Toast.makeText(
-                    this@NotesListActivity,
-                    getString(R.string.toast_error, err.message ?: "onbekende fout"),
-                    Toast.LENGTH_SHORT,
-                ).show()
-            }
-        }
+        val app = applicationContext
+        VoiceMemoSave.save(
+            action = {
+                Storage.noteWriteMutex.withLock {
+                    Storage.saveVoiceMemoNote(app, memo.file, memo.durationMs)
+                }
+            },
+            onSaved = { VoiceMemoRecordingService.clearPending(app) },
+        )
     }
 
     private fun discardPendingMemo() {
+        if (isSavingMemo.value) return
         pendingMemo.value?.file?.delete()
-        pendingMemo.value = null
-    }
-
-    override fun onStop() {
-        // Veilig opruimen als gebruiker tijdens opname de app verlaat — voorkomt
-        // dat de mic vast blijft staan voor andere apps.
-        if (isRecording.value) {
-            recorder.discard()
-            isRecording.value = false
-        }
-        super.onStop()
+        recorder.clearPending()
     }
 
     private fun togglePin(note: NoteSummary) {
@@ -636,16 +692,20 @@ sealed interface NotesUiState {
 @Composable
 private fun NotesListScreen(
     stateFlow: StateFlow<NotesUiState>,
+    folderFlow: StateFlow<NoteFolder>,
+    labelsFlow: StateFlow<List<String>>,
+    onFolderChange: (NoteFolder) -> Unit,
     sortModeFlow: StateFlow<NoteSortMode>,
     onRefresh: () -> Unit,
     onOpenSettings: () -> Unit,
-    onNewNote: () -> Unit,
+    onNewNote: (String?) -> Unit,
     onTakePhoto: () -> Unit,
     onPickPhoto: () -> Unit,
     onOcrCamera: () -> Unit,
     onOcrGallery: () -> Unit,
     isRecordingFlow: StateFlow<Boolean>,
     pendingMemoFlow: StateFlow<VoiceMemoRecorder.RecordedMemo?>,
+    isSavingMemoFlow: StateFlow<Boolean>,
     onToggleRecord: () -> Unit,
     onSaveMemo: (VoiceMemoRecorder.RecordedMemo) -> Unit,
     onDiscardMemo: () -> Unit,
@@ -657,7 +717,11 @@ private fun NotesListScreen(
 ) {
     val isRecording by isRecordingFlow.collectAsState()
     val pendingMemo by pendingMemoFlow.collectAsState()
+    val isSavingMemo by isSavingMemoFlow.collectAsState()
     val state by stateFlow.collectAsState()
+    val folder by folderFlow.collectAsState()
+    val storedLabels by labelsFlow.collectAsState()
+    ReportDrawnWhen { state !is NotesUiState.Loading }
     val sortMode by sortModeFlow.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -700,6 +764,12 @@ private fun NotesListScreen(
     var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
     var overflowOpen by remember { mutableStateOf(false) }
     var sortMenuOpen by remember { mutableStateOf(false) }
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    var remindersOnly by remember { mutableStateOf(false) }
+    var labelManagerOpen by remember { mutableStateOf(false) }
+    var selectedLabel by rememberSaveable { mutableStateOf<String?>(null) }
+    var bulkLabelsOpen by remember { mutableStateOf(false) }
+    var helpOpen by remember { mutableStateOf(false) }
 
     // Eenmalige, throttled update-check (max 1x/dag) bij openen van het dashboard.
     // Banner verschijnt alleen als de gevonden versie niet eerder is weggetikt.
@@ -725,7 +795,12 @@ private fun NotesListScreen(
             .map { it.key }
     }
     val allTagsAlpha = remember(loadedNotes) {
-        loadedNotes.flatMap { it.meta.tags }.distinct().sortedBy { it.lowercase() }
+        loadedNotes.flatMap { it.meta.tags }
+            .distinctBy { it.lowercase() }.sortedBy { it.lowercase() }
+    }
+    val allLabels = remember(loadedNotes, storedLabels) {
+        (storedLabels + loadedNotes.flatMap { it.meta.labels })
+            .distinctBy { it.lowercase() }.sortedBy { it.lowercase() }
     }
     val visibleTags = remember(tagsByFrequency, selectedTags) {
         val top = tagsByFrequency.take(TAG_CHIPS_TOP_N)
@@ -733,9 +808,11 @@ private fun NotesListScreen(
         (top + extraSelected).distinct()
     }
     val overflowCount = (tagsByFrequency.size - visibleTags.size).coerceAtLeast(0)
-    val filtered = remember(loadedNotes, searchQuery, selectedTags) {
+    val filtered = remember(loadedNotes, searchQuery, selectedTags, selectedLabel, remindersOnly) {
         if (loadedNotes.isEmpty()) emptyList()
-        else applyFilters(loadedNotes, searchQuery, selectedTags)
+        else applyFilters(loadedNotes, searchQuery, selectedTags, selectedLabel).filter {
+            !remindersOnly || !it.meta.reminder.isNullOrBlank()
+        }
     }
 
     // Selection-helpers — gewone lambdas (geen @Composable) zodat ze in callbacks/
@@ -773,6 +850,35 @@ private fun NotesListScreen(
     // BackHandler: in selection-mode vangt back-button af om uit te stappen
     // in plaats van naar het systeem-home-scherm te gaan.
     BackHandler(enabled = selectionMode) { exitSelection() }
+    BackHandler(enabled = !selectionMode && drawerState.isOpen) {
+        scope.launch { drawerState.close() }
+    }
+    BackHandler(enabled = !selectionMode && !drawerState.isOpen &&
+        (folder != NoteFolder.NOTES || remindersOnly || selectedTags.isNotEmpty() || selectedLabel != null)) {
+        onFolderChange(NoteFolder.NOTES)
+        remindersOnly = false
+        selectedTags = emptySet()
+        selectedLabel = null
+        searchQuery = ""
+    }
+
+    fun navigate(next: NoteFolder, reminders: Boolean, label: String?) {
+        exitSelection()
+        searchQuery = ""
+        remindersOnly = reminders
+        selectedTags = emptySet()
+        selectedLabel = label
+        onFolderChange(next)
+        scope.launch { drawerState.close() }
+    }
+
+    val screenTitle = when {
+        folder == NoteFolder.ARCHIVE -> stringResource(R.string.nav_archive)
+        folder == NoteFolder.TRASH -> stringResource(R.string.nav_trash)
+        remindersOnly -> stringResource(R.string.nav_reminders)
+        selectedLabel != null -> selectedLabel!!
+        else -> stringResource(R.string.app_name)
+    }
 
     val onUrlClick: (String) -> Unit = { url ->
         scope.launch {
@@ -799,6 +905,28 @@ private fun NotesListScreen(
         }
     }
 
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        gesturesEnabled = !selectionMode && !isRecording,
+        drawerContent = {
+            JotDropDrawer(
+                labels = allLabels,
+                folder = folder,
+                remindersOnly = remindersOnly,
+                selectedLabel = selectedLabel,
+                onNavigate = ::navigate,
+                onManageLabels = {
+                    scope.launch { drawerState.close() }
+                    labelManagerOpen = true
+                },
+                onSettings = onOpenSettings,
+                onHelp = {
+                    scope.launch { drawerState.close() }
+                    helpOpen = true
+                },
+            )
+        },
+    ) {
     Box(modifier = Modifier.fillMaxSize().background(bgBrush)) {
     Scaffold(
         containerColor = Color.Transparent,
@@ -810,14 +938,43 @@ private fun NotesListScreen(
                     canBulkAct = selectedNoteUris.isNotEmpty(),
                     onExit = exitSelection,
                     onSelectAll = selectAll,
-                    onArchive = { showBulkArchiveDialog = true },
+                    onLabels = { bulkLabelsOpen = true },
+                    restoreMode = folder != NoteFolder.NOTES,
+                    onArchive = {
+                        if (folder == NoteFolder.NOTES) {
+                            showBulkArchiveDialog = true
+                        } else {
+                            val toRestore = selectedNoteUris.toList()
+                            scope.launch {
+                                val (ok, fail) = bulkPerform(toRestore) { uri ->
+                                    withContext(Dispatchers.IO) {
+                                        Storage.noteWriteMutex.withLock { Storage.restoreNote(context, uri) }
+                                    }
+                                }
+                                // Restored URIs are in Notes, regardless of the currently displayed folder.
+                                if (ok > 0) withContext(Dispatchers.IO) {
+                                    ReminderScheduler.rescheduleAll(context)
+                                }
+                                Toast.makeText(context, context.getString(R.string.toast_bulk_partial, ok, fail), Toast.LENGTH_SHORT).show()
+                                exitSelection()
+                                onRefresh()
+                            }
+                        }
+                    },
                     onDelete = { showBulkDeleteDialog = true },
                 )
             } else {
                 TopAppBar(
+                    navigationIcon = {
+                        IconButton(onClick = { scope.launch { drawerState.open() } }) {
+                            Icon(Icons.Filled.Menu, stringResource(R.string.nav_open_menu))
+                        }
+                    },
                     title = {
                         Text(
-                            stringResource(R.string.app_name),
+                            screenTitle,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.SemiBold,
                         )
@@ -985,7 +1142,7 @@ private fun NotesListScreen(
                     }
                 }
                 Spacer(Modifier.height(12.dp))
-                FloatingActionButton(onClick = onNewNote) {
+                FloatingActionButton(onClick = { onNewNote(selectedLabel) }) {
                     Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.action_new_note))
                 }
             }
@@ -1011,7 +1168,7 @@ private fun NotesListScreen(
                 )
                 is NotesUiState.Loaded -> {
                     if (s.notes.isEmpty()) {
-                        CenteredText(stringResource(R.string.empty_no_notes))
+                        CenteredText(stringResource(if (folder == NoteFolder.NOTES && !remindersOnly && selectedLabel == null && selectedTags.isEmpty()) R.string.empty_no_notes else R.string.empty_collection))
                     } else {
                         Column(modifier = Modifier.fillMaxSize()) {
                             updateInfo?.let { info ->
@@ -1049,7 +1206,7 @@ private fun NotesListScreen(
                                         notes = filtered,
                                         selectionMode = selectionMode,
                                         selectedUris = selectedNoteUris,
-                                        manualMode = sortMode == NoteSortMode.MANUAL,
+                                        manualMode = sortMode == NoteSortMode.MANUAL && folder != NoteFolder.TRASH,
                                         onCardClick = onCardClick,
                                         onCardLongClick = onCardLongClick,
                                         onTogglePin = onTogglePin,
@@ -1112,7 +1269,9 @@ private fun NotesListScreen(
                     scope.launch {
                         val (ok, fail) = bulkPerform(toArchive) { uri ->
                             ReminderScheduler.cancel(context, uri)
-                            withContext(Dispatchers.IO) { Storage.archiveNote(context, uri) }
+                            withContext(Dispatchers.IO) {
+                                Storage.noteWriteMutex.withLock { Storage.archiveNote(context, uri) }
+                            }
                         }
                         val msg = if (fail == 0) {
                             context.getString(R.string.toast_bulk_archived, ok)
@@ -1138,7 +1297,7 @@ private fun NotesListScreen(
         AlertDialog(
             onDismissRequest = { showBulkDeleteDialog = false },
             title = { Text(stringResource(R.string.bulk_delete_title, selectedNoteUris.size)) },
-            text = { Text(stringResource(R.string.bulk_delete_message)) },
+            text = { Text(stringResource(if (folder == NoteFolder.TRASH) R.string.delete_permanent_message else R.string.bulk_delete_message)) },
             confirmButton = {
                 TextButton(onClick = {
                     showBulkDeleteDialog = false
@@ -1146,7 +1305,9 @@ private fun NotesListScreen(
                     scope.launch {
                         val (ok, fail) = bulkPerform(toDelete) { uri ->
                             ReminderScheduler.cancel(context, uri)
-                            withContext(Dispatchers.IO) { Storage.deleteNote(context, uri) }
+                            withContext(Dispatchers.IO) {
+                                Storage.noteWriteMutex.withLock { Storage.deleteOrTrashNote(context, uri) }
+                            }
                         }
                         val msg = if (fail == 0) {
                             context.getString(R.string.toast_bulk_deleted, ok)
@@ -1172,20 +1333,79 @@ private fun NotesListScreen(
     pendingMemo?.let { memo ->
         val durationLabel = formatMemoDuration(memo.durationMs)
         AlertDialog(
-            onDismissRequest = onDiscardMemo,
+            onDismissRequest = {},
             title = { Text(stringResource(R.string.record_confirm_title)) },
             text = { Text(stringResource(R.string.record_confirm_message, durationLabel)) },
             confirmButton = {
-                TextButton(onClick = { onSaveMemo(memo) }) {
+                TextButton(onClick = { onSaveMemo(memo) }, enabled = !isSavingMemo) {
                     Text(stringResource(R.string.action_save))
                 }
             },
             dismissButton = {
-                TextButton(onClick = onDiscardMemo) {
-                    Text(stringResource(R.string.action_cancel))
+                Row {
+                    TextButton(onClick = onOpenSettings, enabled = !isSavingMemo) {
+                        Text(stringResource(R.string.action_settings))
+                    }
+                    TextButton(onClick = onDiscardMemo, enabled = !isSavingMemo) {
+                        Text(stringResource(R.string.action_cancel))
+                    }
                 }
             },
         )
+    }
+    if (labelManagerOpen) {
+        LabelManagerSheet(
+            labels = allLabels,
+            onChanged = {
+                selectedLabel = null
+                onRefresh()
+            },
+            onDismiss = { labelManagerOpen = false },
+        )
+    }
+    if (bulkLabelsOpen) {
+        val chosen = loadedNotes.filter { it.uri in selectedNoteUris }
+        val memberships = chosen.flatMap { it.meta.labels }.distinctBy { it.lowercase() }
+        val common = memberships.filter { label -> chosen.all { note -> note.meta.labels.any { it.equals(label, true) } } }.toSet()
+        LabelAssignmentSheet(
+            labels = allLabels,
+            selectedLabels = common,
+            mixedLabels = memberships.filterNot { it in common }.toSet(),
+            onApply = { added, removed ->
+                val uris = selectedNoteUris.toList()
+                val (ok, fail) = bulkPerform(uris) { uri ->
+                    withContext(Dispatchers.IO) {
+                        if (added.isEmpty() && removed.isEmpty()) Result.success(Unit)
+                        else Storage.updateLabels(context, uri, added, removed).map { Unit }
+                    }
+                }
+                onRefresh()
+                if (fail == 0) {
+                    exitSelection()
+                    Result.success(Unit)
+                } else {
+                    Result.failure(IllegalStateException(context.getString(R.string.toast_bulk_partial, ok, fail)))
+                }
+            },
+            onDismiss = { bulkLabelsOpen = false },
+        )
+    }
+    if (helpOpen) {
+        AlertDialog(
+            onDismissRequest = { helpOpen = false },
+            title = { Text(stringResource(R.string.nav_help)) },
+            text = { Text(stringResource(R.string.nav_help_message)) },
+            confirmButton = {
+                TextButton(onClick = { helpOpen = false }) { Text(stringResource(R.string.action_close)) }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    helpOpen = false
+                    openTesterLink("https://github.com/Diexar-Labs/jotdrop/issues")
+                }) { Text(stringResource(R.string.nav_feedback)) }
+            },
+        )
+    }
     }
     }
 }
@@ -1589,9 +1809,10 @@ private fun applyFilters(
     notes: List<NoteSummary>,
     query: String,
     selectedTags: Set<String>,
+    selectedLabel: String?,
 ): List<NoteSummary> {
     val q = query.trim().lowercase()
-    if (q.isEmpty() && selectedTags.isEmpty()) return notes
+    if (q.isEmpty() && selectedTags.isEmpty() && selectedLabel == null) return notes
     return notes.filter { note ->
         val matchesQuery = q.isEmpty() ||
             note.title.lowercase().contains(q) ||
@@ -1599,9 +1820,9 @@ private fun applyFilters(
             note.meta.tags.any { it.lowercase().contains(q) }
         // OR-semantiek binnen tags: notitie matcht als 'ie minstens één van de gekozen tags heeft.
         // Sparse handmatige tags maken AND-mode (vrijwel) altijd leeg, daarom OR.
-        val matchesTags = selectedTags.isEmpty() ||
-            note.meta.tags.any { it in selectedTags }
-        matchesQuery && matchesTags
+        val matchesTags = LabelNames.matchesSelection(note.meta.tags, selectedTags)
+        val matchesLabel = selectedLabel == null || note.meta.labels.any { it.equals(selectedLabel, true) }
+        matchesQuery && matchesTags && matchesLabel
     }
 }
 
@@ -1817,6 +2038,8 @@ private fun SelectionTopBar(
     canBulkAct: Boolean,
     onExit: () -> Unit,
     onSelectAll: () -> Unit,
+    onLabels: () -> Unit,
+    restoreMode: Boolean,
     onArchive: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -1845,10 +2068,13 @@ private fun SelectionTopBar(
                     )
                 }
             }
+            IconButton(onClick = onLabels, enabled = canBulkAct) {
+                Icon(Icons.Filled.Label, stringResource(R.string.nav_assign_label))
+            }
             IconButton(onClick = onArchive, enabled = canBulkAct) {
                 Icon(
-                    Icons.Filled.Archive,
-                    contentDescription = stringResource(R.string.action_archive),
+                    if (restoreMode) Icons.Filled.Restore else Icons.Filled.Archive,
+                    contentDescription = stringResource(if (restoreMode) R.string.action_restore else R.string.action_archive),
                 )
             }
             IconButton(onClick = onDelete, enabled = canBulkAct) {

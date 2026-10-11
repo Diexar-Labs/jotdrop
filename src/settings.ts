@@ -42,13 +42,19 @@ export interface JotDropSettings {
    */
   sortMigratedToCreated: boolean;
   playTestLiveNoticeSeen: boolean;
+  /**
+   * Locally persisted label names that have no notes yet (empty collection).
+   * Discovery for the menu comes only from `jotdrop_labels` in managed
+   * folders; these persist separately so empty collections survive reloads.
+   */
+  localLabels: string[];
 }
 
 export const DEFAULT_SETTINGS: JotDropSettings = {
   notesFolder: "Mini Notes",
   archiveFolder: "Mini Notes/Archive",
   assetsFolder: "",
-  sortMode: "created-desc",
+  sortMode: "manual",
   cardWidth: 240,
   showArchived: false,
   downloadImages: true,
@@ -57,6 +63,7 @@ export const DEFAULT_SETTINGS: JotDropSettings = {
   clipServerToken: "",
   sortMigratedToCreated: false,
   playTestLiveNoticeSeen: false,
+  localLabels: [],
 };
 
 export async function notifyPlayTest(plugin: JotDropPlugin): Promise<void> {

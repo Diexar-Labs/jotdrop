@@ -7,13 +7,16 @@ import android.provider.DocumentsContract
 import androidx.documentfile.provider.DocumentFile
 import androidx.preference.PreferenceManager
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+enum class NoteFolder { NOTES, ARCHIVE, TRASH }
+
 /**
- * Sorteermodi voor de notitielijst. NEWEST = aanmaaktijd aflopend (default),
- * MANUAL = handmatige `order`-volgorde (sleep om te herschikken).
+ * Sorteermodi voor de notitielijst. NEWEST = aanmaaktijd aflopend,
+ * MANUAL = handmatige `order`-volgorde (default; sleep om te herschikken).
  */
 enum class NoteSortMode { NEWEST, MANUAL }
 
@@ -152,9 +155,9 @@ object Storage {
         val raw = PreferenceManager.getDefaultSharedPreferences(context)
             .getString(KEY_SORT_MODE, null)
         return try {
-            NoteSortMode.valueOf(raw ?: NoteSortMode.NEWEST.name)
+            NoteSortMode.valueOf(raw ?: NoteSortMode.MANUAL.name)
         } catch (_: Exception) {
-            NoteSortMode.NEWEST
+            NoteSortMode.MANUAL
         }
     }
 
@@ -312,16 +315,20 @@ object Storage {
             target.delete()
             return Result.failure(e)
         }
-        sourceFile.delete()
 
         val durationLabel = formatDuration(durationMs)
         val title = "Voicememo $stamp"
         val body = buildString {
             append("# "); append(title); append("\n\n")
-            append("![["); append(basename); append("]]\n\n")
+            append("![["); append(basename); append("]]")
+            append("\n\n")
             append(durationLabel)
         }
-        return saveNote(context, body)
+        val result = saveNote(context, body)
+        if (result.isSuccess) {
+            sourceFile.delete()
+        }
+        return result
     }
 
     /** Formatteert milliseconden als `M:SS`. */
@@ -405,22 +412,40 @@ object Storage {
     fun listNotes(context: Context): Result<List<NoteSummary>> {
         val vaultUri = getVaultUri(context)
             ?: return Result.failure(IllegalStateException("Geen vault-map gekozen."))
-        // Opening the list is also the first-run path. Create the configured
-        // notes folder here so a fresh vault does not get stuck on a missing
-        // default "Mini Notes" directory.
         val subfolder = openOrCreateNotesFolder(context).getOrElse { return Result.failure(it) }
-
-        // Eén cursor-query haalt name/mime/mtime voor álle kinderen op — veel sneller
-        // dan DocumentFile.listFiles() + per-item .name/.lastModified() (elk een aparte
-        // ContentResolver.query()).
         val children = queryChildren(context, vaultUri, subfolder.uri)
             .filter { !it.name.startsWith(".") && it.name.endsWith(".md", ignoreCase = true) }
+        return Result.success(buildNoteSummaries(context, vaultUri, children))
+    }
 
-        // Snapshot van de assets-map (effectief + legacy): één listing → Map<basename, Uri>.
-        // Hierdoor hoeft NoteCard niet meer per kaart te zoeken.
+    /**
+     * List notes in the given [folder]. NOTES uses the existing pipeline
+     * (creates the notes folder on first run). ARCHIVE/TRASH return notes
+     * from those folders if present; absent → empty list without creation.
+     */
+    fun listNotes(context: Context, folder: NoteFolder): Result<List<NoteSummary>> {
+        return when (folder) {
+            NoteFolder.NOTES -> listNotes(context)
+            NoteFolder.ARCHIVE, NoteFolder.TRASH -> {
+                val vaultUri = getVaultUri(context)
+                    ?: return Result.failure(IllegalStateException("Geen vault-map gekozen."))
+                val tree = DocumentFile.fromTreeUri(context, vaultUri) ?: return Result.success(emptyList())
+                val folderPath = folderPath(context, folder)
+                val folderDoc = traverseSubfolder(context, tree, folderPath) ?: return Result.success(emptyList())
+                val children = queryChildren(context, vaultUri, folderDoc.uri)
+                    .filter { !it.name.startsWith(".") && it.name.endsWith(".md", ignoreCase = true) }
+                Result.success(buildNoteSummaries(context, vaultUri, children))
+            }
+        }
+    }
+
+    private fun buildNoteSummaries(
+        context: Context,
+        vaultUri: Uri,
+        children: List<ChildDoc>,
+    ): List<NoteSummary> {
         val attachments = snapshotAttachments(context, vaultUri)
-
-        val notes = children.map { child ->
+        return children.map { child ->
             val preview = readPreview(context, child.uri)
             val parsed = FrontmatterParser.parse(preview)
             val firstImage = findEmbeddedImageBasenames(parsed.body).firstOrNull()
@@ -440,7 +465,6 @@ object Storage {
                 audioBasename = firstAudio,
             )
         }
-        return Result.success(notes)
     }
 
     /** Refresh one changed card without reopening every note in the vault. */
@@ -463,7 +487,7 @@ object Storage {
         fallback
     }
 
-    private fun queryChildren(context: Context, treeUri: Uri, parentUri: Uri): List<ChildDoc> {
+    private fun queryChildren(context: Context, treeUri: Uri, parentUri: Uri, strict: Boolean = false): List<ChildDoc> {
         val docId = DocumentsContract.getDocumentId(parentUri)
         val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, docId)
         val projection = arrayOf(
@@ -474,7 +498,9 @@ object Storage {
         )
         val out = mutableListOf<ChildDoc>()
         try {
-            context.contentResolver.query(childrenUri, projection, null, null, null)?.use { cursor ->
+            val cursor = context.contentResolver.query(childrenUri, projection, null, null, null)
+            if (strict && cursor == null) error("Kan de notitiemap niet lezen.")
+            cursor?.use { cursor ->
                 while (cursor.moveToNext()) {
                     val id = cursor.getString(0) ?: continue
                     val name = cursor.getString(1) ?: continue
@@ -485,7 +511,8 @@ object Storage {
                     out.add(ChildDoc(uri, name, mtime))
                 }
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            if (strict) throw e
             // Cursor kan falen bij intrekken van permissies; lege lijst voorkomt crash.
         }
         return out
@@ -498,15 +525,9 @@ object Storage {
         // basenames (deterministische volgorde, pariteit met de plugin). Zo blijven
         // oude notities die naar `.attachments` wijzen renderen én wint de
         // ingestelde map wanneer dezelfde basename op beide plekken bestaat.
-        val legacyFolder = traverseSubfolder(tree, legacyAssetsPath(context))
-        if (legacyFolder != null) {
-            for (child in queryChildren(context, vaultUri, legacyFolder.uri)) {
-                result[child.name] = child.uri
-            }
-        }
-        val effectiveFolder = traverseSubfolder(tree, resolveAssetsFolder(context))
-        if (effectiveFolder != null) {
-            for (child in queryChildren(context, vaultUri, effectiveFolder.uri)) {
+        for (path in listOf(legacyAssetsPath(context), resolveAssetsFolder(context)).distinct()) {
+            val folder = traverseSubfolder(context, tree, path) ?: continue
+            for (child in queryChildren(context, vaultUri, folder.uri)) {
                 result[child.name] = child.uri
             }
         }
@@ -523,7 +544,7 @@ object Storage {
         val tree = DocumentFile.fromTreeUri(context, vaultUri) ?: return emptyList()
         val result = LinkedHashSet<Uri>()
         for (path in listOf(resolveAssetsFolder(context), legacyAssetsPath(context)).distinct()) {
-            val folder = traverseSubfolder(tree, path) ?: continue
+            val folder = traverseSubfolder(context, tree, path) ?: continue
             for (child in queryChildren(context, vaultUri, folder.uri)) {
                 if (child.name == basename) result.add(child.uri)
             }
@@ -636,29 +657,29 @@ object Storage {
 
     fun deleteNote(context: Context, uri: Uri): Result<Unit> {
         return try {
-            // Vóór verwijderen: zoek ingebedde afbeeldingen en verwijder die ook —
-            // mits geen andere notitie (Mini Notes of Archive) er nog naar verwijst.
+            // Delete the note first; a failed delete must never strip its attachments.
             // OG-thumbnails worden door OgFetcher gehasht op URL en kunnen dus gedeeld
             // worden tussen kaarten met dezelfde og:image — wis nooit zo'n shared file.
-            val content = readNote(context, uri).getOrNull() ?: ""
+            val content = readNote(context, uri).getOrElse { return Result.failure(it) }
             val embeddedImages = findEmbeddedAttachmentBasenames(content)
+            val vaultUri = getVaultUri(context)
+            val referenced = vaultUri?.let {
+                runCatching { collectReferencedAttachments(context, it, uri) }.getOrNull()
+            }
+            val doc = DocumentFile.fromSingleUri(context, uri)
+                ?: return Result.failure(IllegalStateException("Bestand niet gevonden."))
+            if (!doc.delete()) return Result.failure(IllegalStateException("Verwijderen mislukt."))
             if (embeddedImages.isNotEmpty()) {
-                val vaultUri = getVaultUri(context)
                 if (vaultUri != null) {
-                    val stillReferenced = collectReferencedAttachments(context, vaultUri, uri)
-                    val toRemove = embeddedImages.filter { it !in stillReferenced }
-                    if (toRemove.isNotEmpty()) {
-                        // queryChildren-gebaseerde listing — DocumentFile.findFile()
-                        // bleek onbetrouwbaar op SAF-mappen die Syncthing extern
-                        // aanpast. Elke orphan-kopie uit effectieve én legacy
-                        // locatie mag weg.
-                        for (name in toRemove) {
-                            for (attUri in allAttachmentUris(context, vaultUri, name)) {
-                                try {
-                                    DocumentsContract.deleteDocument(context.contentResolver, attUri)
-                                } catch (_: Exception) {
-                                    // Individuele attachment-failure mag het verwijderen
-                                    // van de .md niet blokkeren.
+                    if (referenced != null) {
+                        val toRemove = embeddedImages.filter { it !in referenced }
+                        if (toRemove.isNotEmpty()) {
+                            for (name in toRemove) {
+                                for (attUri in allAttachmentUris(context, vaultUri, name)) {
+                                    try {
+                                        DocumentsContract.deleteDocument(context.contentResolver, attUri)
+                                    } catch (_: Exception) {
+                                    }
                                 }
                             }
                         }
@@ -666,10 +687,7 @@ object Storage {
                 }
             }
 
-            val doc = DocumentFile.fromSingleUri(context, uri)
-                ?: return Result.failure(IllegalStateException("Bestand niet gevonden."))
-            if (doc.delete()) Result.success(Unit)
-            else Result.failure(IllegalStateException("Verwijderen mislukt."))
+            Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -677,36 +695,36 @@ object Storage {
 
     /**
      * Verzamelt alle attachment-basenames die nog gerefereerd worden door notities
-     * in de Notes-map én in Archive, met uitzondering van [excludeUri]. Gebruikt
+     * in de Notes-map, Archive én Trash, met uitzondering van [excludeUri]. Gebruikt
      * door [deleteNote] om gedeelde OG-thumbnails te beschermen.
      */
     private fun collectReferencedAttachments(
         context: Context,
         vaultUri: Uri,
         excludeUri: Uri,
-    ): Set<String> {
+    ): Set<String>? {
         val excludeKey = excludeUri.toString()
         val result = HashSet<String>()
 
         val notesFolder = openNotesFolder(context).getOrNull()
         if (notesFolder != null) {
-            for (child in queryChildren(context, vaultUri, notesFolder.uri)) {
+            for (child in queryChildren(context, vaultUri, notesFolder.uri, strict = true)) {
                 if (child.name.startsWith(".") || !child.name.endsWith(".md", true)) continue
                 if (child.uri.toString() == excludeKey) continue
-                val body = readNote(context, child.uri).getOrNull() ?: continue
+                val body = readNote(context, child.uri).getOrNull() ?: return null
                 result.addAll(findEmbeddedAttachmentBasenames(body))
             }
         }
 
         val tree = DocumentFile.fromTreeUri(context, vaultUri)
-        if (tree != null) {
-            val archivePath = getSubfolder(context).trimEnd('/') + "/Archive"
-            val archive = traverseSubfolder(tree, archivePath)
-            if (archive != null) {
-                for (child in queryChildren(context, vaultUri, archive.uri)) {
+        if (tree == null) return null
+        for (path in listOf("/Archive", "/Trash")) {
+            val sub = traverseSubfolder(context, tree, getSubfolder(context).trimEnd('/') + path)
+            if (sub != null) {
+                for (child in queryChildren(context, vaultUri, sub.uri, strict = true)) {
                     if (!child.name.endsWith(".md", true)) continue
                     if (child.uri.toString() == excludeKey) continue
-                    val body = readNote(context, child.uri).getOrNull() ?: continue
+                    val body = readNote(context, child.uri).getOrNull() ?: return null
                     result.addAll(findEmbeddedAttachmentBasenames(body))
                 }
             }
@@ -714,6 +732,122 @@ object Storage {
 
         return result
     }
+
+    // ── Labels ──────────────────────────────────────────────────────────────
+
+    private fun labelsKey(context: Context): String? {
+        val vaultUri = getVaultUri(context) ?: return null
+        return "collections_${vaultUri}_${getSubfolder(context)}"
+    }
+
+    /**
+     * Persistente labels geschaard per vault+subfolder via SharedPreferences.
+     * Geen SAF-IO op de hoofdthread.
+     */
+    fun getLabels(context: Context): List<String> {
+        val key = labelsKey(context) ?: return emptyList()
+        val raw = PreferenceManager.getDefaultSharedPreferences(context)
+            .getString(key, null) ?: return emptyList()
+        return raw.split("\n").filter { it.isNotBlank() }
+    }
+
+    /** Discover only dedicated collection memberships, never ordinary tags. Call on IO. */
+    private fun listLabels(context: Context): Result<List<String>> = runCatching {
+        val vaultUri = getVaultUri(context) ?: error("Geen vault-map gekozen.")
+        val tree = DocumentFile.fromTreeUri(context, vaultUri) ?: error("Vault-map kan niet worden geopend.")
+        val labels = getLabels(context).toMutableList()
+        for (folder in NoteFolder.entries) {
+            val directory = traverseSubfolder(context, tree, folderPath(context, folder)) ?: continue
+            for (child in queryChildren(context, vaultUri, directory.uri, strict = true)) {
+                if (child.name.startsWith(".") || !child.name.endsWith(".md", true)) continue
+                labels.addAll(FrontmatterParser.parse(readNote(context, child.uri).getOrThrow()).meta.labels)
+            }
+        }
+        labels.distinctBy { it.lowercase() }
+    }
+
+    /**
+     * Slaat labels persistent op via SharedPreferences. Retourneert Result<Unit>
+     * — geen fouten worden geblokkeerd of genegeerd.
+     */
+    private fun saveLabels(context: Context, labels: List<String>): Result<Unit> {
+        val key = labelsKey(context) ?: return Result.failure(IllegalStateException("Geen vault-map gekozen."))
+        return try {
+            PreferenceManager.getDefaultSharedPreferences(context)
+                .edit()
+                .putString(key, labels.distinctBy { it.lowercase() }.joinToString("\n"))
+                .commit().also { if (!it) error("Labels konden niet worden opgeslagen.") }
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    suspend fun addLabel(context: Context, label: String): Result<Unit> = noteWriteMutex.withLock {
+        runCatching {
+            require(LabelNames.validate(label)) { "Ongeldig label." }
+            saveLabels(context, getLabels(context) + label).getOrThrow()
+        }
+    }
+
+    suspend fun refreshLabels(context: Context): Result<Unit> = noteWriteMutex.withLock {
+        val scopeKey = labelsKey(context)
+        listLabels(context).fold(
+            onSuccess = { labels ->
+                if (scopeKey != labelsKey(context) || labels == getLabels(context)) Result.success(Unit)
+                else saveLabels(context, labels)
+            },
+            onFailure = { Result.failure(it) },
+        )
+    }
+
+    suspend fun updateLabels(context: Context, uri: Uri, added: Set<String>, removed: Set<String>): Result<List<String>> = noteWriteMutex.withLock {
+        runCatching {
+            require((added + removed).all { LabelNames.validate(it) }) { "Ongeldig label." }
+            val current = readNote(context, uri).getOrThrow()
+            val meta = FrontmatterParser.parse(current).meta
+            val labels = LabelNames.applyChanges(meta.labels, added, removed)
+            if (labels != meta.labels) updateNote(context, uri, FrontmatterWriter.applyLabels(current, labels)).getOrThrow()
+            labels
+        }
+    }
+
+    /**
+     * Hernoemt label [old] naar [new] in het register én in de metadata
+     * van alle notities in Notes/Archive/Trash onder [noteWriteMutex].
+     *
+     * [new] = null → verwijdert het label uit het register én uit alle
+     * notities (notities en hun tags blijven behouden).
+     *
+     * Behoudt het lichaam (body) van elke notitie; bij partiële mislukkingen
+     * wordt het register OUD gehouden en het aantal failures gerapporteerd.
+     */
+    suspend fun renameLabel(context: Context, old: String, new: String?): Result<Unit> {
+        return noteWriteMutex.withLock {
+            runCatching {
+                require(new == null || LabelNames.validate(new)) { "Ongeldig label." }
+                val vaultUri = getVaultUri(context) ?: error("Geen vault-map gekozen.")
+                val tree = DocumentFile.fromTreeUri(context, vaultUri) ?: error("Vault-map kan niet worden geopend.")
+                // Failed reads/writes retain the old registry entry so the operation can be retried.
+                for (folder in NoteFolder.entries) {
+                    val folderDoc = traverseSubfolder(context, tree, folderPath(context, folder)) ?: continue
+                    for (child in queryChildren(context, vaultUri, folderDoc.uri, strict = true)) {
+                        if (child.name.startsWith(".") || !child.name.endsWith(".md", true)) continue
+                        val current = readNote(context, child.uri).getOrThrow()
+                        val meta = FrontmatterParser.parse(current).meta
+                        if (meta.labels.none { it.equals(old, true) }) continue
+                        val labels = meta.labels.mapNotNull { if (it.equals(old, true)) new else it }
+                            .distinctBy { it.lowercase() }
+                        updateNote(context, child.uri, FrontmatterWriter.applyLabels(current, labels)).getOrThrow()
+                    }
+                }
+                val labels = getLabels(context).filterNot { it.equals(old, true) }
+                saveLabels(context, if (new == null) labels else labels + new).getOrThrow()
+            }
+        }
+    }
+
+    // ── Einde labels ────────────────────────────────────────────────────────
 
     /**
      * Vindt of maakt de effectieve assets-map (expliciete instelling, of de
@@ -729,7 +863,7 @@ object Storage {
             return Result.failure(IllegalStateException("Geen schrijfrechten op de vault-map."))
         }
         val path = resolveAssetsFolder(context)
-        val folder = findOrCreateSubfolder(tree, path)
+        val folder = findOrCreateSubfolder(context, tree, path)
             ?: return Result.failure(IllegalStateException("Attachments-map kon niet worden aangemaakt."))
         return Result.success(folder)
     }
@@ -743,12 +877,12 @@ object Storage {
         val vaultUri = getVaultUri(context) ?: return null
         val tree = DocumentFile.fromTreeUri(context, vaultUri) ?: return null
         val effective = resolveAssetsFolder(context)
-        val effectiveFolder = traverseSubfolder(tree, effective)
+        val effectiveFolder = traverseSubfolder(context, tree, effective)
         val effectiveHit = effectiveFolder?.findFile(basename)
         if (effectiveHit != null) return effectiveHit.uri
         val legacy = legacyAssetsPath(context)
         if (legacy == effective) return null
-        val legacyFolder = traverseSubfolder(tree, legacy) ?: return null
+        val legacyFolder = traverseSubfolder(context, tree, legacy) ?: return null
         return legacyFolder.findFile(basename)?.uri
     }
 
@@ -805,6 +939,15 @@ object Storage {
     }
 
     fun archiveNote(context: Context, uri: Uri): Result<Unit> {
+        return moveNoteToFolder(context, uri, NoteFolder.ARCHIVE)
+    }
+
+    /**
+     * Move [uri] into [folder]. Collision-safe (unique filename on conflict).
+     * Verifies target output exists and matches source content BEFORE deleting
+     * the source. If verification fails, source is retained and failure returned.
+     */
+    private fun moveNoteToFolder(context: Context, uri: Uri, folder: NoteFolder): Result<Unit> {
         val content = readNote(context, uri).getOrElse { return Result.failure(it) }
 
         val vaultUri = getVaultUri(context)
@@ -812,29 +955,80 @@ object Storage {
         val tree = DocumentFile.fromTreeUri(context, vaultUri)
             ?: return Result.failure(IllegalStateException("Vault-map kan niet worden geopend."))
 
-        val archivePath = getSubfolder(context).trimEnd('/') + "/Archive"
-        val archiveFolder = findOrCreateSubfolder(tree, archivePath)
-            ?: return Result.failure(IllegalStateException("Archiefmap kon niet worden aangemaakt."))
+        val folderPath = folderPath(context, folder)
+        val targetFolder = findOrCreateSubfolder(context, tree, folderPath)
+            ?: return Result.failure(IllegalStateException("Doelmap kon niet worden aangemaakt."))
 
         val sourceDoc = DocumentFile.fromSingleUri(context, uri)
             ?: return Result.failure(IllegalStateException("Bronbestand niet gevonden."))
-        val filename = sourceDoc.name ?: "archived-${System.currentTimeMillis()}.md"
+        val filename = sourceDoc.name ?: "${System.currentTimeMillis()}.md"
 
-        val targetName = uniqueFilename(archiveFolder, filename)
-        val newFile = archiveFolder.createFile("text/markdown", targetName)
-            ?: return Result.failure(IllegalStateException("Bestand kon niet worden aangemaakt in archief."))
+        val targetName = uniqueFilename(targetFolder, filename)
+        val newFile = targetFolder.createFile("text/markdown", targetName)
+            ?: return Result.failure(IllegalStateException("Bestand kon niet worden aangemaakt in doelmap."))
 
         return try {
             context.contentResolver.openOutputStream(newFile.uri, "wt")?.use { out ->
                 out.write(content.toByteArray(Charsets.UTF_8))
-            } ?: return Result.failure(IllegalStateException("Kan niet schrijven naar archief."))
+            } ?: run {
+                newFile.delete()
+                return Result.failure(IllegalStateException("Kan niet schrijven naar doelmap."))
+            }
+
+            // Verify target output before source delete
+            val verified = readNote(context, newFile.uri).getOrNull()
+            if (verified != content) {
+                newFile.delete()
+                return Result.failure(IllegalStateException("Doelbestand verificatie mislukt."))
+            }
+
             if (!sourceDoc.delete()) {
+                newFile.delete()
                 return Result.failure(IllegalStateException("Origineel bestand kon niet worden verwijderd."))
             }
             Result.success(Unit)
         } catch (e: Exception) {
+            newFile.delete()
             Result.failure(e)
         }
+    }
+
+    private fun folderPath(context: Context, folder: NoteFolder): String {
+        val base = getSubfolder(context).trimEnd('/')
+        return when (folder) {
+            NoteFolder.NOTES -> base
+            NoteFolder.ARCHIVE -> "$base/Archive"
+            NoteFolder.TRASH -> "$base/Trash"
+        }
+    }
+
+    fun trashNote(context: Context, uri: Uri): Result<Unit> {
+        return moveNoteToFolder(context, uri, NoteFolder.TRASH)
+    }
+
+    fun restoreNote(context: Context, uri: Uri): Result<Unit> {
+        return moveNoteToFolder(context, uri, NoteFolder.NOTES)
+    }
+
+    /**
+     * If [uri] is inside Trash → permanent delete. Otherwise → move to Trash.
+     * The editor and bulk selection both use the same deletion policy.
+     */
+    fun deleteOrTrashNote(context: Context, uri: Uri): Result<Unit> {
+        return runCatching {
+            if (isInFolder(context, uri, NoteFolder.TRASH)) deleteNote(context, uri).getOrThrow()
+            else trashNote(context, uri).getOrThrow()
+        }
+    }
+
+    private fun isInFolder(context: Context, uri: Uri, folder: NoteFolder): Boolean {
+        val vaultUri = getVaultUri(context) ?: return false
+        val tree = DocumentFile.fromTreeUri(context, vaultUri) ?: return false
+        val folderPath = folderPath(context, folder)
+        val folderDoc = traverseSubfolder(context, tree, folderPath) ?: return false
+        val uriDocId = DocumentsContract.getDocumentId(uri)
+        val children = queryChildren(context, vaultUri, folderDoc.uri, strict = true)
+        return children.any { DocumentsContract.getDocumentId(it.uri) == uriDocId }
     }
 
     /**
@@ -878,7 +1072,7 @@ object Storage {
         val tree = DocumentFile.fromTreeUri(context, vaultUri)
             ?: return Result.failure(IllegalStateException("Vault-map kan niet worden geopend."))
         val subfolderName = getSubfolder(context)
-        val subfolder = traverseSubfolder(tree, subfolderName)
+        val subfolder = traverseSubfolder(context, tree, subfolderName)
             ?: return Result.failure(IllegalStateException("Submap '$subfolderName' bestaat niet."))
         return Result.success(subfolder)
     }
@@ -889,26 +1083,47 @@ object Storage {
         val tree = DocumentFile.fromTreeUri(context, vaultUri)
             ?: return Result.failure(IllegalStateException("Vault-map kan niet worden geopend."))
         val subfolderName = getSubfolder(context)
-        val subfolder = findOrCreateSubfolder(tree, subfolderName)
+        val subfolder = findOrCreateSubfolder(context, tree, subfolderName)
             ?: return Result.failure(IllegalStateException("Submap '$subfolderName' kon niet worden aangemaakt."))
         return Result.success(subfolder)
     }
 
-    private fun traverseSubfolder(parent: DocumentFile, name: String): DocumentFile? {
+    private fun traverseSubfolder(context: Context, parent: DocumentFile, name: String): DocumentFile? {
         var current: DocumentFile = parent
         for (segment in name.split('/').map { it.trim() }.filter { it.isNotEmpty() }) {
-            val existing = current.findFile(segment) ?: return null
-            if (!existing.isDirectory) return null
+            val existing = findDirectory(context, current, segment) ?: return null
             current = existing
         }
         return current
     }
 
-    private fun findOrCreateSubfolder(parent: DocumentFile, name: String): DocumentFile? {
+    // One cursor per directory, instead of DocumentFile.findFile's per-child metadata queries.
+    private fun findDirectory(context: Context, parent: DocumentFile, name: String): DocumentFile? {
+        return try {
+        val uri = DocumentsContract.buildChildDocumentsUriUsingTree(parent.uri, DocumentsContract.getDocumentId(parent.uri))
+        val columns = arrayOf(
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE,
+        )
+        context.contentResolver.query(uri, columns, null, null, null)?.use { cursor ->
+            while (cursor.moveToNext()) {
+                if (cursor.getString(1) == name && cursor.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR) {
+                    val id = cursor.getString(0) ?: continue
+                    val childUri = DocumentsContract.buildDocumentUriUsingTree(parent.uri, id)
+                    return DocumentFile.fromTreeUri(context, childUri)
+                }
+            }
+        }
+        null
+        } catch (_: Exception) { null }
+    }
+
+    private fun findOrCreateSubfolder(context: Context, parent: DocumentFile, name: String): DocumentFile? {
         var current: DocumentFile = parent
         for (segment in name.split('/').map { it.trim() }.filter { it.isNotEmpty() }) {
-            val existing = current.findFile(segment)
-            current = if (existing != null && existing.isDirectory) {
+            val existing = findDirectory(context, current, segment)
+            current = if (existing != null) {
                 existing
             } else {
                 current.createDirectory(segment) ?: return null

@@ -1,6 +1,14 @@
 /* JotDrop — Google Keep-stijl kaartjesweergave */
 
-.jotdrop-view {
+.jotdrop-labelpicker-search { width: 100%; box-sizing: border-box; }
+.jotdrop-labelpicker-list { max-height: 45vh; overflow-y: auto; margin: 12px 0; }
+.jotdrop-labelpicker-row { display: flex; align-items: center; gap: 10px; padding: 8px 4px; cursor: pointer; }
+.jotdrop-labelpicker-new { display: flex; align-items: center; gap: 8px; margin: 12px 0; }
+.jotdrop-labelpicker-new input { flex: 1; min-width: 0; }
+.jotdrop-labelpicker-footer { display: flex; justify-content: flex-end; gap: 8px; }
+
+/* Override Obsidian's .view-content padding, not just our own class. */
+.workspace-leaf-content[data-type="jotdrop-view"] > .view-content.jotdrop-view {
   padding: 0 20px 32px;
   display: flex;
   flex-direction: column;
@@ -24,6 +32,7 @@
   position: sticky;
   top: 0;
   z-index: 10;
+  flex-shrink: 0;
   background: var(--background-primary);
   padding: 16px 0 8px;
   border-bottom: 1px solid var(--background-modifier-border);
@@ -289,6 +298,25 @@
   display: inline-flex;
   min-width: 10px;
   font-weight: 700;
+}
+
+.jotdrop-filter-chip-label {
+  font-size: 0.82em;
+  line-height: 1.2;
+}
+
+.jotdrop-filter-chip-count {
+  font-size: 0.75em;
+  color: var(--text-muted);
+  background: var(--background-modifier-hover);
+  padding: 0 5px;
+  border-radius: 999px;
+  margin-left: 2px;
+}
+
+.jotdrop-filter-chip.is-selected .jotdrop-filter-chip-count {
+  color: var(--text-on-accent);
+  background: rgba(255, 255, 255, 0.2);
 }
 
 .jotdrop-filter-chip.is-overflow {

@@ -19,9 +19,12 @@ export class QuickCaptureModal extends Modal {
   textArea!: HTMLTextAreaElement;
   private chipsEl!: HTMLElement;
   private tagInputEl: HTMLInputElement | null = null;
+  private labelChipsEl!: HTMLElement;
+  private labelInputEl: HTMLInputElement | null = null;
   private state: {
     color: ColorName;
     tags: string[];
+    labels: string[];
     pinned: boolean;
     reminder: string | null;
     reminderRepeat: string | null;
@@ -30,6 +33,7 @@ export class QuickCaptureModal extends Modal {
   } = {
     color: "default",
     tags: [],
+    labels: [],
     pinned: false,
     reminder: null,
     reminderRepeat: null,
@@ -37,9 +41,10 @@ export class QuickCaptureModal extends Modal {
     reminderLimit: null,
   };
 
-  constructor(app: App, plugin: JotDropPlugin) {
+  constructor(app: App, plugin: JotDropPlugin, initialLabels: string[] = []) {
     super(app);
     this.plugin = plugin;
+    this.state.labels = initialLabels.filter((l) => typeof l === "string" && l.length > 0);
   }
 
   onOpen(): void {
@@ -205,6 +210,47 @@ export class QuickCaptureModal extends Modal {
       if (/[\s,]/.test(this.tagInputEl?.value ?? "")) commit(true);
     });
     this.tagInputEl.addEventListener("blur", () => commit());
+
+    // Labels — chips and input share the same flex container.
+    const labelRow = bar.createDiv({ cls: "jotdrop-edit-labelrow" });
+    labelRow.createSpan({ text: t("label_section"), cls: "jotdrop-edit-label" });
+    this.labelChipsEl = labelRow.createDiv({ cls: "jotdrop-edit-chips" });
+    this.labelInputEl = null;
+    this.renderLabelChips();
+
+    this.labelInputEl = this.labelChipsEl.createEl("input", {
+      cls: "jotdrop-edit-taginput",
+      attr: { type: "text", placeholder: t("label_placeholder") },
+    });
+    const labelDatalistId = `jotdrop-labelcompletion-capture-${Date.now()}`;
+    const labelDatalist = labelRow.createEl("datalist", { attr: { id: labelDatalistId } });
+    this.labelInputEl.setAttribute("list", labelDatalistId);
+    for (const label of this.state.labels) {
+      labelDatalist.createEl("option", { attr: { value: label } });
+    }
+    const labelCommit = (restoreFocus = false) => {
+      const input = this.labelInputEl;
+      if (!input) return;
+      const value = input.value.trim();
+      if (value && !this.state.labels.includes(value)) {
+        this.state.labels.push(value);
+        this.renderLabelChips();
+      }
+      input.value = "";
+      if (restoreFocus) input.focus();
+    };
+    this.labelInputEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === "Tab") {
+        if (this.labelInputEl?.value.trim()) {
+          e.preventDefault();
+          labelCommit(true);
+        }
+      } else if (e.key === "Backspace" && this.labelInputEl?.value === "" && this.state.labels.length > 0) {
+        this.state.labels.pop();
+        this.renderLabelChips();
+      }
+    });
+    this.labelInputEl.addEventListener("blur", () => labelCommit());
   }
 
   private renderRepeatControls(parent: Element): void {
@@ -240,6 +286,21 @@ export class QuickCaptureModal extends Modal {
     }
     // Keep the input at the end of the chips container after re-render.
     if (this.tagInputEl) this.chipsEl.appendChild(this.tagInputEl);
+  }
+
+  private renderLabelChips(): void {
+    if (!this.labelChipsEl) return;
+    this.labelChipsEl.empty();
+    for (const label of this.state.labels) {
+      const chip = this.labelChipsEl.createSpan({ cls: "jotdrop-edit-chip" });
+      chip.createSpan({ text: label });
+      const x = chip.createSpan({ cls: "jotdrop-edit-chip-x", text: "×" });
+      x.addEventListener("click", () => {
+        this.state.labels = this.state.labels.filter((l) => l !== label);
+        this.renderLabelChips();
+      });
+    }
+    if (this.labelInputEl) this.labelChipsEl.appendChild(this.labelInputEl);
   }
 
   private insertLinkAtCursor(linkPath: string): void {
@@ -312,12 +373,14 @@ export class QuickCaptureModal extends Modal {
       if (
         this.state.color !== "default" ||
         this.state.tags.length > 0 ||
+        this.state.labels.length > 0 ||
         this.state.pinned ||
         this.state.reminder
       ) {
         await updateMeta(this.app, file, {
           color: this.state.color,
           tags: this.state.tags,
+          labels: this.state.labels,
           pinned: this.state.pinned,
           reminder: this.state.reminder,
           reminderRepeat: this.state.reminder ? this.state.reminderRepeat : null,

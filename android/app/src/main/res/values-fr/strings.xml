@@ -1,8 +1,33 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-  French (fr) — placeholder. Until translations are added, Android falls back
-  to the default English values/strings.xml. Copy keys from values/strings.xml
-  and translate one by one.
--->
 <resources>
+    <string name="nav_open_menu">Ouvrir le menu de navigation</string>
+    <string name="nav_notes">Notes</string>
+    <string name="nav_reminders">Rappels</string>
+    <string name="nav_labels">Étiquettes</string>
+    <string name="nav_edit_labels">Modifier les étiquettes</string>
+    <string name="nav_create_label">Créer une étiquette</string>
+    <string name="nav_assign_label">Ajouter une étiquette aux notes sélectionnées</string>
+    <string name="nav_archive">Archive</string>
+    <string name="nav_trash">Corbeille</string>
+    <string name="nav_help">Aide et commentaires</string>
+    <string name="nav_feedback">Signaler un problème</string>
+    <string name="nav_help_message">Créez des notes avec +, enregistrez des mémos vocaux, capturez des photos ou partagez depuis d\'autres apps. Organisez vos notes avec des étiquettes. Maintenez une carte enfoncée pour sélectionner des notes, ajouter une étiquette, archiver ou supprimer. Sélectionnez des notes dans l\'Archive ou la Corbeille et appuyez sur Restaurer pour les ramener dans Notes. La Corbeille conserve les notes jusqu\'à ce que vous les supprimiez définitivement. Vos notes restent dans le dossier choisi en tant que fichiers Markdown.</string>
+    <string name="action_restore">Restaurer dans Notes</string>
+    <string name="empty_collection">Aucune note dans cette vue.</string>
+    <string name="delete_title">Supprimer la note ?</string>
+    <string name="delete_message">Déplacer cette note dans la Corbeille ? Vous pouvez la restaurer là-bas. Les notes déjà dans la Corbeille sont supprimées définitivement.</string>
+    <string name="bulk_delete_title">Supprimer %1$d notes ?</string>
+    <string name="bulk_delete_message">Les notes seront déplacées dans la Corbeille. Vous pouvez les restaurer là-bas.</string>
+    <string name="delete_permanent_message">Supprimer définitivement ces notes ? Cela ne peut pas être annulé.</string>
+    <string name="label_rename">Renommer l\'étiquette</string>
+    <string name="label_delete">Supprimer l\'étiquette</string>
+    <string name="label_delete_message">Supprimer l\'étiquette "%1$s" de toutes les notes, y compris l\'Archive et la Corbeille ? Les notes elles-mêmes ne seront pas supprimées.</string>
+    <string name="label_invalid">Saisissez un nom non vide, sans retour à la ligne ni caractère de contrôle.</string>
+    <string name="label_duplicate">Une étiquette avec ce nom existe déjà.</string>
+    <string name="label_hint">Les étiquettes sont des collections distinctes des tags. Les espaces sont conservés.</string>
+    <string name="label_search">Rechercher ou créer une étiquette</string>
+    <string name="label_create_first">Créez une étiquette dans le menu de navigation d\'abord.</string>
+    <string name="recording_notification_title">Enregistrement actif</string>
+    <string name="recording_notification_channel_name">Enregistrement de mémo vocal</string>
+    <string name="recording_notification_channel_desc">S\'affiche lorsqu\'un enregistrement de mémo vocal est actif.</string>
 </resources>

@@ -75,6 +75,8 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Label
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Pause
@@ -162,6 +164,7 @@ class EditorActivity : ComponentActivity() {
                     initialUri = noteUri,
                     navUris = navUris,
                     initialThumbnail = thumbnail,
+                    initialLabel = intent.getStringExtra(EXTRA_INITIAL_LABEL)?.takeIf { noteUri == null && LabelNames.validate(it) },
                     onClose = { finish() },
                 )
             }
@@ -173,13 +176,14 @@ class EditorActivity : ComponentActivity() {
         private const val EXTRA_NAV_URIS = "nav_uris"
         private const val EXTRA_THUMBNAIL_NAME = "thumbnail_name"
         private const val EXTRA_THUMBNAIL_URI = "thumbnail_uri"
+        private const val EXTRA_INITIAL_LABEL = "initial_label"
 
         // Intent-extra's lopen via de Binder (limiet ~500KB) en SAF-URI's zijn lang.
         // Beperk de nav-lijst daarom tot een venster rond de geopende notitie.
         private const val NAV_WINDOW = 150
 
-        fun newNoteIntent(context: Context): Intent =
-            Intent(context, EditorActivity::class.java)
+        fun newNoteIntent(context: Context, label: String? = null): Intent =
+            Intent(context, EditorActivity::class.java).putExtra(EXTRA_INITIAL_LABEL, label)
 
         /**
          * Opent een notitie in de editor. [orderedUris] is optioneel de zichtbare
@@ -224,6 +228,7 @@ private fun EditorScreen(
     initialUri: Uri?,
     navUris: List<String>,
     initialThumbnail: Pair<String, Uri>?,
+    initialLabel: String?,
     onClose: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -260,6 +265,9 @@ private fun EditorScreen(
     var color by rememberSaveable { mutableStateOf(NoteColor.DEFAULT) }
     var pinned by rememberSaveable { mutableStateOf(false) }
     val tags = rememberSaveable(saver = stringStateListSaver) { mutableStateListOf<String>() }
+    val labels = rememberSaveable(saver = stringStateListSaver) {
+        mutableStateListOf<String>().apply { initialLabel?.let { add(it) } }
+    }
     var reminder by rememberSaveable { mutableStateOf<String?>(null) }
     var originalReminder by rememberSaveable { mutableStateOf<String?>(null) }
     var reminderRepeat by rememberSaveable { mutableStateOf<String?>(null) }
@@ -269,6 +277,9 @@ private fun EditorScreen(
     var saving by remember { mutableStateOf(false) }
     var showArchiveDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var editorMenuOpen by remember { mutableStateOf(false) }
+    var labelsSheetOpen by remember { mutableStateOf(false) }
+    var labelsOpening by remember { mutableStateOf(false) }
     var showColorPicker by remember { mutableStateOf(false) }
     var showLinkPicker by remember { mutableStateOf(false) }
     var photoMenuExpanded by remember { mutableStateOf(false) }
@@ -532,6 +543,8 @@ private fun EditorScreen(
                 pinned = parsed.meta.pinned
                 tags.clear()
                 tags.addAll(parsed.meta.tags)
+                labels.clear()
+                labels.addAll(parsed.meta.labels)
                 reminder = parsed.meta.reminder
                 originalReminder = parsed.meta.reminder
                 reminderRepeat = parsed.meta.reminderRepeat
@@ -621,6 +634,7 @@ private fun EditorScreen(
             color = color,
             pinned = pinned,
             tags = tags.toList(),
+            labels = labels.toList(),
             reminder = reminderAtSave,
             reminderRepeat = reminderRepeat,
             reminderUntil = reminderUntil,
@@ -678,6 +692,7 @@ private fun EditorScreen(
                 color = color,
                 pinned = pinned,
                 tags = tags.toList(),
+                labels = labels.toList(),
                 reminder = reminderAtSave,
                 reminderRepeat = reminderRepeat,
                 reminderUntil = reminderUntil,
@@ -797,12 +812,50 @@ private fun EditorScreen(
                             )
                         }
                     }
-                    if (isExisting) {
-                        IconButton(onClick = { showArchiveDialog = true }) {
-                            Icon(Icons.Filled.Archive, contentDescription = stringResource(R.string.action_archive))
+                    Box {
+                        IconButton(onClick = { editorMenuOpen = true }) {
+                            Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.more_options))
                         }
-                        IconButton(onClick = { showDeleteDialog = true }) {
-                            Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.action_delete))
+                        DropdownMenu(expanded = editorMenuOpen, onDismissRequest = { editorMenuOpen = false }) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.nav_labels)) },
+                                leadingIcon = { Icon(Icons.Filled.Label, null) },
+                                enabled = loaded && loadError == null && !saving && !labelsOpening,
+                                onClick = {
+                                    editorMenuOpen = false
+                                    val targetUri = currentUri
+                                    if (targetUri == null) {
+                                        labelsSheetOpen = true
+                                    } else {
+                                        labelsOpening = true
+                                        scope.launch {
+                                            val result = withContext(Dispatchers.IO) {
+                                                Storage.noteWriteMutex.withLock { Storage.readNote(context, Uri.parse(targetUri)) }
+                                            }
+                                            labelsOpening = false
+                                            if (targetUri == currentUri) result.onSuccess { content ->
+                                                labels.clear()
+                                                labels.addAll(FrontmatterParser.parse(content).meta.labels)
+                                                labelsSheetOpen = true
+                                            }.onFailure { err ->
+                                                Toast.makeText(context, context.getString(R.string.toast_error, err.message ?: ""), Toast.LENGTH_LONG).show()
+                                            }
+                                        }
+                                    }
+                                },
+                            )
+                            if (isExisting) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.action_archive)) },
+                                    leadingIcon = { Icon(Icons.Filled.Archive, null) },
+                                    onClick = { editorMenuOpen = false; showArchiveDialog = true },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.action_delete)) },
+                                    leadingIcon = { Icon(Icons.Filled.Delete, null) },
+                                    onClick = { editorMenuOpen = false; showDeleteDialog = true },
+                                )
+                            }
                         }
                     }
                     IconButton(
@@ -820,6 +873,7 @@ private fun EditorScreen(
                                 color = color,
                                 pinned = pinned,
                                 tags = tags.toList(),
+                                labels = labels.toList(),
                                 reminder = reminderAtSave,
                                 reminderRepeat = reminderRepeat,
                                 reminderUntil = reminderUntil,
@@ -975,6 +1029,20 @@ private fun EditorScreen(
     }
     }
 
+    if (labelsSheetOpen) {
+        LabelAssignmentSheet(
+            labels = Storage.getLabels(context),
+            selectedLabels = labels.toSet(),
+            onApply = { added, removed ->
+                val uri = currentUri?.let { Uri.parse(it) }
+                val result = if (uri == null) Result.success(LabelNames.applyChanges(labels.toList(), added, removed))
+                else withContext(Dispatchers.IO) { Storage.updateLabels(context, uri, added, removed) }
+                result.onSuccess { updated -> labels.clear(); labels.addAll(updated) }.map { Unit }
+            },
+            onDismiss = { labelsSheetOpen = false },
+        )
+    }
+
     if (showColorPicker) {
         ColorPickerDialog(
             current = color,
@@ -1046,7 +1114,7 @@ private fun EditorScreen(
                     val parsedUri = Uri.parse(uri)
                     ReminderScheduler.cancel(context, parsedUri)
                     val res = withContext(Dispatchers.IO) {
-                        Storage.deleteNote(context, parsedUri)
+                        Storage.noteWriteMutex.withLock { Storage.deleteOrTrashNote(context, parsedUri) }
                     }
                     res.onSuccess {
                         Toast.makeText(context, R.string.toast_deleted, Toast.LENGTH_SHORT).show()
@@ -1289,8 +1357,6 @@ private fun TagEditor(
         input = ""
     }
 
-    // Chips + inline input in a single FlowRow so the input always follows
-    // directly after the last chip with no extra vertical gap.
     androidx.compose.foundation.layout.FlowRow(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1538,6 +1604,7 @@ private fun attemptSaveAndClose(
     color: NoteColor,
     pinned: Boolean,
     tags: List<String>,
+    labels: List<String>,
     reminder: String?,
     reminderRepeat: String?,
     reminderUntil: String?,
@@ -1594,7 +1661,7 @@ private fun attemptSaveAndClose(
                     Storage.updateNote(context, Uri.parse(currentUri), FrontmatterWriter.apply(newRaw, meta)).map { null }
                 } else {
                     // Nieuwe notitie: body + meta in één keer wegschrijven.
-                    val combined = FrontmatterWriter.apply(combinedBody, meta)
+                    val combined = FrontmatterWriter.apply(combinedBody, meta, labels = labels)
                     Storage.createNote(context, combined).map { it.second }
                 }
             }

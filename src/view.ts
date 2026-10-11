@@ -1,6 +1,6 @@
-import { ItemView, Menu, Notice, TFile, WorkspaceLeaf, normalizePath, setIcon } from "obsidian";
+import { App, ItemView, Menu, Modal, Notice, TFile, WorkspaceLeaf, normalizePath, setIcon } from "obsidian";
 import type JotDropPlugin from "./main";
-import { QuickCaptureModal } from "./capture";
+import { QuickCaptureModal, createNoteInFolder } from "./capture";
 import { AttachmentPreviewHint, EditNoteModal } from "./edit";
 import { FolderPickerModal } from "./folderPicker";
 import { TagPickerModal, TagItem } from "./tagPicker";
@@ -15,12 +15,14 @@ import {
   NoteMeta,
   parseReminderMs,
   readMeta,
+  readLabels,
   checklistToGlyphs,
   renderInlinePreview,
   stripFrontmatter,
   toggleChecklistItem,
   updateMeta,
 } from "./metadata";
+import { discoverLabels, assignLabel, removeLabel, createLabel as managerCreateLabel, renameLabel as managerRenameLabel, deleteLabel as managerDeleteLabel, LabelInfo } from "./labelManager";
 import { voidAsync } from "./asyncUtil";
 import { betweenRank, rankForManualOrder, respaceRanks } from "./manualOrder";
 import { t } from "./i18n";
@@ -108,6 +110,234 @@ interface AttachmentResource {
   fallbacks: { resourcePath: string; vaultPath: string }[];
 }
 
+class LabelPickerModal extends Modal {
+  private file: TFile;
+  private plugin: JotDropPlugin;
+  private items: { name: string; isLocal: boolean }[] = [];
+  private checked: Set<string> = new Set();
+  private originalChecked: Set<string> = new Set();
+  private listEl!: HTMLElement;
+  private searchEl!: HTMLInputElement;
+  private newLabelEl!: HTMLInputElement;
+  private saveBtn!: HTMLButtonElement;
+  private cancelBtn!: HTMLButtonElement;
+  private createBtn!: HTMLButtonElement;
+  private saving = false;
+  private query = "";
+
+  constructor(app: App, plugin: JotDropPlugin, file: TFile) {
+    super(app);
+    this.plugin = plugin;
+    this.file = file;
+  }
+
+  async onOpen(): Promise<void> {
+    const { contentEl, titleEl } = this;
+    titleEl.setText(t("label_picker_title"));
+    contentEl.addClass("jotdrop-labelpicker");
+
+    this.searchEl = contentEl.createEl("input", {
+      cls: "jotdrop-labelpicker-search",
+      attr: { type: "search", placeholder: t("label_picker_search") },
+    });
+    this.searchEl.addEventListener("input", () => {
+      this.query = this.searchEl.value.toLowerCase().trim();
+      this.renderList();
+    });
+
+    this.listEl = contentEl.createDiv({ cls: "jotdrop-labelpicker-list" });
+
+    await this.loadItems();
+
+    const newWrap = contentEl.createDiv({ cls: "jotdrop-labelpicker-new" });
+    this.newLabelEl = newWrap.createEl("input", {
+      cls: "jotdrop-edit-taginput",
+      attr: { type: "text", placeholder: t("label_picker_new") },
+    });
+    this.newLabelEl.addEventListener("keydown", async (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        await this.createNewLabel();
+      }
+    });
+    this.createBtn = newWrap.createEl("button", { text: t("label_create") });
+    this.createBtn.addEventListener("click", () => void this.createNewLabel());
+
+    const footer = contentEl.createDiv({ cls: "jotdrop-labelpicker-footer" });
+    this.saveBtn = footer.createEl("button", {
+      text: t("action_save"),
+      cls: "mod-cta",
+    });
+    this.saveBtn.addEventListener("click", () => void this.save());
+    this.cancelBtn = footer.createEl("button", {
+      text: t("action_cancel"),
+    });
+    this.cancelBtn.addEventListener("click", () => { if (!this.saving) this.close(); });
+
+    window.setTimeout(() => this.searchEl.focus(), 0);
+  }
+
+  private async loadItems(): Promise<void> {
+    const discovered = await discoverLabels(
+      this.app,
+      normalizePath(this.plugin.settings.notesFolder),
+      normalizePath(this.plugin.settings.archiveFolder),
+    );
+    const local = readLabels(this.plugin.settings.localLabels ?? []);
+    const seen = new Set<string>();
+    const merged: { name: string; isLocal: boolean }[] = [];
+    for (const name of local) {
+      if (!seen.has(name.toLowerCase())) {
+        merged.push({ name, isLocal: true });
+        seen.add(name.toLowerCase());
+      }
+    }
+    for (const d of discovered) {
+      if (!seen.has(d.name.toLowerCase())) {
+        merged.push({ name: d.name, isLocal: false });
+        seen.add(d.name.toLowerCase());
+      }
+    }
+    this.items = merged.sort((a, b) => a.name.localeCompare(b.name));
+
+    const meta = readMeta(this.app, this.file);
+    this.checked = new Set(meta.labels.map((l) => l.toLowerCase()));
+    this.originalChecked = new Set(this.checked);
+
+    this.renderList();
+  }
+
+  private renderList(): void {
+    this.listEl.empty();
+    const filtered = this.query
+      ? this.items.filter((i) => i.name.toLowerCase().includes(this.query))
+      : this.items;
+
+    if (filtered.length === 0) {
+      this.listEl.createDiv({
+        cls: "jotdrop-labelpicker-empty",
+        text: t("label_picker_empty"),
+      });
+      return;
+    }
+
+    for (const item of filtered) {
+      const isChecked = this.checked.has(item.name.toLowerCase());
+      const row = this.listEl.createEl("label", {
+        cls: `jotdrop-labelpicker-row${isChecked ? " is-selected" : ""}`,
+      });
+      const check = row.createEl("input", { attr: { type: "checkbox" } });
+      check.checked = isChecked;
+      check.disabled = this.saving;
+      row.createSpan({ cls: "jotdrop-labelpicker-name", text: item.name });
+
+      check.addEventListener("change", () => {
+        const lower = item.name.toLowerCase();
+        if (check.checked) this.checked.add(lower);
+        else this.checked.delete(lower);
+        row.classList.toggle("is-selected", check.checked);
+      });
+    }
+  }
+
+  private async createNewLabel(): Promise<void> {
+    if (this.saving) return;
+    const name = this.newLabelEl.value.trim();
+    if (!name) return;
+    if (this.items.some((i) => i.name.toLowerCase() === name.toLowerCase())) {
+      new Notice(t("notice_target_exists"));
+      return;
+    }
+    this.setBusy(true);
+    try {
+    const result = await managerCreateLabel(
+      this.app,
+      name,
+      normalizePath(this.plugin.settings.notesFolder),
+      normalizePath(this.plugin.settings.archiveFolder),
+      this.plugin.settings.localLabels ?? [],
+    );
+    if (!result.success) {
+      new Notice(result.error ?? t("notice_error", "Could not create label"));
+      return;
+    }
+    if (result.labels) {
+      this.plugin.settings.localLabels = readLabels([...(this.plugin.settings.localLabels ?? []), name]);
+      await this.plugin.saveSettings();
+    }
+    this.items.push({ name, isLocal: true });
+    this.items.sort((a, b) => a.name.localeCompare(b.name));
+    this.checked.add(name.toLowerCase());
+    this.newLabelEl.value = "";
+    this.query = "";
+    this.searchEl.value = "";
+    this.renderList();
+    } catch (err) {
+      new Notice(t("notice_error", err instanceof Error ? err.message : String(err)));
+    } finally {
+      this.setBusy(false);
+    }
+  }
+
+  private setBusy(busy: boolean): void {
+    this.saving = busy;
+    this.saveBtn.disabled = busy;
+    this.cancelBtn.disabled = busy;
+    this.createBtn.disabled = busy;
+    this.searchEl.disabled = busy;
+    this.newLabelEl.disabled = busy;
+    this.renderList();
+  }
+
+  private async save(): Promise<void> {
+    if (this.saving) return;
+    this.setBusy(true);
+
+    let errorMsg: string | null = null;
+    try {
+      for (const name of this.checked) {
+        if (!this.originalChecked.has(name)) {
+          const item = this.items.find((i) => i.name.toLowerCase() === name);
+          if (item) {
+            try {
+              await assignLabel(this.app, this.file, item.name);
+            } catch (err) {
+              errorMsg = err instanceof Error ? err.message : String(err);
+            }
+          }
+        }
+      }
+      for (const name of this.originalChecked) {
+        if (!this.checked.has(name)) {
+          const item = this.items.find((i) => i.name.toLowerCase() === name);
+          if (item) {
+            try {
+              await removeLabel(this.app, this.file, item.name);
+            } catch (err) {
+              errorMsg = err instanceof Error ? err.message : String(err);
+            }
+          }
+        }
+      }
+    } finally {
+      this.setBusy(false);
+    }
+
+    if (errorMsg) {
+      new Notice(t("notice_error", errorMsg));
+      this.plugin.refreshViews();
+      return;
+    }
+
+    this.plugin.refreshViews();
+    this.close();
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+}
+
 export class JotDropView extends ItemView {
   plugin: JotDropPlugin;
   private gridEl!: HTMLElement;
@@ -117,8 +347,11 @@ export class JotDropView extends ItemView {
   private selectionToolbarEl!: HTMLElement;
   private selectionCountEl!: HTMLElement;
   private selectAllBtn!: HTMLButtonElement;
+  private labelBtnEl!: HTMLButtonElement;
   private query = "";
   private selectedTags = new Set<string>();
+  private selectedLabels = new Set<string>();
+  private allLabels: { name: string; count: number }[] = [];
   private selectionMode = false;
   private selectedPaths = new Set<string>();
   private lastCards: CardData[] = [];
@@ -167,7 +400,7 @@ export class JotDropView extends ItemView {
     setIcon(newBtn.createSpan({ cls: "jotdrop-new-btn-icon" }), "plus");
     newBtn.createSpan({ text: t("action_new_note") });
     newBtn.addEventListener("click", () => {
-      new QuickCaptureModal(this.app, this.plugin).open();
+      new QuickCaptureModal(this.app, this.plugin, Array.from(this.selectedLabels)).open();
     });
 
     this.micBtnEl = this.normalToolbarEl.createEl("button", {
@@ -190,6 +423,16 @@ export class JotDropView extends ItemView {
         this.searchTimer = null;
         void this.render();
       }, SEARCH_DEBOUNCE_MS);
+    });
+
+    this.labelBtnEl = this.normalToolbarEl.createEl("button", {
+      cls: "jotdrop-toolbar-label-btn",
+      attr: { "aria-label": t("label_section"), "aria-haspopup": "true" },
+    });
+    setIcon(this.labelBtnEl, "folder");
+    this.labelBtnEl.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this.showLabelMenu(e);
     });
 
     this.selectionToolbarEl = root.createDiv({
@@ -836,6 +1079,7 @@ export class JotDropView extends ItemView {
 
     const cards = await this.collectCards();
     this.lastCards = cards;
+    await this.refreshLabels();
     this.renderFilterBar(cards);
 
     // Drop selected tags that no longer exist after note mutations, so the
@@ -1015,53 +1259,62 @@ export class JotDropView extends ItemView {
     this.filterBarEl.empty();
 
     const tagFreq = computeTagFrequency(cards);
-    if (tagFreq.size === 0) {
-      this.filterBarEl.toggleClass("is-hidden", true);
-      return;
-    }
-    this.filterBarEl.toggleClass("is-hidden", false);
+    if (tagFreq.size > 0) {
+      this.filterBarEl.toggleClass("is-hidden", false);
 
-    const byFreqDesc = Array.from(tagFreq.entries())
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-    const top = byFreqDesc.slice(0, TAG_CHIPS_TOP_N).map(([tag]) => tag);
-    const topSet = new Set(top);
-    const extraSelected = Array.from(this.selectedTags)
-      .filter((t) => !topSet.has(t) && tagFreq.has(t))
-      .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
-    const visibleTags = [...top, ...extraSelected];
-    const overflowCount = Math.max(0, tagFreq.size - visibleTags.length);
+      const byFreqDesc = Array.from(tagFreq.entries())
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+      const top = byFreqDesc.slice(0, TAG_CHIPS_TOP_N).map(([tag]) => tag);
+      const topSet = new Set(top);
+      const extraSelected = Array.from(this.selectedTags)
+        .filter((t) => !topSet.has(t) && tagFreq.has(t))
+        .sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
+      const visibleTags = [...top, ...extraSelected];
+      const overflowCount = Math.max(0, tagFreq.size - visibleTags.length);
 
-    for (const tag of visibleTags) {
-      this.renderTagChip(tag, this.selectedTags.has(tag));
-    }
+      for (const tag of visibleTags) {
+        this.renderTagChip(tag, this.selectedTags.has(tag));
+      }
 
-    if (overflowCount > 0) {
-      const more = this.filterBarEl.createEl("button", {
-        cls: "jotdrop-filter-chip is-overflow",
-        text: t("tag_overflow_more", String(overflowCount)),
-      });
-      more.addEventListener("click", () => {
-        const items: TagItem[] = byFreqDesc
-          .map(([tag, count]) => ({ tag, count }))
-          .sort((a, b) =>
-            a.tag.toLowerCase().localeCompare(b.tag.toLowerCase()),
-          );
-        new TagPickerModal(
-          this.app,
-          items,
-          this.selectedTags,
-          (tag) => this.toggleTagFilter(tag),
-        ).open();
-      });
+      if (overflowCount > 0) {
+        const more = this.filterBarEl.createEl("button", {
+          cls: "jotdrop-filter-chip is-overflow",
+          text: t("tag_overflow_more", String(overflowCount)),
+        });
+        more.addEventListener("click", () => {
+          const items: TagItem[] = byFreqDesc
+            .map(([tag, count]) => ({ tag, count }))
+            .sort((a, b) =>
+              a.tag.toLowerCase().localeCompare(b.tag.toLowerCase()),
+            );
+          new TagPickerModal(
+            this.app,
+            items,
+            this.selectedTags,
+            (tag) => this.toggleTagFilter(tag),
+          ).open();
+        });
+      }
     }
 
-    if (this.selectedTags.size > 0) {
+    // Label chips — show when there are any labels (discovered or local).
+    if (this.allLabels.length > 0) {
+      this.filterBarEl.toggleClass("is-hidden", false);
+      const byName = [...this.allLabels].sort((a, b) => a.name.localeCompare(b.name));
+      for (const label of byName) {
+        this.renderLabelChip(label, this.hasLabelSelected(label.name));
+      }
+    }
+
+    if (this.selectedTags.size > 0 || this.selectedLabels.size > 0) {
       const clear = this.filterBarEl.createEl("button", {
         cls: "jotdrop-filter-clear",
         text: t("tag_filter_clear"),
       });
       clear.addEventListener("click", () => {
         this.selectedTags.clear();
+        this.selectedLabels.clear();
+        this.renderLimit = RENDER_CHUNK;
         void this.render();
       });
     }
@@ -1071,12 +1324,26 @@ export class JotDropView extends ItemView {
     const chip = this.filterBarEl.createEl("button", {
       cls: `jotdrop-filter-chip${isSelected ? " is-selected" : ""}`,
     });
-    // Explicit ✓ symbol — color alone is insufficient (color-blind parity
-    // with the Android FilterChip that also shows a Done icon).
     const check = chip.createSpan({ cls: "jotdrop-filter-chip-check" });
     check.setText(isSelected ? "✓" : "");
     chip.createSpan({ cls: "jotdrop-filter-chip-label", text: `#${tag}` });
     chip.addEventListener("click", () => this.toggleTagFilter(tag));
+  }
+
+  private renderLabelChip(label: LabelInfo, isSelected: boolean): void {
+    const chip = this.filterBarEl.createEl("button", {
+      cls: `jotdrop-filter-chip jotdrop-filter-chip-label${isSelected ? " is-selected" : ""}`,
+    });
+    const check = chip.createSpan({ cls: "jotdrop-filter-chip-check" });
+    check.setText(isSelected ? "✓" : "");
+    chip.createSpan({ cls: "jotdrop-filter-chip-label", text: label.name });
+    if (label.count > 0) {
+      chip.createSpan({
+        cls: "jotdrop-filter-chip-count",
+        text: String(label.count),
+      });
+    }
+    chip.addEventListener("click", () => this.toggleLabelFilter(label.name));
   }
 
   private toggleTagFilter(tag: string): void {
@@ -1086,12 +1353,242 @@ export class JotDropView extends ItemView {
     void this.render();
   }
 
+  private toggleLabelFilter(labelName: string): void {
+    this.toggleLabelSelected(labelName);
+    this.renderLimit = RENDER_CHUNK;
+    void this.render();
+  }
+
+  private async refreshLabels(): Promise<void> {
+    const discovered = await discoverLabels(
+      this.plugin.app,
+      normalizePath(this.plugin.settings.notesFolder),
+      normalizePath(this.plugin.settings.archiveFolder),
+    );
+    const local = readLabels(this.plugin.settings.localLabels);
+    const seen = new Set<string>(discovered.map((label) => label.name.toLowerCase()));
+    const merged: LabelInfo[] = [];
+    for (const name of local) {
+      if (!seen.has(name.toLowerCase())) {
+        merged.push({ name, count: 0 });
+        seen.add(name.toLowerCase());
+      }
+    }
+    for (const d of discovered) merged.push(d);
+    this.allLabels = merged.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  private showLabelMenu(event: MouseEvent): void {
+    void this.refreshLabels().then(() => {
+      const menu = new Menu();
+      menu.addItem((i) =>
+        i
+          .setTitle(t("label_all_notes"))
+          .setIcon(this.selectedLabels.size === 0 ? "check" : "folder")
+          .onClick(() => {
+            this.selectedLabels.clear();
+            this.renderLimit = RENDER_CHUNK;
+            void this.render();
+          }),
+      );
+      for (const label of this.allLabels) {
+        const isSelected = this.hasLabelSelected(label.name);
+        menu.addItem((i) =>
+          i
+            .setTitle(`${label.name}  (${label.count})`)
+            .setIcon(isSelected ? "check" : "folder")
+            .onClick(() => {
+              if (isSelected) this.deleteLabelSelected(label.name);
+              else this.selectedLabels.add(label.name);
+              this.renderLimit = RENDER_CHUNK;
+              void this.render();
+            }),
+        );
+      }
+      menu.addSeparator();
+      if (this.selectedLabels.size === 1) {
+        const selectedName = Array.from(this.selectedLabels)[0];
+        menu.addItem((i) =>
+          i
+            .setTitle(t("label_rename"))
+            .setIcon("pencil")
+            .onClick(() => { void this.promptRenameLabel(selectedName); }),
+        );
+        menu.addItem((i) =>
+          i
+            .setTitle(t("label_delete"))
+            .setIcon("trash-2")
+            .onClick(() => { this.promptDeleteLabel(selectedName); }),
+        );
+        menu.addSeparator();
+      }
+      menu.addItem((i) =>
+        i
+          .setTitle(t("label_create"))
+          .setIcon("plus")
+          .onClick(() => {
+            void this.promptCreateLabel();
+          }),
+      );
+      menu.showAtMouseEvent(event);
+    });
+  }
+
+  private async promptRenameLabel(oldName: string): Promise<void> {
+    const input = await this.prompt(t("label_confirm_rename"), t("label_placeholder"));
+    if (!input) return;
+    if (this.allLabels.some((label) => label.name.toLowerCase() === input.trim().toLowerCase()
+      && label.name.toLowerCase() !== oldName.toLowerCase())) {
+      new Notice(t("notice_target_exists"));
+      return;
+    }
+    const result = await managerRenameLabel(
+      this.plugin.app,
+      oldName,
+      input,
+      normalizePath(this.plugin.settings.notesFolder),
+      normalizePath(this.plugin.settings.archiveFolder),
+    );
+    if (!result.success) {
+      new Notice(result.error ?? t("notice_error", "Could not rename label"));
+      return;
+    }
+    this.deleteLabelSelected(oldName);
+    this.selectedLabels.add(input.trim());
+    if (this.plugin.settings.localLabels.some((l) => l.toLowerCase() === oldName.toLowerCase())) {
+      this.plugin.settings.localLabels = readLabels(this.plugin.settings.localLabels.map((l) =>
+        l.toLowerCase() === oldName.toLowerCase() ? input.trim() : l,
+      ));
+      await this.plugin.saveSettings();
+    }
+    await this.refreshLabels();
+    this.renderLimit = RENDER_CHUNK;
+    void this.render();
+  }
+
+  private async promptDeleteLabel(name: string): Promise<void> {
+    new ConfirmModal(
+      this.app,
+      {
+        title: t("label_confirm_delete"),
+        message: t("label_confirm_delete_message", name),
+        confirmLabel: t("label_delete"),
+        destructive: true,
+      },
+      () => { this.doDeleteLabel(name); },
+    ).open();
+  }
+
+  private async doDeleteLabel(name: string): Promise<void> {
+    const result = await managerDeleteLabel(
+      this.plugin.app,
+      name,
+      normalizePath(this.plugin.settings.notesFolder),
+      normalizePath(this.plugin.settings.archiveFolder),
+    );
+    if (!result.success) {
+      new Notice(result.error ?? t("notice_error", "Could not delete label"));
+      return;
+    }
+    this.deleteLabelSelected(name);
+    this.plugin.settings.localLabels = (this.plugin.settings.localLabels ?? []).filter(
+      (l) => l.toLowerCase() !== name.toLowerCase(),
+    );
+    await this.plugin.saveSettings();
+    await this.refreshLabels();
+    this.renderLimit = RENDER_CHUNK;
+    void this.render();
+  }
+
+  private async promptCreateLabel(): Promise<void> {
+    const input = await this.prompt(t("label_placeholder"), t("label_placeholder"));
+    if (!input) return;
+    const result = await managerCreateLabel(
+      this.plugin.app,
+      input,
+      normalizePath(this.plugin.settings.notesFolder),
+      normalizePath(this.plugin.settings.archiveFolder),
+      this.plugin.settings.localLabels ?? [],
+    );
+    if (!result.success) {
+      new Notice(result.error ?? t("notice_error", "Could not create label"));
+      return;
+    }
+    if (result.labels) {
+      this.plugin.settings.localLabels = readLabels([...(this.plugin.settings.localLabels ?? []), input.trim()]);
+      await this.plugin.saveSettings();
+    }
+    await this.refreshLabels();
+    this.deleteLabelSelected(input.trim());
+    this.selectedLabels.add(input.trim());
+    this.renderLimit = RENDER_CHUNK;
+    void this.render();
+  }
+
+  private async prompt(label: string, placeholder: string): Promise<string | null> {
+    return new Promise((resolve) => {
+      const modal = new Modal(this.app);
+      let resolved = false;
+      const done = (value: string | null) => {
+        if (resolved) return;
+        resolved = true;
+        resolve(value);
+      };
+      modal.titleEl.setText(label);
+      const input = modal.contentEl.createEl("input", {
+        cls: "jotdrop-edit-taginput",
+        attr: { type: "text", placeholder },
+      });
+      modal.onClose = () => { if (!resolved) done(null); };
+      const footer = modal.contentEl.createDiv({ cls: "jotdrop-edit-footer" });
+      const cancel = footer.createEl("button", { text: t("action_cancel") });
+      cancel.addEventListener("click", () => { done(null); modal.close(); });
+      const save = footer.createEl("button", { text: t("action_save"), cls: "mod-cta" });
+      save.addEventListener("click", () => { done(input.value); modal.close(); });
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") { event.preventDefault(); done(input.value); modal.close(); }
+      });
+      modal.scope.register([], "Escape", () => { done(null); modal.close(); return false; });
+      modal.open();
+      input.focus();
+    });
+  }
+
   private clearAllFilters(): void {
     this.selectedTags.clear();
+    this.selectedLabels.clear();
     this.query = "";
     if (this.searchEl) this.searchEl.value = "";
     this.renderLimit = RENDER_CHUNK;
     void this.render();
+  }
+
+  private promptAssignLabel(file: TFile): void {
+    new LabelPickerModal(this.app, this.plugin, file).open();
+  }
+
+  private promptRemoveLabel(file: TFile): void {
+    new LabelPickerModal(this.app, this.plugin, file).open();
+  }
+
+  private hasLabelSelected(name: string): boolean {
+    for (const sel of this.selectedLabels) {
+      if (sel.toLowerCase() === name.toLowerCase()) return true;
+    }
+    return false;
+  }
+
+  private toggleLabelSelected(name: string): void {
+    for (const sel of this.selectedLabels) {
+      if (sel.toLowerCase() === name.toLowerCase()) { this.selectedLabels.delete(sel); return; }
+    }
+    this.selectedLabels.add(name);
+  }
+
+  private deleteLabelSelected(name: string): void {
+    for (const sel of this.selectedLabels) {
+      if (sel.toLowerCase() === name.toLowerCase()) { this.selectedLabels.delete(sel); return; }
+    }
   }
 
   private async collectCards(): Promise<CardData[]> {
@@ -1104,6 +1601,8 @@ export class JotDropView extends ItemView {
       const inFolder = isUnder(f.path, folder);
       if (!inFolder) return false;
       if (inArchive && !showArchived) return false;
+      const trashPath = normalizePath(`${folder}/Trash`);
+      if (isUnder(f.path, trashPath)) return false;
       return true;
     });
 
@@ -1130,8 +1629,9 @@ export class JotDropView extends ItemView {
   }
 
   /**
-   * AND between search text and tag filter; OR within selected tags
-   * (a note matches as soon as it has at least one of the selected tags).
+   * AND between search text, label filter, and tag filter; OR within selected
+   * labels (a note matches as soon as it has at least one of the selected labels)
+   * and OR within selected tags.
    */
   private matchesFilters(card: CardData): boolean {
     const q = this.query;
@@ -1139,8 +1639,13 @@ export class JotDropView extends ItemView {
       !q ||
       card.file.basename.toLowerCase().includes(q) ||
       card.content.toLowerCase().includes(q) ||
-      card.meta.tags.some((t) => t.toLowerCase().includes(q));
+      card.meta.tags.some((t) => t.toLowerCase().includes(q)) ||
+      card.meta.labels.some((l) => l.toLowerCase().includes(q));
     if (!matchesQuery) return false;
+
+    if (this.selectedLabels.size > 0) {
+      if (!card.meta.labels.some((l) => this.hasLabelSelected(l))) return false;
+    }
 
     if (this.selectedTags.size === 0) return true;
     return card.meta.tags.some((t) => this.selectedTags.has(t));
@@ -1421,6 +1926,13 @@ export class JotDropView extends ItemView {
             new Notice(t("notice_deleted", file.basename));
             this.plugin.refreshViews();
           })
+      );
+      menu.addSeparator();
+      menu.addItem((i) =>
+        i
+          .setTitle(t("label_picker_open"))
+          .setIcon("folder-plus")
+          .onClick(() => { void this.promptAssignLabel(file); })
       );
       menu.showAtMouseEvent(e);
     });

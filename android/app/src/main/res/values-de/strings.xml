@@ -1,8 +1,33 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-  German (de) — placeholder. Until translations are added, Android falls back
-  to the default English values/strings.xml. Copy keys from values/strings.xml
-  and translate one by one.
--->
 <resources>
+    <string name="nav_open_menu">Navigationsmenü öffnen</string>
+    <string name="nav_notes">Notizen</string>
+    <string name="nav_reminders">Erinnerungen</string>
+    <string name="nav_labels">Labels</string>
+    <string name="nav_edit_labels">Labels bearbeiten</string>
+    <string name="nav_create_label">Neues Label erstellen</string>
+    <string name="nav_assign_label">Label zu ausgewählten Notizen hinzufügen</string>
+    <string name="nav_archive">Archiv</string>
+    <string name="nav_trash">Papierkorb</string>
+    <string name="nav_help">Hilfe und Feedback</string>
+    <string name="nav_feedback">Problem melden</string>
+    <string name="nav_help_message">Notizen mit + erstellen, Voicememos aufnehmen, Fotos erfassen oder aus anderen Apps teilen. Ordnen Sie Notizen mit Labels. Halten Sie eine Karte gedrückt, um Notizen auszuwählen, ein Label hinzuzufügen, zu archivieren oder zu löschen. Wählen Sie Notizen im Archiv oder Papierkorb und tippen Sie auf Zurücksetzen, um sie zu Notizen zurückzusetzen. Der Papierkorb behält Notizen, bis Sie sie dauerhaft löschen. Ihre Notizen bleiben als Markdown-Dateien in Ihrem gewählten Ordner.</string>
+    <string name="action_restore">Zu Notizen zurücksetzen</string>
+    <string name="empty_collection">Keine Notizen in dieser Ansicht.</string>
+    <string name="delete_title">Notiz löschen?</string>
+    <string name="delete_message">Diese Notiz in den Papierkorb verschieben? Sie können sie dort wiederherstellen. Notizen, die sich bereits im Papierkorb befinden, werden dauerhaft gelöscht.</string>
+    <string name="bulk_delete_title">%1$d Notizen löschen?</string>
+    <string name="bulk_delete_message">Die Notizen werden in den Papierkorb verschoben. Sie können sie dort wiederherstellen.</string>
+    <string name="delete_permanent_message">Diese Notizen dauerhaft löschen? Dies kann nicht rückgängig gemacht werden.</string>
+    <string name="label_rename">Label umbenennen</string>
+    <string name="label_delete">Label löschen</string>
+    <string name="label_delete_message">Label "%1$s" aus allen Notizen entfernen, einschließlich Archiv und Papierkorb? Die Notizen selbst werden nicht gelöscht.</string>
+    <string name="label_invalid">Geben Sie einen nicht leeren Label-Namen ohne Zeilenumbrüche oder Steuerzeichen ein.</string>
+    <string name="label_duplicate">Ein Label mit diesem Namen existiert bereits.</string>
+    <string name="label_hint">Labels sind Sammlungen, getrennt von Tags. Leerzeichen bleiben erhalten.</string>
+    <string name="label_search">Label suchen oder erstellen</string>
+    <string name="label_create_first">Erstellen Sie zuerst ein Label im Navigationsmenü.</string>
+    <string name="recording_notification_title">Aufnahme aktiv</string>
+    <string name="recording_notification_channel_name">Voicememo-Aufnahme</string>
+    <string name="recording_notification_channel_desc">Wird angezeigt, wenn eine Voicememo-Aufnahme aktiv ist.</string>
 </resources>

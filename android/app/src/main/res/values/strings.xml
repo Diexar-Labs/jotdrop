@@ -120,6 +120,9 @@
     <string name="audio_pause">Pause audio</string>
     <string name="audio_load_failed">Audio unavailable</string>
     <string name="voice_memo_card_label">Voice memo</string>
+    <string name="recording_notification_title">Recording active</string>
+    <string name="recording_notification_channel_name">Voice memo recording</string>
+    <string name="recording_notification_channel_desc">Shows when a voice memo recording is active.</string>
     <string name="action_insert_photo">Insert photo</string>
     <string name="action_take_photo">Take photo</string>
     <string name="action_pick_from_gallery">Pick from gallery</string>
@@ -167,7 +170,7 @@
     <string name="bulk_archive_title">Archive %1$d notes?</string>
     <string name="bulk_archive_message">The notes will be moved to the Archive subfolder.</string>
     <string name="bulk_delete_title">Delete %1$d notes?</string>
-    <string name="bulk_delete_message">This action cannot be undone.</string>
+    <string name="bulk_delete_message">The notes will move to Trash. You can restore them there.</string>
     <string name="toast_bulk_archived">Archived %1$d notes</string>
     <string name="toast_bulk_deleted">Deleted %1$d notes</string>
     <string name="toast_bulk_partial">%1$d done, %2$d failed</string>
@@ -194,7 +197,7 @@
     <string name="update_up_to_date">You\'re on the latest version (%1$s)</string>
 
     <string name="delete_title">Delete note?</string>
-    <string name="delete_message">This action cannot be undone.</string>
+    <string name="delete_message">Move this note to Trash? You can restore it there. Notes already in Trash are permanently deleted.</string>
     <string name="archive_title">Archive note?</string>
     <string name="archive_message">The note will be moved to the Archive subfolder.</string>
 
@@ -217,4 +220,27 @@
     <string name="color_pink">Pink</string>
     <string name="color_brown">Brown</string>
     <string name="color_gray">Gray</string>
+    <string name="nav_open_menu">Open navigation menu</string>
+    <string name="nav_notes">Notes</string>
+    <string name="nav_reminders">Reminders</string>
+    <string name="nav_labels">Labels</string>
+    <string name="nav_edit_labels">Edit labels</string>
+    <string name="nav_create_label">Create label</string>
+    <string name="nav_assign_label">Add label to selected notes</string>
+    <string name="nav_archive">Archive</string>
+    <string name="nav_trash">Trash</string>
+    <string name="nav_help">Help and feedback</string>
+    <string name="nav_feedback">Report an issue</string>
+    <string name="nav_help_message">Create notes with +, record voice memos, capture photos or share from other apps. Use labels to organize your notes. Long-press a card to select notes, add a label, archive or delete them. In Archive and Trash, select notes and tap Restore to return them to Notes. Trash keeps notes until you permanently delete them. Your notes stay in your chosen folder as Markdown files.</string>
+    <string name="action_restore">Restore to Notes</string>
+    <string name="empty_collection">No notes in this view.</string>
+    <string name="delete_permanent_message">Permanently delete these notes? This cannot be undone.</string>
+    <string name="label_rename">Rename label</string>
+    <string name="label_delete">Delete label</string>
+    <string name="label_delete_message">Remove label "%1$s" from all notes, including Archive and Trash? The notes themselves will not be deleted.</string>
+    <string name="label_invalid">Enter a non-empty label name without line breaks or control characters.</string>
+    <string name="label_duplicate">A label with this name already exists.</string>
+    <string name="label_hint">Labels are collections, separate from tags. Spaces stay unchanged.</string>
+    <string name="label_search">Search or create a label</string>
+    <string name="label_create_first">Create a label in the navigation menu first.</string>
 </resources>

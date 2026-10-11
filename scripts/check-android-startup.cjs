@@ -1,0 +1,16 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const root = path.join(__dirname, '..', 'android', 'app', 'src', 'main', 'kotlin', 'com', 'diexar', 'keepcapture');
+const activity = fs.readFileSync(path.join(root, 'NotesListActivity.kt'), 'utf8');
+const storage = fs.readFileSync(path.join(root, 'Storage.kt'), 'utf8');
+const reload = activity.slice(activity.indexOf('private fun reload('), activity.indexOf('private fun setSortMode('));
+const publish = reload.indexOf('notesState.value = result.fold');
+assert(publish >= 0 && publish < reload.indexOf('Storage.refreshLabels('), 'Show cards before label discovery');
+assert(publish < reload.indexOf('ReminderScheduler.rescheduleAll('), 'Reminders must not delay first cards');
+assert(activity.includes('ReportDrawnWhen'), 'Use native fully-drawn reporting, not shell overhead');
+assert(reload.includes('loadJob?.cancel()'), 'Do not stack outdated reload jobs');
+const traversal = storage.slice(storage.indexOf('private fun traverseSubfolder('), storage.indexOf('private fun uniqueFilename('));
+assert(!traversal.includes('.findFile('), 'Folder traversal must not query every child name individually');
+assert(traversal.includes('contentResolver.query(') && traversal.includes('COLUMN_DISPLAY_NAME'), 'Use a bulk directory cursor');
+console.log('Android startup guards passed');
