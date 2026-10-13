@@ -5,6 +5,7 @@ import { LightboxModal } from "./lightbox";
 import { voidAsync } from "./asyncUtil";
 import { RepeatEditor } from "./repeat";
 import { t } from "./i18n";
+import { keepModalAboveKeyboard } from "./mobileKeyboard";
 import {
   colorLabel,
   COLOR_NAMES,
@@ -77,6 +78,7 @@ export class EditNoteModal extends Modal {
   private touchStartX: number | null = null;
   private touchStartY: number | null = null;
   private touchOnTextField = false;
+  private cleanupKeyboard: (() => void) | null = null;
 
   constructor(
     app: App,
@@ -94,6 +96,7 @@ export class EditNoteModal extends Modal {
 
   async onOpen(): Promise<void> {
     this.contentEl.addClass("jotdrop-edit-modal");
+    this.cleanupKeyboard = keepModalAboveKeyboard(this);
     this.registerNavHandlers();
     await this.loadNote(this.file);
   }
@@ -663,6 +666,8 @@ export class EditNoteModal extends Modal {
   }
 
   onClose(): void {
+    this.cleanupKeyboard?.();
+    this.cleanupKeyboard = null;
     this.contentEl.empty();
   }
 }

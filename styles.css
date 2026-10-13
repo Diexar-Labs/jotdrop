@@ -1422,6 +1422,31 @@
 
 }
 
+/* The keyboard can resize only the visual viewport, leaving vh/dvh unchanged. */
+.is-mobile .modal.jotdrop-keyboard-modal {
+  position: fixed;
+  top: calc(var(--jotdrop-viewport-top, 0px) + 16px);
+  margin-top: 0;
+  margin-bottom: 0;
+  transform: none;
+  height: auto;
+  min-height: 0;
+  max-height: calc(var(--jotdrop-viewport-height, 100dvh) - 32px);
+  display: flex;
+  flex-direction: column;
+}
+
+.is-mobile .jotdrop-keyboard-modal .modal-content {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.is-mobile .jotdrop-keyboard-modal textarea {
+  min-height: 0;
+  height: min(260px, max(48px, calc(var(--jotdrop-viewport-height, 100dvh) - 160px)));
+  max-height: max(48px, calc(var(--jotdrop-viewport-height, 100dvh) - 160px));
+}
+
 /* Obsidian Mobile can report a CSS viewport wider than the physical phone,
    so a width media query alone is unreliable. Its own `.is-mobile` class is
    the authoritative signal. Keep the in-card preview compact; the lightbox

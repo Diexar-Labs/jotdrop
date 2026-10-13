@@ -12,6 +12,7 @@ import {
 import { buildLinkNote, detectAllUrls, fetchOg, OgPreview } from "./ogfetch";
 import { RepeatEditor } from "./repeat";
 import { t } from "./i18n";
+import { keepModalAboveKeyboard } from "./mobileKeyboard";
 
 export class QuickCaptureModal extends Modal {
   plugin: JotDropPlugin;
@@ -21,6 +22,7 @@ export class QuickCaptureModal extends Modal {
   private tagInputEl: HTMLInputElement | null = null;
   private labelChipsEl!: HTMLElement;
   private labelInputEl: HTMLInputElement | null = null;
+  private cleanupKeyboard: (() => void) | null = null;
   private state: {
     color: ColorName;
     tags: string[];
@@ -51,6 +53,7 @@ export class QuickCaptureModal extends Modal {
     const { contentEl, titleEl } = this;
     titleEl.setText(t("capture_title"));
     contentEl.addClass("jotdrop-capture");
+    this.cleanupKeyboard = keepModalAboveKeyboard(this);
 
     this.renderControls(contentEl);
 
@@ -399,6 +402,8 @@ export class QuickCaptureModal extends Modal {
   }
 
   onClose(): void {
+    this.cleanupKeyboard?.();
+    this.cleanupKeyboard = null;
     this.contentEl.empty();
   }
 }
