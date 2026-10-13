@@ -11,11 +11,19 @@ const esbuild = require("esbuild");
   const { keepModalAboveKeyboard } = loaded.exports;
   const viewport = Object.assign(new EventTarget(), { height: 800, offsetTop: 0 });
   const frames = new Map();
+  const observers = [];
+  let keyboard = 0;
   let nextFrame = 0;
   const win = Object.assign(new EventTarget(), {
     visualViewport: viewport, innerHeight: 800,
     requestAnimationFrame: (fn) => { frames.set(++nextFrame, fn); return nextFrame; },
     cancelAnimationFrame: (id) => frames.delete(id),
+    getComputedStyle: () => ({ getPropertyValue: () => `${keyboard}px` }),
+    MutationObserver: class {
+      constructor(callback) { this.callback = callback; observers.push(this); }
+      observe() {}
+      disconnect() { this.disconnected = true; }
+    },
   });
   const flush = () => {
     for (const [id, fn] of frames) { frames.delete(id); fn(); }
@@ -29,6 +37,7 @@ const esbuild = require("esbuild");
   const doc = {
     defaultView: win, activeElement: field,
     body: { classList: { contains: () => mobile } },
+    documentElement: {},
   };
   const styles = new Map();
   const classes = new Set();
@@ -67,11 +76,27 @@ const esbuild = require("esbuild");
   assert.equal(styles.get("--jotdrop-viewport-height"), "800px");
   assert.equal(scrolls, before + 2, "Never scroll another modal's input");
 
+  // Obsidian's real Android WebView keeps both viewport heights unchanged.
+  keyboard = 310;
+  observers[0].callback();
+  flush();
+  assert.equal(styles.get("--jotdrop-viewport-height"), "490px");
+  viewport.height = 490;
+  viewport.dispatchEvent(new Event("resize"));
+  flush();
+  assert.equal(styles.get("--jotdrop-viewport-height"), "490px", "Never subtract the IME twice");
+  keyboard = 0;
+  viewport.height = 800;
+  observers[0].callback();
+  flush();
+  assert.equal(styles.get("--jotdrop-viewport-height"), "800px");
+
   modalEl.dispatchEvent(new Event("input"));
   cleanup();
   assert.equal(frames.size, 0);
   assert.equal(styles.size, 0);
   assert.equal(classes.size, 0);
+  assert.ok(observers[0].disconnected, "Close must disconnect native inset observer");
   viewport.dispatchEvent(new Event("resize"));
   win.dispatchEvent(new Event("resize"));
   modalEl.dispatchEvent(new Event("focusin"));
