@@ -2525,6 +2525,7 @@ internal fun accentOn(color: NoteColor, foreground: Color): Color {
 internal fun renderPreviewAnnotated(
     text: String,
     accent: Color,
+    underlineLinks: Boolean = true,
 ): androidx.compose.ui.text.AnnotatedString {
     data class Match(
         val start: Int,
@@ -2598,7 +2599,7 @@ internal fun renderPreviewAnnotated(
                 withStyle(
                     SpanStyle(
                         color = accent,
-                        textDecoration = TextDecoration.Underline,
+                        textDecoration = if (underlineLinks) TextDecoration.Underline else TextDecoration.None,
                         fontWeight = FontWeight.Medium,
                     )
                 ) {
@@ -2609,7 +2610,7 @@ internal fun renderPreviewAnnotated(
                 withStyle(
                     SpanStyle(
                         color = accent,
-                        textDecoration = TextDecoration.Underline,
+                        textDecoration = if (underlineLinks) TextDecoration.Underline else TextDecoration.None,
                         fontWeight = FontWeight.Medium,
                     )
                 ) {

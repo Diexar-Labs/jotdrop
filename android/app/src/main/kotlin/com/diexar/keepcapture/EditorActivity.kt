@@ -55,6 +55,7 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
@@ -130,6 +131,9 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextAlign
@@ -250,6 +254,7 @@ private fun EditorScreen(
         mutableStateOf(TextFieldValue(""))
     }
     var originalBody by rememberSaveable { mutableStateOf("") }
+    var bodyEditing by rememberSaveable { mutableStateOf(initialUri == null) }
     // Expliciete titel (de eerste `# kop`-regel). Leeg → de kaart leidt zoals
     // vanouds een titel af uit de eerste woorden van de body.
     var titleText by rememberSaveable { mutableStateOf("") }
@@ -316,6 +321,7 @@ private fun EditorScreen(
             val newText = before + insert + after
             val cursorPos = before.length + insert.length
             bodyText = TextFieldValue(text = newText, selection = TextRange(cursorPos))
+            bodyEditing = true
         }
         embedLines.add("![[" + basename + "]]")
     }
@@ -454,6 +460,7 @@ private fun EditorScreen(
         val newText = text.substring(0, lineStart) + newLine + text.substring(lineEnd)
         val newCaret = (caret + caretDelta).coerceIn(0, newText.length)
         bodyText = TextFieldValue(text = newText, selection = TextRange(newCaret))
+        bodyEditing = true
     }
 
     fun insertText(text: String) {
@@ -471,6 +478,7 @@ private fun EditorScreen(
         val newText = before + insert + after
         val cursorPos = before.length + insert.length
         bodyText = TextFieldValue(text = newText, selection = TextRange(cursorPos))
+        bodyEditing = true
     }
 
     val speechLauncher = rememberLauncherForActivityResult(
@@ -535,6 +543,7 @@ private fun EditorScreen(
                 originalTitle = loadedTitle
                 titleLevel = loadedLevel
                 bodyText = TextFieldValue(loadedBody)
+                bodyEditing = false
                 originalBody = loadedBody
                 embedLines.clear()
                 embedLines.addAll(embeds)
@@ -960,6 +969,8 @@ private fun EditorScreen(
                 else -> EditorBody(
                     value = bodyText,
                     onValueChange = { bodyText = it },
+                    bodyEditing = bodyEditing,
+                    onEditBody = { bodyEditing = true },
                     title = titleText,
                     onTitleChange = { titleText = it },
                     embedItems = embedItems,
@@ -1069,6 +1080,7 @@ private fun EditorScreen(
                     text = newText,
                     selection = androidx.compose.ui.text.TextRange(start + insert.length)
                 )
+                bodyEditing = true
             },
             onDismiss = { showLinkPicker = false },
         )
@@ -1134,6 +1146,8 @@ private fun EditorScreen(
 private fun EditorBody(
     value: TextFieldValue,
     onValueChange: (TextFieldValue) -> Unit,
+    bodyEditing: Boolean,
+    onEditBody: () -> Unit,
     title: String,
     onTitleChange: (String) -> Unit,
     embedItems: List<Pair<String, Uri>>,
@@ -1151,8 +1165,24 @@ private fun EditorBody(
     onClear: () -> Unit,
     foreground: Color,
 ) {
+    val context = LocalContext.current
     var lightboxUri by remember { mutableStateOf<Uri?>(null) }
     val scrollState = rememberScrollState()
+    val preview = remember(value.text, foreground, bodyEditing) {
+        if (bodyEditing) androidx.compose.ui.text.AnnotatedString("")
+        else renderPreviewAnnotated(value.text, foreground, underlineLinks = false)
+    }
+    val previewLinks = preview.getStringAnnotations("URL", 0, preview.length)
+    val openLinkLabel = stringResource(R.string.action_open_link)
+    fun openLink(url: String): Boolean {
+        return try {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+            true
+        } catch (e: Exception) {
+            Toast.makeText(context, context.getString(R.string.toast_error, e.message ?: ""), Toast.LENGTH_SHORT).show()
+            false
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -1247,24 +1277,50 @@ private fun EditorBody(
                 unfocusedIndicatorColor = Color.Transparent,
             ),
         )
-        TextField(
-            value = value,
-            onValueChange = onValueChange,
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(min = 200.dp),
-            placeholder = { Text(stringResource(R.string.editor_hint), color = foreground.copy(alpha = 0.5f)) },
-            keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-            colors = TextFieldDefaults.colors(
-                focusedContainerColor = Color.Transparent,
-                unfocusedContainerColor = Color.Transparent,
-                focusedTextColor = foreground,
-                unfocusedTextColor = foreground,
-                cursorColor = foreground,
-                focusedIndicatorColor = Color.Transparent,
-                unfocusedIndicatorColor = Color.Transparent,
-            ),
-        )
+        // The preview is display-only; saving always uses the original TextFieldValue.
+        if (!bodyEditing && previewLinks.isNotEmpty()) {
+            TextButton(onClick = onEditBody) {
+                Text(stringResource(R.string.editor_title_edit), color = foreground)
+            }
+            ClickableText(
+                text = preview,
+                style = MaterialTheme.typography.bodyLarge.copy(color = foreground),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 200.dp).padding(16.dp).semantics {
+                    customActions = previewLinks.map { link ->
+                        CustomAccessibilityAction(
+                            "$openLinkLabel: ${preview.subSequence(link.start, link.end).text} (${link.item})",
+                        ) { openLink(link.item) }
+                    }
+                },
+                onClick = { offset ->
+                    val url = preview.getStringAnnotations("URL", offset, offset).firstOrNull()?.item
+                    if (url == null) {
+                        onEditBody()
+                    } else {
+                        openLink(url)
+                    }
+                },
+            )
+        } else {
+            TextField(
+                value = value,
+                onValueChange = onValueChange,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 200.dp),
+                placeholder = { Text(stringResource(R.string.editor_hint), color = foreground.copy(alpha = 0.5f)) },
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = Color.Transparent,
+                    unfocusedContainerColor = Color.Transparent,
+                    focusedTextColor = foreground,
+                    unfocusedTextColor = foreground,
+                    cursorColor = foreground,
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent,
+                ),
+            )
+        }
     }
     lightboxUri?.let { uri ->
         ImageLightbox(uri = uri, onClose = { lightboxUri = null })

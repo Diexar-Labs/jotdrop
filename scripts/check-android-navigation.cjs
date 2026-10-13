@@ -40,6 +40,26 @@ assert(assignment.includes('TriStateCheckbox'), 'Labels need checked and mixed m
 assert(assignment.includes('OutlinedTextField'), 'The assignment picker must support label search');
 assert(assignment.includes('Storage.addLabel'), 'Create labels inline without leaving the note');
 assert(source('EditorActivity').includes('LabelAssignmentSheet('), 'Individual notes need a direct labels picker');
+const editor = source('EditorActivity');
+const editorBody = editor.slice(editor.indexOf('private fun EditorBody('), editor.indexOf('private fun EditorNavHeader('));
+assert(editor.includes('mutableStateOf(initialUri == null)'), 'New notes must remain directly editable');
+assert.match(editor, /bodyText = TextFieldValue\(loadedBody\)\s+bodyEditing = false/, 'Navigation must reset the link reading view');
+assert(editorBody.includes('renderPreviewAnnotated(value.text, foreground, underlineLinks = false)'), 'Reuse the renderer with calm editor styling without changing the source body');
+assert(list.includes('underlineLinks: Boolean = true'), 'Keep the existing list-card link styling by default');
+assert.equal((list.match(/if \(underlineLinks\) TextDecoration.Underline else TextDecoration.None/g) || []).length, 2, 'Web and wiki link styles must both respect the reading style');
+assert(editorBody.includes('val previewLinks = preview.getStringAnnotations("URL", 0, preview.length)'), 'Detect link bodies using actual renderer annotations');
+assert(editorBody.includes('!bodyEditing && previewLinks.isNotEmpty()'), 'Only link bodies should enter reading view');
+assert(editorBody.includes('TextButton(onClick = onEditBody)'), 'Reading view must have an accessible edit action');
+assert(editorBody.includes('CustomAccessibilityAction('), 'Screen readers must be able to open individual preview links');
+assert(editorBody.includes('Intent(Intent.ACTION_VIEW, Uri.parse(url))'), 'Link labels must open their annotated destination');
+assert.match(editorBody, /TextField\(\s+value = value,\s+onValueChange = onValueChange/, 'Editing must retain the original Markdown value');
+assert.equal((editor.match(/bodyText = bodyText.text,/g) || []).length, 3, 'All save paths must persist raw Markdown, never the preview');
+for (const name of ['insertOcrAndEmbed', 'toggleOrInsertChecklist', 'insertText']) {
+  const start = editor.indexOf(`fun ${name}(`);
+  const end = editor.indexOf('\n    fun ', start + 1);
+  assert(editor.slice(start, end < 0 ? undefined : end).includes('bodyEditing = true'), `${name} must reveal edits in the raw editor`);
+}
+assert.match(editor, /bodyText = TextFieldValue\(\s+text = newText,[\s\S]*?bodyEditing = true/, 'Inserted wiki links must enter editing mode');
 assert(storage.includes('LabelNames.applyChanges(meta.labels, added, removed)'), 'Only user-toggled memberships may change');
 assert(drawer.includes('Storage.addLabel(context, normalized)'), 'Creation must merge a fresh label registry under the write mutex');
 assert(storage.includes('private fun saveLabels('), 'Callers must not overwrite label snapshots without coordination');
