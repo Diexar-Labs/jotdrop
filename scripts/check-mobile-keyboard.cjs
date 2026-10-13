@@ -1,7 +1,13 @@
 const assert = require("node:assert/strict");
 const esbuild = require("esbuild");
+const fs = require("node:fs");
 
 (async () => {
+  const css = fs.readFileSync("styles.css", "utf8");
+  assert.match(css, /\.is-mobile \.jotdrop-keyboard-modal textarea\s*\{[^}]*flex-shrink:\s*0;/,
+    "Native mobile flex layout must not collapse the editor to one line");
+  assert.match(css, /--jotdrop-top-gap:\s*max\(16px, var\(--safe-area-inset-top, 0px\)\)/);
+  assert.match(css, /max-height:\s*calc\(var\(--jotdrop-viewport-height, 100dvh\) - var\(--jotdrop-top-gap\)\)/);
   const bundle = await esbuild.build({
     entryPoints: ["src/mobileKeyboard.ts"],
     bundle: true, platform: "node", format: "cjs", write: false,
