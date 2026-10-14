@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="referrer" content="no-referrer">
+  <title>JotDrop Cloud</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <!-- Extends JotDrop's existing card workspace, not a new brand. System type,
+       neutral surfaces, colored notes, native controls, and explicit sync state.
+       The primary task is capturing and finding the user's own Markdown files. -->
+  <div class="local-banner">Local development preview. Not a hosted service. Use test files only.</div>
+  <section id="access" class="access" aria-labelledby="access-title">
+    <div class="wordmark"><span class="brand-mark" aria-hidden="true">J</span> JotDrop <span>Cloud</span></div>
+    <h1 id="access-title">Your notes, within reach.</h1>
+    <p>Open your encrypted workspace. Your unlock passphrase stays on this device.</p>
+    <form id="unlock-form" hidden>
+      <label for="unlock-password">Device unlock passphrase</label>
+      <input id="unlock-password" type="password" autocomplete="current-password" required>
+      <button class="primary" type="submit">Unlock workspace</button>
+      <button id="use-another" type="button">Connect another workspace</button>
+    </form>
+    <form id="connect-form">
+      <label for="connect-method">Connect this device</label>
+      <select id="connect-method"><option value="create">Create a local test workspace</option><option value="pair">Use a device pairing code</option><option value="recover">Use a recovery code</option></select>
+      <label id="access-code-label" for="access-code">Local enrollment token from the server terminal</label>
+      <textarea id="access-code" rows="3" autocomplete="off" autocapitalize="off" spellcheck="false" required></textarea>
+      <label for="device-name">Device name</label>
+      <input id="device-name" value="Web browser" maxlength="80" autocomplete="off" required>
+      <label for="new-password">Device unlock passphrase (at least 12 characters)</label>
+      <input id="new-password" type="password" minlength="12" autocomplete="new-password" required>
+      <label for="confirm-password">Confirm unlock passphrase</label>
+      <input id="confirm-password" type="password" minlength="12" autocomplete="new-password" required>
+      <button class="primary" type="submit">Connect workspace</button>
+    </form>
+    <p id="access-message" role="status" aria-live="polite"></p>
+    <p class="access-footnote">Local use of JotDrop never requires a cloud account. This preview does not change your existing notes or sync settings.</p>
+  </section>
+
+  <div id="workspace" class="workspace" hidden>
+    <aside class="sidebar" aria-label="Workspace navigation">
+      <div class="wordmark"><span class="brand-mark" aria-hidden="true">J</span> JotDrop <span>Cloud</span></div>
+      <nav aria-label="Library">
+        <button data-view="notes" aria-current="page">Notes <span id="note-count"></span></button>
+        <button data-view="files">Files</button>
+        <button data-view="trash">Trash</button>
+        <button data-view="devices">Devices &amp; recovery</button>
+      </nav>
+      <div class="sidebar-bottom">
+        <p id="storage-usage">Checking storage...</p>
+        <button id="export-all" type="button">Export files</button>
+        <button id="lock" type="button">Lock workspace</button>
+      </div>
+    </aside>
+    <main>
+      <header class="toolbar">
+        <label class="search-label" for="search">Search your notes and filenames</label>
+        <input id="search" type="search" placeholder="Search your notes and files" autocomplete="off">
+        <label class="search-label" for="label-filter">Filter by label</label><select id="label-filter"><option value="">All labels</option></select>
+        <button id="sync" type="button">Sync now</button>
+        <button id="new-note" class="primary" type="button">New note</button>
+        <label class="upload-button" for="upload">Upload files<input id="upload" type="file" multiple></label>
+      </header>
+      <div class="workspace-heading"><div><h1 id="view-title">Notes</h1><p id="view-description">Plain Markdown. Your files, your workspace.</p></div><p id="sync-status" role="status" aria-live="polite">Connecting...</p></div>
+      <p id="workspace-message" class="message" role="status" aria-live="polite"></p>
+      <section id="items" class="note-grid" aria-label="Notes"></section>
+      <section id="devices-panel" hidden aria-label="Devices and recovery">
+        <h2>Connected devices</h2><p>Revoking access prevents future cloud requests. It cannot erase files already downloaded.</p>
+        <div id="device-list"></div>
+        <form id="pair-form"><label for="pair-name">Name of the new device</label><input id="pair-name" maxlength="80" placeholder="My phone" required><button type="submit">Create one-time pairing code</button></form>
+        <p>Pairing codes expire after 10 minutes. Treat them like a password and send them only to your own device.</p>
+        <label for="pair-code">Pairing code</label><textarea id="pair-code" rows="4" readonly spellcheck="false"></textarea>
+        <button id="copy-pair" type="button">Copy pairing code</button>
+        <h2>Recovery</h2><p>Your recovery code contains the keys to this workspace. Keep it in a password manager. We cannot recover encrypted files without your keys.</p>
+        <p>The recovery code is shown when you create a workspace. Pairing a device does not create a replacement recovery code.</p>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="editor" aria-labelledby="editor-title">
+    <form id="editor-form">
+      <div class="dialog-heading"><h2 id="editor-title">Edit note</h2><button id="close-editor" type="button" aria-label="Close editor">Close</button></div>
+      <label for="note-path">Filename</label><input id="note-path" required maxlength="512" spellcheck="false">
+      <label for="note-content">Markdown content</label><textarea id="note-content" rows="14" spellcheck="true"></textarea>
+      <p id="editor-message" role="status"></p>
+      <div class="dialog-actions"><button id="note-history" type="button">Version history</button><button id="note-download" type="button">Download</button><button id="note-delete" class="danger" type="button">Move to trash</button><button class="primary" type="submit">Save note</button></div>
+      <section id="history" hidden><h3>Saved cloud versions</h3><p>Restoring creates a new version. It does not erase history.</p><div id="history-list"></div></section>
+    </form>
+  </dialog>
+  <dialog id="recovery-dialog" aria-labelledby="recovery-title">
+    <h2 id="recovery-title">Keep your recovery code safe</h2>
+    <p>This is the only time this browser shows it. Anyone with this code can access and decrypt your workspace.</p>
+    <label for="recovery-code">Workspace recovery code</label><textarea id="recovery-code" rows="5" readonly spellcheck="false"></textarea>
+    <button id="download-recovery" type="button">Download recovery code</button>
+    <label class="check-label"><input id="recovery-saved" type="checkbox">I have saved the recovery code securely.</label>
+    <button id="finish-recovery" class="primary" type="button" disabled>Open workspace</button>
+  </dialog>
+</body>
+</html>

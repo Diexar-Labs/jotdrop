@@ -5,6 +5,7 @@ import { QuickCaptureModal, createNoteInFolder } from "./capture";
 import { PreviewRescue } from "./previewRescue";
 import { ReminderScheduler } from "./reminderScheduler";
 import { ClipServer } from "./clipServer";
+import { CloudController } from "./cloud";
 import { fetchOg, safeMarkdownLink } from "./ogfetch";
 import { legacyAssetsPath } from "./attachments";
 import {
@@ -23,9 +24,12 @@ export default class JotDropPlugin extends Plugin {
   private readonly suppressedPaths: Set<string> = new Set();
   private reminderScheduler!: ReminderScheduler;
   private clipServer!: ClipServer;
+  cloud!: CloudController;
 
   async onload(): Promise<void> {
     await this.loadSettings();
+    this.cloud = new CloudController(this);
+    this.cloud.register();
 
     this.registerView(VIEW_TYPE_JOTDROP, (leaf) => new JotDropView(leaf, this));
 
@@ -112,6 +116,7 @@ export default class JotDropPlugin extends Plugin {
     // Obsidian closes the view automatically
     this.reminderScheduler?.cancelAll();
     this.clipServer?.stop();
+    this.cloud?.lock();
   }
 
   /**

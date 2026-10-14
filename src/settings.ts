@@ -34,6 +34,8 @@ export interface JotDropSettings {
   clipServerPort: number;
   /** Bearer token the extension must send. Generated automatically. */
   clipServerToken: string;
+  /** Passphrase-wrapped preview credentials and revision journal, never plaintext keys. */
+  cloudConnection: string;
   /**
    * One-time guard: older installs defaulted to "modified-desc", which made
    * cards jump on every edit. On first load we switch that old default to the
@@ -61,6 +63,7 @@ export const DEFAULT_SETTINGS: JotDropSettings = {
   clipServerEnabled: false,
   clipServerPort: 27124,
   clipServerToken: "",
+  cloudConnection: "",
   sortMigratedToCreated: false,
   playTestLiveNoticeSeen: false,
   localLabels: [],
@@ -348,6 +351,14 @@ export class JotDropSettingTab extends PluginSettingTab {
           new Notice(t("notice_token_regenerated"));
         }),
     );
+
+    new Setting(containerEl).setName("Cloud development preview").setHeading();
+    containerEl.createEl("p", { text: "Optional manual sync of an isolated test folder only. Not a hosted service. All software features stay free; existing notes and sync settings are unchanged." });
+    new Setting(containerEl).setName("Cloud connection").setDesc(this.plugin.cloud?.status || "Locked. No background cloud sync.")
+      .addButton((button) => button.setButtonText("Pair preview").onClick(() => this.plugin.cloud?.showPair()))
+      .addButton((button) => button.setButtonText("Unlock").onClick(() => this.plugin.cloud?.showUnlock()))
+      .addButton((button) => button.setButtonText("Manual test sync").onClick(() => this.plugin.cloud?.confirmSync()))
+      .addButton((button) => button.setButtonText("Lock").onClick(() => { this.plugin.cloud?.lock(); this.display(); }));
 
     // "About JotDrop" — unobtrusive, dismisses itself if the user has no
     // interest. No popups, no "premium" features. Open source +

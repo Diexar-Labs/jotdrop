@@ -25,6 +25,7 @@ const els = {
 
 let activeTab = null;
 let currentTags = [];
+const cloudCaptureId = crypto.randomUUID();
 
 function setStatus(text, kind) {
   els.status.textContent = text;
@@ -77,7 +78,9 @@ async function init() {
   if (info.title) els.title.textContent = info.title;
   if (info.selection) els.selection.value = info.selection;
   const settings = await getSettings();
-  if (!settings.token) {
+  if (settings.cloudEnabled) {
+    setStatus("Cloud preview: unlock to save", "idle");
+  } else if (!settings.token) {
     // Zero-config default: saving opens Obsidian via the obsidian:// protocol.
     setStatus("Direct mode: Save opens Obsidian", "idle");
   } else {
@@ -87,7 +90,7 @@ async function init() {
 
 async function getSettings() {
   const defaults = { port: 27124, token: "" };
-  const stored = await chrome.storage.local.get(["port", "token"]);
+  const stored = await chrome.storage.local.get(["port", "token", "cloudEnabled"]);
   return { ...defaults, ...stored };
 }
 
@@ -184,6 +187,22 @@ async function save() {
   };
 
   const settings = await getSettings();
+
+  if (settings.cloudEnabled) {
+    try {
+      if (!globalThis.JotDropCloud) throw new Error("Cloud preview requires the local development extension build. Local mode is available in settings.");
+      const password = $("cloudUnlock");
+      if (!password?.value) throw new Error("Enter your cloud device unlock passphrase.");
+      await globalThis.JotDropCloud.save(payload, password.value, cloudCaptureId);
+      password.value = "";
+      setStatus("Encrypted clip saved to cloud", "ok");
+      setTimeout(() => window.close(), 800);
+    } catch (error) {
+      setStatus(error.message || "Cloud save failed. Any queued encrypted draft is kept; retry when online.", "error");
+      els.saveBtn.disabled = false;
+    }
+    return;
+  }
 
   // Zero-config: no token → open the clip URI directly; Obsidian creates the card.
   if (JotDropProtocol.pickRoute(settings) === "direct") {
