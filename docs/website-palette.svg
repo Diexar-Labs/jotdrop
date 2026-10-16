@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="900" viewBox="0 0 1200 900" role="img" aria-labelledby="title description">
+  <title id="title">JotDrop websitepalet: Sunset &amp; Ink</title>
+  <desc id="description">Het JotDrop-websitepalet combineert donker nachtblauw met perzik, koraal en goud. Papierwit en wit ondersteunen leesvlakken; violet blijft een klein logoaccent. Met geteste leesbare kleurcombinaties.</desc>
+  <defs>
+    <linearGradient id="sunset" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#F28B89"/>
+      <stop offset=".55" stop-color="#FEAA81"/>
+      <stop offset="1" stop-color="#FDCB7E"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="900" fill="#070A2F"/>
+  <rect width="1200" height="180" fill="url(#sunset)"/>
+  <g font-family="Segoe UI, Arial, sans-serif" fill="#FFF9F3">
+    <text x="48" y="58" fill="#070A2F" font-size="16" font-weight="600" letter-spacing="2">JOTDROP / WEBSITEKLEUREN</text>
+    <text x="46" y="122" fill="#070A2F" font-size="52" font-weight="700" letter-spacing="-1">Sunset &amp; Ink</text>
+    <text x="48" y="154" fill="#070A2F" font-size="19">Nachtblauw als basis. Perzik, koraal en goud geven warmte.</text>
+    <text x="48" y="222" font-size="20" font-weight="600">De vier hoofdkleuren</text>
+
+    <g transform="translate(48 246)">
+      <rect width="264" height="104" rx="8" fill="#0F123A" stroke="#636477"/>
+      <text x="16" y="82" fill="#FFFFFF" font-size="18">#0F123A</text>
+      <text y="136" font-size="20" font-weight="600">Nachtblauw</text>
+      <text y="160" font-size="16" fill="#CAC7DD">De rustige, donkere merkbasis</text>
+    </g>
+    <g transform="translate(328 246)">
+      <rect width="264" height="104" rx="8" fill="#FEAA81"/>
+      <text x="16" y="82" fill="#070A2F" font-size="18">#FEAA81</text>
+      <text y="136" font-size="20" font-weight="600">Perzik</text>
+      <text y="160" font-size="16" fill="#CAC7DD">Primaire knoppen op donker</text>
+    </g>
+    <g transform="translate(608 246)">
+      <rect width="264" height="104" rx="8" fill="#F28B89"/>
+      <text x="16" y="82" fill="#070A2F" font-size="18">#F28B89</text>
+      <text y="136" font-size="20" font-weight="600">Koraal</text>
+      <text y="160" font-size="16" fill="#CAC7DD">Warme highlights en details</text>
+    </g>
+    <g transform="translate(888 246)">
+      <rect width="264" height="104" rx="8" fill="#FDCB7E"/>
+      <text x="16" y="82" fill="#070A2F" font-size="18">#FDCB7E</text>
+      <text y="136" font-size="20" font-weight="600">Goud / zonlicht</text>
+      <text y="160" font-size="16" fill="#CAC7DD">Spaarzame nadruk en focus</text>
+    </g>
+
+    <g transform="translate(48 442)">
+      <rect width="264" height="104" rx="8" fill="#070A2F" stroke="#636477"/>
+      <text x="16" y="82" fill="#FFF9F3" font-size="18">#070A2F</text>
+      <text y="136" font-size="20" font-weight="600">Diepe inkt</text>
+      <text y="160" font-size="16" fill="#CAC7DD">Tekst op licht en diepste vlakken</text>
+    </g>
+    <g transform="translate(328 442)">
+      <rect width="264" height="104" rx="8" fill="#FFF9F3"/>
+      <text x="16" y="82" fill="#070A2F" font-size="18">#FFF9F3</text>
+      <text y="136" font-size="20" font-weight="600">Papierwit</text>
+      <text y="160" font-size="16" fill="#CAC7DD">Lichte lees- en werkvlakken</text>
+    </g>
+    <g transform="translate(608 442)">
+      <rect width="264" height="104" rx="8" fill="#FFFFFF"/>
+      <text x="16" y="82" fill="#070A2F" font-size="18">#FFFFFF</text>
+      <text y="136" font-size="20" font-weight="600">Wit</text>
+      <text y="160" font-size="16" fill="#CAC7DD">Schone inhoudelijke panelen</text>
+    </g>
+    <g transform="translate(888 442)">
+      <rect width="264" height="104" rx="8" fill="#A24DFF"/>
+      <text x="16" y="82" fill="#070A2F" font-size="18">#A24DFF</text>
+      <text y="136" font-size="20" font-weight="600">Logo-violet</text>
+      <text y="160" font-size="16" fill="#CAC7DD">Klein accent, niet de hoofdkleur</text>
+    </g>
+
+    <rect x="32" y="642" width="1136" height="180" rx="12" fill="#0F123A"/>
+    <text x="56" y="684" fill="#FFF9F3" font-size="22" font-weight="600">Leesbaarheid hoort bij de basis.</text>
+    <text x="56" y="716" fill="#CAC7DD" font-size="17">Inkt op perzik: 10,32:1. Inkt op goud: 12,82:1.</text>
+    <text x="56" y="744" fill="#CAC7DD" font-size="17">Inkt op koraal: 8,07:1. Inkt op papierwit: 18,38:1.</text>
+    <text x="56" y="783" fill="#FEAA81" font-size="17">Warme accenten leiden de aandacht; nachtblauw geeft rust.</text>
+    <rect x="864" y="686" width="264" height="60" rx="8" fill="#FEAA81"/>
+    <text x="996" y="724" fill="#070A2F" font-size="19" font-weight="600" text-anchor="middle">Voorbeeldknop</text>
+    <text x="864" y="778" fill="#CAC7DD" font-size="15">Geen witte lopende tekst op perzik.</text>
+    <text x="48" y="858" font-size="14" fill="#CAC7DD">Bron: docs/banner.png. Bannerkleuren bemonsterd; leeskleuren afgeleid voor contrast. Uitgewerkt met Impeccable.</text>
+    <text x="48" y="882" font-size="13" fill="#CAC7DD">14 oktober 2026 / CSS-tokens: docs/website-palette.css / Bestaande notitiekleuren blijven ongewijzigd.</text>
+  </g>
+</svg>
