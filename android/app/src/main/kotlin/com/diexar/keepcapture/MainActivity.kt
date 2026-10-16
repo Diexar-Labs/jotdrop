@@ -1,9 +1,11 @@
 package com.diexar.keepcapture
 
 import android.content.Intent
+import android.content.ActivityNotFoundException
 import android.content.res.Configuration
 import android.net.Uri
 import android.os.Bundle
+import android.provider.Settings
 import android.view.View
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
@@ -35,6 +37,19 @@ class MainActivity : AppCompatActivity() {
 
         binding.pickVaultButton.setOnClickListener {
             pickVaultLauncher.launch(null)
+        }
+        binding.reminderSoundButton.setOnClickListener {
+            val channelId = ReminderReceiver.ensureChannel(this)
+            try {
+                startActivity(Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).apply {
+                    putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                    putExtra(Settings.EXTRA_CHANNEL_ID, channelId)
+                })
+            } catch (_: ActivityNotFoundException) {
+                startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                    putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                })
+            }
         }
 
         binding.saveSubfolderButton.setOnClickListener {

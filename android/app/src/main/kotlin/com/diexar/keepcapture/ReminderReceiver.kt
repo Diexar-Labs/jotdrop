@@ -5,7 +5,10 @@ import android.app.NotificationManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.media.AudioAttributes
+import android.media.RingtoneManager
 import android.net.Uri
+import android.os.Build
 import androidx.core.content.getSystemService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
@@ -42,22 +45,38 @@ class ReminderReceiver : BroadcastReceiver() {
     companion object {
         const val ACTION_FIRE = "com.diexar.keepcapture.action.FIRE_REMINDER"
         const val EXTRA_NOTE_URI = "note_uri"
-        const val CHANNEL_ID = "reminders"
+        private const val CHANNEL_ID = "reminder_alarms_v1"
+        private const val LEGACY_CHANNEL_ID = "reminders"
 
         fun requestCodeFor(noteUri: String): Int = noteUri.hashCode()
         fun notificationIdFor(noteUri: String): Int = (noteUri.hashCode() and 0x7fffffff) or 1
 
-        fun ensureChannel(context: Context) {
-            val nm = context.getSystemService<NotificationManager>() ?: return
-            if (nm.getNotificationChannel(CHANNEL_ID) != null) return
+        fun ensureChannel(context: Context): String {
+            val nm = context.getSystemService<NotificationManager>() ?: return CHANNEL_ID
+            // Existing channel sounds are immutable. Migrate only the untouched default;
+            // a deliberate mute or custom sound must not be undone by an app update.
+            val legacy = nm.getNotificationChannel(LEGACY_CHANNEL_ID)
+            if (legacy != null && (legacy.importance != NotificationManager.IMPORTANCE_HIGH ||
+                    legacy.sound != RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION) ||
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.R && legacy.hasUserSetSound())) {
+                return LEGACY_CHANNEL_ID
+            }
+            if (nm.getNotificationChannel(CHANNEL_ID) != null) return CHANNEL_ID
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 context.getString(R.string.reminder_channel_name),
                 NotificationManager.IMPORTANCE_HIGH,
             ).apply {
                 description = context.getString(R.string.reminder_channel_desc)
+                setSound(
+                    RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM),
+                    AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ALARM)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build(),
+                )
+                enableVibration(true)
             }
             nm.createNotificationChannel(channel)
+            return CHANNEL_ID
         }
     }
 }
