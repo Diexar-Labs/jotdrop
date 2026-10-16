@@ -1,4 +1,6 @@
-:root { color-scheme: light dark; --page: #f8f9fa; --surface: #fff; --ink: #20242b; --muted: #515d6d; --line: #d8dee6; --accent: #315fb4; --accent-hover: #264b91; --on-accent: #fff; --selected: #e7eefb; --danger: #a32929; --note: #fff; --focus: #315fb4; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+:root { color-scheme: light dark; --page: light-dark(#f8f9fa, #191c21); --surface: light-dark(#fff, #23272e); --ink: light-dark(#20242b, #eef1f5); --muted: light-dark(#515d6d, #b4becc); --line: light-dark(#d8dee6, #444c58); --accent: light-dark(#315fb4, #9abaff); --accent-hover: light-dark(#264b91, #b6cdff); --on-accent: light-dark(#fff, #172b50); --selected: light-dark(#e7eefb, #2b3950); --danger: light-dark(#a32929, #ffa7a7); --note: light-dark(#fff, #23272e); --focus: light-dark(#315fb4, #aecaff); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
 body { margin: 0; color: var(--ink); background: var(--page); font-size: 15px; line-height: 1.55; }
@@ -18,7 +20,10 @@ h1, h2, h3 { line-height: 1.2; }
 h1 { font-size: 1.8rem; font-weight: 650; letter-spacing: -.025em; margin: 0; }
 h2 { font-size: 1.25rem; margin-top: 2rem; }
 h3 { font-size: 1.05rem; }
-.local-banner { padding: .5rem 1.2rem; text-align: center; background: #fff1c7; color: #654d0a; font-size: .8rem; }
+.local-banner { padding: .5rem 1.2rem; text-align: center; background: light-dark(#fff1c7, #3b3219); color: light-dark(#654d0a, #f1d995); font-size: .8rem; }
+.appearance { display: flex; justify-content: flex-end; align-items: center; gap: .65rem; padding: .6rem 1rem; }
+.appearance label { margin: 0; font-size: .85rem; }
+.appearance select { width: auto; }
 .wordmark { display: flex; align-items: center; gap: .55rem; font-size: 1.25rem; font-weight: 650; white-space: nowrap; }
 .wordmark > span:last-child { font-size: .8rem; color: var(--muted); font-weight: 500; }
 .brand-mark { width: 30px; height: 34px; border-radius: 5px 5px 11px 5px; display: grid; place-items: center; background: #f4c458; color: #3a2d0a; font-size: 1.2rem; }
@@ -56,17 +61,23 @@ main { min-width: 0; padding: 0 2rem 3rem; }
 .note-card button { font-size: .85rem; padding: .4rem .6rem; margin: .25rem .35rem 0 0; background: transparent; }
 .note-card img { width: 100%; max-height: 220px; object-fit: contain; border-radius: 6px; }
 .note-card audio { width: 100%; }
+.note-card .task-row { display: flex; gap: .6rem; align-items: baseline; margin: .5rem 0; font-weight: 400; overflow-wrap: anywhere; }
+.task-row input { width: auto; flex: none; }
+.property-row { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+.property-row > label:first-child { flex: 1; }
+#note-properties summary { cursor: pointer; padding-top: 1rem; font-weight: 600; }
+#note-properties p, #voice-message { color: var(--muted); font-size: .9rem; }
 .note-card.is-pending { border-style: dashed; }
-.note-card.note-red { --note: #fbe5e4; }
-.note-card.note-orange { --note: #fcebd9; }
-.note-card.note-yellow { --note: #fff4ca; }
-.note-card.note-green { --note: #e5f0d8; }
-.note-card.note-teal { --note: #dcf0e9; }
-.note-card.note-blue { --note: #e1edf9; }
-.note-card.note-purple { --note: #ece4f7; }
-.note-card.note-pink { --note: #f7e3ee; }
-.note-card.note-brown { --note: #eee4da; }
-.note-card.note-gray { --note: #e8ebef; }
+.note-card.note-red { --note: light-dark(#fbe5e4, #432d30); }
+.note-card.note-orange { --note: light-dark(#fcebd9, #433526); }
+.note-card.note-yellow { --note: light-dark(#fff4ca, #403b25); }
+.note-card.note-green { --note: light-dark(#fce0bd, #584320); }
+.note-card.note-teal { --note: light-dark(#c6d3e0, #334758); }
+.note-card.note-blue { --note: light-dark(#e1edf9, #29384a); }
+.note-card.note-purple { --note: light-dark(#ece4f7, #362f45); }
+.note-card.note-pink { --note: light-dark(#f7e3ee, #422d3c); }
+.note-card.note-brown { --note: light-dark(#eee4da, #3c352e); }
+.note-card.note-gray { --note: light-dark(#e8ebef, #33383f); }
 .note-card button.label-chip { display: inline-block; border-radius: 20px; font-size: .75rem; font-weight: 500; }
 .empty-state { grid-column: 1 / -1; padding: 3rem 0; max-width: 480px; }
 .empty-state h2 { margin-top: 0; }
@@ -82,22 +93,13 @@ dialog::backdrop { background: rgb(15 23 36 / .4); }
 .dialog-heading h2 { margin: 0; }
 .dialog-actions { display: flex; flex-wrap: wrap; gap: .6rem; justify-content: flex-end; margin-top: 1rem; }
 #note-content { min-height: 260px; line-height: 1.7; }
+#photo-tools { margin-top: 1rem; }
+#photo-tools summary { cursor: pointer; font-weight: 600; padding: .6rem 0; }
+#photo-tools p { color: var(--muted); overflow-wrap: anywhere; }
+.photo-actions { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; }
+#camera-preview { display: block; width: 100%; max-height: 320px; margin: 1rem 0; object-fit: contain; }
 .check-label { display: flex; align-items: start; gap: .7rem; margin: 1.2rem 0; }
 .check-label input { width: auto; margin-top: .35rem; }
-@media (prefers-color-scheme: dark) {
-  :root { --page: #191c21; --surface: #23272e; --ink: #eef1f5; --muted: #b4becc; --line: #444c58; --accent: #9abaff; --accent-hover: #b6cdff; --on-accent: #172b50; --selected: #2b3950; --danger: #ffa7a7; --note: #23272e; --focus: #aecaff; }
-  .local-banner { background: #3b3219; color: #f1d995; }
-  .note-card.note-red { --note: #432d30; }
-  .note-card.note-orange { --note: #433526; }
-  .note-card.note-yellow { --note: #403b25; }
-  .note-card.note-green { --note: #2b3b2b; }
-  .note-card.note-teal { --note: #263b38; }
-  .note-card.note-blue { --note: #29384a; }
-  .note-card.note-purple { --note: #362f45; }
-  .note-card.note-pink { --note: #422d3c; }
-  .note-card.note-brown { --note: #3c352e; }
-  .note-card.note-gray { --note: #33383f; }
-}
 @media (max-width: 760px) {
   .workspace { grid-template-columns: 1fr; }
   .sidebar { padding: 1rem; border-right: none; border-bottom: 1px solid var(--line); }

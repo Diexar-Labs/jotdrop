@@ -23,6 +23,44 @@ def check_browser(browser, url, enrollment_token):
     second.on("dialog", lambda dialog: dialog.accept())
     try:
         first.goto(url, wait_until="networkidle")
+        def check_theme(page, expected):
+            page.wait_for_function("expected => getComputedStyle(document.body).backgroundColor === expected", arg=expected)
+
+        first.emulate_media(color_scheme="light")
+        assert first.locator("#theme").input_value() == "system"
+        check_theme(first, "rgb(248, 249, 250)")
+        first.emulate_media(color_scheme="dark")
+        check_theme(first, "rgb(25, 28, 33)")
+        first.locator("#theme").select_option("light")
+        check_theme(first, "rgb(248, 249, 250)")
+        first.reload(wait_until="networkidle")
+        assert first.locator("#theme").input_value() == "light"
+        check_theme(first, "rgb(248, 249, 250)")
+        first.locator("#theme").select_option("dark")
+        first.emulate_media(color_scheme="light")
+        check_theme(first, "rgb(25, 28, 33)")
+        first.reload(wait_until="networkidle")
+        assert first.locator("#theme").input_value() == "dark"
+        check_theme(first, "rgb(25, 28, 33)")
+        first.locator("#theme").select_option("system")
+        check_theme(first, "rgb(248, 249, 250)")
+        first.reload(wait_until="networkidle")
+        assert first.locator("#theme").input_value() == "system"
+        first.emulate_media(color_scheme="dark")
+        check_theme(first, "rgb(25, 28, 33)")
+        first.emulate_media(color_scheme="light")
+        check_theme(first, "rgb(248, 249, 250)")
+        blocked_context = browser.new_context()
+        try:
+            blocked_context.add_init_script("Object.defineProperty(window, 'localStorage', { get() { throw new DOMException('Blocked', 'SecurityError'); } });")
+            blocked = blocked_context.new_page()
+            blocked.goto(url, wait_until="networkidle")
+            blocked.locator("#theme").select_option("dark")
+            check_theme(blocked, "rgb(25, 28, 33)")
+            blocked.locator("#theme").select_option("light")
+            check_theme(blocked, "rgb(248, 249, 250)")
+        finally:
+            blocked_context.close()
         first.locator("#access-code").fill(enrollment_token)
         first.locator("#new-password").fill(password)
         first.locator("#confirm-password").fill(password)
@@ -180,31 +218,32 @@ def check_browser(browser, url, enrollment_token):
               db.close(); return keys.filter(key => key.startsWith('pending:')).length === 1 && !JSON.stringify(rows).includes('Synthetic blocked private draft.') && !JSON.stringify(rows).includes('Saved on second browser.');
             }""")
         assert not first.evaluate("document.documentElement.scrollWidth > innerWidth")
-        return {"paired_browsers": True, "stale_editor_protected": True, "history_trash_restore": True, "busy_upload_retried": True, "lost_upload_response_retried": True, "lost_delete_response_retried": True, "encrypted_browser_storage": True, "offline_queue_replayed": True, "history_limit_drafts_preserved": True, "history_readable_at_limit": True, "mobile_overflow": False, "unlock": True}
+        return {"system_light_dark_theme": True, "theme_persisted": True, "theme_without_storage": True, "paired_browsers": True, "stale_editor_protected": True, "history_trash_restore": True, "busy_upload_retried": True, "lost_upload_response_retried": True, "lost_delete_response_retried": True, "encrypted_browser_storage": True, "offline_queue_replayed": True, "history_limit_drafts_preserved": True, "history_readable_at_limit": True, "mobile_overflow": False, "unlock": True}
     finally:
         first_context.close()
         second_context.close()
 
 
-def main():
+def main(check=check_browser, history_limit=5, camera=False):
     root = Path(__file__).resolve().parent.parent
     with tempfile.TemporaryDirectory(prefix="jotdrop-browser-test-") as directory:
         with socket.socket() as candidate:
             candidate.bind(("127.0.0.1", 0))
             port = candidate.getsockname()[1]
         token = secrets.token_urlsafe(32)
-        environment = dict(os.environ, JOTDROP_CLOUD_DATA_DIR=directory, JOTDROP_CLOUD_ENROLLMENT_TOKEN=token, JOTDROP_CLOUD_PORT=str(port), JOTDROP_CLOUD_MAX_HISTORY_ENTRIES="5", JOTDROP_CLOUD_MAX_DEVICE_ENTRIES="2", JOTDROP_CLOUD_MAX_PAIRING_ENTRIES="1", JOTDROP_CLOUD_MAX_CONCURRENT_REQUESTS="8")
+        environment = dict(os.environ, JOTDROP_CLOUD_DATA_DIR=directory, JOTDROP_CLOUD_ENROLLMENT_TOKEN=token, JOTDROP_CLOUD_PORT=str(port), JOTDROP_CLOUD_MAX_HISTORY_ENTRIES=str(history_limit), JOTDROP_CLOUD_MAX_DEVICE_ENTRIES="2", JOTDROP_CLOUD_MAX_PAIRING_ENTRIES="1", JOTDROP_CLOUD_MAX_CONCURRENT_REQUESTS="8")
         process = subprocess.Popen(["node", "cloud/server.mjs"], cwd=root, env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         try:
             line = process.stdout.readline()
             assert "Local cloud preview" in line, "Local test server did not start."
             with sync_playwright() as playwright:
-                browser = playwright.chromium.launch(headless=True, channel=sys.argv[1] if len(sys.argv) > 1 else "msedge")
+                browser = playwright.chromium.launch(headless=True, channel=sys.argv[1] if len(sys.argv) > 1 else "msedge", args=["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"] if camera else [])
                 try:
-                    result = check_browser(browser, f"http://127.0.0.1:{port}", token)
+                    result = check(browser, f"http://127.0.0.1:{port}", token)
                     with closing(sqlite3.connect((Path(directory) / "cloud.db").as_uri() + "?mode=ro", uri=True)) as database:
-                        for table, count in [("revisions", 5), ("changes", 5), ("envelopes", 3), ("devices", 2), ("pairings", 1)]:
-                            assert database.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == count
+                        if check is check_browser:
+                            for table, count in [("revisions", 5), ("changes", 5), ("envelopes", 3), ("devices", 2), ("pairings", 1)]:
+                                assert database.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == count
                         assert database.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
                         assert not database.execute("PRAGMA foreign_key_check").fetchall()
                     print(json.dumps(result))

@@ -21,11 +21,15 @@
     "check:toolbar": "node scripts/check-toolbar-containment.cjs",
     "check:preview-fallback": "node scripts/check-preview-fallback.cjs",
     "check:recurrence": "node scripts/check-recurrence.cjs",
+    "check:reminder-sound": "node scripts/check-reminder-sound.cjs",
     "check:web-clipper": "node scripts/check-web-clipper.mjs",
     "check:play-invite": "node scripts/check-play-invite.cjs",
     "check:transport-safety": "node scripts/check-transport-safety.cjs",
     "check:cloud": "node --test \"cloud/**/*.test.mjs\"",
     "check:cloud-browser": "python cloud/browser_check.py",
+    "check:cloud-photo": "python cloud/photo_browser_check.py",
+    "check:cloud-parity": "python cloud/parity_browser_check.py",
+    "check:cloud-android": "node scripts/check-cloud-android.mjs",
     "cloud:dev": "npm run verify:base && node cloud/server.mjs",
     "cloud:backup": "node cloud/backup.mjs",
     "build:cloud-clipper": "npm run verify:base && node scripts/build-cloud-clipper.mjs",
@@ -53,9 +57,12 @@
   },
   "homepage": "https://github.com/Diexar-Labs/jotdrop#readme",
   "devDependencies": {
+    "@tesseract.js-data/eng": "1.0.0",
+    "@tesseract.js-data/nld": "1.0.0",
     "@types/node": "^20.11.0",
     "esbuild": "^0.28.2",
     "obsidian": "latest",
+    "tesseract.js": "7.0.0",
     "tslib": "^2.6.2",
     "typescript": "^5.4.5"
   }

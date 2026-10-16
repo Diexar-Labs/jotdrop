@@ -29,7 +29,6 @@ object ReminderEngine {
      * verloren gaat.
      */
     suspend fun fireAndAdvance(context: Context, noteUri: Uri) {
-        ReminderReceiver.ensureChannel(context)
         val fired = Storage.noteWriteMutex.withLock {
             val fresh = Storage.readNote(context, noteUri).getOrNull() ?: return@withLock null
             val parsed = FrontmatterParser.parse(fresh)
@@ -90,7 +89,7 @@ object ReminderEngine {
             context, ReminderReceiver.requestCodeFor(noteUri.toString()), openIntent, pendingFlags,
         )
 
-        val notification = NotificationCompat.Builder(context, ReminderReceiver.CHANNEL_ID)
+        val notification = NotificationCompat.Builder(context, ReminderReceiver.ensureChannel(context))
             .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(context.getString(R.string.reminder_notification_title))
             .setContentText(title)
@@ -98,6 +97,7 @@ object ReminderEngine {
             .setContentIntent(tap)
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
             .build()
 
         val nm = context.getSystemService<NotificationManager>() ?: return

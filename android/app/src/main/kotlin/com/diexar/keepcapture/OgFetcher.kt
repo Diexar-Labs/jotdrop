@@ -526,6 +526,7 @@ object OgFetcher {
                 "gif" -> "image/gif"
                 else -> "image/*"
             }
+            synchronized(Storage.cloudFileLock) {
             val target = attachmentsFolder.createFile(mimeForFile, basename)
                 ?: return Result.failure(IllegalStateException("Kan attachment niet aanmaken."))
 
@@ -548,6 +549,7 @@ object OgFetcher {
                 return Result.failure(IllegalStateException("Kan niet schrijven naar attachment."))
             }
             Result.success(basename)
+            }
         } catch (e: Exception) {
             Result.failure(e)
         } finally {

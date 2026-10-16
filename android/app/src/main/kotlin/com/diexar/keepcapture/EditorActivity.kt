@@ -245,6 +245,12 @@ private fun EditorScreen(
     // anders herlaadt de LaunchedEffect de notitie van schijf óver de
     // herstelde (ongesavede) tekst heen.
     var currentUri by rememberSaveable { mutableStateOf(initialUri?.toString()) }
+    var loadedBodyHash by rememberSaveable { mutableStateOf<String?>(null) }
+    DisposableEffect(currentUri) {
+        val uri = currentUri?.let(Uri::parse)
+        if (uri != null) CloudSyncManager.openEditor(uri)
+        onDispose { if (uri != null) CloudSyncManager.closeEditor(uri) }
+    }
     // Positie binnen de meegegeven kaartvolgorde; -1 = geen navigatie mogelijk.
     var navIndex by rememberSaveable { mutableStateOf(navUris.indexOf(initialUri?.toString())) }
     val navEnabled = navUris.size >= 2 && navIndex >= 0
@@ -536,6 +542,7 @@ private fun EditorScreen(
                 attachmentUris = attachments
                 attachmentIndexLoaded = indexReady
                 val parsed = FrontmatterParser.parse(raw)
+                loadedBodyHash = CloudSyncEngine.hash(parsed.body.toByteArray(Charsets.UTF_8))
                 val cleanBody = parsed.body.removePrefix("\n")
                 val (textPart, embeds) = splitBodyAndEmbeds(cleanBody)
                 val (loadedTitle, loadedBody, loadedLevel) = splitHeadingTitle(textPart)
@@ -640,6 +647,7 @@ private fun EditorScreen(
             titleLevel = titleLevel,
             embedLines = embedLines.toList(),
             currentUri = currentUri,
+            expectedBodyHash = loadedBodyHash,
             color = color,
             pinned = pinned,
             tags = tags.toList(),
@@ -698,6 +706,7 @@ private fun EditorScreen(
                 titleLevel = titleLevel,
                 embedLines = embedLines.toList(),
                 currentUri = currentUri,
+                expectedBodyHash = loadedBodyHash,
                 color = color,
                 pinned = pinned,
                 tags = tags.toList(),
@@ -879,6 +888,7 @@ private fun EditorScreen(
                                 titleLevel = titleLevel,
                                 embedLines = embedLines.toList(),
                                 currentUri = currentUri,
+                                expectedBodyHash = loadedBodyHash,
                                 color = color,
                                 pinned = pinned,
                                 tags = tags.toList(),
@@ -1657,6 +1667,7 @@ private fun attemptSaveAndClose(
     titleLevel: Int = 1,
     embedLines: List<String>,
     currentUri: String?,
+    expectedBodyHash: String?,
     color: NoteColor,
     pinned: Boolean,
     tags: List<String>,
@@ -1711,6 +1722,9 @@ private fun attemptSaveAndClose(
                     val rawCurrent = Storage.readNote(context, Uri.parse(currentUri))
                         .getOrElse { return@withContext Result.failure(it) }
                     val parsed = FrontmatterParser.parse(rawCurrent)
+                    if (expectedBodyHash == null || CloudSyncEngine.hash(parsed.body.toByteArray(Charsets.UTF_8)) != expectedBodyHash) {
+                        return@withContext Result.failure(IllegalStateException("This note changed since it was opened. Your draft was kept; compare the current note before saving."))
+                    }
                     val fmBlock = parsed.frontmatter
                     val newRaw = if (fmBlock.isEmpty()) combinedBody else fmBlock + combinedBody
                     // Pas eerst meta toe (geeft consistente frontmatter), dan write.

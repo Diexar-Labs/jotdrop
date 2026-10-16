@@ -157,6 +157,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.withLock
@@ -245,6 +246,7 @@ class NotesListActivity : ComponentActivity() {
         VoiceMemoRecordingService.restorePending(this)
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
+                launch { CloudSyncManager.changes.drop(1).collect { reload(rescheduleReminders = true) } }
                 launch {
                     VoiceMemoRecordingService.failure.collect { message ->
                         if (message != null) {
@@ -413,6 +415,7 @@ class NotesListActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         reload(rescheduleReminders = true)
+        CloudSyncManager.request(this)
     }
 
     override fun onStop() {
@@ -920,6 +923,10 @@ private fun NotesListScreen(
                     labelManagerOpen = true
                 },
                 onSettings = onOpenSettings,
+                onCloud = {
+                    scope.launch { drawerState.close() }
+                    context.startActivity(Intent(context, CloudActivity::class.java))
+                },
                 onHelp = {
                     scope.launch { drawerState.close() }
                     helpOpen = true

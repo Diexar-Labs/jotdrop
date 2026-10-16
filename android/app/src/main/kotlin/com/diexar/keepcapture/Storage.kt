@@ -28,6 +28,8 @@ object Storage {
      * een nieuwere overschrijven (getypte tekst kwijt na een tag-tik).
      */
     val noteWriteMutex = Mutex()
+    // ponytail: one synchronous SAF lock; use per-document locks if capture throughput needs it.
+    val cloudFileLock = Any()
 
     private const val KEY_VAULT_URI = "vault_tree_uri"
     private const val KEY_SUBFOLDER = "subfolder"
@@ -295,6 +297,7 @@ object Storage {
         sourceFile: java.io.File,
         durationMs: Long,
     ): Result<String> {
+        synchronized(cloudFileLock) {
         val attachmentsFolder = getOrCreateAttachmentsFolder(context).getOrElse {
             return Result.failure(it)
         }
@@ -329,6 +332,7 @@ object Storage {
             sourceFile.delete()
         }
         return result
+        }
     }
 
     /** Formatteert milliseconden als `M:SS`. */
@@ -346,6 +350,7 @@ object Storage {
      * bestaande notitie).
      */
     fun copyImageToAttachments(context: Context, imageUri: Uri): Result<String> {
+        synchronized(cloudFileLock) {
         val attachmentsFolder = getOrCreateAttachmentsFolder(context).getOrElse {
             return Result.failure(it)
         }
@@ -390,9 +395,11 @@ object Storage {
             return Result.failure(e)
         }
         return Result.success(basename)
+        }
     }
 
     fun createNote(context: Context, content: String): Result<Pair<String, Uri>> {
+        synchronized(cloudFileLock) {
         val subfolder = openOrCreateNotesFolder(context).getOrElse { return Result.failure(it) }
 
         val filename = generateFilename(content)
@@ -403,9 +410,11 @@ object Storage {
             context.contentResolver.openOutputStream(newFile.uri, "wt")?.use { out ->
                 out.write(content.toByteArray(Charsets.UTF_8))
             } ?: return Result.failure(IllegalStateException("Kan niet schrijven naar bestand."))
+            CloudSyncManager.request(context)
             Result.success((newFile.name ?: filename) to newFile.uri)
         } catch (e: Exception) {
             Result.failure(e)
+        }
         }
     }
 
@@ -577,13 +586,16 @@ object Storage {
     }
 
     fun updateNote(context: Context, uri: Uri, content: String): Result<Unit> {
+        synchronized(cloudFileLock) {
         return try {
             context.contentResolver.openOutputStream(uri, "wt")?.use { out ->
                 out.write(content.toByteArray(Charsets.UTF_8))
             } ?: return Result.failure(IllegalStateException("Kan niet schrijven naar bestand."))
+            CloudSyncManager.request(context)
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
+        }
         }
     }
 
@@ -656,6 +668,7 @@ object Storage {
     }
 
     fun deleteNote(context: Context, uri: Uri): Result<Unit> {
+        synchronized(cloudFileLock) {
         return try {
             // Delete the note first; a failed delete must never strip its attachments.
             // OG-thumbnails worden door OgFetcher gehasht op URL en kunnen dus gedeeld
@@ -687,9 +700,11 @@ object Storage {
                 }
             }
 
+            CloudSyncManager.request(context)
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
+        }
         }
     }
 
@@ -948,6 +963,7 @@ object Storage {
      * the source. If verification fails, source is retained and failure returned.
      */
     private fun moveNoteToFolder(context: Context, uri: Uri, folder: NoteFolder): Result<Unit> {
+        synchronized(cloudFileLock) {
         val content = readNote(context, uri).getOrElse { return Result.failure(it) }
 
         val vaultUri = getVaultUri(context)
@@ -986,10 +1002,12 @@ object Storage {
                 newFile.delete()
                 return Result.failure(IllegalStateException("Origineel bestand kon niet worden verwijderd."))
             }
+            CloudSyncManager.request(context)
             Result.success(Unit)
         } catch (e: Exception) {
             newFile.delete()
             Result.failure(e)
+        }
         }
     }
 

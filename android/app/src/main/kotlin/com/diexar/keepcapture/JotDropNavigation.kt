@@ -29,6 +29,7 @@ internal fun JotDropDrawer(
     onNavigate: (NoteFolder, Boolean, String?) -> Unit,
     onManageLabels: () -> Unit,
     onSettings: () -> Unit,
+    onCloud: () -> Unit,
     onHelp: () -> Unit,
 ) {
     ModalDrawerSheet {
@@ -92,6 +93,12 @@ internal fun JotDropDrawer(
                     label = { Text(stringResource(R.string.action_settings)) },
                     icon = { Icon(Icons.Filled.Settings, null) },
                     selected = false, onClick = onSettings,
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                )
+                NavigationDrawerItem(
+                    label = { Text("JotDrop Cloud") },
+                    icon = { Icon(Icons.Filled.CloudSync, null) },
+                    selected = false, onClick = onCloud,
                     modifier = Modifier.padding(horizontal = 12.dp),
                 )
                 NavigationDrawerItem(

@@ -67,8 +67,11 @@
     <string name="action_open_external">Open externally</string>
     <string name="action_open_image">Open image</string>
     <string name="lightbox_load_failed">Could not load image.</string>
-    <string name="reminder_channel_name">Reminders</string>
-    <string name="reminder_channel_desc">Notifications for note reminders.</string>
+    <string name="reminder_channel_name">Reminder alarms</string>
+    <string name="reminder_channel_desc">Note reminders using the alarm tone and alarm volume by default.</string>
+    <string name="section_reminder_sound">Reminder alarms</string>
+    <string name="reminder_sound_settings">Alarm sound &amp; vibration</string>
+    <string name="reminder_sound_hint">New reminder alarms use your device alarm tone and alarm volume, not the notification sound. Choose Sound in Android settings to preview and select a different tone. Existing custom tones or muted reminders are kept. Check your alarm volume; Do Not Disturb and device restrictions can still silence or delay reminders.</string>
     <string name="reminder_notification_title">JotDrop reminder</string>
     <string name="reminder_default_title">Open note</string>
     <string name="action_set_reminder">Set reminder</string>

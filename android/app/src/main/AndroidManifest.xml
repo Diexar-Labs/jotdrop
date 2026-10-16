@@ -54,6 +54,8 @@
             android:exported="false"
             android:label="@string/settings_title" />
 
+        <activity android:name=".CloudActivity" android:exported="false" android:label="JotDrop Cloud" />
+
         <activity
             android:name=".ShareActivity"
             android:exported="true"
