@@ -968,7 +968,20 @@ private fun EditorScreen(
                 }
                 else -> EditorBody(
                     value = bodyText,
-                    onValueChange = { bodyText = it },
+                    onValueChange = { next ->
+                        val current = bodyText
+                        val start = current.selection.min
+                        val end = current.selection.max
+                        // Only a committed single newline; leave bulk edits and IME composition alone.
+                        val edit = if (next.composition == null && next.selection.collapsed &&
+                            next.selection.start == start + 1 &&
+                            next.text == current.text.replaceRange(start, end, "\n")
+                        ) listEnterEdit(current.text, start, end) else null
+                        bodyText = if (edit == null) next else TextFieldValue(
+                            text = current.text.replaceRange(edit.from, edit.to, edit.insert),
+                            selection = TextRange(edit.from + edit.insert.length),
+                        )
+                    },
                     bodyEditing = bodyEditing,
                     onEditBody = { bodyEditing = true },
                     title = titleText,
@@ -1305,6 +1318,12 @@ private fun EditorBody(
             TextField(
                 value = value,
                 onValueChange = onValueChange,
+                visualTransformation = androidx.compose.ui.text.input.VisualTransformation { source ->
+                    androidx.compose.ui.text.input.TransformedText(
+                        androidx.compose.ui.text.AnnotatedString(renderListBullets(source.text)),
+                        androidx.compose.ui.text.input.OffsetMapping.Identity,
+                    )
+                },
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 200.dp),

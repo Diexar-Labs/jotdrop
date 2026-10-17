@@ -13,6 +13,7 @@ import { buildLinkNote, detectAllUrls, fetchOg, OgPreview } from "./ogfetch";
 import { RepeatEditor } from "./repeat";
 import { t } from "./i18n";
 import { keepModalAboveKeyboard } from "./mobileKeyboard";
+import { enhanceListEditing } from "./listEditor";
 
 export class QuickCaptureModal extends Modal {
   plugin: JotDropPlugin;
@@ -23,6 +24,7 @@ export class QuickCaptureModal extends Modal {
   private labelChipsEl!: HTMLElement;
   private labelInputEl: HTMLInputElement | null = null;
   private cleanupKeyboard: (() => void) | null = null;
+  private cleanupListEditor: (() => void) | null = null;
   private state: {
     color: ColorName;
     tags: string[];
@@ -67,6 +69,7 @@ export class QuickCaptureModal extends Modal {
       attr: { placeholder: t("capture_placeholder") },
     });
     this.textArea.rows = 8;
+    this.cleanupListEditor = enhanceListEditing(this.textArea);
 
     const footer = contentEl.createDiv({ cls: "jotdrop-capture-footer" });
     const hint = footer.createSpan({ cls: "jotdrop-capture-hint" });
@@ -315,6 +318,7 @@ export class QuickCaptureModal extends Modal {
     const caret = start + insert.length;
     ta.selectionStart = ta.selectionEnd = caret;
     ta.focus();
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
   }
 
   private toggleOrInsertChecklist(): void {
@@ -402,6 +406,8 @@ export class QuickCaptureModal extends Modal {
   }
 
   onClose(): void {
+    this.cleanupListEditor?.();
+    this.cleanupListEditor = null;
     this.cleanupKeyboard?.();
     this.cleanupKeyboard = null;
     this.contentEl.empty();

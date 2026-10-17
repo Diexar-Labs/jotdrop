@@ -6,6 +6,7 @@ import { voidAsync } from "./asyncUtil";
 import { RepeatEditor } from "./repeat";
 import { t } from "./i18n";
 import { keepModalAboveKeyboard } from "./mobileKeyboard";
+import { enhanceListEditing } from "./listEditor";
 import {
   colorLabel,
   COLOR_NAMES,
@@ -79,6 +80,7 @@ export class EditNoteModal extends Modal {
   private touchStartY: number | null = null;
   private touchOnTextField = false;
   private cleanupKeyboard: (() => void) | null = null;
+  private cleanupListEditor: (() => void) | null = null;
 
   constructor(
     app: App,
@@ -234,6 +236,7 @@ export class EditNoteModal extends Modal {
 
   private buildLayout(): void {
     const root = this.contentEl;
+    this.cleanupListEditor?.();
     root.empty();
 
     this.renderNavHeader(root);
@@ -257,6 +260,7 @@ export class EditNoteModal extends Modal {
     });
     this.bodyEl.rows = 12;
     this.bodyEl.value = this.state.body;
+    this.cleanupListEditor = enhanceListEditing(this.bodyEl);
     this.bodyEl.addEventListener("input", () => {
       this.state.body = this.bodyEl.value;
     });
@@ -526,7 +530,7 @@ export class EditNoteModal extends Modal {
     const caret = start + insert.length;
     ta.selectionStart = ta.selectionEnd = caret;
     ta.focus();
-    this.state.body = ta.value;
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
   }
 
   /**
@@ -666,6 +670,8 @@ export class EditNoteModal extends Modal {
   }
 
   onClose(): void {
+    this.cleanupListEditor?.();
+    this.cleanupListEditor = null;
     this.cleanupKeyboard?.();
     this.cleanupKeyboard = null;
     this.contentEl.empty();
