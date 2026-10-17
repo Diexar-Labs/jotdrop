@@ -64,6 +64,10 @@ jobs:
         working-directory: .
         run: npm run build
 
+      - name: Check list editor behavior
+        working-directory: .
+        run: npm run check:list-editor
+
       - name: Check mobile keyboard behavior
         working-directory: .
         run: npm run check:mobile-keyboard
