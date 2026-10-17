@@ -111,6 +111,7 @@ export class CloudController {
             active();
             if (!await vault.adapter.exists(folder)) return;
             const listing = await vault.adapter.list(folder);
+            if ([...listing.files, ...listing.folders].some((path) => [".stfolder", ".stignore", ".stversions"].includes(path.split("/").pop()?.toLowerCase() || ""))) throw new Error("Syncthing markers found. Use an isolated test vault; never run two sync systems on the same files.");
             for (const file of listing.files) {
               if (file.split("/").pop()?.startsWith(".") || /\.cloud-conflict-r\d+(?:\.|$)/.test(file)) continue;
               const stat = await vault.adapter.stat(file);

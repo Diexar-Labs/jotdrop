@@ -63,6 +63,21 @@ test('plugin is locked by default, saves only wrapped credentials, syncs isolate
   await owner.write('notes/cloud.md', text('Updated cloud note'), 1);
   await controller.sync();
   assert.equal(decode(files.get('JotDrop Cloud Test/notes/cloud.md')), 'Updated cloud note');
+  const nested = 'JotDrop Cloud Test/notes/nested';
+  folders.add(nested);
+  files.set(`${nested}/local.md`, text('Never upload from another sync workspace'));
+  for (const marker of ['.stfolder', '.stignore', '.stversions']) {
+    const path = `${nested}/${marker}`;
+    const entries = marker === '.stignore' ? files : folders;
+    if (entries === files) entries.set(path, new Uint8Array());
+    else entries.add(path);
+    const before = (await owner.listChanges()).changes.length;
+    await assert.rejects(controller.sync(), /Syncthing/);
+    assert.equal((await owner.listChanges()).changes.length, before);
+    entries.delete(path);
+  }
+  files.delete(`${nested}/local.md`);
+  folders.delete(nested);
   files.set('.stfolder', new Uint8Array());
   await assert.rejects(controller.sync(), /Syncthing/);
   files.delete('.stfolder');
