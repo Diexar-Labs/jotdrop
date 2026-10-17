@@ -1325,6 +1325,63 @@
   outline-offset: 1px;
 }
 
+.jotdrop-list-editor {
+  position: relative;
+  flex-shrink: 0;
+  background: var(--background-primary);
+  border-radius: 8px;
+}
+
+.jotdrop-list-editor textarea {
+  position: relative;
+  display: block;
+  margin: 0;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--text-normal);
+}
+
+.jotdrop-list-editor textarea::selection {
+  color: var(--text-normal);
+  background: var(--text-selection);
+}
+
+.jotdrop-list-editor-preview {
+  position: absolute;
+  inset: 1px auto auto 1px;
+  box-sizing: border-box;
+  overflow: hidden;
+  pointer-events: none;
+  padding: 10px 12px;
+  color: var(--text-normal);
+  font-family: inherit;
+  font-size: 0.95em;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.jotdrop-list-bullet {
+  position: relative;
+  color: transparent;
+}
+
+.jotdrop-list-bullet::after {
+  content: "\2022";
+  position: absolute;
+  inset: 0;
+  color: var(--text-normal);
+  text-align: center;
+}
+
+@media (forced-colors: active) {
+  .jotdrop-list-editor-preview { display: none; }
+  .jotdrop-list-editor textarea {
+    color: CanvasText;
+    caret-color: CanvasText;
+  }
+}
+
 .jotdrop-capture-footer {
   display: flex;
   justify-content: space-between;

@@ -36,3 +36,25 @@ tasks.register<JavaExec>("checkCloudSync") {
     classpath(provider { project(":app").configurations.getByName("debugCompileClasspath") })
     mainClass.set("com.diexar.keepcapture.CloudSyncEngineCheckKt")
 }
+
+val listEditorClasses = layout.buildDirectory.dir("list-editor-check")
+val listEditorSources = files("app/src/main/kotlin/com/diexar/keepcapture/ListEditing.kt", "checks/ListEditorCheck.kt")
+val listEditorCompile = tasks.register<JavaExec>("listEditorCompile") {
+    inputs.files(listEditorSources)
+    outputs.dir(listEditorClasses)
+    classpath(buildscript.configurations.getByName("classpath"))
+    mainClass.set("org.jetbrains.kotlin.cli.jvm.K2JVMCompiler")
+    doFirst {
+        args("-Xdisable-default-scripting-plugin", "-no-stdlib", "-no-reflect", "-jvm-target", "17", "-classpath",
+            project(":app").configurations.getByName("debugCompileClasspath").asPath,
+            "-d", listEditorClasses.get().asFile.absolutePath)
+        args(listEditorSources.files.map { it.absolutePath })
+    }
+}
+
+tasks.register<JavaExec>("checkListEditor") {
+    dependsOn(listEditorCompile)
+    classpath(listEditorClasses)
+    classpath(provider { project(":app").configurations.getByName("debugCompileClasspath") })
+    mainClass.set("com.diexar.keepcapture.ListEditorCheckKt")
+}
