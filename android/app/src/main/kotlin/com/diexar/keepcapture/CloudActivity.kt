@@ -98,7 +98,12 @@ private fun CloudScreen(onBack: () -> Unit, onSettings: () -> Unit) {
             }
             if (busy) item {
                 LinearProgressIndicator(Modifier.fillMaxWidth().semantics { contentDescription = "Cloud action in progress" })
-                if (status?.enabled == true) TextButton(onClick = { scope.launch { runCatching { CloudSyncManager.setEnabled(context, false); refresh() } } }) { Text("Pause sync safely") }
+                if (status?.enabled == true) {
+                    OutlinedButton(
+                        onClick = { scope.launch { runCatching { CloudSyncManager.setEnabled(context, false); refresh() } } },
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                    ) { Text("Pause sync safely") }
+                }
             }
             error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) } }
             if (status?.connected != true) {
@@ -163,7 +168,13 @@ private fun CloudScreen(onBack: () -> Unit, onSettings: () -> Unit) {
                         }
                     }
                 }
-                item { TextButton(onClick = { confirmDisconnect = true }, enabled = !busy) { Text("Disconnect this device") } }
+                item {
+                    OutlinedButton(
+                        onClick = { confirmDisconnect = true },
+                        enabled = !busy,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                    ) { Text("Disconnect this device") }
+                }
             }
         }
     }
