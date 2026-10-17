@@ -4,6 +4,7 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.AtomicFile
+import android.util.Log
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -154,7 +155,10 @@ class CloudClient(val credentials: CloudCredentials) {
         }
         private fun request(origin: String, path: String, method: String, value: JSONObject?, auth: CloudCredentials?): JSONObject {
             val connection = URI(secureOrigin(origin) + "/api/v1" + path).toURL().openConnection() as HttpURLConnection
-            val deadline = System.nanoTime() + 30_000_000_000L
+            val startedAt = System.nanoTime()
+            val deadline = startedAt + 30_000_000_000L
+            var phase = CloudDiagnostics.Phase.REQUEST_SETUP
+            var receivedBytes = 0
             try {
                 connection.instanceFollowRedirects = false
                 connection.connectTimeout = 10000
@@ -171,24 +175,38 @@ class CloudClient(val credentials: CloudCredentials) {
                     connection.setRequestProperty("Content-Type", "application/json")
                     connection.doOutput = true
                     connection.setFixedLengthStreamingMode(bytes.size)
+                    phase = CloudDiagnostics.Phase.REQUEST_SEND
                     connection.outputStream.use { it.write(bytes) }
                 }
+                phase = CloudDiagnostics.Phase.REQUEST_HEADERS
                 val status = connection.responseCode
                 if (status !in 200..299) throw CloudRequestException(status)
                 require(connection.contentLengthLong <= 12 * 1024 * 1024) { "Cloud response exceeds limit" }
                 val output = ByteArrayOutputStream()
+                phase = CloudDiagnostics.Phase.REQUEST_BODY
                 connection.inputStream.use { input ->
                     val buffer = ByteArray(8192)
                     while (true) {
-                        if (System.nanoTime() >= deadline) throw SocketTimeoutException("Cloud response deadline exceeded")
+                        if (System.nanoTime() >= deadline) {
+                            phase = CloudDiagnostics.Phase.REQUEST_DEADLINE
+                            throw SocketTimeoutException("Cloud response deadline exceeded")
+                        }
                         val count = input.read(buffer)
                         if (count < 0) break
                         require(output.size() + count <= 12 * 1024 * 1024) { "Cloud response exceeds limit" }
                         output.write(buffer, 0, count)
+                        receivedBytes = output.size()
                     }
                 }
-                if (System.nanoTime() >= deadline) throw SocketTimeoutException("Cloud response deadline exceeded")
+                if (System.nanoTime() >= deadline) {
+                    phase = CloudDiagnostics.Phase.REQUEST_DEADLINE
+                    throw SocketTimeoutException("Cloud response deadline exceeded")
+                }
+                phase = CloudDiagnostics.Phase.REQUEST_DECODE
                 return JSONObject(utf8(output.toByteArray()))
+            } catch (error: Exception) {
+                Log.w("JotDropCloud", CloudDiagnostics.failure(error, phase, (System.nanoTime() - startedAt) / 1_000_000, receivedBytes))
+                throw error
             } finally { connection.disconnect() }
         }
     }

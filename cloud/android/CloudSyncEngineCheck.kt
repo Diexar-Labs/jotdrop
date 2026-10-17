@@ -38,6 +38,34 @@ private class CheckLocal : CloudSyncLocal {
 }
 
 fun main() {
+    val sensitive = "Bearer synthetic-secret https://private.invalid/notes/personal.md?token=secret\nprivate note"
+    val failures = listOf(
+        java.net.SocketTimeoutException(sensitive) to "timeout",
+        javax.net.ssl.SSLHandshakeException(sensitive) to "tls",
+        java.net.UnknownHostException(sensitive) to "dns",
+        java.net.ConnectException(sensitive) to "connect",
+        java.io.EOFException(sensitive) to "truncated",
+        java.net.SocketException(sensitive) to "socket",
+        java.io.IOException(sensitive, Exception(sensitive)) to "io",
+        SecurityException(sensitive) to "permission",
+        java.security.GeneralSecurityException(sensitive) to "crypto",
+        IllegalArgumentException(sensitive) to "validation",
+        IllegalStateException(sensitive) to "validation",
+        object : Exception() {
+            override val message: String get() = error("Diagnostic accessed exception text")
+            override fun toString(): String = error("Diagnostic rendered exception")
+        } to "other",
+    )
+    for ((failure, category) in failures) {
+        for (phase in CloudDiagnostics.Phase.entries) {
+            check(CloudDiagnostics.failure(failure, phase, 123, 8192) ==
+                "[DEBUG:error] phase=$phase category=$category elapsedMs=123 receivedBytes=8192")
+        }
+    }
+    check(CloudDiagnostics.failure(java.io.IOException(sensitive), CloudDiagnostics.Phase.RECONCILE, 0) ==
+        "[DEBUG:error] phase=RECONCILE category=io elapsedMs=0")
+    println("Native diagnostic checks passed: fixed categories/phases, numeric timing/bytes, no exception text or causes")
+
     val remote = CheckRemote()
     val a = CheckLocal()
     val b = CheckLocal()

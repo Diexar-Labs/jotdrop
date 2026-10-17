@@ -164,26 +164,37 @@ object CloudSyncManager {
         val settings = store.settings()
         if (!settings.optBoolean("enabled")) throw CloudSyncException("Enable cloud sync first")
         val client = client(context) ?: throw CloudSyncException("Pair this device first")
+        val startedAt = System.nanoTime()
+        var phase = CloudDiagnostics.Phase.VAULT_VALIDATION
         try {
             val initial = CloudVaultAdapter(context)
             check(settings.optString("binding") == initial.binding) { "Vault settings changed. Pause and re-enable sync for the intended folder" }
+            phase = CloudDiagnostics.Phase.STATE_LOAD
             val scope = scope(client, initial.binding)
             val state = store.syncState(scope) ?: JSONObject()
             val pending = state.optJSONObject("pending")
             if (pending != null) {
+                phase = CloudDiagnostics.Phase.RECOVERY
                 check(synchronized(Storage.cloudFileLock) { initial.verifyPending(pending.getString("path"), pending.optString("original").takeIf { it.isNotEmpty() }, pending.optString("replacement").takeIf { it.isNotEmpty() }) }) {
                     "An interrupted local write needs recovery. Restore its .cloud-recovery copy, or remove a partial new file, before syncing again"
                 }
                 state.remove("pending")
+                phase = CloudDiagnostics.Phase.STATE_SAVE
                 store.saveSyncState(scope, state)
             }
+            phase = CloudDiagnostics.Phase.VAULT_VALIDATION
             val adapter = CloudVaultAdapter(context, { path, original, replacement ->
+                phase = CloudDiagnostics.Phase.STATE_SAVE
                 state.put("pending", JSONObject().put("path", path).put("original", original.orEmpty()).put("replacement", replacement.orEmpty()))
                 store.saveSyncState(scope, state)
+                phase = CloudDiagnostics.Phase.RECONCILE
             }, {
+                phase = CloudDiagnostics.Phase.STATE_SAVE
                 state.remove("pending")
                 store.saveSyncState(scope, state)
+                phase = CloudDiagnostics.Phase.RECONCILE
             })
+            phase = CloudDiagnostics.Phase.STATE_LOAD
             val tracked = mutableMapOf<String, CloudSyncBase>()
             val baseline = state.optJSONObject("tracked") ?: JSONObject()
             for (name in baseline.keys()) {
@@ -191,22 +202,40 @@ object CloudSyncManager {
                 tracked[name] = CloudSyncBase(value.getInt("revision"), value.getString("hash"), value.getBoolean("deleted"))
             }
             val remote = object : CloudSyncRemote {
-                override fun list(): List<CloudSyncObject> = client.changesAndFiles(checkActive).map { CloudSyncObject(it.path, it.bytes, it.revision, it.deleted) }
-                override fun write(path: String, bytes: ByteArray, baseRevision: Int): CloudSyncObject { checkActive(); return CloudSyncObject(path, bytes, client.write(path, bytes, baseRevision)) }
+                override fun list(): List<CloudSyncObject> {
+                    phase = CloudDiagnostics.Phase.REMOTE_LIST
+                    val files = client.changesAndFiles(checkActive).map { CloudSyncObject(it.path, it.bytes, it.revision, it.deleted) }
+                    phase = CloudDiagnostics.Phase.RECONCILE
+                    return files
+                }
+                override fun write(path: String, bytes: ByteArray, baseRevision: Int): CloudSyncObject {
+                    checkActive()
+                    phase = CloudDiagnostics.Phase.REMOTE_WRITE
+                    val saved = CloudSyncObject(path, bytes, client.write(path, bytes, baseRevision))
+                    phase = CloudDiagnostics.Phase.RECONCILE
+                    return saved
+                }
                 override fun delete(path: String, baseRevision: Int): CloudSyncObject {
                     checkActive()
+                    phase = CloudDiagnostics.Phase.REMOTE_DELETE
                     val id = CloudCrypto.objectId(client.credentials.vaultKey, path)
                     val current = client.read(id)
                     check(current.revision == baseRevision) { "Cloud changed during sync. Retry to compare both versions" }
-                    return CloudSyncObject(path, current.bytes, client.remove(id, baseRevision), true)
+                    val deleted = CloudSyncObject(path, current.bytes, client.remove(id, baseRevision), true)
+                    phase = CloudDiagnostics.Phase.RECONCILE
+                    return deleted
                 }
             }
+            phase = CloudDiagnostics.Phase.RECONCILE
             val report = CloudSyncEngine.sync(remote, adapter, tracked, checkActive) { values ->
+                phase = CloudDiagnostics.Phase.STATE_SAVE
                 val next = JSONObject()
                 for ((path, base) in values) next.put(path, JSONObject().put("revision", base.revision).put("hash", base.hash).put("deleted", base.deleted))
                 state.put("tracked", next)
                 store.saveSyncState(scope, state)
+                phase = CloudDiagnostics.Phase.RECONCILE
             }
+            phase = CloudDiagnostics.Phase.STATE_SAVE
             settings.put("lastSynced", Instant.now().toString()).put("conflicts", report.conflicts)
                 .put("message", "Uploaded ${report.uploaded}, downloaded ${report.downloaded}, deleted ${report.deleted}. " +
                     if (report.conflicts > 0) "${report.conflicts} conflicts: originals were kept. Compare .cloud-conflict copies before choosing a version." else "Sync complete. Recovery copies remain local.")
@@ -214,6 +243,7 @@ object CloudSyncManager {
             changed.value++
         } catch (error: Exception) {
             if (error is CancellationException) throw error
+            Log.w("JotDropCloud", CloudDiagnostics.failure(error, phase, (System.nanoTime() - startedAt) / 1_000_000))
             val message = when (error) {
                 is CloudRequestException -> if (error.status == 401) "Device access was revoked. Local files were kept; pair again." else error.message.orEmpty()
                 is CloudSyncException -> error.message.orEmpty()
