@@ -723,13 +723,6 @@ export class JotDropView extends ItemView {
     // (unlikely) and we want to work sequentially.
     const paths = Array.from(this.selectedPaths);
     const archiveFolder = normalizePath(this.plugin.settings.archiveFolder);
-    if (!this.app.vault.getAbstractFileByPath(archiveFolder)) {
-      try {
-        await this.app.vault.createFolder(archiveFolder);
-      } catch {
-        // May already exist; the rename below will still fail gracefully per file.
-      }
-    }
     let ok = 0;
     let fail = 0;
     for (const path of paths) {
@@ -739,12 +732,7 @@ export class JotDropView extends ItemView {
         continue;
       }
       try {
-        const newPath = normalizePath(`${archiveFolder}/${file.name}`);
-        if (this.app.vault.getAbstractFileByPath(newPath)) {
-          fail++;
-          continue;
-        }
-        await this.app.fileManager.renameFile(file, newPath);
+        await this.moveArchivedFile(file, archiveFolder);
         ok++;
       } catch {
         fail++;
@@ -2130,22 +2118,25 @@ export class JotDropView extends ItemView {
     this.plugin.refreshViews();
   }
 
+  private async moveArchivedFile(file: TFile, folder: string): Promise<void> {
+    let target = normalizePath(`${folder}/${file.name}`);
+    if (target === file.path) return;
+    if (!this.app.vault.getAbstractFileByPath(folder)) {
+      await this.app.vault.createFolder(folder);
+    }
+    let suffix = 1;
+    while (this.app.vault.getAbstractFileByPath(target)) {
+      target = normalizePath(`${folder}/${file.basename} (${suffix++}).${file.extension}`);
+    }
+    await this.app.fileManager.renameFile(file, target);
+  }
+
   private async toggleArchive(file: TFile, currentlyArchived: boolean): Promise<void> {
     const archiveFolder = normalizePath(this.plugin.settings.archiveFolder);
     const notesFolder = normalizePath(this.plugin.settings.notesFolder);
     try {
-      if (currentlyArchived) {
-        const newPath = normalizePath(`${notesFolder}/${file.name}`);
-        await this.app.fileManager.renameFile(file, newPath);
-        new Notice(t("notice_unarchived", file.basename));
-      } else {
-        if (!this.app.vault.getAbstractFileByPath(archiveFolder)) {
-          await this.app.vault.createFolder(archiveFolder);
-        }
-        const newPath = normalizePath(`${archiveFolder}/${file.name}`);
-        await this.app.fileManager.renameFile(file, newPath);
-        new Notice(t("notice_archived", file.basename));
-      }
+      await this.moveArchivedFile(file, currentlyArchived ? notesFolder : archiveFolder);
+      new Notice(t(currentlyArchived ? "notice_unarchived" : "notice_archived", file.basename));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       new Notice(t("notice_error", message));
