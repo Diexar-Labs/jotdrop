@@ -75,6 +75,40 @@ test('authorization, tenant isolation, origin and host checks fail closed', asyn
   assert.equal((await fetch(`${app.url}/cloud.db`)).status, 404);
 });
 
+test('explicit HTTPS proxy origin preserves loopback binding and exact host and origin checks', async (t) => {
+  const publicOrigin = 'https://api.example.test';
+  const app = await fixture(t, { publicOrigin });
+  const status = (host, origin, extra = {}) => new Promise((done, reject) => get(`${app.url}/api/v1/status`, {
+    headers: { Host: host, ...(origin === undefined ? {} : { Origin: origin }), ...extra }
+  }, (response) => { response.resume(); done(response.statusCode); }).on('error', reject));
+  assert.equal(await status('api.example.test', publicOrigin), 401);
+  assert.equal(await status('api.example.test'), 401);
+  assert.equal(app.server.address().address, '127.0.0.1');
+  assert.equal(app.server.requestTimeout, 30000);
+  assert.equal(await status(`127.0.0.1:${app.port}`, app.url), 401);
+  for (const origin of ['http://api.example.test', 'https://evil.example', 'null', `${publicOrigin}/`, app.url]) {
+    assert.equal(await status('api.example.test', origin), 403);
+  }
+  for (const host of ['evil.example', 'api.example.test:443', 'api.example.test:8443', 'api.example.test.evil.example']) {
+    assert.equal(await status(host, publicOrigin, { 'X-Forwarded-Host': 'api.example.test', 'X-Forwarded-Proto': 'https' }), 403);
+  }
+  assert.equal(await status(`127.0.0.1:${app.port}`, publicOrigin), 403);
+  const local = await fixture(t);
+  const denied = await new Promise((done, reject) => get(`${local.url}/`, { headers: { Host: 'api.example.test', Origin: publicOrigin } },
+    (response) => { response.resume(); done(response.statusCode); }).on('error', reject));
+  assert.equal(denied, 403);
+});
+
+test('public proxy configuration requires one canonical HTTPS origin, not a URL or wildcard', async (t) => {
+  const app = await fixture(t);
+  for (const publicOrigin of ['', null, 1, 'http://api.example.test', 'https://*.example.test', 'https://api.example.test/', 'https://api.example.test/path', 'https://user:password@api.example.test', 'https://api.example.test?query', 'https://api.example.test#fragment', 'https://api.example.test:443', 'https://API.example.test', 'https://api.example.test,https://evil.example']) {
+    await assert.rejects(async () => {
+      const started = await createCloudServer({ dataDir: app.dataDir, enrollmentToken: app.enrollmentToken, publicOrigin });
+      await started.close();
+    }, /HTTPS origin/);
+  }
+});
+
 test('quota and validation are atomic, including restore and concurrent uploads', async (t) => {
   const app = await fixture(t, { quotaBytes: 2500 });
   const { client } = await app.create();

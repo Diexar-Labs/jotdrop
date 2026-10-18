@@ -47,12 +47,19 @@ async function body(req, maximum = MAX_BODY) {
 }
 
 /** Loopback-only development server. No production signup, billing or provider credentials. */
-export async function createCloudServer({ dataDir, enrollmentToken, quotaBytes = 100 * 1024 * 1024, maxHistoryEntries = 100000, maxDeviceEntries = 1000, maxPairingEntries = 128, maxConcurrentRequests = 16, webRoot = join(directory, 'web'), corsOrigins = [], port = 0, enrollmentLimit = 1, clock = Date.now }) {
+export async function createCloudServer({ dataDir, enrollmentToken, quotaBytes = 100 * 1024 * 1024, maxHistoryEntries = 100000, maxDeviceEntries = 1000, maxPairingEntries = 128, maxConcurrentRequests = 16, webRoot = join(directory, 'web'), corsOrigins = [], publicOrigin, port = 0, enrollmentLimit = 1, clock = Date.now }) {
   if (!dataDir || !validToken(enrollmentToken) || !Number.isSafeInteger(quotaBytes) || quotaBytes < 1) throw new Error('Provide a data directory, random 32-byte enrollment token and positive quota.');
   if (!Number.isSafeInteger(maxHistoryEntries) || maxHistoryEntries < 1) throw new Error('Provide a positive safe-integer history entry limit.');
   if ([maxDeviceEntries, maxPairingEntries].some((limit) => !Number.isSafeInteger(limit) || limit < 1)) throw new Error('Provide positive safe-integer metadata entry limits.');
   if (!Number.isSafeInteger(maxConcurrentRequests) || maxConcurrentRequests < 1) throw new Error('Provide a positive safe-integer concurrent request limit.');
   if (!Number.isSafeInteger(enrollmentLimit) || enrollmentLimit < 1 || corsOrigins.some((origin) => !/^chrome-extension:\/\/[a-p]{32}$/.test(origin) && origin !== 'app://obsidian.md')) throw new Error('Invalid enrollment limit or explicit client origin.');
+  let publicHost;
+  if (publicOrigin !== undefined) {
+    let parsed;
+    try { parsed = new URL(publicOrigin); } catch { throw new Error('Provide one canonical HTTPS origin for the trusted reverse proxy.'); }
+    if (typeof publicOrigin !== 'string' || parsed.protocol !== 'https:' || parsed.origin !== publicOrigin || parsed.hostname.includes('*')) throw new Error('Provide one canonical HTTPS origin for the trusted reverse proxy.');
+    publicHost = parsed.host;
+  }
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const db = new DatabaseSync(join(dataDir, 'cloud.db'), { timeout: 5000 });
   const one = (sql, ...args) => db.prepare(sql).get(...args);
@@ -155,9 +162,10 @@ export async function createCloudServer({ dataDir, enrollmentToken, quotaBytes =
     try {
       const actualPort = server.address().port;
       const hosts = [`127.0.0.1:${actualPort}`, `localhost:${actualPort}`];
-      if (!hosts.includes(req.headers.host)) fail(403, 'Host not allowed');
+      const loopback = hosts.includes(req.headers.host);
+      if (!loopback && (!publicHost || req.headers.host !== publicHost)) fail(403, 'Host not allowed');
       const origin = req.headers.origin;
-      if (origin && origin !== `http://${req.headers.host}` && !corsOrigins.includes(origin)) fail(403, 'Origin not allowed');
+      if (origin && origin !== (loopback ? `http://${req.headers.host}` : publicOrigin) && !corsOrigins.includes(origin)) fail(403, 'Origin not allowed');
       if (origin && corsOrigins.includes(origin)) { res.setHeader('Access-Control-Allow-Origin', origin); res.setHeader('Vary', 'Origin'); }
       const url = new URL(req.url, `http://${req.headers.host}`), method = req.method, pathname = url.pathname;
       if (activeRequests >= maxConcurrentRequests) {
@@ -314,7 +322,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, quotaBytes =
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   if (!process.env.JOTDROP_CLOUD_DATA_DIR) throw new Error('Set JOTDROP_CLOUD_DATA_DIR to a dedicated test-data directory. Never point it at an Obsidian vault.');
   const enrollmentToken = process.env.JOTDROP_CLOUD_ENROLLMENT_TOKEN || randomBytes(32).toString('base64url');
-  const app = await createCloudServer({ dataDir: process.env.JOTDROP_CLOUD_DATA_DIR, enrollmentToken, maxHistoryEntries: Number(process.env.JOTDROP_CLOUD_MAX_HISTORY_ENTRIES ?? 100000), maxDeviceEntries: Number(process.env.JOTDROP_CLOUD_MAX_DEVICE_ENTRIES ?? 1000), maxPairingEntries: Number(process.env.JOTDROP_CLOUD_MAX_PAIRING_ENTRIES ?? 128), maxConcurrentRequests: Number(process.env.JOTDROP_CLOUD_MAX_CONCURRENT_REQUESTS ?? 16), port: Number(process.env.JOTDROP_CLOUD_PORT || 8787), corsOrigins: (process.env.JOTDROP_CLOUD_CORS_ORIGINS || '').split(',').map((entry) => entry.trim()).filter(Boolean) });
+  const app = await createCloudServer({ dataDir: process.env.JOTDROP_CLOUD_DATA_DIR, enrollmentToken, maxHistoryEntries: Number(process.env.JOTDROP_CLOUD_MAX_HISTORY_ENTRIES ?? 100000), maxDeviceEntries: Number(process.env.JOTDROP_CLOUD_MAX_DEVICE_ENTRIES ?? 1000), maxPairingEntries: Number(process.env.JOTDROP_CLOUD_MAX_PAIRING_ENTRIES ?? 128), maxConcurrentRequests: Number(process.env.JOTDROP_CLOUD_MAX_CONCURRENT_REQUESTS ?? 16), publicOrigin: process.env.JOTDROP_CLOUD_PUBLIC_ORIGIN, port: Number(process.env.JOTDROP_CLOUD_PORT || 8787), corsOrigins: (process.env.JOTDROP_CLOUD_CORS_ORIGINS || '').split(',').map((entry) => entry.trim()).filter(Boolean) });
   console.log(`Local cloud preview: http://127.0.0.1:${app.port}. Test data only, not production.`);
   if (!process.env.JOTDROP_CLOUD_ENROLLMENT_TOKEN) console.log(`Single-use local enrollment token: ${enrollmentToken}`);
   for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { void app.close().then(() => process.exit(0)); });
