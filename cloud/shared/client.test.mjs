@@ -67,3 +67,51 @@ test('client rejects announced oversized responses before reading and rejects no
   }));
   assert.deepEqual(await client.status(), { name: '\u00e9' });
 });
+
+test('resumable uploads fail closed on missing capabilities and never silently downgrade', async () => {
+  const client = new CloudClient({ url: 'https://example.com', vaultId: crypto.randomUUID(), deviceId: crypto.randomUUID(), token: randomToken(), vaultKey: generateVaultKey() });
+  const prepared = await client.prepareWrite('notes/test.md', new TextEncoder().encode('Synthetic draft'), 0);
+  for (const transport of [undefined, { version: 2, chunkBytes: 65536 }, { version: 1, chunkBytes: 1 }]) {
+    const requests = [];
+    client.fetcher = async (url, options) => { requests.push({ url, options }); return new Response(JSON.stringify({ transport })); };
+    await assert.rejects(client.commitWrite(prepared, { resumable: true }), /does not support/);
+    assert.equal(requests.length, 1);
+    assert.ok(requests[0].url.endsWith('/status'));
+    assert.equal(requests[0].options.redirect, 'error');
+    assert.equal(requests[0].options.headers.Authorization, `Bearer ${client.credentials.token}`);
+  }
+  let requests = 0;
+  client.fetcher = async () => { requests++; throw new TypeError('Synthetic network failure'); };
+  await assert.rejects(client.commitWrite(prepared, { resumable: true }), /network failure/);
+  assert.equal(requests, 2);
+  requests = 0;
+  const controller = new AbortController(); controller.abort();
+  await assert.rejects(client.commitWrite(prepared, { resumable: true, signal: controller.signal }));
+  assert.equal(requests, 0);
+  client.fetcher = async () => { requests++; return new Response(JSON.stringify({ error: 'Unavailable' }), { status: 503 }); };
+  await assert.rejects(client.commitWrite(prepared, { resumable: true }), (error) => error.status === 503);
+  assert.equal(requests, 1);
+});
+
+test('resumable uploads reject impossible offsets and invalid final receipts without reporting success', async () => {
+  const client = new CloudClient({ url: 'https://example.com', vaultId: crypto.randomUUID(), deviceId: crypto.randomUUID(), token: randomToken(), vaultKey: generateVaultKey() });
+  const prepared = await client.prepareWrite('notes/test.md', new TextEncoder().encode('Synthetic draft'), 0);
+  for (const mode of ['negative', 'wrong-size', 'no-progress', 'wrong-id', 'wrong-revision', 'wrong-sequence', 'missing-commit']) {
+    const progress = [];
+    let size;
+    client.fetcher = async (url, options) => {
+      if (url.endsWith('/status')) return new Response(JSON.stringify({ transport: { version: 1, chunkBytes: 65536 } }));
+      if (url.endsWith('/commit')) {
+        const committed = { id: prepared.id, revision: 1, sequence: 1 };
+        if (mode === 'wrong-id') committed.id = '0'.repeat(64);
+        if (mode === 'wrong-revision') committed.revision = 2;
+        if (mode === 'wrong-sequence') committed.sequence = 0;
+        return new Response(JSON.stringify(mode === 'missing-commit' ? {} : { committed }));
+      }
+      if (options.method === 'POST') size = JSON.parse(options.body).size;
+      return new Response(JSON.stringify({ offset: mode === 'negative' ? -1 : options.method === 'PUT' && mode !== 'no-progress' ? size : 0, size: mode === 'wrong-size' ? size + 1 : size }));
+    };
+    await assert.rejects(client.commitWrite(prepared, { resumable: true, onProgress: (event) => progress.push(event) }), /acknowledgment/);
+    assert.ok(progress.every((event) => event.phase !== 'committed'));
+  }
+});

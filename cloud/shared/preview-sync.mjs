@@ -1,9 +1,9 @@
 import { base64ToBytes, bytesToBase64, MAX_FILE_BYTES, normalizePath, objectId } from './crypto.mjs';
 
-const fingerprint = async (bytes) => bytesToBase64(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)));
+export const fingerprint = async (bytes) => bytesToBase64(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)));
 
 /** Manual, non-destructive sync for an isolated test folder. Never deletes local files. */
-export async function syncPreview(client, adapter, tracked, persist) {
+export async function syncPreview(client, adapter, tracked, persist, { write = (...args) => client.write(...args) } = {}) {
   const result = { uploaded: 0, downloaded: 0, conflicts: 0, remoteDeletions: 0 };
   const local = new Map();
   for (const file of await adapter.list()) {
@@ -63,7 +63,7 @@ export async function syncPreview(client, adapter, tracked, persist) {
       } else await conflictCopy(entry);
     } else if (base && !base.deleted && base.revision === entry.revision && base.hash === remoteHash) {
       try {
-        const saved = await client.write(path, bytes, entry.revision);
+        const saved = await write(path, bytes, entry.revision);
         await remember(id, saved.revision, localHash);
         result.uploaded++;
       } catch (error) { if (error.status !== 409) throw error; await conflictCopy(await client.read(id)); }
@@ -73,7 +73,7 @@ export async function syncPreview(client, adapter, tracked, persist) {
     const id = await objectId(client.credentials.vaultKey, path);
     if (tracked[id]) { result.conflicts++; continue; }
     try {
-      const saved = await client.write(path, bytes, 0);
+      const saved = await write(path, bytes, 0);
       await remember(id, saved.revision, await fingerprint(bytes));
       result.uploaded++;
     } catch (error) { if (error.status !== 409) throw error; await conflictCopy(await client.read(id)); }

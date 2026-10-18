@@ -1,13 +1,15 @@
-import { Modal, Notice, Setting, TFile, normalizePath } from "obsidian";
+import { Modal, Notice, Setting, TFile, normalizePath, type ButtonComponent } from "obsidian";
 import type JotDropPlugin from "./main";
 import { ConfirmModal } from "./confirmModal";
 import { CloudClient } from "../cloud/shared/client.mjs";
-import { normalizePath as safeCloudPath, sealLocal, unsealLocal, MAX_FILE_BYTES } from "../cloud/shared/crypto.mjs";
-import { syncPreview } from "../cloud/shared/preview-sync.mjs";
+import { normalizePath as safeCloudPath, sealLocal, unsealLocal, decryptEnvelope, base64ToBytes, objectId, MAX_FILE_BYTES } from "../cloud/shared/crypto.mjs";
+import { fingerprint, syncPreview } from "../cloud/shared/preview-sync.mjs";
 
 const TEST_FOLDER = "JotDrop Cloud Test";
 const decoder = new TextDecoder("utf-8", { fatal: true });
 type Tracked = Record<string, { revision: number; hash: string; deleted: boolean }>;
+type Pending = { prepared: { id: string; baseRevision: number; envelope: string }; hash: string };
+type Progress = { phase: string; transferredBytes: number; totalBytes: number };
 
 /** Manual isolated preview only; never attaches cloud sync to the user's notes folder. */
 export class CloudController {
@@ -17,6 +19,8 @@ export class CloudController {
   private tracked: Tracked = {};
   private generation = 0;
   private busy = false;
+  private transfer?: AbortController;
+  private pending?: Pending;
 
   constructor(private plugin: JotDropPlugin) {}
 
@@ -25,9 +29,11 @@ export class CloudController {
     this.plugin.addCommand({ id: "cloud-preview-unlock", name: "Cloud preview: unlock this device", callback: () => this.showUnlock() });
     this.plugin.addCommand({ id: "cloud-preview-sync", name: "Cloud preview: manually sync isolated test folder", callback: () => this.confirmSync() });
     this.plugin.addCommand({ id: "cloud-preview-lock", name: "Cloud preview: lock", callback: () => this.lock() });
+    this.plugin.addCommand({ id: "cloud-preview-pause", name: "Cloud preview: pause current transfer", callback: () => this.cancel() });
   }
 
   lock(): void {
+    this.transfer?.abort();
     this.generation++;
     this.client = undefined;
     this.password = "";
@@ -37,10 +43,60 @@ export class CloudController {
 
   showPair(): void { new CloudAccessModal(this, this.plugin, true).open(); }
   showUnlock(): void { new CloudAccessModal(this, this.plugin, false).open(); }
+  get hasQueuedUpload(): boolean { return !!this.pending; }
+
+  async recoverQueuedUpload(): Promise<string> {
+    if (!this.client) throw new Error("Unlock the cloud preview first.");
+    if (this.busy) throw new Error("Wait for the current preview operation to finish.");
+    if (!this.pending) throw new Error("There is no queued upload to recover.");
+    this.busy = true;
+    const client = this.client, pending = this.pending, generation = this.generation;
+    const transfer = this.transfer = new AbortController();
+    const active = () => { transfer.signal.throwIfAborted(); if (this.generation !== generation) throw new Error("Cloud preview locked. The queued upload was kept."); };
+    try {
+      await this.assertSafeFolder();
+      const { vaultKey, vaultId } = client.credentials, { id, envelope } = pending.prepared;
+      const file = await decryptEnvelope(vaultKey, JSON.parse(envelope), `jotdrop:object:v1:${vaultId}:${id}`);
+      const path = safeCloudPath(file.path), bytes = base64ToBytes(file.content);
+      if (!/^(notes|attachments)\//.test(path) || bytes.length > MAX_FILE_BYTES || await objectId(vaultKey, path) !== id || await fingerprint(bytes) !== pending.hash) throw new Error("Invalid queued snapshot. Nothing was cleared.");
+      const vault = this.plugin.app.vault;
+      const target = normalizePath(`${TEST_FOLDER}/Recovered Uploads/${crypto.randomUUID()}/${path}`);
+      let parent = "";
+      for (const part of target.split("/").slice(0, -1)) {
+        active();
+        parent = parent ? `${parent}/${part}` : part;
+        if (!await vault.adapter.exists(parent)) await vault.createFolder(parent);
+      }
+      active();
+      await vault.createBinary(target, bytes.slice().buffer);
+      if (await fingerprint(new Uint8Array(await vault.adapter.readBinary(target))) !== pending.hash) throw new Error("Recovery copy verification failed. The queued upload was kept.");
+      active();
+      await client.discardWrite(pending.prepared);
+      active();
+      const sealed = await sealLocal({ credentials: client.credentials, tracked: this.tracked }, this.password);
+      active();
+      const previous = this.plugin.settings.cloudConnection;
+      this.plugin.settings.cloudConnection = JSON.stringify(sealed);
+      try { await this.plugin.saveSettings(); }
+      catch (error) { this.plugin.settings.cloudConnection = previous; throw error; }
+      active();
+      this.pending = undefined;
+      this.status = `Queued snapshot saved to ${target}. Original local and cloud files unchanged. Resume sync manually.`;
+      return target;
+    } finally { this.busy = false; this.transfer = undefined; }
+  }
+
+  cancel(): void {
+    if (!this.transfer) return;
+    this.transfer?.abort();
+    this.status = "Cloud transfer paused. Encrypted upload kept; manual sync resumes it.";
+  }
 
   async connect(code: string, password: string): Promise<void> {
     if (password.length < 12) throw new Error("Use an unlock passphrase of at least 12 characters.");
     if (this.busy) throw new Error("Wait for the current preview operation to finish.");
+    if (this.plugin.settings.cloudConnection && !this.client) throw new Error("Unlock the existing preview before pairing another workspace. Queued uploads must be preserved.");
+    if (this.pending) throw new Error("Resume the queued upload before replacing this connection.");
     const client = await CloudClient.claim({ pairingCode: code });
     const sealed = await sealLocal({ credentials: client.credentials, tracked: {} }, password);
     this.plugin.settings.cloudConnection = JSON.stringify(sealed);
@@ -48,6 +104,7 @@ export class CloudController {
     this.client = client;
     this.password = password;
     this.tracked = {};
+    this.pending = undefined;
     this.status = "Paired. Manual test-folder sync only; no existing notes have been imported.";
   }
 
@@ -58,6 +115,7 @@ export class CloudController {
     this.client = new CloudClient(value.credentials);
     this.password = password;
     this.tracked = value.tracked || {};
+    this.pending = value.pending;
     this.status = "Unlocked for manual test-folder sync. Automatic cloud sync is disabled.";
   }
 
@@ -81,15 +139,34 @@ export class CloudController {
       title: "Sync isolated cloud test folder",
       message: `This preview only syncs ${TEST_FOLDER}/notes and ${TEST_FOLDER}/attachments. Confirm no other sync service manages this folder. Existing JotDrop folders are excluded. Conflicts are preserved separately; deletions are NOT automatically applied. Maximum 500 files, 4 MiB each.`,
       confirmLabel: "Sync test files manually",
-    }, () => { void this.sync().catch((error) => { this.status = error.message || "Cloud preview failed. Local files were preserved."; new Notice(this.status, 10000); }); }).open();
+    }, () => { new CloudTransferModal(this, this.plugin).open(); }).open();
   }
 
-  async sync(): Promise<void> {
+  async sync(onProgress?: (event: Progress) => void): Promise<void> {
     if (!this.client) throw new Error("Unlock the cloud preview first.");
     if (this.busy) throw new Error("A manual cloud preview sync is already running.");
     this.busy = true;
-    const client = this.client, generation = this.generation;
-    const active = () => { if (!this.client || this.generation !== generation) throw new Error("Cloud preview locked. Further local writes stopped."); };
+    const transfer = new AbortController();
+    this.transfer = transfer;
+    const { credentials, fetcher } = this.client, generation = this.generation;
+    const client = new CloudClient({ ...credentials, fetcher: (url, options) => fetcher(url, { ...options, signal: options?.signal ? AbortSignal.any([transfer.signal, options.signal]) : transfer.signal }) });
+    const active = () => { transfer.signal.throwIfAborted(); if (!this.client || this.generation !== generation) throw new Error("Cloud preview locked. Further local writes stopped."); };
+    const persist = async () => {
+      active();
+      const pending = this.pending;
+      const saved = pending && this.tracked[pending.prepared.id];
+      const completed = saved && !saved.deleted && saved.revision === pending.prepared.baseRevision + 1 && saved.hash === pending.hash;
+      const sealed = await sealLocal({ credentials, tracked: this.tracked, pending: completed ? undefined : pending }, this.password);
+      active();
+      this.plugin.settings.cloudConnection = JSON.stringify(sealed);
+      await this.plugin.saveSettings();
+      if (completed && this.pending === pending) this.pending = undefined;
+    };
+    const upload = (prepared: Pending["prepared"]) => client.commitWrite(prepared, { resumable: true, signal: transfer.signal, onProgress: (event: Progress) => {
+      active();
+      this.status = event.phase === "committed" ? "Cloud version confirmed." : event.phase === "committing" ? "Finalizing cloud version..." : `${Math.floor(event.transferredBytes / 1024)} / ${Math.ceil(event.totalBytes / 1024)} KiB encrypted bytes confirmed.`;
+      onProgress?.(event);
+    } });
     const vault = this.plugin.app.vault;
     const localPath = (path: string) => normalizePath(`${TEST_FOLDER}/${safeCloudPath(path)}`);
     const ensureParent = async (path: string) => {
@@ -103,7 +180,7 @@ export class CloudController {
     try {
       await this.assertSafeFolder();
       this.status = "Syncing encrypted test files...";
-      const result = await syncPreview(client, {
+      const adapter = {
         list: async () => {
           const items: Array<{ path: string; bytes: Uint8Array }> = [];
           let totalBytes = 0;
@@ -158,18 +235,72 @@ export class CloudController {
           active();
           await vault.createBinary(target, bytes.slice().buffer);
         },
-      }, this.tracked, async () => {
+      };
+      const items = await adapter.list();
+      let resumed = 0;
+      if (this.pending) {
+        const pending = this.pending;
+        await persist();
+        const saved = await upload(pending.prepared);
         active();
-        const sealed = await sealLocal({ credentials: client.credentials, tracked: this.tracked }, this.password);
+        this.tracked[pending.prepared.id] = { revision: saved.revision, hash: pending.hash, deleted: false };
+        await persist();
+        resumed = 1;
+      }
+      const result = await syncPreview(client, { ...adapter, list: async () => items }, this.tracked, persist, { write: async (path: string, bytes: Uint8Array, revision: number) => {
         active();
-        this.plugin.settings.cloudConnection = JSON.stringify(sealed);
-        await this.plugin.saveSettings();
-      });
+        if (this.pending) throw new Error("A queued upload needs review before another file can upload. The encrypted snapshot was kept.");
+        // One durable snapshot at a time bounds wrapped settings and survives app restarts.
+        this.pending = { prepared: await client.prepareWrite(path, bytes, revision), hash: await fingerprint(bytes) };
+        await persist();
+        return upload(this.pending.prepared);
+      } });
       active();
+      result.uploaded += resumed;
       this.status = `Preview: ${result.uploaded} uploaded, ${result.downloaded} downloaded, ${result.conflicts} conflicts (${result.remoteDeletions} cloud deletions kept locally). No background sync.`;
       new Notice(this.status, 10000);
-    } finally { this.busy = false; }
+    } catch (error) {
+      if (this.generation === generation) this.status = transfer.signal.aborted ? "Cloud transfer paused. Encrypted upload kept; manual sync resumes it." : error instanceof Error ? error.message : "Sync failed. Local files and the queued upload were kept.";
+      throw error;
+    } finally { this.busy = false; this.transfer = undefined; }
   }
+}
+
+class CloudTransferModal extends Modal {
+  constructor(private cloud: CloudController, plugin: JotDropPlugin) { super(plugin.app); }
+
+  onOpen(): void {
+    this.titleEl.setText("Encrypted test-folder sync");
+    const status = this.contentEl.createEl("p", { text: "Starting manual sync...", attr: { role: "status" } });
+    const progress = this.contentEl.createEl("progress", { attr: { "aria-label": "Encrypted upload", hidden: "" } });
+    new Setting(this.contentEl).addButton((button) => button.setButtonText("Pause sync").onClick(() => this.cloud.cancel()));
+    let recovery: ButtonComponent;
+    new Setting(this.contentEl).setName("Queued upload recovery").setDesc("Save the exact queued version as a separate local copy, then clear its upload reservation. Original local files and cloud history stay unchanged.")
+      .addButton((button) => {
+        recovery = button;
+        button.setButtonText("Keep local copy and clear queue").setDisabled(true).onClick(async () => {
+          button.setDisabled(true);
+          try { await this.cloud.recoverQueuedUpload(); status.setText(this.cloud.status); }
+          catch (error) { status.setText(error instanceof Error ? error.message : "Recovery failed. The queued upload was kept."); }
+          finally { button.setDisabled(!this.cloud.hasQueuedUpload); }
+        });
+      });
+    new Setting(this.contentEl).addButton((button) => {
+      const run = async () => {
+        button.setDisabled(true);
+        recovery.setDisabled(true);
+        try {
+          await this.cloud.sync((event) => { progress.hidden = false; progress.max = event.totalBytes; progress.value = event.transferredBytes; status.setText(this.cloud.status); });
+          status.setText(this.cloud.status);
+        } catch (error) { status.setText(error instanceof Error && error.name === "AbortError" ? "Paused. Encrypted upload kept; select Resume sync to continue." : error instanceof Error ? error.message : "Sync failed. Local files and the queued upload were kept."); }
+        finally { progress.hidden = true; button.setDisabled(false); recovery.setDisabled(!this.cloud.hasQueuedUpload); }
+      };
+      button.setButtonText("Resume sync").onClick(() => { void run(); });
+      void run();
+    });
+  }
+
+  onClose(): void { this.cloud.cancel(); this.contentEl.empty(); }
 }
 
 class CloudAccessModal extends Modal {

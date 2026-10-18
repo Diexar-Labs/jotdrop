@@ -24,8 +24,9 @@ function token(value) {
   return value;
 }
 
-async function request(url, path, { method = 'GET', body, headers = {}, fetcher = globalThis.fetch } = {}) {
-  const response = await fetcher(`${validateUrl(url)}/api/v1${path}`, { method, headers: { ...headers, ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}) }, ...(body !== undefined ? { body: JSON.stringify(body) } : {}), cache: 'no-store', redirect: 'error', signal: AbortSignal.timeout(30000) });
+async function request(url, path, { method = 'GET', body, headers = {}, fetcher = globalThis.fetch, signal, binary = false } = {}) {
+  const timeout = AbortSignal.timeout(30000);
+  const response = await fetcher(`${validateUrl(url)}/api/v1${path}`, { method, headers: { ...headers, ...(body !== undefined ? { 'Content-Type': binary ? 'application/octet-stream' : 'application/json' } : {}) }, ...(body !== undefined ? { body: binary ? body : JSON.stringify(body) } : {}), cache: 'no-store', redirect: 'error', signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
   const reader = response.body?.getReader(), decoder = new TextDecoder(), chunks = [];
   let size = 0;
   try {
@@ -46,6 +47,12 @@ async function request(url, path, { method = 'GET', body, headers = {}, fetcher 
   if (!result || typeof result !== 'object' || Array.isArray(result)) throw new CloudError('The server did not return a valid response.', response.status);
   if (!response.ok) throw new CloudError(typeof result.error === 'string' ? result.error : 'Cloud request failed.', response.status, result.currentRevision);
   return result;
+}
+
+async function uploadPath(prepared) {
+  if (!/^[0-9a-f]{64}$/.test(prepared.id) || !Number.isSafeInteger(prepared.baseRevision) || prepared.baseRevision < 0 || prepared.baseRevision >= Number.MAX_SAFE_INTEGER || typeof prepared.envelope !== 'string' || prepared.envelope.length > 8 * 1024 * 1024) throw new Error('Invalid prepared upload.');
+  const digest = [...new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(prepared.envelope)))].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+  return `/objects/${prepared.id}/uploads/${prepared.baseRevision}/${digest}`;
 }
 
 export class CloudClient {
@@ -69,9 +76,9 @@ export class CloudClient {
     return new CloudClient({ url, ...recovered, token: deviceToken, vaultKey: recovery.vaultKey, fetcher });
   }
 
-  call(path, method = 'GET', body) {
+  call(path, method = 'GET', body, { signal, binary = false } = {}) {
     const c = this.credentials;
-    return request(c.url, path, { method, body, headers: { Authorization: `Bearer ${c.token}`, 'X-JotDrop-Vault': c.vaultId, 'X-JotDrop-Device': c.deviceId }, fetcher: this.fetcher });
+    return request(c.url, path, { method, body, signal, binary, headers: { Authorization: `Bearer ${c.token}`, 'X-JotDrop-Vault': c.vaultId, 'X-JotDrop-Device': c.deviceId }, fetcher: this.fetcher });
   }
 
   async prepareWrite(path, bytes, baseRevision, modifiedAt = new Date().toISOString()) {
@@ -83,10 +90,59 @@ export class CloudClient {
     return { id, baseRevision, envelope: JSON.stringify(envelope) };
   }
 
-  async commitWrite(prepared) {
+  /** @param {{ resumable?: boolean, signal?: AbortSignal, onProgress?: (event: { phase: string, transferredBytes: number, totalBytes: number }) => void }} [options] */
+  async commitWrite(prepared, options = {}) {
+    let { resumable = false, signal, onProgress } = options;
     if (!/^[0-9a-f]{64}$/.test(prepared.id)) throw new Error('Invalid object ID.');
-    const result = await this.call(`/objects/${prepared.id}`, 'PUT', { baseRevision: prepared.baseRevision, envelope: prepared.envelope });
-    return { ...result, id: prepared.id };
+    if (!resumable) {
+      const result = await this.call(`/objects/${prepared.id}`, 'PUT', { baseRevision: prepared.baseRevision, envelope: prepared.envelope }, { signal });
+      return { ...result, id: prepared.id };
+    }
+    if (!Number.isSafeInteger(prepared.baseRevision) || prepared.baseRevision < 0 || prepared.baseRevision >= Number.MAX_SAFE_INTEGER || typeof prepared.envelope !== 'string' || prepared.envelope.length > 8 * 1024 * 1024) throw new Error('Invalid prepared upload.');
+    const envelope = JSON.parse(prepared.envelope);
+    if (envelope?.v !== 1 || JSON.stringify({ v: 1, iv: envelope.iv, ciphertext: envelope.ciphertext }) !== prepared.envelope) throw new Error('Resumable upload requires a canonical v1 envelope.');
+    const iv = base64ToBytes(envelope.iv), ciphertext = base64ToBytes(envelope.ciphertext);
+    if (iv.length !== 12 || ciphertext.length < 16 || iv.length + ciphertext.length > 6 * 1024 * 1024) throw new Error('Invalid binary envelope.');
+    const bytes = new Uint8Array(iv.length + ciphertext.length);
+    bytes.set(iv); bytes.set(ciphertext, iv.length);
+    const path = await uploadPath(prepared);
+    // Bound this attempt, not the durable upload: every HTTP request still has its own 30s limit.
+    const budget = AbortSignal.timeout(10 * 60 * 1000);
+    signal = signal ? AbortSignal.any([signal, budget]) : budget;
+    const send = async (path, method, body, binary = false) => {
+      signal.throwIfAborted();
+      try { return await this.call(path, method, body, { signal, binary }); }
+      catch (error) {
+        if (signal.aborted || !(error instanceof TypeError || error.name === 'TimeoutError' || error.name === 'AbortError')) throw error;
+        // One identical retry is safe for start, chunk and commit, including a lost successful response.
+        return this.call(path, method, body, { signal, binary });
+      }
+    };
+    const capability = (await send('/status')).transport;
+    if (capability?.version !== 1 || capability.chunkBytes !== 65536) throw new Error('This server does not support resumable v1 uploads. The encrypted draft was kept.');
+    let state = await send(path, 'POST', { size: bytes.length }), previous = 0;
+    while (!state.committed) {
+      if (state.size !== bytes.length || !Number.isSafeInteger(state.offset) || state.offset < previous || state.offset > bytes.length) throw new Error('Invalid upload acknowledgment. The encrypted draft was kept.');
+      onProgress?.({ phase: state.offset === bytes.length ? 'committing' : 'upload', transferredBytes: state.offset, totalBytes: bytes.length });
+      signal.throwIfAborted();
+      if (state.offset === bytes.length) {
+        state = await send(`${path}/commit`, 'POST', {});
+        if (!state.committed) throw new Error('Missing upload commit acknowledgment. The encrypted draft was kept.');
+      } else {
+        const end = Math.min(state.offset + capability.chunkBytes, bytes.length);
+        state = await send(`${path}?offset=${state.offset}`, 'PUT', bytes.subarray(state.offset, end), true);
+        previous = end;
+      }
+    }
+    const saved = state.committed;
+    if (saved.id !== prepared.id || saved.revision !== prepared.baseRevision + 1 || !Number.isSafeInteger(saved.sequence) || saved.sequence < 1) throw new Error('Invalid upload commit acknowledgment. The encrypted draft was kept.');
+    onProgress?.({ phase: 'committed', transferredBytes: bytes.length, totalBytes: bytes.length });
+    return saved;
+  }
+
+  async discardWrite(prepared) {
+    try { await this.call(await uploadPath(prepared), 'DELETE'); }
+    catch (error) { if (![404, 410].includes(error.status)) throw error; }
   }
 
   async write(path, bytes, baseRevision, modifiedAt) { return this.commitWrite(await this.prepareWrite(path, bytes, baseRevision, modifiedAt)); }

@@ -8,6 +8,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const directory = dirname(fileURLToPath(import.meta.url));
 const MAX_BODY = 12 * 1024 * 1024;
 const MAX_METADATA_BODY = 16 * 1024;
+const TRANSFER_CHUNK_BYTES = 64 * 1024;
+const TRANSFER_LIFETIME = 24 * 60 * 60 * 1000;
 const idPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const hashPattern = /^[0-9a-f]{64}$/;
 const hash = (value) => createHash('sha256').update(value).digest('hex');
@@ -30,8 +32,7 @@ function envelopeSize(value, limit = 8 * 1024 * 1024) {
   return Buffer.byteLength(value);
 }
 
-async function body(req, maximum = MAX_BODY) {
-  requireValue(/^application\/json(?:;|$)/i.test(req.headers['content-type'] || ''), 'Expected JSON content type');
+async function bodyBytes(req, maximum) {
   if (Number(req.headers['content-length'] || 0) > maximum) fail(413, 'Request exceeds size limit');
   let size = 0;
   const chunks = [];
@@ -40,8 +41,14 @@ async function body(req, maximum = MAX_BODY) {
     if (size > maximum) fail(413, 'Request exceeds size limit');
     chunks.push(chunk);
   }
+  return Buffer.concat(chunks);
+}
+
+async function body(req, maximum = MAX_BODY) {
+  requireValue(/^application\/json(?:;|$)/i.test(req.headers['content-type'] || ''), 'Expected JSON content type');
+  const bytes = await bodyBytes(req, maximum);
   let value;
-  try { value = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { fail(400, 'Invalid JSON'); }
+  try { value = JSON.parse(bytes.toString('utf8')); } catch { fail(400, 'Invalid JSON'); }
   requireValue(value && typeof value === 'object' && !Array.isArray(value), 'Expected a JSON object');
   return value;
 }
@@ -66,6 +73,8 @@ export async function createCloudServer({ dataDir, enrollmentToken, quotaBytes =
   const all = (sql, ...args) => db.prepare(sql).all(...args);
   const run = (sql, ...args) => db.prepare(sql).run(...args);
   function transaction(action) {
+    // Upload publication composes with append in the same atomic transaction.
+    if (db.isTransaction) return action();
     db.exec('BEGIN IMMEDIATE');
     try { const result = action(); db.exec('COMMIT'); return result; }
     catch (error) { if (db.isTransaction) db.exec('ROLLBACK'); throw error; }
@@ -81,7 +90,8 @@ export async function createCloudServer({ dataDir, enrollmentToken, quotaBytes =
         CREATE INDEX IF NOT EXISTS changes_by_vault ON changes(vaultId,sequence);
         CREATE TABLE IF NOT EXISTS pairings(id TEXT PRIMARY KEY, vaultId TEXT NOT NULL REFERENCES vaults(id), deviceName TEXT NOT NULL, deviceTokenHash TEXT NOT NULL, claimTokenHash TEXT NOT NULL, envelope TEXT NOT NULL, expiresAt INTEGER NOT NULL, creatorId TEXT NOT NULL REFERENCES devices(id), claimed INTEGER NOT NULL DEFAULT 0);
         CREATE INDEX IF NOT EXISTS pairings_by_vault ON pairings(vaultId,expiresAt);
-        CREATE TABLE IF NOT EXISTS envelopes(vaultId TEXT NOT NULL REFERENCES vaults(id), id TEXT NOT NULL, envelopeHash TEXT NOT NULL, envelope TEXT NOT NULL, size INTEGER NOT NULL, PRIMARY KEY(vaultId,id,envelopeHash));`);
+        CREATE TABLE IF NOT EXISTS envelopes(vaultId TEXT NOT NULL REFERENCES vaults(id), id TEXT NOT NULL, envelopeHash TEXT NOT NULL, envelope TEXT NOT NULL, size INTEGER NOT NULL, PRIMARY KEY(vaultId,id,envelopeHash));
+        CREATE TABLE IF NOT EXISTS uploads(vaultId TEXT NOT NULL REFERENCES vaults(id), deviceId TEXT NOT NULL REFERENCES devices(id), id TEXT NOT NULL, baseRevision INTEGER NOT NULL, envelopeHash TEXT NOT NULL, size INTEGER NOT NULL, reservedBytes INTEGER NOT NULL, expiresAt INTEGER NOT NULL, data BLOB NOT NULL, PRIMARY KEY(vaultId,deviceId,id,baseRevision,envelopeHash));`);
       const legacy = all('PRAGMA table_info(revisions)').some((column) => column.name === 'envelope');
       db.exec(`CREATE TABLE IF NOT EXISTS ${legacy ? 'revisions_migrated' : 'revisions'}(vaultId TEXT NOT NULL REFERENCES vaults(id), id TEXT NOT NULL, revision INTEGER NOT NULL, envelopeHash TEXT NOT NULL, deleted INTEGER NOT NULL, size INTEGER NOT NULL, updatedAt TEXT NOT NULL, deviceId TEXT NOT NULL, PRIMARY KEY(vaultId,id,revision), FOREIGN KEY(vaultId,id,envelopeHash) REFERENCES envelopes(vaultId,id,envelopeHash));`);
       if (legacy) {
@@ -120,9 +130,12 @@ export async function createCloudServer({ dataDir, enrollmentToken, quotaBytes =
   function requireActiveDevice(vaultId, deviceId) {
     if (one('SELECT revoked FROM devices WHERE vaultId=? AND id=?', vaultId, deviceId)?.revoked !== 0) fail(401, 'Device access denied');
   }
+  const pruneUploads = (vaultId) => run('DELETE FROM uploads WHERE vaultId=? AND expiresAt<=?', vaultId, clock());
+  const storageUsage = (vaultId) => one('SELECT (SELECT COALESCE(SUM(size),0) FROM envelopes WHERE vaultId=?) + (SELECT COALESCE(SUM(reservedBytes),0) FROM uploads WHERE vaultId=?) AS used', vaultId, vaultId).used;
   function append(vaultId, deviceId, id, baseRevision, envelope, deleted) {
     return transaction(() => {
       requireActiveDevice(vaultId, deviceId);
+      pruneUploads(vaultId);
       const current = latest(vaultId, id);
       if ((current?.revision || 0) !== baseRevision) fail(409, 'Another version was saved. Review both versions.', { currentRevision: current?.revision || 0 });
       if (deleted) { if (!current) fail(404, 'File not found'); envelope = current.envelope; }
@@ -133,7 +146,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, quotaBytes =
       const history = historyUsage(vaultId);
       if (history.revisionCount >= maxHistoryEntries || history.changeCount >= maxHistoryEntries) fail(507, 'Cloud history safety limit reached. Existing versions remain readable; no history was deleted.');
       if (!stored) {
-        const used = one('SELECT COALESCE(SUM(size),0) AS used FROM envelopes WHERE vaultId=?', vaultId).used;
+        const used = storageUsage(vaultId);
         if (used + size > quotaBytes) fail(507, 'Cloud storage is full. Your local files remain available.');
         run('INSERT INTO envelopes VALUES(?,?,?,?,?)', vaultId, id, envelopeHash, envelope, size);
       }
@@ -239,7 +252,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, quotaBytes =
         if (![5, 6, 8, 10, 13].includes(sqliteCode(error))) throw error; // BUSY, LOCKED, READONLY, IOERR, FULL.
       }
       if (method === 'GET' && route === '/status') {
-        reply(200, { usedBytes: one('SELECT COALESCE(SUM(size),0) AS size FROM envelopes WHERE vaultId=?', vaultId).size, quotaBytes, sequence: one('SELECT COALESCE(MAX(sequence),0) AS sequence FROM changes WHERE vaultId=?', vaultId).sequence, history: historyUsage(vaultId) }); return;
+        reply(200, { usedBytes: one('SELECT COALESCE(SUM(size),0) AS size FROM envelopes WHERE vaultId=?', vaultId).size, quotaBytes, sequence: one('SELECT COALESCE(MAX(sequence),0) AS sequence FROM changes WHERE vaultId=?', vaultId).sequence, history: historyUsage(vaultId), transport: { version: 1, chunkBytes: TRANSFER_CHUNK_BYTES, reservedBytes: one('SELECT COALESCE(SUM(reservedBytes),0) AS size FROM uploads WHERE vaultId=?', vaultId).size } }); return;
       }
       if (method === 'GET' && route === '/changes') {
         const after = Number(url.searchParams.get('after') || 0);
@@ -252,10 +265,14 @@ export async function createCloudServer({ dataDir, enrollmentToken, quotaBytes =
       if (method === 'GET' && route === '/devices') { reply(200, { devices: all('SELECT id,name,createdAt,lastSeenAt,revoked FROM devices WHERE vaultId=? ORDER BY createdAt', vaultId).map((entry) => ({ ...entry, revoked: Boolean(entry.revoked) })) }); return; }
       const revoke = /^\/devices\/([0-9a-f-]+)$/.exec(route);
       if (method === 'DELETE' && revoke) {
-        const target = one('SELECT * FROM devices WHERE vaultId=? AND id=?', vaultId, revoke[1]);
-        if (!target) fail(404, 'Device not found');
-        if (!target.revoked && one('SELECT COUNT(*) AS count FROM devices WHERE vaultId=? AND revoked=0', vaultId).count <= 1) fail(409, 'Cannot revoke the only active device');
-        run('UPDATE devices SET revoked=1 WHERE id=? AND vaultId=?', target.id, vaultId);
+        transaction(() => {
+          requireActiveDevice(vaultId, deviceId);
+          const target = one('SELECT * FROM devices WHERE vaultId=? AND id=?', vaultId, revoke[1]);
+          if (!target) fail(404, 'Device not found');
+          if (!target.revoked && one('SELECT COUNT(*) AS count FROM devices WHERE vaultId=? AND revoked=0', vaultId).count <= 1) fail(409, 'Cannot revoke the only active device');
+          run('UPDATE devices SET revoked=1 WHERE id=? AND vaultId=?', target.id, vaultId);
+          run('DELETE FROM uploads WHERE vaultId=? AND deviceId=?', vaultId, target.id);
+        });
         reply(200, { ok: true }); return;
       }
       if (method === 'POST' && route === '/pairings') {
@@ -273,6 +290,93 @@ export async function createCloudServer({ dataDir, enrollmentToken, quotaBytes =
           return { pairingId, expiresAt: new Date(expiresAt).toISOString() };
         });
         reply(201, result); return;
+      }
+      const upload = /^\/objects\/([0-9a-f]{64})\/uploads\/(0|[1-9][0-9]*)\/([0-9a-f]{64})(\/commit)?$/.exec(route);
+      if (upload) {
+        const [, id, base, envelopeHash, commit] = upload, baseRevision = Number(base);
+        requireValue(Number.isSafeInteger(baseRevision) && baseRevision < Number.MAX_SAFE_INTEGER, 'Invalid base revision');
+        const key = [vaultId, deviceId, id, baseRevision, envelopeHash];
+        const where = 'vaultId=? AND deviceId=? AND id=? AND baseRevision=? AND envelopeHash=?';
+        // Immutable history is the receipt, even when the commit response was lost or newer edits exist.
+        const receipt = () => {
+          const saved = one('SELECT r.revision,c.sequence FROM revisions r JOIN changes c USING(vaultId,id,revision) WHERE r.vaultId=? AND r.deviceId=? AND r.id=? AND r.revision=? AND r.envelopeHash=? ORDER BY c.sequence LIMIT 1', vaultId, deviceId, id, baseRevision + 1, envelopeHash);
+          return saved ? { committed: { id, ...saved } } : undefined;
+        };
+        const pending = () => {
+          const row = one(`SELECT * FROM uploads WHERE ${where}`, ...key);
+          if (!row) fail(404, 'Upload not found');
+          if (row.expiresAt <= clock()) fail(410, 'Upload expired; prepare a new upload');
+          return row;
+        };
+        if (method === 'GET' && !commit) {
+          const saved = receipt();
+          if (saved) { reply(200, saved); return; }
+          const row = pending();
+          reply(200, { offset: row.data.length, size: row.size }); return;
+        }
+        if (method === 'POST' && !commit) {
+          const value = await body(req, MAX_METADATA_BODY);
+          requireValue(Number.isSafeInteger(value.size) && value.size >= 28 && value.size <= 6 * 1024 * 1024, 'Invalid binary envelope size');
+          const reservedBytes = Buffer.byteLength(JSON.stringify({ v: 1, iv: 'A'.repeat(16), ciphertext: '' })) + Math.ceil((value.size - 12) * 4 / 3);
+          requireValue(reservedBytes <= 8 * 1024 * 1024, 'Invalid envelope size');
+          const result = transaction(() => {
+            requireActiveDevice(vaultId, deviceId);
+            const saved = receipt();
+            if (saved) return saved;
+            pruneUploads(vaultId);
+            const existing = one(`SELECT size,length(data) AS offset FROM uploads WHERE ${where}`, ...key);
+            if (existing) { requireValue(existing.size === value.size, 'Upload size changed'); return { offset: existing.offset, size: existing.size }; }
+            const revision = latest(vaultId, id)?.revision || 0;
+            if (revision !== baseRevision) fail(409, 'Another version was saved. Review both versions.', { currentRevision: revision });
+            if (one('SELECT COUNT(*) AS count FROM uploads WHERE vaultId=?', vaultId).count >= 4) fail(507, 'Cloud pending upload limit reached');
+            if (storageUsage(vaultId) + reservedBytes > quotaBytes) fail(507, 'Cloud storage is full. Your local files remain available.');
+            run('INSERT INTO uploads VALUES(?,?,?,?,?,?,?,?,?)', ...key, value.size, reservedBytes, clock() + TRANSFER_LIFETIME, Buffer.alloc(0));
+            return { offset: 0, size: value.size };
+          });
+          reply(200, result); return;
+        }
+        if (method === 'PUT' && !commit) {
+          requireValue(req.headers['content-type'] === 'application/octet-stream', 'Expected binary content type');
+          const offsetText = url.searchParams.get('offset');
+          requireValue(/^(0|[1-9][0-9]*)$/.test(offsetText || ''), 'Invalid upload offset');
+          const offset = Number(offsetText), bytes = await bodyBytes(req, TRANSFER_CHUNK_BYTES);
+          requireValue(Number.isSafeInteger(offset) && bytes.length > 0, 'Invalid upload chunk');
+          const result = transaction(() => {
+            requireActiveDevice(vaultId, deviceId);
+            const saved = receipt();
+            if (saved) return saved;
+            const row = pending();
+            if (offset < row.data.length && offset + bytes.length <= row.data.length) {
+              requireValue(Buffer.from(row.data).subarray(offset, offset + bytes.length).equals(bytes), 'Upload retry bytes changed');
+            } else {
+              if (offset !== row.data.length || offset + bytes.length > row.size) fail(409, 'Upload offset mismatch');
+              // ponytail: BLOB concatenation is bounded to 6 MiB; use chunk rows if write amplification matters.
+              run(`UPDATE uploads SET data=CAST(data || ? AS BLOB) WHERE ${where}`, bytes, ...key);
+            }
+            return { offset: offset < row.data.length ? row.data.length : offset + bytes.length, size: row.size };
+          });
+          reply(200, result); return;
+        }
+        if (method === 'POST' && commit) {
+          await body(req, MAX_METADATA_BODY);
+          const result = transaction(() => {
+            requireActiveDevice(vaultId, deviceId);
+            const saved = receipt();
+            if (saved) return saved;
+            const row = pending(), bytes = Buffer.from(row.data);
+            if (bytes.length !== row.size) fail(409, 'Upload is incomplete');
+            const envelope = JSON.stringify({ v: 1, iv: bytes.subarray(0, 12).toString('base64url'), ciphertext: bytes.subarray(12).toString('base64url') });
+            requireValue(hash(envelope) === envelopeHash, 'Upload ciphertext hash mismatch');
+            run(`DELETE FROM uploads WHERE ${where}`, ...key);
+            return { committed: append(vaultId, deviceId, id, baseRevision, envelope, false) };
+          });
+          reply(200, result); return;
+        }
+        if (method === 'DELETE' && !commit) {
+          transaction(() => { requireActiveDevice(vaultId, deviceId); pending(); run(`DELETE FROM uploads WHERE ${where}`, ...key); });
+          reply(200, { ok: true }); return;
+        }
+        fail(405, 'Method not allowed');
       }
       const object = /^\/objects\/([0-9a-f]{64})(?:\/(history|restore))?$/.exec(route);
       if (!object) fail(404, 'Not found');

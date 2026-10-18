@@ -105,20 +105,20 @@ def check_browser(browser, url, enrollment_token):
             else:
                 route.continue_()
 
-        second_context.route("**/api/v1/objects/*", busy_upload)
+        second_context.route("**/api/v1/objects/**", busy_upload)
         second.locator('#editor-form button[type="submit"]').click()
         second.locator("#workspace-message").filter(has_text="Cloud is busy").wait_for()
         second.locator(".note-card").filter(has_text="Saved on second browser.").filter(has_text="Waiting for cloud").wait_for()
-        second_context.unroute("**/api/v1/objects/*", busy_upload)
+        second_context.unroute("**/api/v1/objects/**", busy_upload)
 
         def lose_upload_response(route):
-            if route.request.method != "PUT":
+            if route.request.method != "POST" or not route.request.url.endswith("/commit"):
                 route.continue_()
                 return
-            assert route.fetch().status == 201
+            assert route.fetch().status == 200
             route.abort("failed")
 
-        second_context.route("**/api/v1/objects/*", lose_upload_response)
+        second_context.route("**/api/v1/objects/**", lose_upload_response)
         second.locator("#sync").click()
         second.locator("#sync-status").filter(has_text="Cloud unavailable").wait_for()
         second.locator(".note-card").filter(has_text="Saved on second browser.").filter(has_text="Waiting for cloud").wait_for()
@@ -128,7 +128,7 @@ def check_browser(browser, url, enrollment_token):
           const keys = await new Promise(done => { const r = db.transaction('values').objectStore('values').getAllKeys(); r.onsuccess = () => done(r.result); });
           db.close(); return keys.filter(key => key.startsWith('pending:')).length === 1 && !JSON.stringify(rows).includes('Saved on second browser.');
         }""")
-        second_context.unroute("**/api/v1/objects/*", lose_upload_response)
+        second_context.unroute("**/api/v1/objects/**", lose_upload_response)
         second.locator("#sync").click()
         second.locator("#sync-status").filter(has_text="Cloud copy up to date").wait_for()
         first.locator("#editor").evaluate("dialog => dialog.close()")
@@ -220,6 +220,10 @@ def check_browser(browser, url, enrollment_token):
         assert not first.evaluate("document.documentElement.scrollWidth > innerWidth")
         return {"system_light_dark_theme": True, "theme_persisted": True, "theme_without_storage": True, "paired_browsers": True, "stale_editor_protected": True, "history_trash_restore": True, "busy_upload_retried": True, "lost_upload_response_retried": True, "lost_delete_response_retried": True, "encrypted_browser_storage": True, "offline_queue_replayed": True, "history_limit_drafts_preserved": True, "history_readable_at_limit": True, "mobile_overflow": False, "unlock": True}
     finally:
+        if sys.exc_info()[0]:
+            for page in [first, second]:
+                if page.locator("#sync-status").count():
+                    print(json.dumps({"sync": page.locator("#sync-status").text_content(), "message": page.locator("#workspace-message").text_content()}))
         first_context.close()
         second_context.close()
 

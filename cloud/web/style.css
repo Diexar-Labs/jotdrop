@@ -52,6 +52,7 @@ main { min-width: 0; padding: 0 2rem 3rem; }
 .workspace-heading { display: flex; gap: 1rem; align-items: start; justify-content: space-between; margin: 2.5rem 0 1rem; }
 .workspace-heading p { color: var(--muted); margin: .5rem 0; font-size: .9rem; }
 #sync-status { text-align: right; max-width: 35ch; }
+#upload-progress { width: 100%; accent-color: var(--accent); }
 .message { color: var(--danger); min-height: 1.5em; margin: 0 0 1rem; }
 .note-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr)); gap: 1rem; align-items: start; }
 .note-card { background: var(--note); padding: 1.1rem; border: 1px solid var(--line); border-radius: 12px; min-width: 0; }

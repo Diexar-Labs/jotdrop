@@ -22,6 +22,8 @@ let view = 'notes';
 let editing;
 let editingRevision;
 let syncing;
+let syncController;
+let syncPaused = false;
 let cursor = 0;
 let generation = 0;
 let cameraStream;
@@ -51,6 +53,25 @@ async function store(action, key, value) {
           entry.continue();
         }
       };
+    } else if (action === 'queue' || action === 'ack') {
+      const request = values.get(key);
+      request.onsuccess = () => {
+        const latest = request.result;
+        // Compare and mutate together: a newer draft must survive an older receipt.
+        if (action === 'queue') {
+          value.prepared.baseRevision = latest?.prepared.baseRevision ?? value.prepared.baseRevision;
+          values.put(value, key);
+        } else {
+          if (latest?.queueId === value.queueId) values.delete(key);
+          else if (latest) {
+            latest.prepared.baseRevision = value.revision;
+            values.put(latest, key);
+          }
+          values.delete(key.replace('pending:', 'upload:'));
+        }
+      };
+    } else if (action === 'delete' && Array.isArray(key)) {
+      for (const item of key) values.delete(item);
     } else {
       const request = action === 'get' ? values.get(key) : action === 'put' ? values.put(value, key) : values.delete(key);
       request.onsuccess = () => { result = request.result; };
@@ -246,11 +267,9 @@ async function queueFile(path, bytes, expectedRevision) {
   if (expectedRevision !== undefined && current?.revision !== expectedRevision) throw new Error('This note changed while you were editing. Download your draft, then reopen the current version before saving.');
   if (current?.conflict) throw new Error('Review the cloud conflict before saving another edit. Download this draft to keep a separate copy.');
   const key = `${pendingPrefix()}${prepared.id}`;
-  const prior = await store('get', key);
-  if (generation !== activeGeneration) throw new Error('Workspace changed before saving. Reopen the original workspace.');
-  prepared.baseRevision = prior?.prepared.baseRevision ?? current?.revision ?? 0;
+  prepared.baseRevision = current?.revision ?? 0;
   const record = { prepared, deleted: false, queueId: crypto.randomUUID() };
-  await store('put', key, record);
+  await store('queue', key, record);
   if (generation !== activeGeneration) return;
   files.set(prepared.id, { id: prepared.id, revision: prepared.baseRevision, deleted: false, pending: true, file: { path, content: bytesToBase64(bytes), modifiedAt: new Date().toISOString() } });
   render();
@@ -265,12 +284,12 @@ async function deleteEntry(entry, ask = true) {
   if (entry.conflict) throw new Error('Resolve the conflicting versions before moving this file to trash.');
   const key = `${pendingPrefix()}${entry.id}`;
   const prior = await store('get', key);
-  if (prior && prior.prepared.baseRevision === 0) {
+  if (prior && prior.prepared.baseRevision === 0 && !await store('get', key.replace('pending:', 'upload:'))) {
     await store('delete', key);
     files.delete(entry.id);
   } else {
     const prepared = prior?.prepared || await client.prepareWrite(entry.file.path, base64ToBytes(entry.file.content), entry.revision, entry.file.modifiedAt);
-    await store('put', key, { prepared, deleted: true, queueId: crypto.randomUUID() });
+    await store('queue', key, { prepared, deleted: true, queueId: crypto.randomUUID() });
     files.set(entry.id, { ...entry, deleted: true, pending: true });
   }
   render();
@@ -298,23 +317,40 @@ async function moveArchive(entry) {
   await deleteEntry(entry, false);
 }
 
-async function performSync() {
+async function performSync(signal) {
   if (!client) return;
-  const activeClient = client;
+  const { credentials, fetcher } = client;
+  const activeClient = new CloudClient({ ...credentials, fetcher: (url, options) => fetcher(url, { ...options, signal: AbortSignal.any([signal, options.signal]) }) });
   const activeGeneration = generation;
   let changed = false;
   $('sync-status').textContent = 'Syncing encrypted changes...';
   const keyPrefix = pendingPrefix();
   for (const [key, pending] of await store('entries', keyPrefix)) {
     if (activeGeneration !== generation) return;
+    signal.throwIfAborted();
     if (files.get(pending.prepared.id)?.conflict) continue;
+    const uploadKey = key.replace('pending:', 'upload:');
+    // Freeze the active snapshot independently of edits to the latest queued draft.
+    const uploading = await store('get', uploadKey) || pending;
+    await store('put', uploadKey, uploading);
     let result;
-    try { result = pending.deleted ? await activeClient.remove(pending.prepared.id, pending.prepared.baseRevision) : await activeClient.commitWrite(pending.prepared); }
+    try { result = uploading.deleted ? await activeClient.remove(uploading.prepared.id, uploading.prepared.baseRevision) : await activeClient.commitWrite(uploading.prepared, {
+      resumable: true, signal,
+      onProgress: ({ phase, transferredBytes, totalBytes }) => {
+        if (activeGeneration !== generation || signal.aborted) return;
+        const progress = $('upload-progress');
+        progress.hidden = false;
+        progress.max = totalBytes;
+        progress.value = transferredBytes;
+        $('sync-status').textContent = phase === 'committed' ? 'Cloud version confirmed.' : phase === 'committing' ? 'Encrypted bytes confirmed. Finalizing cloud version...' : `${Math.floor(transferredBytes / 1024)} / ${Math.ceil(totalBytes / 1024)} KiB encrypted bytes confirmed.`;
+      },
+    }); }
     catch (error) {
+      signal.throwIfAborted();
       if (error.status !== 409) throw error;
-      const remote = await activeClient.read(pending.prepared.id);
-      const expected = await decryptEnvelope(activeClient.credentials.vaultKey, JSON.parse(pending.prepared.envelope), `jotdrop:object:v1:${activeClient.credentials.vaultId}:${pending.prepared.id}`);
-      if (remote.deleted === pending.deleted && remote.file.path === expected.path && remote.file.content === expected.content) result = { revision: remote.revision };
+      const remote = await activeClient.read(uploading.prepared.id);
+      const expected = await decryptEnvelope(activeClient.credentials.vaultKey, JSON.parse(uploading.prepared.envelope), `jotdrop:object:v1:${activeClient.credentials.vaultId}:${uploading.prepared.id}`);
+      if (remote.deleted === uploading.deleted && remote.file.path === expected.path && remote.file.content === expected.content) result = { revision: remote.revision };
       else {
         const entry = files.get(pending.prepared.id);
         if (entry) { entry.conflict = true; changed = true; }
@@ -323,7 +359,7 @@ async function performSync() {
     }
     if (activeGeneration !== generation) return;
     const latest = await store('get', key);
-    if (latest?.queueId === pending.queueId) {
+    if (latest?.queueId === uploading.queueId) {
       const entry = files.get(pending.prepared.id);
       if (entry) {
         entry.revision = result.revision;
@@ -331,14 +367,12 @@ async function performSync() {
         changed = true;
         await cacheEntry(entry);
       }
-      await store('delete', key);
-    } else if (latest) {
-      latest.prepared.baseRevision = result.revision;
-      await store('put', key, latest);
     }
+    await store('ack', key, { queueId: uploading.queueId, revision: result.revision });
   }
   let more = true;
   while (more) {
+    signal.throwIfAborted();
     const result = await activeClient.listChanges(cursor);
     for (const change of result.changes) {
       if (activeGeneration !== generation) return;
@@ -362,14 +396,27 @@ async function performSync() {
 }
 
 async function sync() {
-  if (!client || syncing) return syncing;
+  if (!client || syncing || syncPaused) return syncing;
   const activeGeneration = generation;
-  syncing = performSync().catch((error) => {
+  const controller = new AbortController();
+  syncController = controller;
+  $('sync').disabled = true;
+  $('pause-sync').hidden = false;
+  syncing = performSync(controller.signal).catch((error) => {
     if (activeGeneration !== generation) return;
-    $('sync-status').textContent = 'Cloud unavailable. Encrypted drafts stay on this browser.';
-    message(errorText(error));
+    $('sync-status').textContent = syncPaused ? 'Sync paused. Encrypted drafts stay on this browser. Select Resume sync to continue.' : 'Cloud unavailable. Encrypted drafts stay on this browser.';
+    if (!syncPaused) message(errorText(error));
     render();
-  }).finally(() => { syncing = undefined; });
+  }).finally(() => {
+    if (syncController !== controller) return;
+    syncing = undefined;
+    syncController = undefined;
+    $('sync').disabled = false;
+    $('sync').textContent = syncPaused ? 'Resume sync' : 'Sync now';
+    $('pause-sync').hidden = true;
+    $('upload-progress').hidden = true;
+    if (syncPaused && !$('workspace').hidden) $('sync').focus();
+  });
   return syncing;
 }
 
@@ -505,8 +552,11 @@ async function reviewConflict(entry) {
   const remote = await client.read(entry.id);
   download(base64ToBytes(entry.file.content), `local-draft-${entry.file.path.split('/').pop()}`);
   if (!confirm(`Your local draft has been downloaded. Keep the cloud version of "${remote.file.path}" in this workspace? Select Cancel to keep both unresolved.`)) return;
+  const uploadKey = `${pendingPrefix()}${entry.id}`.replace('pending:', 'upload:');
+  const uploading = await store('get', uploadKey);
+  if (uploading && !uploading.deleted) await client.discardWrite(uploading.prepared);
   await cacheEntry(remote);
-  await store('delete', `${pendingPrefix()}${entry.id}`);
+  await store('delete', [`${pendingPrefix()}${entry.id}`, uploadKey]);
   files.set(entry.id, remote);
   render();
   await sync();
@@ -530,7 +580,11 @@ async function renderDevices() {
 }
 
 async function openWorkspace(connected) {
+  syncController?.abort();
+  if (syncing) await syncing;
   client = connected;
+  syncPaused = false;
+  $('sync').textContent = 'Sync now';
   generation++;
   cursor = 0;
   files.clear();
@@ -549,6 +603,7 @@ function lock() {
   if (voiceJob && !confirm('Discard the current recording and lock?')) return;
   discardVoice();
   resetPhoto();
+  syncController?.abort();
   generation++;
   client = undefined;
   files.clear();
@@ -618,7 +673,8 @@ $('use-another').addEventListener('click', () => {
   $('access-message').textContent = 'Existing encrypted drafts are kept. Connect the original device again to sync them.';
 });
 $('lock').addEventListener('click', lock);
-$('sync').addEventListener('click', () => { message(); void sync(); });
+$('sync').addEventListener('click', () => { syncPaused = false; $('sync').textContent = 'Sync now'; message(); void sync(); });
+$('pause-sync').addEventListener('click', () => { syncPaused = true; syncController?.abort(); });
 $('search').addEventListener('input', render);
 $('label-filter').addEventListener('change', render);
 $('sort').addEventListener('change', render);
@@ -835,7 +891,7 @@ $('recovery-dialog').addEventListener('cancel', (event) => event.preventDefault(
 $('recovery-saved').addEventListener('change', () => { $('finish-recovery').disabled = !$('recovery-saved').checked; });
 $('finish-recovery').addEventListener('click', () => { $('recovery-dialog').close(); $('recovery-code').value = ''; });
 window.addEventListener('online', () => { if (client) void sync(); });
-window.addEventListener('pagehide', () => { resetPhoto(); discardVoice(); });
+window.addEventListener('pagehide', () => { syncController?.abort(); resetPhoto(); discardVoice(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) { stopCamera(); if (voiceJob?.recorder?.state === 'recording') voiceJob.recorder.stop(); } });
 window.addEventListener('beforeunload', (event) => {
   const unsaved = $('editor').open && (voiceJob || $('note-content').value !== (editing ? noteText(editing.file) : '# Untitled\n\n'));

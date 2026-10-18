@@ -25,7 +25,8 @@ const els = {
 
 let activeTab = null;
 let currentTags = [];
-const cloudCaptureId = crypto.randomUUID();
+let cloudCaptureId = crypto.randomUUID();
+let cloudTransfer;
 
 function setStatus(text, kind) {
   els.status.textContent = text;
@@ -166,7 +167,7 @@ function openObsidianUri(payload, onOk) {
 }
 
 async function save() {
-  if (!activeTab) return;
+  if (!activeTab || els.saveBtn.disabled) return;
   els.saveBtn.disabled = true;
   setStatus("Saving…", "busy");
 
@@ -189,18 +190,7 @@ async function save() {
   const settings = await getSettings();
 
   if (settings.cloudEnabled) {
-    try {
-      if (!globalThis.JotDropCloud) throw new Error("Cloud preview requires the local development extension build. Local mode is available in settings.");
-      const password = $("cloudUnlock");
-      if (!password?.value) throw new Error("Enter your cloud device unlock passphrase.");
-      await globalThis.JotDropCloud.save(payload, password.value, cloudCaptureId);
-      password.value = "";
-      setStatus("Encrypted clip saved to cloud", "ok");
-      setTimeout(() => window.close(), 800);
-    } catch (error) {
-      setStatus(error.message || "Cloud save failed. Any queued encrypted draft is kept; retry when online.", "error");
-      els.saveBtn.disabled = false;
-    }
+    await saveCloud(payload);
     return;
   }
 
@@ -234,6 +224,51 @@ async function save() {
     els.saveBtn.disabled = false;
   }
 }
+
+async function saveCloud(payload) {
+  if (cloudTransfer) return;
+  const controller = new AbortController();
+  cloudTransfer = controller;
+  els.saveBtn.disabled = true;
+  const resume = $("cloudResume"), pause = $("cloudPause"), progress = $("cloudProgress");
+  if (resume) resume.disabled = true;
+  if (pause) pause.hidden = false;
+  try {
+    if (!globalThis.JotDropCloud) throw new Error("Cloud preview requires the local development extension build. Local mode is available in settings.");
+    const password = $("cloudUnlock");
+    if (!password?.value) throw new Error("Enter your cloud device unlock passphrase.");
+    const options = { signal: controller.signal, onCaptureCommitted: (captureId) => {
+      if (captureId === cloudCaptureId) cloudCaptureId = crypto.randomUUID();
+    }, onProgress: ({ phase, transferredBytes, totalBytes }) => {
+      if (controller.signal.aborted) return;
+      progress.hidden = false; progress.max = totalBytes; progress.value = transferredBytes;
+      setStatus(phase === "committed" ? "Cloud version confirmed" : phase === "committing" ? "Finalizing cloud version..." : `${Math.floor(transferredBytes / 1024)} / ${Math.ceil(totalBytes / 1024)} KiB encrypted bytes confirmed`, "busy");
+    } };
+    if (payload) await globalThis.JotDropCloud.save(payload, password.value, cloudCaptureId, options);
+    else {
+      const count = await globalThis.JotDropCloud.resume(password.value, options);
+      password.value = "";
+      setStatus(count ? "Saved drafts confirmed in cloud. Current page was not clipped." : "No saved cloud drafts. Current page was not clipped.", "ok");
+      return;
+    }
+    password.value = "";
+    setStatus("Encrypted clip saved to cloud", "ok");
+    setTimeout(() => window.close(), 800);
+  } catch (error) {
+    setStatus(controller.signal.aborted ? "Upload paused. Encrypted drafts are kept; select Resume saved drafts to continue." : `${error.message || "Cloud save failed."} Any queued encrypted draft is kept unchanged.`, "error");
+  } finally {
+    cloudTransfer = undefined;
+    els.saveBtn.disabled = false;
+    if (resume) resume.disabled = false;
+    if (pause) pause.hidden = true;
+    if (progress) progress.hidden = true;
+    if (controller.signal.aborted) resume?.focus();
+  }
+}
+
+$("cloudPause")?.addEventListener("click", () => cloudTransfer?.abort());
+$("cloudResume")?.addEventListener("click", () => { void saveCloud(); });
+window.addEventListener("pagehide", () => cloudTransfer?.abort());
 
 els.saveBtn.addEventListener("click", () => { void save(); });
 els.optionsBtn.addEventListener("click", () => chrome.runtime.openOptionsPage());

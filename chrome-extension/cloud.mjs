@@ -24,9 +24,10 @@ export function createClipperCloud(storage, fetcher = globalThis.fetch) {
     return new CloudClient({ ...await unsealLocal(cloudConnection, password), fetcher });
   }
 
-  async function commit(client, key, prepared) {
-    try { await client.commitWrite(prepared); }
+  async function commit(client, key, prepared, { signal, onProgress, onCaptureCommitted } = {}) {
+    try { await client.commitWrite(prepared, { resumable: true, signal, onProgress }); }
     catch (error) {
+      signal?.throwIfAborted();
       if (error.status !== 409) throw error;
       const existing = await client.read(prepared.id);
       const expected = JSON.parse(prepared.envelope);
@@ -34,6 +35,7 @@ export function createClipperCloud(storage, fetcher = globalThis.fetch) {
       if (existing.deleted || existing.envelope !== JSON.stringify(expected)) throw new Error('A different cloud version exists. Your encrypted draft is preserved.');
     }
     await storage.remove(key);
+    onCaptureCommitted?.(key.slice(key.lastIndexOf(':') + 1));
   }
 
   return {
@@ -42,7 +44,7 @@ export function createClipperCloud(storage, fetcher = globalThis.fetch) {
       await storage.set({ cloudConnection: await sealLocal(client.credentials, password), cloudEnabled: true });
       return client.credentials.url;
     },
-    async save(payload, password, captureId) {
+    async save(payload, password, captureId, options = {}) {
       if (!/^[0-9a-f-]{36}$/.test(captureId)) throw new Error('Invalid capture ID.');
       const client = await unlock(password);
       const data = await storage.get(null);
@@ -52,7 +54,15 @@ export function createClipperCloud(storage, fetcher = globalThis.fetch) {
         data[key] = await client.prepareWrite(`notes/Inbox/${captureId}.md`, encoder.encode(clipMarkdown(payload)), 0);
         await storage.set({ [key]: data[key] });
       }
-      for (const [draftKey, prepared] of Object.entries(data)) if (draftKey.startsWith(prefix)) await commit(client, draftKey, prepared);
+      for (const [draftKey, prepared] of Object.entries(data)) if (draftKey.startsWith(prefix)) await commit(client, draftKey, prepared, options);
+    },
+    async resume(password, options = {}) {
+      const client = await unlock(password);
+      const data = await storage.get(null);
+      const prefix = `cloudDraft:${client.credentials.vaultId}:`;
+      let count = 0;
+      for (const [draftKey, prepared] of Object.entries(data)) if (draftKey.startsWith(prefix)) { await commit(client, draftKey, prepared, options); count++; }
+      return count;
     },
   };
 }
@@ -118,6 +128,13 @@ if (typeof document !== 'undefined' && typeof chrome !== 'undefined') {
     const container = document.createElement('div');
     container.hidden = true;
     const password = field(container, 'Cloud device unlock passphrase', 'cloudUnlock', 'password');
+    const progress = document.createElement('progress');
+    progress.id = 'cloudProgress'; progress.hidden = true; progress.setAttribute('aria-label', 'Encrypted upload');
+    const pause = document.createElement('button');
+    pause.id = 'cloudPause'; pause.type = 'button'; pause.textContent = 'Pause upload'; pause.hidden = true;
+    const resume = document.createElement('button');
+    resume.id = 'cloudResume'; resume.type = 'button'; resume.textContent = 'Resume saved drafts';
+    container.append(progress, pause, resume);
     document.querySelector('.foot').before(container);
     void chrome.storage.local.get(['cloudEnabled']).then(({ cloudEnabled }) => { container.hidden = !cloudEnabled; password.required = Boolean(cloudEnabled); });
   }

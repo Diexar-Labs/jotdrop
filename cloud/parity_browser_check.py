@@ -98,6 +98,8 @@ def check_parity(browser, url, token):
         assert all(request.startswith(url + "/") or request.startswith("blob:") for request in requests), requests
         return {"metadata_and_reminder_editing": True, "unknown_yaml_preserved": True, "interactive_checklists": True, "archive_unarchive_with_media": True, "failed_move_preserves_original": True, "search_labels_sort": True, "real_voice_recording": True, "voice_permission_feedback": True, "inline_local_media": True, "no_external_requests": True, "mobile_overflow": False}
     finally:
+        if sys.exc_info()[0]:
+            print({"sync": page.locator("#sync-status").text_content(), "message": page.locator("#workspace-message").text_content(), "errors": errors})
         context.close()
 
 
