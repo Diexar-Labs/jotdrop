@@ -33,7 +33,8 @@ fun main(args: Array<String>) {
         rejects { CloudCrypto.encrypt(CloudCrypto.encode(ByteArray(31)), bytes, aad) }
         val encrypted = CloudCrypto.encrypt(key, bytes, aad)
         check(encrypted.iv != CloudCrypto.encrypt(key, bytes, aad).iv)
-        listOf(encrypted.iv, encrypted.ciphertext).joinToString("\t")
+        val prepared = CloudPreparedUpload(expectedId, 0, encrypted)
+        listOf(encrypted.iv, encrypted.ciphertext, prepared.uploadPath()).joinToString("\t")
     }
     File(args[1]).writeText(output.joinToString("\n"))
     println("Android JVM crypto checks passed (${output.size} cross-runtime vectors)")

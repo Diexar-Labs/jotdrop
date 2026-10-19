@@ -4,6 +4,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes, createHash } from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { DatabaseSync } from 'node:sqlite';
 import { request } from 'node:http';
 import { createCloudServer } from './server.mjs';
@@ -48,6 +50,67 @@ test('opt-in binary upload resumes after interruption and restart without changi
   assert.deepEqual(await reopened.commitWrite(prepared, { resumable: true }), saved);
   assert.equal((await reopened.history(saved.id)).versions.length, 1);
   assert.equal(app.server.requestTimeout, 30000);
+});
+
+test('hard process kill during an incomplete chunk preserves only acknowledged bytes for resume', { timeout: 20000 }, async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'jotdrop-transfer-kill-'));
+  const enrollmentToken = randomToken();
+  const child = spawn(process.execPath, ['--input-type=module', '-e', `
+    const { createCloudServer } = await import(${JSON.stringify(new URL('./server.mjs', import.meta.url).href)});
+    const app = await createCloudServer({ dataDir: process.env.JOTDROP_TEST_DATA_DIR, enrollmentToken: process.env.JOTDROP_TEST_ENROLLMENT });
+    app.server.on('request', (req) => {
+      if (req.method === 'PUT' && req.url.endsWith('?offset=65536')) req.once('data', (bytes) => process.send({ receivedBytes: bytes.length }));
+    });
+    process.send({ port: app.port });
+  `], { env: { ...process.env, JOTDROP_TEST_DATA_DIR: dataDir, JOTDROP_TEST_ENROLLMENT: enrollmentToken }, stdio: ['ignore', 'ignore', 'inherit', 'ipc'] });
+  const exited = once(child, 'exit');
+  let app, pending;
+  t.after(async () => {
+    pending?.destroy();
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    await exited;
+    await app?.close();
+    await rm(dataDir, { recursive: true, force: true });
+  });
+  const [{ port }] = await once(child, 'message', { signal: t.signal });
+  const url = `http://127.0.0.1:${port}`;
+  const { client } = await CloudClient.create({ url, enrollmentToken, deviceName: 'Synthetic crash test' });
+  const bytes = randomBytes(128 * 1024);
+  const prepared = await client.prepareWrite('attachments/process-kill.bin', bytes, 0);
+  const { wire, route, put } = uploadRequest(client, prepared);
+  await client.call(route, 'POST', { size: wire.length });
+  assert.equal((await put(wire.subarray(0, 65536))).status, 200);
+  const received = once(child, 'message', { signal: t.signal });
+  let acknowledged = false;
+  pending = request(`${url}/api/v1${route}?offset=65536`, { method: 'PUT', headers: {
+    Authorization: `Bearer ${client.credentials.token}`, 'X-JotDrop-Vault': client.credentials.vaultId,
+    'X-JotDrop-Device': client.credentials.deviceId, 'Content-Type': 'application/octet-stream', 'Content-Length': 65536,
+  } }, (response) => { acknowledged = true; response.resume(); });
+  pending.on('error', () => {}); // The unfinished socket is expected to break when the child is killed.
+  pending.write(wire.subarray(65536, 65536 + 32768));
+  const [{ receivedBytes }] = await received;
+  assert.ok(receivedBytes > 0 && receivedBytes < 65536, 'Kill only after the server actually receives part of the next chunk');
+  assert.equal(child.kill('SIGKILL'), true);
+  await exited;
+  assert.equal(acknowledged, false);
+  pending.destroy();
+  app = await createCloudServer({ dataDir, enrollmentToken });
+  const reopened = new CloudClient({ ...client.credentials, url: `http://127.0.0.1:${app.port}` });
+  assert.deepEqual(await reopened.call(route), { offset: 65536, size: wire.length });
+  assert.equal((await reopened.listChanges()).changes.length, 0);
+  assert.equal((await reopened.status()).transport.reservedBytes, Buffer.byteLength(prepared.envelope));
+  const progress = [];
+  const saved = await reopened.commitWrite(prepared, { resumable: true, onProgress: (event) => progress.push(event) });
+  assert.equal(progress[0].transferredBytes, 65536);
+  assert.equal((await reopened.read(saved.id)).envelope, prepared.envelope);
+  assert.deepEqual(Buffer.from(base64ToBytes((await reopened.read(saved.id)).file.content)), bytes);
+  assert.equal((await reopened.history(saved.id)).versions.length, 1);
+  assert.equal((await reopened.status()).transport.reservedBytes, 0);
+  const db = new DatabaseSync(app.dbPath, { readOnly: true });
+  try {
+    assert.equal(db.prepare('PRAGMA integrity_check').get().integrity_check, 'ok');
+    assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+  } finally { db.close(); }
 });
 
 test('binary upload verifies complete ciphertext before publishing and isolates device-owned staging', async (t) => {

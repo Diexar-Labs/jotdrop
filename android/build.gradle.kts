@@ -6,7 +6,8 @@ plugins {
 val cloudCryptoClasses = layout.buildDirectory.dir("cloud-crypto-check")
 val cloudCryptoSources = files("app/src/main/kotlin/com/diexar/keepcapture/CloudCrypto.kt", "../cloud/android/CloudCryptoCheck.kt",
     "app/src/main/kotlin/com/diexar/keepcapture/CloudSyncEngine.kt", "../cloud/android/CloudSyncEngineCheck.kt",
-    "app/src/main/kotlin/com/diexar/keepcapture/CloudDiagnostics.kt")
+    "app/src/main/kotlin/com/diexar/keepcapture/CloudDiagnostics.kt",
+    "app/src/main/kotlin/com/diexar/keepcapture/CloudUpload.kt")
 val cloudCryptoCompile = tasks.register<JavaExec>("cloudCryptoCompile") {
     inputs.files(cloudCryptoSources)
     outputs.dir(cloudCryptoClasses)

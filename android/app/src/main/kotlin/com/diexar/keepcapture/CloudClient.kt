@@ -7,6 +7,7 @@ import android.util.AtomicFile
 import android.util.Log
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import java.io.DataInputStream
 import java.io.File
 import java.io.FileNotFoundException
 import java.net.SocketTimeoutException
@@ -17,6 +18,9 @@ import java.net.URI
 import java.security.KeyStore
 import java.time.Instant
 import java.util.UUID
+import java.util.concurrent.ScheduledThreadPoolExecutor
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -71,21 +75,49 @@ class CloudClient(val credentials: CloudCredentials) {
         return CloudPreviewFile(id, revision(response), path, bytes, response.getBoolean("deleted"))
     }
 
-    fun writeNote(path: String, content: String, baseRevision: Int): Int {
-        require(path.startsWith("notes/") && path.endsWith(".md", ignoreCase = true) && baseRevision >= 0) { "Use a Markdown filename in notes/" }
+    fun prepareWrite(path: String, bytes: ByteArray, baseRevision: Int): CloudPreparedUpload {
         CloudCrypto.safePath(path)
-        val bytes = content.toByteArray(Charsets.UTF_8)
-        require(bytes.size <= CloudCrypto.MAX_FILE_BYTES) { "Preview notes must be 4 MiB or smaller" }
-        return write(path, bytes, baseRevision)
-    }
-
-    fun write(path: String, bytes: ByteArray, baseRevision: Int): Int {
-        CloudCrypto.safePath(path)
-        require(bytes.size <= CloudCrypto.MAX_FILE_BYTES && baseRevision >= 0) { "Invalid cloud file or revision" }
+        require(bytes.size <= CloudCrypto.MAX_FILE_BYTES && baseRevision in 0 until Int.MAX_VALUE) { "Invalid cloud file or revision" }
         val id = CloudCrypto.objectId(credentials.vaultKey, path)
         val payload = JSONObject().put("path", path).put("content", CloudCrypto.encode(bytes)).put("modifiedAt", Instant.now().toString())
         val envelope = CloudCrypto.encrypt(credentials.vaultKey, payload.toString().toByteArray(Charsets.UTF_8), "jotdrop:object:v1:${credentials.vaultId}:$id")
-        return revision(call("/objects/$id", "PUT", JSONObject().put("baseRevision", baseRevision).put("envelope", envelopeJson(envelope).toString())))
+        return CloudPreparedUpload(id, baseRevision, envelope)
+    }
+
+    fun preparedFile(prepared: CloudPreparedUpload): CloudPreviewFile {
+        prepared.canonicalEnvelope()
+        val payload = JSONObject(utf8(CloudCrypto.decrypt(credentials.vaultKey, prepared.envelope, "jotdrop:object:v1:${credentials.vaultId}:${prepared.id}")))
+        val path = CloudSyncEngine.path(payload.getString("path"))
+        val bytes = CloudCrypto.decode(payload.getString("content"))
+        require(bytes.size <= CloudCrypto.MAX_FILE_BYTES && CloudCrypto.objectId(credentials.vaultKey, path) == prepared.id) { "Invalid encrypted upload snapshot" }
+        Instant.parse(payload.getString("modifiedAt"))
+        return CloudPreviewFile(prepared.id, prepared.baseRevision, path, bytes, false)
+    }
+
+    fun commitWrite(prepared: CloudPreparedUpload, checkActive: () -> Unit): Int = CloudUpload.commit(prepared, checkActive) { path, method, body, binary ->
+        val result = request(credentials.url, path, method, null, credentials, body, binary)
+        when {
+            path == "/status" -> result.getJSONObject("transport").let {
+                require(integer(it, "version") == 1L && integer(it, "chunkBytes") == 65536L) { "Resumable v1 uploads are unavailable. The encrypted draft was kept." }
+                CloudUploadReply(version = 1, chunkBytes = 65536)
+            }
+            result.has("committed") -> result.getJSONObject("committed").let {
+                val version = integer(it, "revision")
+                require(version in 1..Int.MAX_VALUE.toLong()) { "Invalid upload revision" }
+                CloudUploadReply(committed = CloudUploadReceipt(it.getString("id"), version.toInt(), integer(it, "sequence")))
+            }
+            else -> {
+                val offset = integer(result, "offset")
+                val size = integer(result, "size")
+                require(offset in 0..6 * 1024 * 1024L && size in 28..6 * 1024 * 1024L) { "Invalid upload acknowledgment" }
+                CloudUploadReply(offset.toInt(), size.toInt())
+            }
+        }
+    }
+
+    fun discardWrite(prepared: CloudPreparedUpload) {
+        try { call(prepared.uploadPath(), "DELETE") }
+        catch (error: CloudRequestException) { if (error.status != 404 && error.status != 410) throw error }
     }
 
     private fun call(path: String, method: String = "GET", body: JSONObject? = null): JSONObject = request(credentials.url, path, method, body, credentials)
@@ -125,6 +157,13 @@ class CloudClient(val credentials: CloudCredentials) {
     }
 
     companion object {
+        private val deadlines = ScheduledThreadPoolExecutor(1) { runnable -> Thread(runnable, "JotDropCloudDeadline").apply { isDaemon = true } }
+            .apply { removeOnCancelPolicy = true }
+        private fun integer(json: JSONObject, name: String): Long {
+            val value = json.get(name)
+            require(value is Int || value is Long) { "Invalid upload acknowledgment" }
+            return (value as Number).toLong()
+        }
         private fun validId(value: String): Boolean = value.matches(Regex("(?i)[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"))
         private fun revision(json: JSONObject): Int = json.getLong("revision").also { require(it in 1..Int.MAX_VALUE.toLong()) { "Invalid cloud revision" } }.toInt()
         private fun utf8(bytes: ByteArray): String = Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
@@ -153,12 +192,14 @@ class CloudClient(val credentials: CloudCredentials) {
             require(keys.getString("vaultId") == response.getString("vaultId")) { "Pairing workspace mismatch" }
             return CloudClient(CloudCredentials(origin, response.getString("vaultId"), response.getString("deviceId"), keys.getString("token"), keys.getString("vaultKey")))
         }
-        private fun request(origin: String, path: String, method: String, value: JSONObject?, auth: CloudCredentials?): JSONObject {
+        private fun request(origin: String, path: String, method: String, value: JSONObject?, auth: CloudCredentials?, body: ByteArray? = null, binary: Boolean = false): JSONObject {
             val connection = URI(secureOrigin(origin) + "/api/v1" + path).toURL().openConnection() as HttpURLConnection
             val startedAt = System.nanoTime()
             val deadline = startedAt + 30_000_000_000L
             var phase = CloudDiagnostics.Phase.REQUEST_SETUP
             var receivedBytes = 0
+            val timedOut = AtomicBoolean(false)
+            val timeout = deadlines.schedule({ timedOut.set(true); connection.disconnect() }, 30, TimeUnit.SECONDS)
             try {
                 connection.instanceFollowRedirects = false
                 connection.connectTimeout = 10000
@@ -170,9 +211,9 @@ class CloudClient(val credentials: CloudCredentials) {
                     connection.setRequestProperty("X-JotDrop-Vault", auth.vaultId)
                     connection.setRequestProperty("X-JotDrop-Device", auth.deviceId)
                 }
-                if (value != null) {
-                    val bytes = value.toString().toByteArray(Charsets.UTF_8)
-                    connection.setRequestProperty("Content-Type", "application/json")
+                val bytes = body ?: value?.toString()?.toByteArray(Charsets.UTF_8)
+                if (bytes != null) {
+                    connection.setRequestProperty("Content-Type", if (binary) "application/octet-stream" else "application/json")
                     connection.doOutput = true
                     connection.setFixedLengthStreamingMode(bytes.size)
                     phase = CloudDiagnostics.Phase.REQUEST_SEND
@@ -198,16 +239,18 @@ class CloudClient(val credentials: CloudCredentials) {
                         receivedBytes = output.size()
                     }
                 }
-                if (System.nanoTime() >= deadline) {
+                if (timedOut.get() || System.nanoTime() >= deadline) {
                     phase = CloudDiagnostics.Phase.REQUEST_DEADLINE
                     throw SocketTimeoutException("Cloud response deadline exceeded")
                 }
                 phase = CloudDiagnostics.Phase.REQUEST_DECODE
                 return JSONObject(utf8(output.toByteArray()))
             } catch (error: Exception) {
-                Log.w("JotDropCloud", CloudDiagnostics.failure(error, phase, (System.nanoTime() - startedAt) / 1_000_000, receivedBytes))
-                throw error
-            } finally { connection.disconnect() }
+                val failure = if (timedOut.get()) SocketTimeoutException("Cloud request deadline exceeded") else error
+                if (timedOut.get()) phase = CloudDiagnostics.Phase.REQUEST_DEADLINE
+                Log.w("JotDropCloud", CloudDiagnostics.failure(failure, phase, (System.nanoTime() - startedAt) / 1_000_000, receivedBytes))
+                throw failure
+            } finally { timeout.cancel(false); connection.disconnect() }
         }
     }
 }
@@ -232,10 +275,21 @@ class CloudPreviewStore(context: Context) {
         val sealed = CloudClient.envelopeJson(CloudEnvelope(CloudCrypto.encode(cipher.iv), CloudCrypto.encode(cipher.doFinal(value.toString().toByteArray(Charsets.UTF_8)))))
         val file = AtomicFile(File(folder, name))
         val output = file.startWrite()
-        try { output.write(sealed.toString().toByteArray(Charsets.UTF_8)); file.finishWrite(output) }
+        val bytes = sealed.toString().toByteArray(Charsets.UTF_8)
+        try {
+            output.write(bytes)
+            output.fd.sync()
+            file.finishWrite(output)
+        }
         catch (error: Exception) { file.failWrite(output); throw error }
+        // Verify after finish, outside failWrite: older Android versions could delete the committed file on a late read error.
+        file.openRead().use { input ->
+            val actual = ByteArray(bytes.size)
+            DataInputStream(input).readFully(actual)
+            check(actual.contentEquals(bytes) && input.read() == -1) { "Encrypted preview save verification failed" }
+        }
     }
-    private fun load(name: String): JSONObject? = synchronized(lock) {
+    private fun load(name: String, maxBytes: Int = 8 * 1024 * 1024): JSONObject? = synchronized(lock) {
         val file = AtomicFile(File(folder, name))
         val sealed = try { file.openRead().use { input ->
             val output = ByteArrayOutputStream()
@@ -243,7 +297,7 @@ class CloudPreviewStore(context: Context) {
             while (true) {
                 val count = input.read(buffer)
                 if (count < 0) break
-                require(output.size() + count <= 8 * 1024 * 1024) { "Encrypted preview file exceeds limit" }
+                require(output.size() + count <= maxBytes) { "Encrypted preview file exceeds limit" }
                 output.write(buffer, 0, count)
             }
             output.toByteArray()
@@ -262,6 +316,28 @@ class CloudPreviewStore(context: Context) {
     fun draft(vaultId: String): JSONObject? = load(draftName(vaultId))
     fun syncState(scope: String): JSONObject? = load("sync-$scope")
     fun saveSyncState(scope: String, value: JSONObject) = save("sync-$scope", value)
+    private fun uploadName(scope: String, deviceId: String): String {
+        require(scope.matches(Regex("[A-Za-z0-9_-]{43}"))) { "Invalid sync scope" }
+        UUID.fromString(deviceId)
+        return "upload-$scope-$deviceId"
+    }
+    fun upload(scope: String, deviceId: String): CloudPreparedUpload? = load(uploadName(scope, deviceId), 12 * 1024 * 1024)?.let {
+        CloudPreparedUpload(it.getString("id"), it.getInt("baseRevision"), CloudClient.parseEnvelope(it.getString("envelope")))
+    }
+    fun hasUploads(deviceId: String): Boolean = synchronized(lock) {
+        UUID.fromString(deviceId)
+        val files = checkNotNull(folder.listFiles()) { "Encrypted upload storage is unavailable" }
+        files.any { it.name.startsWith("upload-") && it.name.removeSuffix(".bak").endsWith("-$deviceId") }
+    }
+    fun saveUpload(scope: String, deviceId: String, value: CloudPreparedUpload) = synchronized(lock) {
+        check(!hasUploads(deviceId)) { "Resume or recover the previous encrypted upload before changing files or vaults" }
+        save(uploadName(scope, deviceId), JSONObject().put("id", value.id).put("baseRevision", value.baseRevision).put("envelope", value.canonicalEnvelope()))
+    }
+    fun clearUpload(scope: String, deviceId: String) = synchronized(lock) {
+        val file = AtomicFile(File(folder, uploadName(scope, deviceId)))
+        file.delete()
+        check(listOf("", ".bak", ".new").none { File(file.baseFile.path + it).exists() }) { "Encrypted upload cleanup failed" }
+    }
     fun settings(): JSONObject = load("sync-settings") ?: JSONObject()
     fun saveSettings(value: JSONObject) = save("sync-settings", value)
 }

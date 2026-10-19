@@ -38,6 +38,78 @@ private class CheckLocal : CloudSyncLocal {
 }
 
 fun main() {
+    val uploadBytes = ByteArray(CloudCrypto.MAX_FILE_BYTES) { (it * 31).toByte() }
+    val uploadKey = CloudCrypto.token()
+    val uploadPayload = """{"path":"attachments/max.bin","content":"${CloudCrypto.encode(uploadBytes)}","modifiedAt":"2026-10-19T00:00:00Z"}""".toByteArray(Charsets.UTF_8)
+    val prepared = CloudPreparedUpload("a".repeat(64), 7, CloudCrypto.encrypt(uploadKey, uploadPayload, "synthetic upload"))
+    val uploadWire = CloudCrypto.decode(prepared.envelope.iv) + CloudCrypto.decode(prepared.envelope.ciphertext)
+    val receipt = CloudUploadReceipt(prepared.id, 8, 1)
+    var received = ByteArray(0)
+    var committed = false
+    val lost = mutableSetOf<String>()
+    val chunks = mutableListOf<Pair<String, ByteArray>>()
+    var route = ""
+    val transport: (String, String, ByteArray?, Boolean) -> CloudUploadReply = { path, method, body, binary ->
+        when {
+            path == "/status" -> CloudUploadReply(version = 1, chunkBytes = 65536)
+            method == "POST" && !path.endsWith("/commit") -> {
+                if (route.isNotEmpty()) check(route == path)
+                route = path
+                check(!binary && String(requireNotNull(body)) == """{"size":${uploadWire.size}}""")
+                if (lost.add("start")) throw java.io.EOFException("Lost start response")
+                if (committed) CloudUploadReply(committed = receipt) else CloudUploadReply(received.size, uploadWire.size)
+            }
+            method == "PUT" -> {
+                check(binary)
+                val bytes = requireNotNull(body)
+                check(bytes.size in 1..65536)
+                chunks += path to bytes.copyOf()
+                val offset = path.substringAfter("?offset=").toInt()
+                if (offset == received.size) received += bytes
+                else check(received.copyOfRange(offset, offset + bytes.size).contentEquals(bytes))
+                if (lost.add("chunk")) throw java.io.EOFException("Lost chunk response")
+                CloudUploadReply(received.size, uploadWire.size)
+            }
+            else -> {
+                check(path == "$route/commit" && received.contentEquals(uploadWire))
+                committed = true
+                if (lost.add("commit")) throw java.io.EOFException("Lost commit response")
+                CloudUploadReply(committed = receipt)
+            }
+        }
+    }
+    check(runCatching { CloudUpload.commit(prepared, { if (chunks.size >= 2) error("Synthetic process interruption") }, transport) }.isFailure)
+    check(received.size == 65536 && !committed)
+    val restart = prepared.copy(envelope = prepared.envelope.copy())
+    check(CloudUpload.commit(restart, send = transport) == 8)
+    check(received.contentEquals(uploadWire) && CloudCrypto.decrypt(uploadKey, restart.envelope, "synthetic upload").contentEquals(uploadPayload))
+    check(chunks[0].first == chunks[1].first && chunks[0].second.contentEquals(chunks[1].second))
+    val sent = chunks.size
+    check(CloudUpload.commit(restart, send = transport) == 8 && chunks.size == sent)
+    check(lost == setOf("start", "chunk", "commit"))
+    check(runCatching { CloudUpload.commit(prepared) { _, _, _, _ -> CloudUploadReply() } }.isFailure)
+    for (invalid in listOf(CloudUploadReply(-1, uploadWire.size), CloudUploadReply(uploadWire.size + 1, uploadWire.size),
+        CloudUploadReply(0, uploadWire.size - 1), CloudUploadReply(committed = receipt.copy(id = "b".repeat(64))),
+        CloudUploadReply(committed = receipt.copy(revision = 9)), CloudUploadReply(committed = receipt.copy(sequence = 0)))) {
+        check(runCatching { CloudUpload.commit(prepared) { path, _, _, _ ->
+            if (path == "/status") CloudUploadReply(version = 1, chunkBytes = 65536) else invalid
+        } }.isFailure)
+    }
+    var attempts = 0
+    check(runCatching { CloudUpload.commit(prepared) { _, _, _, _ -> attempts++; throw java.io.IOException("Offline") } }.isFailure && attempts == 2)
+    var regressed = 0
+    check(runCatching { CloudUpload.commit(prepared) { path, method, _, _ ->
+        when {
+            path == "/status" -> CloudUploadReply(version = 1, chunkBytes = 65536)
+            method == "POST" -> CloudUploadReply(0, uploadWire.size)
+            else -> { regressed++; CloudUploadReply(0, uploadWire.size) }
+        }
+    } }.isFailure && regressed == 1)
+    check(runCatching { CloudUpload.commit(prepared) { path, _, _, _ ->
+        if (path == "/status") CloudUploadReply(version = 1, chunkBytes = 65536) else CloudUploadReply(uploadWire.size, uploadWire.size)
+    } }.isFailure)
+    println("Native upload checks passed: 4 MiB, identical lost-response retries, interruption/resume, receipts, capability and acknowledgment limits")
+
     val sensitive = "Bearer synthetic-secret https://private.invalid/notes/personal.md?token=secret\nprivate note"
     val failures = listOf(
         java.net.SocketTimeoutException(sensitive) to "timeout",
@@ -137,6 +209,16 @@ fun main() {
     remote.files.remove(note)
     check(runCatching { syncA() }.isFailure)
     check(String(a.files.getValue(note)) == "restored history")
+    val resumedRemote = CheckRemote()
+    val newerLocal = CheckLocal().also { it.files[note] = "newer local edit".toByteArray() }
+    val acknowledgedSnapshot = resumedRemote.write(note, "older sealed snapshot".toByteArray(), 0)
+    val resumedBase = mutableMapOf(note to CloudSyncBase(acknowledgedSnapshot.revision, CloudSyncEngine.hash(acknowledgedSnapshot.bytes)))
+    check(CloudSyncEngine.sync(resumedRemote, newerLocal, resumedBase) {}.uploaded == 1)
+    check(resumedRemote.files.getValue(note).revision == 2 && String(resumedRemote.files.getValue(note).bytes) == "newer local edit")
+    newerLocal.files[note] = "second offline edit".toByteArray()
+    resumedRemote.write(note, "newer remote edit".toByteArray(), 2)
+    check(CloudSyncEngine.sync(resumedRemote, newerLocal, resumedBase) {}.conflicts == 1)
+    check(String(newerLocal.files.getValue(note)) == "second offline edit" && String(resumedRemote.files.getValue(note).bytes) == "newer remote edit")
     for (path in listOf("../x", "notes/../x", ".obsidian/key", "notes/.stfolder/x.md", "notes/x.cloud-conflict-r1.md", "attachments/.git/x", "notes/file.exe")) {
         check(runCatching { CloudSyncEngine.path(path) }.isFailure)
     }

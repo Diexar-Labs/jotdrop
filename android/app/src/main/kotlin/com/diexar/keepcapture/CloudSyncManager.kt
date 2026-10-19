@@ -76,13 +76,16 @@ object CloudSyncManager {
         val settings = store.settings()
         if (enabled) {
             pauseRequested.set(false)
-            requireNotNull(client(context)) { "Pair this device first" }
+            val client = requireNotNull(client(context)) { "Pair this device first" }
             val adapter = try {
                 CloudVaultAdapter(context).also { it.list() }
             } catch (error: IllegalStateException) {
                 throw CloudSyncException(error.message ?: "Local vault validation failed; no files were changed.")
             } catch (error: IllegalArgumentException) {
                 throw CloudSyncException(error.message ?: "Choose safe, non-overlapping local note and attachment folders.")
+            }
+            check(!store.hasUploads(client.credentials.deviceId) || store.upload(scope(client, adapter.binding), client.credentials.deviceId) != null) {
+                "An encrypted upload belongs to the previous local vault. Select that vault and resume or disconnect safely before changing sync folders."
             }
             settings.put("binding", adapter.binding)
         }
@@ -116,6 +119,17 @@ object CloudSyncManager {
         cancel(context)
         serialized {
         val store = CloudPreviewStore(context)
+        val client = client(context)
+        if (client != null && store.hasUploads(client.credentials.deviceId)) {
+            val adapter = CloudVaultAdapter(context)
+            val scope = scope(client, adapter.binding)
+            val prepared = store.upload(scope, client.credentials.deviceId)
+                ?: error("Select the previous local vault to recover its encrypted upload before disconnecting")
+            val file = client.preparedFile(prepared)
+            adapter.recoverUpload(file.path, file.bytes)
+            store.clearUpload(scope, client.credentials.deviceId)
+            check(!store.hasUploads(client.credentials.deviceId)) { "Another local vault still has an encrypted upload. Its credentials were kept." }
+        }
         val settings = store.settings().put("enabled", false).put("message", "Disconnected. Local notes, conflicts and recovery copies were kept.")
         store.saveSettings(settings)
         store.disconnect()
@@ -124,6 +138,33 @@ object CloudSyncManager {
     }
 
     private fun scope(client: CloudClient, binding: String): String = CloudSyncEngine.hash((client.credentials.url + "\n" + client.credentials.vaultId + "\n" + client.credentials.vaultKey + "\n" + binding).toByteArray(Charsets.UTF_8))
+
+    private fun finishUpload(store: CloudPreviewStore, scope: String, client: CloudClient, state: JSONObject, checkActive: () -> Unit): CloudSyncObject? {
+        val prepared = store.upload(scope, client.credentials.deviceId) ?: return null
+        val file = client.preparedFile(prepared)
+        val saved = CloudSyncObject(file.path, file.bytes, client.commitWrite(prepared, checkActive))
+        val tracked = JSONObject((state.optJSONObject("tracked") ?: JSONObject()).toString())
+        val previous = tracked.optJSONObject(saved.path)
+        if (previous == null || previous.getInt("revision") < saved.revision) {
+            tracked.put(saved.path, JSONObject().put("revision", saved.revision).put("hash", CloudSyncEngine.hash(saved.bytes)).put("deleted", false))
+        } else if (previous.getInt("revision") == saved.revision) {
+            check(!previous.getBoolean("deleted") && previous.getString("hash") == CloudSyncEngine.hash(saved.bytes)) { "Upload receipt differs from the saved baseline" }
+        }
+        // The baseline must survive a restart before the exact encrypted snapshot may be removed.
+        val next = JSONObject(state.toString()).put("tracked", tracked)
+        store.saveSyncState(scope, next)
+        state.put("tracked", tracked)
+        store.clearUpload(scope, client.credentials.deviceId)
+        return saved
+    }
+
+    private fun writeUpload(store: CloudPreviewStore, scope: String, client: CloudClient, state: JSONObject,
+        path: String, bytes: ByteArray, baseRevision: Int, checkActive: () -> Unit): CloudSyncObject {
+        checkActive()
+        check(store.upload(scope, client.credentials.deviceId) == null) { "Resume the previous encrypted upload before saving another file" }
+        store.saveUpload(scope, client.credentials.deviceId, client.prepareWrite(path, bytes, baseRevision))
+        return requireNotNull(finishUpload(store, scope, client, state, checkActive))
+    }
 
     suspend fun resolve(context: Context, path: String, keepLocal: Boolean) {
         serialized {
@@ -137,6 +178,13 @@ object CloudSyncManager {
             val scope = scope(client, initial.binding)
             val state = store.syncState(scope) ?: JSONObject()
             check(!state.has("pending")) { "Recover the interrupted local write before resolving conflicts" }
+            check(store.upload(scope, client.credentials.deviceId) == null) { "Run sync to resume or recover the interrupted encrypted upload before resolving conflicts" }
+            val coroutine = currentCoroutineContext()
+            val checkActive = {
+                coroutine.ensureActive()
+                check(!pauseRequested.get()) { "Cloud sync paused. Local files and encrypted uploads were kept." }
+                initial.validateBinding()
+            }
             val adapter = CloudVaultAdapter(context, { name, original, replacement ->
                 state.put("pending", JSONObject().put("path", name).put("original", original.orEmpty()).put("replacement", replacement.orEmpty()))
                 store.saveSyncState(scope, state)
@@ -145,7 +193,7 @@ object CloudSyncManager {
             val remote = client.read(CloudCrypto.objectId(client.credentials.vaultKey, path))
             if (keepLocal) {
                 if (bytes == null) { if (!remote.deleted) client.remove(remote.id, remote.revision) }
-                else if (remote.deleted || !bytes.contentEquals(remote.bytes)) client.write(path, bytes, remote.revision)
+                else if (remote.deleted || !bytes.contentEquals(remote.bytes)) writeUpload(store, scope, client, state, path, bytes, remote.revision, checkActive)
             } else {
                 if (!adapter.compareAndSet(path, bytes, if (remote.deleted) null else remote.bytes)) throw CloudSyncException("The local file changed or is open in an editor. Close it and compare again")
             }
@@ -172,6 +220,10 @@ object CloudSyncManager {
             phase = CloudDiagnostics.Phase.STATE_LOAD
             val scope = scope(client, initial.binding)
             val state = store.syncState(scope) ?: JSONObject()
+            val uploadActive = { checkActive(); initial.validateBinding() }
+            check(!store.hasUploads(client.credentials.deviceId) || store.upload(scope, client.credentials.deviceId) != null) {
+                "An encrypted upload belongs to another local vault. Select its original sync folders to resume or recover it."
+            }
             val pending = state.optJSONObject("pending")
             if (pending != null) {
                 phase = CloudDiagnostics.Phase.RECOVERY
@@ -181,6 +233,20 @@ object CloudSyncManager {
                 state.remove("pending")
                 phase = CloudDiagnostics.Phase.STATE_SAVE
                 store.saveSyncState(scope, state)
+            }
+            phase = CloudDiagnostics.Phase.REMOTE_WRITE
+            try { finishUpload(store, scope, client, state, uploadActive) }
+            catch (error: CloudRequestException) {
+                if (error.status != 409) throw error
+                // A newer cloud revision wins. Preserve the sealed draft outside sync before discarding staging.
+                uploadActive()
+                val prepared = store.upload(scope, client.credentials.deviceId) ?: throw error
+                val file = client.preparedFile(prepared)
+                phase = CloudDiagnostics.Phase.RECOVERY
+                initial.recoverUpload(file.path, file.bytes)
+                uploadActive()
+                client.discardWrite(prepared)
+                store.clearUpload(scope, client.credentials.deviceId)
             }
             phase = CloudDiagnostics.Phase.VAULT_VALIDATION
             val adapter = CloudVaultAdapter(context, { path, original, replacement ->
@@ -204,14 +270,14 @@ object CloudSyncManager {
             val remote = object : CloudSyncRemote {
                 override fun list(): List<CloudSyncObject> {
                     phase = CloudDiagnostics.Phase.REMOTE_LIST
-                    val files = client.changesAndFiles(checkActive).map { CloudSyncObject(it.path, it.bytes, it.revision, it.deleted) }
+                    val files = client.changesAndFiles(uploadActive).map { CloudSyncObject(it.path, it.bytes, it.revision, it.deleted) }
                     phase = CloudDiagnostics.Phase.RECONCILE
                     return files
                 }
                 override fun write(path: String, bytes: ByteArray, baseRevision: Int): CloudSyncObject {
                     checkActive()
                     phase = CloudDiagnostics.Phase.REMOTE_WRITE
-                    val saved = CloudSyncObject(path, bytes, client.write(path, bytes, baseRevision))
+                    val saved = writeUpload(store, scope, client, state, path, bytes, baseRevision, uploadActive)
                     phase = CloudDiagnostics.Phase.RECONCILE
                     return saved
                 }
@@ -227,7 +293,7 @@ object CloudSyncManager {
                 }
             }
             phase = CloudDiagnostics.Phase.RECONCILE
-            val report = CloudSyncEngine.sync(remote, adapter, tracked, checkActive) { values ->
+            val report = CloudSyncEngine.sync(remote, adapter, tracked, uploadActive) { values ->
                 phase = CloudDiagnostics.Phase.STATE_SAVE
                 val next = JSONObject()
                 for ((path, base) in values) next.put(path, JSONObject().put("revision", base.revision).put("hash", base.hash).put("deleted", base.deleted))

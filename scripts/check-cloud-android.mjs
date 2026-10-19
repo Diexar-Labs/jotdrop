@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -17,6 +18,7 @@ try {
     ['attachments/all-bytes.bin', Uint8Array.from({ length: 256 }, (_, index) => index)],
     ['notes/empty.md', new Uint8Array()],
     ['notes/long.md', new Uint8Array(65536).fill(97)],
+    ['attachments/max.bin', Uint8Array.from({ length: 4 * 1024 * 1024 }, (_, index) => index % 251)],
   ]) {
     normalizePath(filename);
     const key = generateVaultKey();
@@ -36,9 +38,15 @@ try {
   const results = readFileSync(output, 'utf8').split('\n');
   assert.equal(results.length, vectors.length);
   for (const [index, line] of results.entries()) {
-    const [iv, ciphertext] = line.split('\t');
+    const [iv, ciphertext, uploadPath] = line.split('\t');
     const { key, aad, payload } = vectors[index];
     const envelope = { v: 1, iv, ciphertext };
+    const id = await objectId(key, payload.path);
+    assert.equal(uploadPath, `/objects/${id}/uploads/0/${createHash('sha256').update(JSON.stringify(envelope)).digest('hex')}`);
+    const snapshot = JSON.stringify({ id, baseRevision: 0, envelope: JSON.stringify(envelope) });
+    const sealedSnapshotBytes = JSON.stringify({ v: 1, iv: 'A'.repeat(16), ciphertext: bytesToBase64(new Uint8Array(Buffer.byteLength(snapshot) + 16)) }).length;
+    assert.ok(sealedSnapshotBytes < 12 * 1024 * 1024, 'A maximum file snapshot fits the bounded Android upload store');
+    if (payload.path === 'attachments/max.bin') assert.ok(sealedSnapshotBytes > 8 * 1024 * 1024, 'A double-sealed 4 MiB snapshot needs the upload-specific read bound');
     assert.deepEqual(await decryptEnvelope(key, envelope, aad), payload);
     await assert.rejects(decryptEnvelope(generateVaultKey(), envelope, aad));
     await assert.rejects(decryptEnvelope(key, envelope, `${aad}:wrong`));
@@ -46,7 +54,7 @@ try {
     tampered[0] ^= 1;
     await assert.rejects(decryptEnvelope(key, { ...envelope, ciphertext: bytesToBase64(tampered) }, aad));
   }
-  console.log('JavaScript <-> Android JVM AES-GCM, HMAC paths and token hashes passed. Synthetic data only; no APK or device access.');
+  console.log('JavaScript <-> Android JVM AES-GCM, HMAC paths, token hashes and canonical resumable upload hashes passed, including 4 MiB. Synthetic data only; no APK or device access.');
 } finally {
   rmSync(temporary, { recursive: true, force: true });
 }

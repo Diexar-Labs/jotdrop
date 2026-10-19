@@ -46,8 +46,12 @@ class CloudVaultAdapter(
         return result
     }
 
-    fun validate() {
+    fun validateBinding() {
         check(Storage.getVaultUri(context) == treeUri && Storage.getSubfolder(context) == notes && Storage.resolveAssetsFolder(context) == assets) { "Vault settings changed. Pause and re-enable cloud sync for the intended folder" }
+    }
+
+    fun validate() {
+        validateBinding()
         for (folder in listOf(notes, assets, legacyAssets).distinct()) {
             var current = tree
             for (segment in listOf("") + folder.split('/')) {
@@ -180,6 +184,16 @@ class CloudVaultAdapter(
             name = copyName(path, "$suffix-${UUID.randomUUID()}")
         }
         writeNew(name, bytes)
+    }
+
+    fun recoverUpload(path: String, bytes: ByteArray) = runBlocking {
+        Storage.noteWriteMutex.withLock {
+            synchronized(Storage.cloudFileLock) {
+                validate()
+                CloudSyncEngine.path(path)
+                preserve(path, bytes, ".cloud-recovery-${CloudSyncEngine.hash(bytes).take(12)}")
+            }
+        }
     }
 
     override fun compareAndSet(path: String, expected: ByteArray?, replacement: ByteArray?): Boolean = runBlocking {
