@@ -15,6 +15,7 @@ import java.io.File
 import java.io.FileNotFoundException
 import java.io.FileOutputStream
 import java.io.IOException
+import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -45,6 +46,7 @@ object Storage {
     private const val KEY_DOWNLOAD_IMAGES = "download_images"
     private const val KEY_SORT_MODE = "sort_mode"
     private const val JOURNAL_SEPARATOR = '\n'.code.toByte()
+    private const val PARKED_JOURNAL_DIR = "note-write-parked"
     const val DEFAULT_SUBFOLDER = "Mini Notes"
     const val DEFAULT_SPEECH_LANG = "nl-NL"
 
@@ -408,6 +410,10 @@ object Storage {
 
     fun createNote(context: Context, content: String): Result<Pair<String, Uri>> {
         synchronized(cloudFileLock) {
+        // Eerst herstellen: anders bleef bij een vastzittend journaal een leeg bestand achter.
+        if (!recoverInterruptedNoteWrite(context)) {
+            return Result.failure(IllegalStateException(context.getString(R.string.error_interrupted_save)))
+        }
         val subfolder = openOrCreateNotesFolder(context).getOrElse { return Result.failure(it) }
 
         val filename = generateFilename(content)
@@ -416,11 +422,14 @@ object Storage {
 
         return try {
             if (!writeNoteBytes(context, newFile.uri, content.toByteArray(Charsets.UTF_8))) {
+                newFile.delete()
                 return Result.failure(IllegalStateException("Kan niet schrijven naar bestand."))
             }
             CloudSyncManager.request(context)
             Result.success((newFile.name ?: filename) to newFile.uri)
         } catch (e: Exception) {
+            // Staat het journaal nog, dan maakt het herstel deze notitie later af.
+            if (!noteJournal(context).baseFile.exists()) newFile.delete()
             Result.failure(e)
         }
         }
@@ -586,7 +595,7 @@ object Storage {
     fun readNote(context: Context, uri: Uri): Result<String> {
         // Een halve notitie mag niet verder (archief/prullenbak kopieert en wist de bron).
         if (!recoverInterruptedNoteWrite(context)) {
-            return Result.failure(IllegalStateException("Een eerder onderbroken opslag kon niet worden afgemaakt."))
+            return Result.failure(IllegalStateException(context.getString(R.string.error_interrupted_save)))
         }
         return try {
             val text = context.contentResolver.openInputStream(uri)?.use { input ->
@@ -621,7 +630,7 @@ object Storage {
     private fun noteJournal(context: Context) = AtomicFile(File(context.noBackupFilesDir, "note-write.journal"))
 
     private fun writeNoteBytes(context: Context, uri: Uri, bytes: ByteArray): Boolean {
-        check(recoverInterruptedNoteWrite(context)) { "Een eerder onderbroken opslag kon niet worden afgemaakt." }
+        check(recoverInterruptedNoteWrite(context)) { context.getString(R.string.error_interrupted_save) }
         val journal = noteJournal(context)
         val output = journal.startWrite()
         try {
@@ -643,6 +652,8 @@ object Storage {
         // Bij een exception blijft het journaal staan, zodat de write later alsnog wordt afgemaakt.
         val written = writeSynced(context, uri, bytes)
         journal.delete()
+        // Een ouder geparkeerd journaal mag deze nieuwere inhoud later niet meer aanvullen.
+        if (written) parkedJournal(context, uri).delete()
         return written
     }
 
@@ -660,12 +671,24 @@ object Storage {
      * notitie nu leeg of een begin van de bedoelde inhoud is, wordt die inhoud
      * opnieuw geschreven; anders is de write nooit begonnen of heeft iets anders
      * het bestand gewijzigd, en blijft het bestand ongemoeid. Geeft false als
-     * het journaal nog openstaat omdat de herstel-write mislukte.
+     * een journaal nog openstaat omdat de herstel-write mislukte. Is de vault-map
+     * onbereikbaar (SD-kaart, toestemming, hernoemd), dan wordt het journaal per
+     * notitie geparkeerd en later afgemaakt, zonder andere writes te blokkeren.
      */
     fun recoverInterruptedNoteWrite(context: Context): Boolean {
         val journal = noteJournal(context)
-        if (!journal.baseFile.exists()) return true
+        val parkedDir = File(context.noBackupFilesDir, PARKED_JOURNAL_DIR)
+        if (!journal.baseFile.exists() && parkedDir.list().isNullOrEmpty()) return true
         synchronized(cloudFileLock) {
+        var recovered = !journal.baseFile.exists() || recoverJournal(context, journal)
+        parkedDir.listFiles { file -> file.name.endsWith(".journal") }?.forEach {
+            if (!recoverJournal(context, AtomicFile(it))) recovered = false
+        }
+        return recovered
+        }
+    }
+
+    private fun recoverJournal(context: Context, journal: AtomicFile): Boolean {
         val data = try {
             journal.readFully()
         } catch (_: FileNotFoundException) {
@@ -686,9 +709,14 @@ object Storage {
         } catch (_: Exception) {
             null
         }
-        // Bestaat de notitie nog maar is ze nu niet leesbaar, dan journaal bewaren en later opnieuw proberen.
-        if (current == null && DocumentFile.fromSingleUri(context, uri)?.exists() == true) return false
-        if (current != null && current.size < bytes.size && current.contentEquals(bytes.copyOf(current.size))) {
+        if (current == null) {
+            // Bestaat de notitie nog maar is ze nu niet leesbaar, dan journaal bewaren en later opnieuw proberen.
+            if (DocumentFile.fromSingleUri(context, uri)?.exists() == true) return false
+            // Onbereikbare map: de notitie is er misschien nog, dus niet wissen maar parkeren.
+            if (!vaultTreeReachable(context, uri) && !otherVaultReachable(context, uri)) return parkJournal(context, journal, uri, data)
+            // Notitie weg (bv. in Obsidian hernoemd) of andere vault gekozen (bv. de hernoemde map): bedoelde inhoud redden.
+            if (!rescueNote(context, uri, bytes)) return parkJournal(context, journal, uri, data)
+        } else if (current.size < bytes.size && current.contentEquals(bytes.copyOf(current.size))) {
             try {
                 if (!writeSynced(context, uri, bytes)) return false
                 val verified = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
@@ -699,7 +727,62 @@ object Storage {
         }
         journal.delete()
         return true
+    }
+
+    private fun parkedJournal(context: Context, uri: Uri): AtomicFile {
+        val hash = MessageDigest.getInstance("SHA-256").digest(uri.toString().toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+        return AtomicFile(File(File(context.noBackupFilesDir, PARKED_JOURNAL_DIR), "$hash.journal"))
+    }
+
+    /** Zet het journaal apart per notitie; false als dat niet lukt en het journaal dus blijft blokkeren. */
+    private fun parkJournal(context: Context, journal: AtomicFile, uri: Uri, data: ByteArray): Boolean {
+        val parked = parkedJournal(context, uri)
+        if (parked.baseFile == journal.baseFile) return true
+        parked.baseFile.parentFile?.mkdirs()
+        val output = try { parked.startWrite() } catch (_: IOException) { return false }
+        try {
+            output.write(data)
+            output.fd.sync()
+            parked.finishWrite(output)
+        } catch (_: Exception) {
+            parked.failWrite(output)
+            return false
         }
+        journal.delete()
+        return true
+    }
+
+    private fun vaultTreeReachable(context: Context, uri: Uri): Boolean = try {
+        val treeUri = DocumentsContract.buildTreeDocumentUri(uri.authority, DocumentsContract.getTreeDocumentId(uri))
+        DocumentFile.fromTreeUri(context, treeUri)?.isDirectory == true
+    } catch (_: Exception) {
+        false
+    }
+
+    /** Een andere, wel bereikbare vault gekozen: daar redden in plaats van voor altijd te parkeren. */
+    private fun otherVaultReachable(context: Context, uri: Uri): Boolean {
+        val vault = getVaultUri(context) ?: return false
+        val same = runCatching { DocumentsContract.getTreeDocumentId(vault) == DocumentsContract.getTreeDocumentId(uri) }.getOrDefault(true)
+        return !same && vaultTreeReachable(context, vault)
+    }
+
+    /** Schrijft de bedoelde inhoud als `<naam> (recovered).md` in de notitiemap. */
+    private fun rescueNote(context: Context, uri: Uri, bytes: ByteArray): Boolean {
+        if (bytes.isEmpty()) return true
+        val folder = openOrCreateNotesFolder(context).getOrElse { return false }
+        val name = runCatching { DocumentsContract.getDocumentId(uri) }.getOrNull()
+            ?.substringAfterLast('/')?.substringAfterLast(':')?.removeSuffix(".md")
+            ?.takeIf { it.isNotBlank() } ?: "Note"
+        val file = folder.createFile("text/markdown", "$name (recovered).md") ?: return false
+        val written = try {
+            writeSynced(context, file.uri, bytes) &&
+                context.contentResolver.openInputStream(file.uri)?.use { it.readBytes() }?.contentEquals(bytes) == true
+        } catch (_: Exception) {
+            false
+        }
+        if (!written) file.delete()
+        return written
     }
 
     /**
@@ -1160,31 +1243,49 @@ object Storage {
     fun listAllVaultMarkdownFiles(context: Context): Result<List<VaultMarkdownFile>> {
         val vaultUri = getVaultUri(context)
             ?: return Result.failure(IllegalStateException("Geen vault-map gekozen."))
-        val tree = DocumentFile.fromTreeUri(context, vaultUri)
-            ?: return Result.failure(IllegalStateException("Vault-map kan niet worden geopend."))
+        val rootId = try {
+            DocumentsContract.getTreeDocumentId(vaultUri)
+        } catch (_: Exception) {
+            return Result.failure(IllegalStateException("Vault-map kan niet worden geopend."))
+        }
 
         val results = mutableListOf<VaultMarkdownFile>()
-        walkVault(tree, "", results)
+        walkVault(context, vaultUri, rootId, "", results)
         results.sortBy { it.basename.lowercase() }
         return Result.success(results)
     }
 
-    private fun walkVault(folder: DocumentFile, pathPrefix: String, into: MutableList<VaultMarkdownFile>) {
-        // Sla Obsidian-systeemmappen over om niet honderden .md's uit plugins te laden.
-        val name = folder.name ?: ""
-        if (name.startsWith(".")) return
-
-        for (child in folder.listFiles()) {
-            val childName = child.name ?: continue
-            if (child.isDirectory) {
-                val newPrefix = if (pathPrefix.isEmpty()) childName else "$pathPrefix/$childName"
-                walkVault(child, newPrefix, into)
-            } else if (child.isFile && childName.endsWith(".md", ignoreCase = true)) {
-                val basename = childName.removeSuffix(".md").removeSuffix(".MD")
-                val relPath = if (pathPrefix.isEmpty()) basename else "$pathPrefix/$basename"
-                into.add(VaultMarkdownFile(basename = basename, relativePath = relPath, uri = child.uri))
+    // Eén query per map: DocumentFile.listFiles() vraagt naam en type per bestand apart op (circa 20 s bij een grote vault).
+    private fun walkVault(context: Context, treeUri: Uri, folderId: String, pathPrefix: String, into: MutableList<VaultMarkdownFile>) {
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, folderId)
+        val projection = arrayOf(
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE,
+        )
+        val folders = mutableListOf<Pair<String, String>>()
+        try {
+            context.contentResolver.query(childrenUri, projection, null, null, null)?.use { cursor ->
+                while (cursor.moveToNext()) {
+                    val id = cursor.getString(0) ?: continue
+                    val childName = cursor.getString(1) ?: continue
+                    val mime = cursor.getString(2).orEmpty()
+                    if (mime == DocumentsContract.Document.MIME_TYPE_DIR) {
+                        // Sla Obsidian-systeemmappen over om niet honderden .md's uit plugins te laden.
+                        if (!childName.startsWith(".")) {
+                            folders.add(id to if (pathPrefix.isEmpty()) childName else "$pathPrefix/$childName")
+                        }
+                    } else if (mime.isNotEmpty() && childName.endsWith(".md", ignoreCase = true)) {
+                        val basename = childName.removeSuffix(".md").removeSuffix(".MD")
+                        val relPath = if (pathPrefix.isEmpty()) basename else "$pathPrefix/$basename"
+                        into.add(VaultMarkdownFile(basename, relPath, DocumentsContract.buildDocumentUriUsingTree(treeUri, id)))
+                    }
+                }
             }
+        } catch (_: Exception) {
+            // Net als DocumentFile.listFiles(): een onleesbare map telt als leeg.
         }
+        for ((id, path) in folders) walkVault(context, treeUri, id, path, into)
     }
 
     private fun openNotesFolder(context: Context): Result<DocumentFile> {
@@ -1194,7 +1295,7 @@ object Storage {
             ?: return Result.failure(IllegalStateException("Vault-map kan niet worden geopend."))
         val subfolderName = getSubfolder(context)
         val subfolder = traverseSubfolder(context, tree, subfolderName)
-            ?: return Result.failure(IllegalStateException("Submap '$subfolderName' bestaat niet."))
+            ?: return Result.failure(IllegalStateException(context.getString(R.string.error_subfolder_missing, subfolderName)))
         return Result.success(subfolder)
     }
 
@@ -1205,7 +1306,7 @@ object Storage {
             ?: return Result.failure(IllegalStateException("Vault-map kan niet worden geopend."))
         val subfolderName = getSubfolder(context)
         val subfolder = findOrCreateSubfolder(context, tree, subfolderName)
-            ?: return Result.failure(IllegalStateException("Submap '$subfolderName' kon niet worden aangemaakt."))
+            ?: return Result.failure(IllegalStateException(context.getString(R.string.error_subfolder_create, subfolderName)))
         return Result.success(subfolder)
     }
 
