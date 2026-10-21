@@ -37,6 +37,9 @@
     <string name="error_unknown">Onbekende fout.</string>
     <string name="error_with_message">Fout: %1$s</string>
     <string name="error_generic">Fout</string>
+    <string name="error_subfolder_missing">Submap \'%1$s\' bestaat niet.</string>
+    <string name="error_subfolder_create">Submap \'%1$s\' kon niet worden aangemaakt.</string>
+    <string name="error_interrupted_save">Een eerder onderbroken opslag kon niet worden afgemaakt. Probeer het opnieuw.</string>
 
     <string name="loading">Laden…</string>
     <string name="empty_no_vault">Nog geen vault gekozen. Open instellingen om aan de slag te gaan.</string>

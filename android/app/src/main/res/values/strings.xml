@@ -39,6 +39,9 @@
     <string name="error_unknown">Unknown error.</string>
     <string name="error_with_message">Error: %1$s</string>
     <string name="error_generic">Error</string>
+    <string name="error_subfolder_missing">Folder \'%1$s\' does not exist.</string>
+    <string name="error_subfolder_create">Folder \'%1$s\' could not be created.</string>
+    <string name="error_interrupted_save">An interrupted save could not be completed. Try again.</string>
 
     <string name="loading">Loading…</string>
     <string name="empty_no_vault">No vault chosen yet. Open settings to get started.</string>
