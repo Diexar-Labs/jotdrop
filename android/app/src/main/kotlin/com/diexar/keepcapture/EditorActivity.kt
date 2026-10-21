@@ -1292,6 +1292,8 @@ private fun EditorBody(
             value = title,
             onValueChange = onTitleChange,
             modifier = Modifier.fillMaxWidth(),
+            // De titel is de eerste regel van de body; een titelwijziging herschrijft de onzichtbare tekst.
+            enabled = !bodyTooTall,
             singleLine = true,
             placeholder = { Text(stringResource(R.string.editor_title_hint), color = foreground.copy(alpha = 0.5f)) },
             textStyle = MaterialTheme.typography.titleLarge,
@@ -1299,11 +1301,14 @@ private fun EditorBody(
             colors = TextFieldDefaults.colors(
                 focusedContainerColor = Color.Transparent,
                 unfocusedContainerColor = Color.Transparent,
+                disabledContainerColor = Color.Transparent,
                 focusedTextColor = foreground,
                 unfocusedTextColor = foreground,
+                disabledTextColor = foreground,
                 cursorColor = foreground,
                 focusedIndicatorColor = Color.Transparent,
                 unfocusedIndicatorColor = Color.Transparent,
+                disabledIndicatorColor = Color.Transparent,
             ),
         )
         // The preview is display-only; saving always uses the original TextFieldValue.
