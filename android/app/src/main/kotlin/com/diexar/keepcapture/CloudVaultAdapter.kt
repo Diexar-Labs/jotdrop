@@ -122,6 +122,8 @@ class CloudVaultAdapter(
         Storage.noteWriteMutex.withLock {
             synchronized(Storage.cloudFileLock) {
             validate()
+            // Een tijdens deze sync mislukte notitie-write laat een halve notitie plus journaal achter; die niet uploaden.
+            check(Storage.recoverInterruptedNoteWrite(context)) { "An interrupted note save could not be completed. Open the note list and try again" }
             val result = linkedMapOf<String, ByteArray>()
             var total = 0L
             fun walk(directory: DocumentFile, prefix: String, attachments: Boolean, depth: Int = 0) {
