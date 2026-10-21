@@ -582,7 +582,10 @@ object Storage {
     private data class ChildDoc(val uri: Uri, val name: String, val lastModified: Long)
 
     fun readNote(context: Context, uri: Uri): Result<String> {
-        recoverInterruptedNoteWrite(context)
+        // Een halve notitie mag niet verder (archief/prullenbak kopieert en wist de bron).
+        if (!recoverInterruptedNoteWrite(context)) {
+            return Result.failure(IllegalStateException("Een eerder onderbroken opslag kon niet worden afgemaakt."))
+        }
         return try {
             val text = context.contentResolver.openInputStream(uri)?.use { input ->
                 input.readBytes().toString(Charsets.UTF_8)
@@ -663,6 +666,11 @@ object Storage {
             return false
         }
         val split = data.indexOf(JOURNAL_SEPARATOR)
+        // Afgebroken journaal (oude AtomicFile schrijft direct): de write naar de notitie begon nooit.
+        if (split < 0) {
+            journal.delete()
+            return true
+        }
         val uri = Uri.parse(String(data, 0, split, Charsets.UTF_8))
         val bytes = data.copyOfRange(split + 1, data.size)
         val current = try {
@@ -670,6 +678,8 @@ object Storage {
         } catch (_: Exception) {
             null
         }
+        // Bestaat de notitie nog maar is ze nu niet leesbaar, dan journaal bewaren en later opnieuw proberen.
+        if (current == null && DocumentFile.fromSingleUri(context, uri)?.exists() == true) return false
         if (current != null && current.size < bytes.size && current.contentEquals(bytes.copyOf(current.size))) {
             try {
                 if (!writeSynced(context, uri, bytes)) return false
