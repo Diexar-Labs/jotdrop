@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.DocumentsContract
+import android.system.Os
+import android.system.OsConstants
 import android.util.AtomicFile
 import androidx.documentfile.provider.DocumentFile
 import androidx.preference.PreferenceManager
@@ -621,6 +623,12 @@ object Storage {
         } catch (e: Exception) {
             journal.failWrite(output)
             throw e
+        }
+        // AtomicFile synct de map niet; zonder deze sync kan stroomverlies de rename
+        // van het journaal kwijtraken terwijl de "wt"-truncatie wel op schijf staat.
+        runCatching {
+            val dir = Os.open(journal.baseFile.parent, OsConstants.O_RDONLY, 0)
+            try { Os.fsync(dir) } finally { Os.close(dir) }
         }
         // Bij een exception blijft het journaal staan, zodat de write later alsnog wordt afgemaakt.
         val written = writeSynced(context, uri, bytes)
