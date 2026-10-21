@@ -151,6 +151,7 @@ import com.diexar.keepcapture.ui.noteCardBrush
 import com.diexar.keepcapture.ui.screenBackgroundBrush
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -591,26 +592,30 @@ private fun EditorScreen(
     fun resolveParked(keepCopy: Boolean) {
         val uri = parkedUri ?: return
         parkedBusy = true
+        val appContext = context.applicationContext
         scope.launch {
-            val res = withContext(Dispatchers.IO) {
-                Storage.noteWriteMutex.withLock {
+            // Niet afbreekbaar: bij een draai tijdens de actie hoort de melding nog steeds bij het resultaat.
+            val res = withContext(NonCancellable + Dispatchers.IO) {
+                val res = Storage.noteWriteMutex.withLock {
                     runCatching {
-                        if (keepCopy) Storage.keepParkedSaveAsCopy(context, Uri.parse(uri)).getOrThrow()
-                        else Storage.discardParkedSave(context, Uri.parse(uri)).let { Storage.ParkedResolution.Released }
+                        if (keepCopy) Storage.keepParkedSaveAsCopy(appContext, Uri.parse(uri)).getOrThrow()
+                        else Storage.discardParkedSave(appContext, Uri.parse(uri)).let { Storage.ParkedResolution.Released }
                     }
                 }
+                val message = res.fold(
+                    onSuccess = { resolution ->
+                        when (resolution) {
+                            is Storage.ParkedResolution.Copied -> appContext.getString(R.string.parked_copy_saved, resolution.name)
+                            Storage.ParkedResolution.Released -> if (keepCopy) appContext.getString(R.string.parked_nothing_to_keep) else null
+                        }
+                    },
+                    onFailure = { err -> appContext.getString(R.string.toast_error, err.message ?: "") },
+                )
+                if (message != null) withContext(Dispatchers.Main) { Toast.makeText(appContext, message, Toast.LENGTH_LONG).show() }
+                res
             }
             parkedBusy = false
-            res.onSuccess { resolution ->
-                val message = when (resolution) {
-                    is Storage.ParkedResolution.Copied -> context.getString(R.string.parked_copy_saved, resolution.name)
-                    Storage.ParkedResolution.Released -> if (keepCopy) context.getString(R.string.parked_nothing_to_keep) else null
-                }
-                if (message != null) Toast.makeText(context, message, Toast.LENGTH_LONG).show()
-                if (parkedUri == uri) loadInto(uri)
-            }.onFailure { err ->
-                Toast.makeText(context, context.getString(R.string.toast_error, err.message ?: ""), Toast.LENGTH_LONG).show()
-            }
+            if (res.isSuccess && parkedUri == uri) loadInto(uri)
         }
     }
 
@@ -618,6 +623,15 @@ private fun EditorScreen(
         if (initialUri != null && !loaded) {
             loadInto(initialUri.toString())
         }
+    }
+
+    // Na een draai (ook tijdens Keep/Discard) kan de geparkeerde opslag al opgelost zijn: na de lopende actie opnieuw kijken.
+    LaunchedEffect(Unit) {
+        val uri = parkedUri ?: return@LaunchedEffect
+        parkedBusy = true
+        withContext(Dispatchers.IO) { Storage.noteWriteMutex.withLock {} }
+        parkedBusy = false
+        if (parkedUri == uri) loadInto(uri)
     }
 
     // Na een mislukte load (bv. naar een geparkeerde notitie gebladerd) hoort de oude editor-state bij geen notitie meer.

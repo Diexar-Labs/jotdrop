@@ -3,6 +3,7 @@ package com.diexar.keepcapture
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.SystemClock
 import android.provider.DocumentsContract
 import android.system.Os
 import android.system.OsConstants
@@ -51,6 +52,9 @@ object Storage {
     // Journaal v2: magic + uri + separator + inhoud + CRC32. Oude journalen beginnen met "content:".
     private val JOURNAL_MAGIC = "JDJ2".toByteArray(Charsets.US_ASCII)
     private const val PARKED_JOURNAL_DIR = "note-write-parked"
+    // Geparkeerde notities niet bij elke aanroep opnieuw proberen: listLabels leest elke notitie.
+    private const val PARKED_RETRY_MS = 30_000L
+    @Volatile private var parkedRetryAt = 0L
     const val DEFAULT_SUBFOLDER = "Mini Notes"
     const val DEFAULT_SPEECH_LANG = "nl-NL"
 
@@ -601,8 +605,13 @@ object Storage {
         if (!recoverNoteJournals(context)) {
             return Result.failure(IllegalStateException(context.getString(R.string.error_interrupted_save)))
         }
-        if (parkedJournal(context, uri).baseFile.exists()) {
-            return Result.failure(ParkedSaveException(context.getString(R.string.error_parked_save, noteName(uri))))
+        val parked = parkedJournal(context, uri)
+        if (parked.baseFile.exists()) {
+            // Deze notitie zelf wel meteen opnieuw proberen (Try again), los van de wachttijd voor de rest.
+            synchronized(cloudFileLock) { recoverJournal(context, parked) }
+            if (parked.baseFile.exists()) {
+                return Result.failure(ParkedSaveException(context.getString(R.string.error_parked_save, noteName(uri))))
+            }
         }
         return try {
             val text = context.contentResolver.openInputStream(uri)?.use { input ->
@@ -681,25 +690,35 @@ object Storage {
      * het bestand gewijzigd, en blijft het bestand ongemoeid. Mislukt dat afmaken,
      * of is de vault-map onbereikbaar (SD-kaart, toestemming, hernoemd), dan wordt
      * het journaal per notitie geparkeerd en later afgemaakt, zonder andere writes
-     * te blokkeren; [readNote] weigert zolang die ene notitie. Geeft false als het
-     * journaal niet geparkeerd kon worden en dus nog openstaat.
+     * te blokkeren; [readNote] weigert zolang die ene notitie. Geparkeerde journalen
+     * worden hooguit eens per [PARKED_RETRY_MS] opnieuw geprobeerd. Geeft false als
+     * het journaal niet geparkeerd kon worden en dus nog openstaat.
      */
     private fun recoverNoteJournals(context: Context): Boolean {
         val journal = noteJournal(context)
         val parkedDir = File(context.noBackupFilesDir, PARKED_JOURNAL_DIR)
-        if (!journal.baseFile.exists() && parkedDir.list().isNullOrEmpty()) return true
+        val retryParked = SystemClock.elapsedRealtime() >= parkedRetryAt
+        if (!journal.baseFile.exists() && (!retryParked || parkedDir.list().isNullOrEmpty())) return true
         synchronized(cloudFileLock) {
+        // Vóór het actieve journaal opgehaald: een net geparkeerde notitie krijgt pas bij een volgende ronde een nieuwe poging.
+        val parked = if (retryParked) parkedJournalFiles(context) else emptyList()
         var recovered = !journal.baseFile.exists() || recoverJournal(context, journal)
-        parkedDir.listFiles { file -> file.name.endsWith(".journal") }?.forEach {
-            if (!recoverJournal(context, AtomicFile(it))) recovered = false
+        if (retryParked) {
+            parked.forEach {
+                if (!recoverJournal(context, AtomicFile(it))) recovered = false
+            }
+            parkedRetryAt = SystemClock.elapsedRealtime() + PARKED_RETRY_MS
         }
         return recovered
         }
     }
 
     /** Voor cloud-sync: ook een geparkeerde notitie kan half zijn en mag niet worden geüpload. */
-    fun recoverInterruptedNoteWrite(context: Context): Boolean =
-        recoverNoteJournals(context) && parkedJournalFiles(context).isEmpty()
+    fun recoverInterruptedNoteWrite(context: Context): Boolean {
+        // Sync draait zelden en zegt "probeer opnieuw": dan ook echt opnieuw proberen, zonder wachttijd.
+        parkedRetryAt = 0L
+        return recoverNoteJournals(context) && parkedJournalFiles(context).isEmpty()
+    }
 
     /** Melding bij een geblokkeerde sync: noemt de geparkeerde notitie, zodat duidelijk is wat te openen. */
     fun interruptedSaveMessage(context: Context): String {
@@ -792,7 +811,7 @@ object Storage {
         }
         if (current == null) {
             // Bestaat de notitie nog maar is ze nu niet leesbaar: parkeren en later opnieuw proberen; alleen deze notitie blijft dicht.
-            if (DocumentFile.fromSingleUri(context, uri)?.exists() == true) return parkJournal(context, journal, uri, data)
+            if (DocumentFile.fromSingleUri(context, uri)?.exists() == true) return parkOrRescue(context, journal, uri, data, bytes)
             // Onbereikbare map: de notitie is er misschien nog, dus niet wissen maar parkeren.
             if (!vaultTreeReachable(context, uri) && !otherVaultReachable(context, uri)) return parkJournal(context, journal, uri, data)
             // Notitie weg (bv. in Obsidian hernoemd) of andere vault gekozen (bv. de hernoemde map): bedoelde inhoud redden.
@@ -805,7 +824,7 @@ object Storage {
                 false
             }
             // Mislukt het afmaken, dan parkeren: anders blokkeerde dit journaal lezen, opslaan en sync van alle notities.
-            if (!restored) return parkJournal(context, journal, uri, data)
+            if (!restored) return parkOrRescue(context, journal, uri, data, bytes)
             // Een ouder geparkeerd journaal mag deze nieuwere inhoud later niet meer aanvullen.
             parkedJournal(context, uri).takeIf { it.baseFile != journal.baseFile }?.delete()
         }
@@ -836,6 +855,21 @@ object Storage {
             return false
         }
         journal.delete()
+        return true
+    }
+
+    /**
+     * Een notitie buiten de gekozen vault staat in geen lijst en is dus niet te openen: daar redden in plaats van
+     * parkeren. Pas bij een al geparkeerd journaal, zodat de notitie in die vault eerst een tweede kans krijgt.
+     */
+    private fun parkOrRescue(context: Context, journal: AtomicFile, uri: Uri, data: ByteArray, bytes: ByteArray): Boolean {
+        val alreadyParked = journal.baseFile == parkedJournal(context, uri).baseFile
+        if (!alreadyParked || bytes.isEmpty() || !otherVaultReachable(context, uri) || rescueNote(context, uri, bytes) == null) {
+            return parkJournal(context, journal, uri, data)
+        }
+        journal.delete()
+        // Een ouder geparkeerd journaal is door deze nieuwere kopie achterhaald.
+        parkedJournal(context, uri).delete()
         return true
     }
 
@@ -1120,11 +1154,19 @@ object Storage {
                 val vaultUri = getVaultUri(context) ?: error("Geen vault-map gekozen.")
                 val tree = DocumentFile.fromTreeUri(context, vaultUri) ?: error("Vault-map kan niet worden geopend.")
                 // Failed reads/writes retain the old registry entry so the operation can be retried.
+                var parked: Throwable? = null
                 for (folder in NoteFolder.entries) {
                     val folderDoc = traverseSubfolder(context, tree, folderPath(context, folder)) ?: continue
                     for (child in queryChildren(context, vaultUri, folderDoc.uri, strict = true)) {
                         if (child.name.startsWith(".") || !child.name.endsWith(".md", true)) continue
-                        val current = readNote(context, child.uri).getOrThrow()
+                        val note = readNote(context, child.uri)
+                        // Eén geparkeerde notitie mag de rest niet halverwege laten staan; daarna melden.
+                        val error = note.exceptionOrNull()
+                        if (error is ParkedSaveException) {
+                            parked = error
+                            continue
+                        }
+                        val current = note.getOrThrow()
                         val meta = FrontmatterParser.parse(current).meta
                         if (meta.labels.none { it.equals(old, true) }) continue
                         val labels = meta.labels.mapNotNull { if (it.equals(old, true)) new else it }
@@ -1132,6 +1174,7 @@ object Storage {
                         updateNote(context, child.uri, FrontmatterWriter.applyLabels(current, labels)).getOrThrow()
                     }
                 }
+                parked?.let { throw it }
                 val labels = getLabels(context).filterNot { it.equals(old, true) }
                 saveLabels(context, if (new == null) labels else labels + new).getOrThrow()
             }
