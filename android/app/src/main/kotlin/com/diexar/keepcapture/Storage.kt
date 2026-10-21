@@ -15,10 +15,12 @@ import java.io.File
 import java.io.FileNotFoundException
 import java.io.FileOutputStream
 import java.io.IOException
+import java.nio.ByteBuffer
 import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.zip.CRC32
 
 enum class NoteFolder { NOTES, ARCHIVE, TRASH }
 
@@ -46,6 +48,8 @@ object Storage {
     private const val KEY_DOWNLOAD_IMAGES = "download_images"
     private const val KEY_SORT_MODE = "sort_mode"
     private const val JOURNAL_SEPARATOR = '\n'.code.toByte()
+    // Journaal v2: magic + uri + separator + inhoud + CRC32. Oude journalen beginnen met "content:".
+    private val JOURNAL_MAGIC = "JDJ2".toByteArray(Charsets.US_ASCII)
     private const val PARKED_JOURNAL_DIR = "note-write-parked"
     const val DEFAULT_SUBFOLDER = "Mini Notes"
     const val DEFAULT_SPEECH_LANG = "nl-NL"
@@ -411,7 +415,7 @@ object Storage {
     fun createNote(context: Context, content: String): Result<Pair<String, Uri>> {
         synchronized(cloudFileLock) {
         // Eerst herstellen: anders bleef bij een vastzittend journaal een leeg bestand achter.
-        if (!recoverInterruptedNoteWrite(context)) {
+        if (!recoverNoteJournals(context)) {
             return Result.failure(IllegalStateException(context.getString(R.string.error_interrupted_save)))
         }
         val subfolder = openOrCreateNotesFolder(context).getOrElse { return Result.failure(it) }
@@ -436,7 +440,7 @@ object Storage {
     }
 
     fun listNotes(context: Context): Result<List<NoteSummary>> {
-        recoverInterruptedNoteWrite(context)
+        recoverNoteJournals(context)
         val vaultUri = getVaultUri(context)
             ?: return Result.failure(IllegalStateException("Geen vault-map gekozen."))
         val subfolder = openOrCreateNotesFolder(context).getOrElse { return Result.failure(it) }
@@ -594,7 +598,7 @@ object Storage {
 
     fun readNote(context: Context, uri: Uri): Result<String> {
         // Een halve notitie mag niet verder (archief/prullenbak kopieert en wist de bron).
-        if (!recoverInterruptedNoteWrite(context)) {
+        if (!recoverNoteJournals(context) || parkedJournal(context, uri).baseFile.exists()) {
             return Result.failure(IllegalStateException(context.getString(R.string.error_interrupted_save)))
         }
         return try {
@@ -625,18 +629,19 @@ object Storage {
      * SAF heeft geen atomaire vervanging: "wt" leegt het bestand vóór de write,
      * dus een procesdood daartussen liet een lege of halve notitie achter. De
      * nieuwe inhoud staat daarom eerst in een journaal in appopslag (buiten de
-     * vault); [recoverInterruptedNoteWrite] maakt een onderbroken write af.
+     * vault); [recoverNoteJournals] maakt een onderbroken write af.
      */
     private fun noteJournal(context: Context) = AtomicFile(File(context.noBackupFilesDir, "note-write.journal"))
 
     private fun writeNoteBytes(context: Context, uri: Uri, bytes: ByteArray): Boolean {
-        check(recoverInterruptedNoteWrite(context)) { context.getString(R.string.error_interrupted_save) }
+        check(recoverNoteJournals(context)) { context.getString(R.string.error_interrupted_save) }
         val journal = noteJournal(context)
         val output = journal.startWrite()
         try {
-            output.write(uri.toString().toByteArray(Charsets.UTF_8))
-            output.write(JOURNAL_SEPARATOR.toInt())
-            output.write(bytes)
+            val body = JOURNAL_MAGIC + uri.toString().toByteArray(Charsets.UTF_8) + JOURNAL_SEPARATOR + bytes
+            output.write(body)
+            // Oude AtomicFile (API 26-29) schrijft direct naar het journaal; de CRC herkent een afgebroken journaal.
+            output.write(ByteBuffer.allocate(4).putInt(journalCrc(body, body.size)).array())
             output.fd.sync()
             journal.finishWrite(output)
         } catch (e: Exception) {
@@ -670,12 +675,13 @@ object Storage {
      * Maakt een door procesdood onderbroken notitie-write af. Alleen als de
      * notitie nu leeg of een begin van de bedoelde inhoud is, wordt die inhoud
      * opnieuw geschreven; anders is de write nooit begonnen of heeft iets anders
-     * het bestand gewijzigd, en blijft het bestand ongemoeid. Geeft false als
-     * een journaal nog openstaat omdat de herstel-write mislukte. Is de vault-map
-     * onbereikbaar (SD-kaart, toestemming, hernoemd), dan wordt het journaal per
-     * notitie geparkeerd en later afgemaakt, zonder andere writes te blokkeren.
+     * het bestand gewijzigd, en blijft het bestand ongemoeid. Mislukt dat afmaken,
+     * of is de vault-map onbereikbaar (SD-kaart, toestemming, hernoemd), dan wordt
+     * het journaal per notitie geparkeerd en later afgemaakt, zonder andere writes
+     * te blokkeren; [readNote] weigert zolang die ene notitie. Geeft false als het
+     * journaal niet geparkeerd kon worden en dus nog openstaat.
      */
-    fun recoverInterruptedNoteWrite(context: Context): Boolean {
+    private fun recoverNoteJournals(context: Context): Boolean {
         val journal = noteJournal(context)
         val parkedDir = File(context.noBackupFilesDir, PARKED_JOURNAL_DIR)
         if (!journal.baseFile.exists() && parkedDir.list().isNullOrEmpty()) return true
@@ -688,6 +694,10 @@ object Storage {
         }
     }
 
+    /** Voor cloud-sync: ook een geparkeerde notitie kan half zijn en mag niet worden geüpload. */
+    fun recoverInterruptedNoteWrite(context: Context): Boolean =
+        recoverNoteJournals(context) && File(context.noBackupFilesDir, PARKED_JOURNAL_DIR).list()?.none { it.endsWith(".journal") } != false
+
     private fun recoverJournal(context: Context, journal: AtomicFile): Boolean {
         val data = try {
             journal.readFully()
@@ -696,38 +706,49 @@ object Storage {
         } catch (_: IOException) {
             return false
         }
-        val split = data.indexOf(JOURNAL_SEPARATOR)
+        val body = when {
+            !data.copyOf(JOURNAL_MAGIC.size).contentEquals(JOURNAL_MAGIC) -> data
+            data.size >= JOURNAL_MAGIC.size + 4 && ByteBuffer.wrap(data, data.size - 4, 4).int == journalCrc(data, data.size - 4) ->
+                data.copyOfRange(JOURNAL_MAGIC.size, data.size - 4)
+            else -> ByteArray(0)
+        }
+        val split = body.indexOf(JOURNAL_SEPARATOR)
         // Afgebroken journaal (oude AtomicFile schrijft direct): de write naar de notitie begon nooit.
         if (split < 0) {
             journal.delete()
             return true
         }
-        val uri = Uri.parse(String(data, 0, split, Charsets.UTF_8))
-        val bytes = data.copyOfRange(split + 1, data.size)
+        val uri = Uri.parse(String(body, 0, split, Charsets.UTF_8))
+        val bytes = body.copyOfRange(split + 1, body.size)
         val current = try {
             context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
         } catch (_: Exception) {
             null
         }
         if (current == null) {
-            // Bestaat de notitie nog maar is ze nu niet leesbaar, dan journaal bewaren en later opnieuw proberen.
-            if (DocumentFile.fromSingleUri(context, uri)?.exists() == true) return false
+            // Bestaat de notitie nog maar is ze nu niet leesbaar: parkeren en later opnieuw proberen; alleen deze notitie blijft dicht.
+            if (DocumentFile.fromSingleUri(context, uri)?.exists() == true) return parkJournal(context, journal, uri, data)
             // Onbereikbare map: de notitie is er misschien nog, dus niet wissen maar parkeren.
             if (!vaultTreeReachable(context, uri) && !otherVaultReachable(context, uri)) return parkJournal(context, journal, uri, data)
             // Notitie weg (bv. in Obsidian hernoemd) of andere vault gekozen (bv. de hernoemde map): bedoelde inhoud redden.
             if (!rescueNote(context, uri, bytes)) return parkJournal(context, journal, uri, data)
         } else if (current.size < bytes.size && current.contentEquals(bytes.copyOf(current.size))) {
-            try {
-                if (!writeSynced(context, uri, bytes)) return false
-                val verified = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                if (verified == null || !verified.contentEquals(bytes)) return false
+            val restored = try {
+                writeSynced(context, uri, bytes) &&
+                    context.contentResolver.openInputStream(uri)?.use { it.readBytes() }?.contentEquals(bytes) == true
             } catch (_: Exception) {
-                return false
+                false
             }
+            // Mislukt het afmaken, dan parkeren: anders blokkeerde dit journaal lezen, opslaan en sync van alle notities.
+            if (!restored) return parkJournal(context, journal, uri, data)
+            // Een ouder geparkeerd journaal mag deze nieuwere inhoud later niet meer aanvullen.
+            parkedJournal(context, uri).takeIf { it.baseFile != journal.baseFile }?.delete()
         }
         journal.delete()
         return true
     }
+
+    private fun journalCrc(data: ByteArray, length: Int): Int = CRC32().apply { update(data, 0, length) }.value.toInt()
 
     private fun parkedJournal(context: Context, uri: Uri): AtomicFile {
         val hash = MessageDigest.getInstance("SHA-256").digest(uri.toString().toByteArray(Charsets.UTF_8))
