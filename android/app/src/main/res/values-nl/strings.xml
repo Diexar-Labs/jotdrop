@@ -40,6 +40,17 @@
     <string name="error_subfolder_missing">Submap \'%1$s\' bestaat niet.</string>
     <string name="error_subfolder_create">Submap \'%1$s\' kon niet worden aangemaakt.</string>
     <string name="error_interrupted_save">Een eerder onderbroken opslag kon niet worden afgemaakt. Probeer het opnieuw.</string>
+    <string name="error_parked_save">\"%1$s\" is niet volledig opgeslagen. Open de notitie om die wijziging als kopie te bewaren of te verwerpen.</string>
+    <string name="error_parked_save_missing">\"%1$s\" is niet volledig opgeslagen, en JotDrop kan die notitie niet bereiken. Maak de map weer beschikbaar, of kies de vaultmap opnieuw, zodat JotDrop het opslaan kan afmaken of de wijziging als kopie kan bewaren.</string>
+    <string name="error_parked_copy">De kopie kon niet worden bewaard. Controleer of de vaultmap bereikbaar is en probeer het opnieuw.</string>
+    <string name="parked_save_title">Deze notitie is niet volledig opgeslagen</string>
+    <string name="parked_save_message">De laatste wijziging aan deze notitie is afgebroken, en JotDrop kon het opslaan niet afmaken. De notitie kan nu onvolledig of leeg zijn. Bewaar als kopie zet de volledige wijziging in een aparte notitie. Verwerp wijziging gooit de volledige wijziging weg.</string>
+    <string name="parked_keep_copy">Bewaar als kopie</string>
+    <string name="parked_discard">Verwerp wijziging</string>
+    <string name="parked_discard_title">Onvolledige wijziging verwerpen?</string>
+    <string name="parked_discard_message">De volledige versie van de wijziging gaat verloren. Alleen de notitie zoals ze nu is blijft over, en die kan onvolledig of leeg zijn. Bewaar als kopie is veiliger.</string>
+    <string name="parked_copy_saved">Bewaard als \"%1$s\".</string>
+    <string name="parked_nothing_to_keep">Er was niets meer te bewaren. De notitie is weer beschikbaar.</string>
 
     <string name="loading">Laden…</string>
     <string name="empty_no_vault">Nog geen vault gekozen. Open instellingen om aan de slag te gaan.</string>

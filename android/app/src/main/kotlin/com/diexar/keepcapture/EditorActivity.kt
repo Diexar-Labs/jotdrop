@@ -85,6 +85,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
@@ -257,7 +258,12 @@ private fun EditorScreen(
     var navIndex by rememberSaveable { mutableStateOf(navUris.indexOf(initialUri?.toString())) }
     val navEnabled = navUris.size >= 2 && navIndex >= 0
     var loaded by rememberSaveable { mutableStateOf(initialUri == null) }
-    var loadError by remember { mutableStateOf<String?>(null) }
+    // Saveable zoals `loaded`: anders toonde een draai een lege editor voor een niet-geladen notitie.
+    var loadError by rememberSaveable { mutableStateOf<String?>(null) }
+    // Notitie met een geparkeerde, niet af te maken opslag: de editor biedt dan de uitweg.
+    var parkedUri by rememberSaveable { mutableStateOf<String?>(null) }
+    var parkedBusy by remember { mutableStateOf(false) }
+    var showParkedDiscard by rememberSaveable { mutableStateOf(false) }
     var bodyText by rememberSaveable(stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue(""))
     }
@@ -523,6 +529,7 @@ private fun EditorScreen(
     suspend fun loadInto(uriString: String) {
         loaded = false
         loadError = null
+        parkedUri = null
         val cachedAttachments = attachmentUris.takeIf { attachmentIndexLoaded }
         val result = withContext(Dispatchers.IO) {
             runCatching {
@@ -576,7 +583,34 @@ private fun EditorScreen(
             loaded = true
         }.onFailure { err ->
             loadError = err.message ?: context.getString(R.string.error_unknown)
+            if (err is Storage.ParkedSaveException) parkedUri = uriString
             loaded = true
+        }
+    }
+
+    fun resolveParked(keepCopy: Boolean) {
+        val uri = parkedUri ?: return
+        parkedBusy = true
+        scope.launch {
+            val res = withContext(Dispatchers.IO) {
+                Storage.noteWriteMutex.withLock {
+                    runCatching {
+                        if (keepCopy) Storage.keepParkedSaveAsCopy(context, Uri.parse(uri)).getOrThrow()
+                        else Storage.discardParkedSave(context, Uri.parse(uri)).let { Storage.ParkedResolution.Released }
+                    }
+                }
+            }
+            parkedBusy = false
+            res.onSuccess { resolution ->
+                val message = when (resolution) {
+                    is Storage.ParkedResolution.Copied -> context.getString(R.string.parked_copy_saved, resolution.name)
+                    Storage.ParkedResolution.Released -> if (keepCopy) context.getString(R.string.parked_nothing_to_keep) else null
+                }
+                if (message != null) Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                if (parkedUri == uri) loadInto(uri)
+            }.onFailure { err ->
+                Toast.makeText(context, context.getString(R.string.toast_error, err.message ?: ""), Toast.LENGTH_LONG).show()
+            }
         }
     }
 
@@ -586,7 +620,8 @@ private fun EditorScreen(
         }
     }
 
-    val isDirty = loaded && (bodyText.text != originalBody || titleText != originalTitle || embedLines.toList() != originalEmbeds)
+    // Na een mislukte load (bv. naar een geparkeerde notitie gebladerd) hoort de oude editor-state bij geen notitie meer.
+    val isDirty = loaded && loadError == null && (bodyText.text != originalBody || titleText != originalTitle || embedLines.toList() != originalEmbeds)
     val isExisting = currentUri != null
     val bg = noteBackground(color, dark)
     val fg = contentColorOn(color, dark)
@@ -691,7 +726,7 @@ private fun EditorScreen(
     // worden eerst opgeslagen (zelfde pad als de save-knop); een save-fout
     // annuleert de navigatie zodat er niets verloren gaat.
     fun navigateTo(delta: Int) {
-        if (!navEnabled || saving || !loaded) return
+        if (!navEnabled || saving || !loaded || parkedBusy) return
         val target = navIndex + delta
         if (target < 0 || target >= navUris.size) return
         val proceed: () -> Unit = {
@@ -768,165 +803,168 @@ private fun EditorScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = {
-                        pinned = !pinned
-                        if (isExisting) applyMetaAsync(newPinned = pinned)
-                    }) {
-                        Icon(
-                            Icons.Filled.PushPin,
-                            contentDescription = stringResource(if (pinned) R.string.action_unpin else R.string.action_pin),
-                            tint = if (pinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                        )
-                    }
-                    IconButton(onClick = { showColorPicker = true }) {
-                        Icon(Icons.Filled.Palette, contentDescription = stringResource(R.string.action_color))
-                    }
-                    IconButton(onClick = { showLinkPicker = true }) {
-                        Icon(Icons.Filled.Link, contentDescription = stringResource(R.string.action_link))
-                    }
-                    IconButton(onClick = { toggleOrInsertChecklist() }) {
-                        Icon(Icons.Filled.CheckBox, contentDescription = stringResource(R.string.action_checklist))
-                    }
-                    IconButton(onClick = { launchSpeech() }) {
-                        Icon(Icons.Filled.Mic, contentDescription = stringResource(R.string.action_speech))
-                    }
-                    Box {
-                        IconButton(onClick = { photoMenuExpanded = true }) {
-                            Icon(Icons.Filled.AddAPhoto, contentDescription = stringResource(R.string.action_insert_photo))
-                        }
-                        DropdownMenu(
-                            expanded = photoMenuExpanded,
-                            onDismissRequest = { photoMenuExpanded = false },
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.action_take_photo)) },
-                                leadingIcon = { Icon(Icons.Filled.CameraAlt, contentDescription = null) },
-                                onClick = {
-                                    photoMenuExpanded = false
-                                    launchCamera(withOcr = false)
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.action_pick_from_gallery)) },
-                                leadingIcon = { Icon(Icons.Filled.Image, contentDescription = null) },
-                                onClick = {
-                                    photoMenuExpanded = false
-                                    launchPicker(withOcr = false)
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.action_ocr_camera)) },
-                                leadingIcon = { Icon(Icons.Filled.TextFields, contentDescription = null) },
-                                onClick = {
-                                    photoMenuExpanded = false
-                                    launchCamera(withOcr = true)
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.action_ocr_gallery)) },
-                                leadingIcon = { Icon(Icons.Filled.TextFields, contentDescription = null) },
-                                onClick = {
-                                    photoMenuExpanded = false
-                                    launchPicker(withOcr = true)
-                                },
+                    // Zonder geladen notitie (bv. geparkeerd) zouden deze acties op een vorige of verkeerde notitie werken.
+                    if (loadError == null) {
+                        IconButton(onClick = {
+                            pinned = !pinned
+                            if (isExisting) applyMetaAsync(newPinned = pinned)
+                        }) {
+                            Icon(
+                                Icons.Filled.PushPin,
+                                contentDescription = stringResource(if (pinned) R.string.action_unpin else R.string.action_pin),
+                                tint = if (pinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                             )
                         }
-                    }
-                    Box {
-                        IconButton(onClick = { editorMenuOpen = true }) {
-                            Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.more_options))
+                        IconButton(onClick = { showColorPicker = true }) {
+                            Icon(Icons.Filled.Palette, contentDescription = stringResource(R.string.action_color))
                         }
-                        DropdownMenu(expanded = editorMenuOpen, onDismissRequest = { editorMenuOpen = false }) {
-                            DropdownMenuItem(
-                                text = { Text(stringResource(R.string.nav_labels)) },
-                                leadingIcon = { Icon(Icons.Filled.Label, null) },
-                                enabled = loaded && loadError == null && !saving && !labelsOpening,
-                                onClick = {
-                                    editorMenuOpen = false
-                                    val targetUri = currentUri
-                                    if (targetUri == null) {
-                                        labelsSheetOpen = true
-                                    } else {
-                                        labelsOpening = true
-                                        scope.launch {
-                                            val result = withContext(Dispatchers.IO) {
-                                                Storage.noteWriteMutex.withLock { Storage.readNote(context, Uri.parse(targetUri)) }
-                                            }
-                                            labelsOpening = false
-                                            if (targetUri == currentUri) result.onSuccess { content ->
-                                                labels.clear()
-                                                labels.addAll(FrontmatterParser.parse(content).meta.labels)
-                                                labelsSheetOpen = true
-                                            }.onFailure { err ->
-                                                Toast.makeText(context, context.getString(R.string.toast_error, err.message ?: ""), Toast.LENGTH_LONG).show()
-                                            }
-                                        }
-                                    }
-                                },
-                            )
-                            if (isExisting) {
+                        IconButton(onClick = { showLinkPicker = true }) {
+                            Icon(Icons.Filled.Link, contentDescription = stringResource(R.string.action_link))
+                        }
+                        IconButton(onClick = { toggleOrInsertChecklist() }) {
+                            Icon(Icons.Filled.CheckBox, contentDescription = stringResource(R.string.action_checklist))
+                        }
+                        IconButton(onClick = { launchSpeech() }) {
+                            Icon(Icons.Filled.Mic, contentDescription = stringResource(R.string.action_speech))
+                        }
+                        Box {
+                            IconButton(onClick = { photoMenuExpanded = true }) {
+                                Icon(Icons.Filled.AddAPhoto, contentDescription = stringResource(R.string.action_insert_photo))
+                            }
+                            DropdownMenu(
+                                expanded = photoMenuExpanded,
+                                onDismissRequest = { photoMenuExpanded = false },
+                            ) {
                                 DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.action_archive)) },
-                                    leadingIcon = { Icon(Icons.Filled.Archive, null) },
-                                    onClick = { editorMenuOpen = false; showArchiveDialog = true },
+                                    text = { Text(stringResource(R.string.action_take_photo)) },
+                                    leadingIcon = { Icon(Icons.Filled.CameraAlt, contentDescription = null) },
+                                    onClick = {
+                                        photoMenuExpanded = false
+                                        launchCamera(withOcr = false)
+                                    },
                                 )
                                 DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.action_delete)) },
-                                    leadingIcon = { Icon(Icons.Filled.Delete, null) },
-                                    onClick = { editorMenuOpen = false; showDeleteDialog = true },
+                                    text = { Text(stringResource(R.string.action_pick_from_gallery)) },
+                                    leadingIcon = { Icon(Icons.Filled.Image, contentDescription = null) },
+                                    onClick = {
+                                        photoMenuExpanded = false
+                                        launchPicker(withOcr = false)
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.action_ocr_camera)) },
+                                    leadingIcon = { Icon(Icons.Filled.TextFields, contentDescription = null) },
+                                    onClick = {
+                                        photoMenuExpanded = false
+                                        launchCamera(withOcr = true)
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.action_ocr_gallery)) },
+                                    leadingIcon = { Icon(Icons.Filled.TextFields, contentDescription = null) },
+                                    onClick = {
+                                        photoMenuExpanded = false
+                                        launchPicker(withOcr = true)
+                                    },
                                 )
                             }
                         }
-                    }
-                    IconButton(
-                        enabled = !saving && (bodyText.text.isNotBlank() || titleText.isNotBlank() || embedLines.isNotEmpty()) && (isDirty || !isExisting),
-                        onClick = {
-                            val reminderAtSave = reminder
-                            attemptSaveAndClose(
-                                scope = scope,
-                                context = context,
-                                bodyText = bodyText.text,
-                                title = titleText,
-                                titleLevel = titleLevel,
-                                embedLines = embedLines.toList(),
-                                currentUri = currentUri,
-                                expectedBodyHash = loadedBodyHash,
-                                color = color,
-                                pinned = pinned,
-                                tags = tags.toList(),
-                                labels = labels.toList(),
-                                reminder = reminderAtSave,
-                                reminderRepeat = reminderRepeat,
-                                reminderUntil = reminderUntil,
-                                reminderLimit = reminderLimit,
-                                reminderDone = reminderDone,
-                                isDirty = true,
-                                onSavingChange = { saving = it },
-                                onSaved = { newUri ->
-                                    if (newUri != null) currentUri = newUri.toString()
-                                    originalBody = bodyText.text
-                                    originalTitle = titleText
-                                    originalEmbeds = embedLines.toList()
-                                    val finalUri = newUri ?: currentUri?.let { Uri.parse(it) }
-                                    if (finalUri != null) {
-                                        ReminderScheduler.cancel(context, finalUri)
-                                        if (!reminderAtSave.isNullOrBlank()) {
-                                            ReminderScheduler.schedule(context, finalUri, reminderAtSave)
+                        Box {
+                            IconButton(onClick = { editorMenuOpen = true }) {
+                                Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.more_options))
+                            }
+                            DropdownMenu(expanded = editorMenuOpen, onDismissRequest = { editorMenuOpen = false }) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.nav_labels)) },
+                                    leadingIcon = { Icon(Icons.Filled.Label, null) },
+                                    enabled = loaded && loadError == null && !saving && !labelsOpening,
+                                    onClick = {
+                                        editorMenuOpen = false
+                                        val targetUri = currentUri
+                                        if (targetUri == null) {
+                                            labelsSheetOpen = true
+                                        } else {
+                                            labelsOpening = true
+                                            scope.launch {
+                                                val result = withContext(Dispatchers.IO) {
+                                                    Storage.noteWriteMutex.withLock { Storage.readNote(context, Uri.parse(targetUri)) }
+                                                }
+                                                labelsOpening = false
+                                                if (targetUri == currentUri) result.onSuccess { content ->
+                                                    labels.clear()
+                                                    labels.addAll(FrontmatterParser.parse(content).meta.labels)
+                                                    labelsSheetOpen = true
+                                                }.onFailure { err ->
+                                                    Toast.makeText(context, context.getString(R.string.toast_error, err.message ?: ""), Toast.LENGTH_LONG).show()
+                                                }
+                                            }
                                         }
-                                        originalReminder = reminderAtSave
-                                    }
-                                    Toast.makeText(context, R.string.toast_saved_short, Toast.LENGTH_SHORT).show()
-                                    onClose()
-                                },
-                                onError = { msg ->
-                                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
-                                },
-                                closeWhenClean = false,
-                                onClose = onClose,
-                            )
-                        },
-                    ) {
-                        Icon(Icons.Filled.Check, contentDescription = stringResource(R.string.action_save))
+                                    },
+                                )
+                                if (isExisting) {
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.action_archive)) },
+                                        leadingIcon = { Icon(Icons.Filled.Archive, null) },
+                                        onClick = { editorMenuOpen = false; showArchiveDialog = true },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.action_delete)) },
+                                        leadingIcon = { Icon(Icons.Filled.Delete, null) },
+                                        onClick = { editorMenuOpen = false; showDeleteDialog = true },
+                                    )
+                                }
+                            }
+                        }
+                        IconButton(
+                            enabled = !saving && (bodyText.text.isNotBlank() || titleText.isNotBlank() || embedLines.isNotEmpty()) && (isDirty || !isExisting),
+                            onClick = {
+                                val reminderAtSave = reminder
+                                attemptSaveAndClose(
+                                    scope = scope,
+                                    context = context,
+                                    bodyText = bodyText.text,
+                                    title = titleText,
+                                    titleLevel = titleLevel,
+                                    embedLines = embedLines.toList(),
+                                    currentUri = currentUri,
+                                    expectedBodyHash = loadedBodyHash,
+                                    color = color,
+                                    pinned = pinned,
+                                    tags = tags.toList(),
+                                    labels = labels.toList(),
+                                    reminder = reminderAtSave,
+                                    reminderRepeat = reminderRepeat,
+                                    reminderUntil = reminderUntil,
+                                    reminderLimit = reminderLimit,
+                                    reminderDone = reminderDone,
+                                    isDirty = true,
+                                    onSavingChange = { saving = it },
+                                    onSaved = { newUri ->
+                                        if (newUri != null) currentUri = newUri.toString()
+                                        originalBody = bodyText.text
+                                        originalTitle = titleText
+                                        originalEmbeds = embedLines.toList()
+                                        val finalUri = newUri ?: currentUri?.let { Uri.parse(it) }
+                                        if (finalUri != null) {
+                                            ReminderScheduler.cancel(context, finalUri)
+                                            if (!reminderAtSave.isNullOrBlank()) {
+                                                ReminderScheduler.schedule(context, finalUri, reminderAtSave)
+                                            }
+                                            originalReminder = reminderAtSave
+                                        }
+                                        Toast.makeText(context, R.string.toast_saved_short, Toast.LENGTH_SHORT).show()
+                                        onClose()
+                                    },
+                                    onError = { msg ->
+                                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                                    },
+                                    closeWhenClean = false,
+                                    onClose = onClose,
+                                )
+                            },
+                        ) {
+                            Icon(Icons.Filled.Check, contentDescription = stringResource(R.string.action_save))
+                        }
                     }
                 },
             )
@@ -970,6 +1008,35 @@ private fun EditorScreen(
             when {
                 !loaded -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
+                }
+                parkedUri != null -> Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text(
+                            text = stringResource(R.string.parked_save_title),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = fg,
+                        )
+                        Text(
+                            text = stringResource(R.string.parked_save_message),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = fg,
+                        )
+                        // Bewaren is de veilige keuze en daarom de hoofdknop.
+                        Button(onClick = { resolveParked(keepCopy = true) }, enabled = !parkedBusy) {
+                            Text(stringResource(R.string.parked_keep_copy))
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(
+                                onClick = { parkedUri?.let { scope.launch { loadInto(it) } } },
+                                enabled = !parkedBusy,
+                            ) {
+                                Text(stringResource(R.string.retry))
+                            }
+                            TextButton(onClick = { showParkedDiscard = true }, enabled = !parkedBusy) {
+                                Text(stringResource(R.string.parked_discard))
+                            }
+                        }
+                    }
                 }
                 loadError != null -> Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
                     Text(
@@ -1162,6 +1229,18 @@ private fun EditorScreen(
                 }
             },
             onDismiss = { showDeleteDialog = false },
+        )
+    }
+    if (showParkedDiscard) {
+        ConfirmDialog(
+            title = stringResource(R.string.parked_discard_title),
+            message = stringResource(R.string.parked_discard_message),
+            confirmLabel = stringResource(R.string.parked_discard),
+            onConfirm = {
+                showParkedDiscard = false
+                resolveParked(keepCopy = false)
+            },
+            onDismiss = { showParkedDiscard = false },
         )
     }
 }

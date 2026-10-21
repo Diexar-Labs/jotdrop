@@ -215,7 +215,7 @@ object CloudSyncManager {
         val startedAt = System.nanoTime()
         var phase = CloudDiagnostics.Phase.VAULT_VALIDATION
         try {
-            check(Storage.recoverInterruptedNoteWrite(context)) { "An interrupted note save could not be completed. Open the note list and try again" }
+            check(Storage.recoverInterruptedNoteWrite(context)) { Storage.interruptedSaveMessage(context) }
             val initial = CloudVaultAdapter(context)
             check(settings.optString("binding") == initial.binding) { "Vault settings changed. Pause and re-enable sync for the intended folder" }
             phase = CloudDiagnostics.Phase.STATE_LOAD
