@@ -143,6 +143,8 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import com.diexar.keepcapture.ui.JotDropTheme
 import com.diexar.keepcapture.ui.noteCardBrush
 import com.diexar.keepcapture.ui.screenBackgroundBrush
@@ -1181,8 +1183,22 @@ private fun EditorBody(
     val context = LocalContext.current
     var lightboxUri by remember { mutableStateOf<Uri?>(null) }
     val scrollState = rememberScrollState()
-    val preview = remember(value.text, foreground, bodyEditing) {
-        if (bodyEditing) androidx.compose.ui.text.AnnotatedString("")
+    // Compose kan in deze scrollkolom geen tekstveld meten dat hoger is dan
+    // 2^18 px; een notitie van enkele MiB crashte de editor. Schatting is ruim:
+    // elk teken telt als een volle em breed. De tekst blijft in de state, dus
+    // tags/kleur/pin (updateNoteMeta) bewaren de body ongewijzigd.
+    val density = LocalDensity.current
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp
+    val bodyStyle = MaterialTheme.typography.bodyLarge
+    val bodyTooTall = remember(value.text, screenWidthDp, density, bodyStyle) {
+        with(density) {
+            val charsPerLine = ((screenWidthDp - 64).dp.toPx() / bodyStyle.fontSize.toPx()).toInt().coerceAtLeast(1)
+            val lines = value.text.lineSequence().sumOf { 1L + it.length / charsPerLine }
+            lines * bodyStyle.lineHeight.toPx() > 200_000f
+        }
+    }
+    val preview = remember(value.text, foreground, bodyEditing, bodyTooTall) {
+        if (bodyEditing || bodyTooTall) androidx.compose.ui.text.AnnotatedString("")
         else renderPreviewAnnotated(value.text, foreground, underlineLinks = false)
     }
     val previewLinks = preview.getStringAnnotations("URL", 0, preview.length)
@@ -1291,7 +1307,14 @@ private fun EditorBody(
             ),
         )
         // The preview is display-only; saving always uses the original TextFieldValue.
-        if (!bodyEditing && previewLinks.isNotEmpty()) {
+        if (bodyTooTall) {
+            Text(
+                stringResource(R.string.editor_body_too_large),
+                color = foreground,
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.padding(16.dp),
+            )
+        } else if (!bodyEditing && previewLinks.isNotEmpty()) {
             TextButton(onClick = onEditBody) {
                 Text(stringResource(R.string.editor_title_edit), color = foreground)
             }

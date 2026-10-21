@@ -4,10 +4,15 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.DocumentsContract
+import android.util.AtomicFile
 import androidx.documentfile.provider.DocumentFile
 import androidx.preference.PreferenceManager
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.io.File
+import java.io.FileNotFoundException
+import java.io.FileOutputStream
+import java.io.IOException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -28,6 +33,8 @@ object Storage {
      * een nieuwere overschrijven (getypte tekst kwijt na een tag-tik).
      */
     val noteWriteMutex = Mutex()
+    // Eén journaal voor alle notitie-writes; dit slot houdt ze daarom na elkaar.
+    private val noteJournalLock = Any()
 
     private const val KEY_VAULT_URI = "vault_tree_uri"
     private const val KEY_SUBFOLDER = "subfolder"
@@ -35,6 +42,7 @@ object Storage {
     private const val KEY_SPEECH_LANG = "speech_language"
     private const val KEY_DOWNLOAD_IMAGES = "download_images"
     private const val KEY_SORT_MODE = "sort_mode"
+    private const val JOURNAL_SEPARATOR = '\n'.code.toByte()
     const val DEFAULT_SUBFOLDER = "Mini Notes"
     const val DEFAULT_SPEECH_LANG = "nl-NL"
 
@@ -400,9 +408,9 @@ object Storage {
             ?: return Result.failure(IllegalStateException("Bestand kon niet worden aangemaakt."))
 
         return try {
-            context.contentResolver.openOutputStream(newFile.uri, "wt")?.use { out ->
-                out.write(content.toByteArray(Charsets.UTF_8))
-            } ?: return Result.failure(IllegalStateException("Kan niet schrijven naar bestand."))
+            if (!writeNoteBytes(context, newFile.uri, content.toByteArray(Charsets.UTF_8))) {
+                return Result.failure(IllegalStateException("Kan niet schrijven naar bestand."))
+            }
             Result.success((newFile.name ?: filename) to newFile.uri)
         } catch (e: Exception) {
             Result.failure(e)
@@ -410,6 +418,7 @@ object Storage {
     }
 
     fun listNotes(context: Context): Result<List<NoteSummary>> {
+        recoverInterruptedNoteWrite(context)
         val vaultUri = getVaultUri(context)
             ?: return Result.failure(IllegalStateException("Geen vault-map gekozen."))
         val subfolder = openOrCreateNotesFolder(context).getOrElse { return Result.failure(it) }
@@ -566,6 +575,7 @@ object Storage {
     private data class ChildDoc(val uri: Uri, val name: String, val lastModified: Long)
 
     fun readNote(context: Context, uri: Uri): Result<String> {
+        recoverInterruptedNoteWrite(context)
         return try {
             val text = context.contentResolver.openInputStream(uri)?.use { input ->
                 input.readBytes().toString(Charsets.UTF_8)
@@ -578,12 +588,89 @@ object Storage {
 
     fun updateNote(context: Context, uri: Uri, content: String): Result<Unit> {
         return try {
-            context.contentResolver.openOutputStream(uri, "wt")?.use { out ->
-                out.write(content.toByteArray(Charsets.UTF_8))
-            } ?: return Result.failure(IllegalStateException("Kan niet schrijven naar bestand."))
+            if (!writeNoteBytes(context, uri, content.toByteArray(Charsets.UTF_8))) {
+                return Result.failure(IllegalStateException("Kan niet schrijven naar bestand."))
+            }
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
+        }
+    }
+
+    /**
+     * SAF heeft geen atomaire vervanging: "wt" leegt het bestand vóór de write,
+     * dus een procesdood daartussen liet een lege of halve notitie achter. De
+     * nieuwe inhoud staat daarom eerst in een journaal in appopslag (buiten de
+     * vault); [recoverInterruptedNoteWrite] maakt een onderbroken write af.
+     */
+    private fun noteJournal(context: Context) = AtomicFile(File(context.noBackupFilesDir, "note-write.journal"))
+
+    private fun writeNoteBytes(context: Context, uri: Uri, bytes: ByteArray): Boolean = synchronized(noteJournalLock) {
+        check(recoverInterruptedNoteWrite(context)) { "Een eerder onderbroken opslag kon niet worden afgemaakt." }
+        val journal = noteJournal(context)
+        val output = journal.startWrite()
+        try {
+            output.write(uri.toString().toByteArray(Charsets.UTF_8))
+            output.write(JOURNAL_SEPARATOR.toInt())
+            output.write(bytes)
+            output.fd.sync()
+            journal.finishWrite(output)
+        } catch (e: Exception) {
+            journal.failWrite(output)
+            throw e
+        }
+        // Bij een exception blijft het journaal staan, zodat de write later alsnog wordt afgemaakt.
+        val written = writeSynced(context, uri, bytes)
+        journal.delete()
+        written
+    }
+
+    private fun writeSynced(context: Context, uri: Uri, bytes: ByteArray): Boolean {
+        val out = context.contentResolver.openOutputStream(uri, "wt") ?: return false
+        out.use {
+            it.write(bytes)
+            (it as? FileOutputStream)?.let { file -> runCatching { file.fd.sync() } }
+        }
+        return true
+    }
+
+    /**
+     * Maakt een door procesdood onderbroken notitie-write af. Alleen als de
+     * notitie nu leeg of een begin van de bedoelde inhoud is, wordt die inhoud
+     * opnieuw geschreven; anders is de write nooit begonnen of heeft iets anders
+     * het bestand gewijzigd, en blijft het bestand ongemoeid. Geeft false als
+     * het journaal nog openstaat omdat de herstel-write mislukte.
+     */
+    fun recoverInterruptedNoteWrite(context: Context): Boolean {
+        val journal = noteJournal(context)
+        if (!journal.baseFile.exists()) return true
+        synchronized(noteJournalLock) {
+        val data = try {
+            journal.readFully()
+        } catch (_: FileNotFoundException) {
+            return true
+        } catch (_: IOException) {
+            return false
+        }
+        val split = data.indexOf(JOURNAL_SEPARATOR)
+        val uri = Uri.parse(String(data, 0, split, Charsets.UTF_8))
+        val bytes = data.copyOfRange(split + 1, data.size)
+        val current = try {
+            context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+        } catch (_: Exception) {
+            null
+        }
+        if (current != null && current.size < bytes.size && current.contentEquals(bytes.copyOf(current.size))) {
+            try {
+                if (!writeSynced(context, uri, bytes)) return false
+                val verified = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                if (verified == null || !verified.contentEquals(bytes)) return false
+            } catch (_: Exception) {
+                return false
+            }
+        }
+        journal.delete()
+        return true
         }
     }
 

@@ -179,6 +179,7 @@
     <string name="editor_title_new">Nieuwe notitie</string>
     <string name="editor_title_edit">Notitie bewerken</string>
     <string name="editor_hint">Schrijf hier…</string>
+    <string name="editor_body_too_large">Deze notitie is te lang om hier te tonen. Open hem in Obsidian om de tekst te bewerken. Tags, kleur en vastzetten werken wel en laten de tekst ongewijzigd.</string>
     <string name="editor_title_hint">Titel (optioneel)</string>
     <string name="more_options">Meer opties</string>
     <string name="sort_title">Sortering</string>
