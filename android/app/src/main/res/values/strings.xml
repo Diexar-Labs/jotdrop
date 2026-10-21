@@ -42,6 +42,17 @@
     <string name="error_subfolder_missing">Folder \'%1$s\' does not exist.</string>
     <string name="error_subfolder_create">Folder \'%1$s\' could not be created.</string>
     <string name="error_interrupted_save">An interrupted save could not be completed. Try again.</string>
+    <string name="error_parked_save">\"%1$s\" was not saved completely. Open the note to keep that change as a copy or discard it.</string>
+    <string name="error_parked_save_missing">\"%1$s\" was not saved completely, and JotDrop cannot reach that note. Make its folder available again, or pick the vault folder again, so JotDrop can finish the save or keep the change as a copy.</string>
+    <string name="error_parked_copy">The copy could not be saved. Check that the vault folder is available and try again.</string>
+    <string name="parked_save_title">This note was not saved completely</string>
+    <string name="parked_save_message">The last change to this note was cut off, and JotDrop could not finish saving it. The note may now be incomplete or empty. Keep as copy saves the full change as a separate note. Discard change throws the full change away.</string>
+    <string name="parked_keep_copy">Keep as copy</string>
+    <string name="parked_discard">Discard change</string>
+    <string name="parked_discard_title">Discard the unfinished change?</string>
+    <string name="parked_discard_message">The full version of the change will be lost. Only the note as it is now remains, and it may be incomplete or empty. Keep as copy is safer.</string>
+    <string name="parked_copy_saved">Saved as \"%1$s\".</string>
+    <string name="parked_nothing_to_keep">There was nothing left to keep. The note is available again.</string>
 
     <string name="loading">Loading…</string>
     <string name="empty_no_vault">No vault chosen yet. Open settings to get started.</string>

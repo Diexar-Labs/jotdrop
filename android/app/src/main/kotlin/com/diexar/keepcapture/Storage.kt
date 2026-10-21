@@ -591,8 +591,11 @@ object Storage {
 
     fun readNote(context: Context, uri: Uri): Result<String> {
         // Een halve notitie mag niet verder (archief/prullenbak kopieert en wist de bron).
-        if (!recoverNoteJournals(context) || parkedJournal(context, uri).baseFile.exists()) {
+        if (!recoverNoteJournals(context)) {
             return Result.failure(IllegalStateException(context.getString(R.string.error_interrupted_save)))
+        }
+        if (parkedJournal(context, uri).baseFile.exists()) {
+            return Result.failure(ParkedSaveException(context.getString(R.string.error_parked_save, noteName(uri))))
         }
         return try {
             val text = context.contentResolver.openInputStream(uri)?.use { input ->
@@ -684,6 +687,60 @@ object Storage {
         }
     }
 
+    /** Readnote weigert een notitie met een geparkeerde, nog niet afgemaakte opslag. */
+    class ParkedSaveException(message: String) : IllegalStateException(message)
+
+    sealed interface ParkedResolution {
+        data class Copied(val name: String) : ParkedResolution
+        /** Journaal weg zonder kopie: verworpen, of er was niets te bewaren. */
+        object Released : ParkedResolution
+    }
+
+    /**
+     * Uitweg voor een geparkeerde notitie: bewaart de onvolledig opgeslagen
+     * wijziging als `<naam> (recovered).md` en geeft de notitie vrij zoals ze nu
+     * is (leeg of afgekapt). Bewust altijd een kopie en geen nieuwe afmaakpoging:
+     * die laat het journaal vervallen als de notitie intussen elders is gewijzigd.
+     */
+    fun keepParkedSaveAsCopy(context: Context, uri: Uri): Result<ParkedResolution> {
+        synchronized(noteJournalLock) {
+        val parked = parkedJournal(context, uri)
+        val data = try {
+            parked.readFully()
+        } catch (_: FileNotFoundException) {
+            return Result.success(ParkedResolution.Released)
+        } catch (e: IOException) {
+            return Result.failure(e)
+        }
+        val bytes = parseJournal(data)?.second
+        val name = if (bytes == null || bytes.isEmpty()) {
+            null
+        } else {
+            rescueNote(context, uri, bytes) ?: return Result.failure(IllegalStateException(context.getString(R.string.error_parked_copy)))
+        }
+        parked.delete()
+        return Result.success(if (name == null) ParkedResolution.Released else ParkedResolution.Copied(name))
+        }
+    }
+
+    /** Uitweg voor een geparkeerde notitie: verwerpt de onvolledige wijziging; de notitie blijft zoals ze nu is. */
+    fun discardParkedSave(context: Context, uri: Uri) {
+        synchronized(noteJournalLock) { parkedJournal(context, uri).delete() }
+    }
+
+    /** Uri en bedoelde inhoud uit een journaal; null bij een afgebroken journaal (de write begon nooit). */
+    private fun parseJournal(data: ByteArray): Pair<Uri, ByteArray>? {
+        val body = when {
+            !data.copyOf(JOURNAL_MAGIC.size).contentEquals(JOURNAL_MAGIC) -> data
+            data.size >= JOURNAL_MAGIC.size + 4 && ByteBuffer.wrap(data, data.size - 4, 4).int == journalCrc(data, data.size - 4) ->
+                data.copyOfRange(JOURNAL_MAGIC.size, data.size - 4)
+            else -> ByteArray(0)
+        }
+        val split = body.indexOf(JOURNAL_SEPARATOR)
+        if (split < 0) return null
+        return Uri.parse(String(body, 0, split, Charsets.UTF_8)) to body.copyOfRange(split + 1, body.size)
+    }
+
     private fun recoverJournal(context: Context, journal: AtomicFile): Boolean {
         val data = try {
             journal.readFully()
@@ -692,20 +749,11 @@ object Storage {
         } catch (_: IOException) {
             return false
         }
-        val body = when {
-            !data.copyOf(JOURNAL_MAGIC.size).contentEquals(JOURNAL_MAGIC) -> data
-            data.size >= JOURNAL_MAGIC.size + 4 && ByteBuffer.wrap(data, data.size - 4, 4).int == journalCrc(data, data.size - 4) ->
-                data.copyOfRange(JOURNAL_MAGIC.size, data.size - 4)
-            else -> ByteArray(0)
-        }
-        val split = body.indexOf(JOURNAL_SEPARATOR)
         // Afgebroken journaal (oude AtomicFile schrijft direct): de write naar de notitie begon nooit.
-        if (split < 0) {
+        val (uri, bytes) = parseJournal(data) ?: run {
             journal.delete()
             return true
         }
-        val uri = Uri.parse(String(body, 0, split, Charsets.UTF_8))
-        val bytes = body.copyOfRange(split + 1, body.size)
         val current = try {
             context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
         } catch (_: Exception) {
@@ -717,7 +765,7 @@ object Storage {
             // Onbereikbare map: de notitie is er misschien nog, dus niet wissen maar parkeren.
             if (!vaultTreeReachable(context, uri) && !otherVaultReachable(context, uri)) return parkJournal(context, journal, uri, data)
             // Notitie weg (bv. in Obsidian hernoemd) of andere vault gekozen (bv. de hernoemde map): bedoelde inhoud redden.
-            if (!rescueNote(context, uri, bytes)) return parkJournal(context, journal, uri, data)
+            if (bytes.isNotEmpty() && rescueNote(context, uri, bytes) == null) return parkJournal(context, journal, uri, data)
         } else if (current.size < bytes.size && current.contentEquals(bytes.copyOf(current.size))) {
             val restored = try {
                 writeSynced(context, uri, bytes) &&
@@ -774,14 +822,15 @@ object Storage {
         return !same && vaultTreeReachable(context, vault)
     }
 
-    /** Schrijft de bedoelde inhoud als `<naam> (recovered).md` in de notitiemap. */
-    private fun rescueNote(context: Context, uri: Uri, bytes: ByteArray): Boolean {
-        if (bytes.isEmpty()) return true
-        val folder = openOrCreateNotesFolder(context).getOrElse { return false }
-        val name = runCatching { DocumentsContract.getDocumentId(uri) }.getOrNull()
-            ?.substringAfterLast('/')?.substringAfterLast(':')?.removeSuffix(".md")
-            ?.takeIf { it.isNotBlank() } ?: "Note"
-        val file = folder.createFile("text/markdown", "$name (recovered).md") ?: return false
+    private fun noteName(uri: Uri): String = runCatching { DocumentsContract.getDocumentId(uri) }.getOrNull()
+        ?.substringAfterLast('/')?.substringAfterLast(':')?.removeSuffix(".md")
+        ?.takeIf { it.isNotBlank() } ?: "Note"
+
+    /** Schrijft de bedoelde inhoud als `<naam> (recovered).md` in de notitiemap; geeft de bestandsnaam of null. */
+    private fun rescueNote(context: Context, uri: Uri, bytes: ByteArray): String? {
+        val folder = openOrCreateNotesFolder(context).getOrElse { return null }
+        val filename = "${noteName(uri)} (recovered).md"
+        val file = folder.createFile("text/markdown", filename) ?: return null
         val written = try {
             writeSynced(context, file.uri, bytes) &&
                 context.contentResolver.openInputStream(file.uri)?.use { it.readBytes() }?.contentEquals(bytes) == true
@@ -789,7 +838,7 @@ object Storage {
             false
         }
         if (!written) file.delete()
-        return written
+        return if (written) file.name ?: filename else null
     }
 
     /**
@@ -965,7 +1014,10 @@ object Storage {
             val directory = traverseSubfolder(context, tree, folderPath(context, folder)) ?: continue
             for (child in queryChildren(context, vaultUri, directory.uri, strict = true)) {
                 if (child.name.startsWith(".") || !child.name.endsWith(".md", true)) continue
-                labels.addAll(FrontmatterParser.parse(readNote(context, child.uri).getOrThrow()).meta.labels)
+                val note = readNote(context, child.uri)
+                // Eén geparkeerde notitie mag het verversen niet blokkeren; bestaande labels blijven in het register.
+                if (note.exceptionOrNull() is ParkedSaveException) continue
+                labels.addAll(FrontmatterParser.parse(note.getOrThrow()).meta.labels)
             }
         }
         labels.distinctBy { it.lowercase() }

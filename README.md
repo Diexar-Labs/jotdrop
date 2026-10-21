@@ -146,7 +146,7 @@ Install [JotDrop Web Clipper from the Chrome Web Store](https://chromewebstore.g
 
 ### Android app
 
-1. Download [`jotdrop.apk` for Android 0.28.20](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.20/jotdrop.apk).
+1. Download [`jotdrop.apk` for Android 0.28.21](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.21/jotdrop.apk).
 2. Open the file on your phone → Android will ask permission to install from unknown sources → grant it.
 3. Open JotDrop → first screen lets you pick the vault folder (the same one you sync to your laptop).
 4. From now on, the share-sheet in any app includes JotDrop.
