@@ -188,6 +188,7 @@
     <string name="editor_title_new">New note</string>
     <string name="editor_title_edit">Edit note</string>
     <string name="editor_hint">Write here…</string>
+    <string name="editor_body_too_large">This note is too long to show here. Open it in Obsidian to edit the text. Tags, color and pin still work and keep the text unchanged.</string>
     <string name="editor_title_hint">Title (optional)</string>
     <string name="more_options">More options</string>
     <string name="sort_title">Sort order</string>
