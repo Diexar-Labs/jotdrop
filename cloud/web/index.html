@@ -179,7 +179,11 @@
           <button id="totp-submit" type="submit" hidden>Turn on</button>
         </form>
         <h2>Recovery</h2><p>Your recovery code contains the keys to this workspace. Keep it in a password manager. We cannot recover encrypted files without your keys.</p>
-        <p>The recovery code is shown when you create a workspace. Pairing a device does not create a replacement recovery code.</p>
+        <p>The recovery code is shown when you create a workspace. Lost it? Make a new one here. The old code stops working.</p>
+        <form id="new-recovery-form">
+          <div id="new-recovery-password-row" hidden><label for="new-recovery-password">Password</label><input id="new-recovery-password" type="password" maxlength="1024" autocomplete="current-password"></div>
+          <button type="submit">Make a new recovery code</button>
+        </form>
       </section>
     </main>
   </div>

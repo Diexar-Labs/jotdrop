@@ -1,5 +1,5 @@
 import { CloudClient } from '/shared/client.mjs';
-import { accountInfo, approveDevice, attachAccount, changePassword, checkApproval, completeApproval, confirmLogin, confirmSignup, disableTotp, enableTotp, listApprovals, logIn, rejectDevice, requestApproval, resetWithRecoveryCode, setupTotp, signUp, startOver, startReset } from '/shared/account.mjs';
+import { accountInfo, approveDevice, attachAccount, changePassword, checkApproval, completeApproval, confirmLogin, confirmSignup, disableTotp, enableTotp, listApprovals, logIn, newRecoveryCode, rejectDevice, requestApproval, resetWithRecoveryCode, setupTotp, signUp, startOver, startReset } from '/shared/account.mjs';
 import { base64ToBytes, bytesToBase64, decryptEnvelope, sealLocal, unsealLocal } from '/shared/crypto.mjs';
 import { exportZip } from '/export.mjs';
 import { noteSummary, updateMetadata, toggleTask, attachmentPath } from '/note.mjs';
@@ -663,12 +663,15 @@ async function finishAccess(connected, { password, remember, recoveryCode }) {
   for (const input of $('access').querySelectorAll('input[type="password"], input[inputmode="numeric"], textarea')) input.value = '';
   $('access-message').textContent = '';
   await openWorkspace(connected);
-  if (recoveryCode) {
-    $('recovery-code').value = recoveryCode;
-    $('recovery-saved').checked = false;
-    $('finish-recovery').disabled = true;
-    $('recovery-dialog').showModal();
-  }
+  if (recoveryCode) showRecoveryCode(recoveryCode);
+}
+
+function showRecoveryCode(code, finishLabel = 'Open workspace') {
+  $('recovery-code').value = code;
+  $('recovery-saved').checked = false;
+  $('finish-recovery').disabled = true;
+  $('finish-recovery').textContent = finishLabel;
+  $('recovery-dialog').showModal();
 }
 
 function accessForm(id, action) {
@@ -776,6 +779,8 @@ async function renderAccount() {
   $('attach-code-form').hidden = Boolean(account || !attaching);
   $('password-form').hidden = !account;
   $('totp-form').hidden = !account;
+  $('new-recovery-password-row').hidden = !account;
+  $('new-recovery-password').required = Boolean(account);
   if (account) {
     totpOn = account.totp;
     $('totp-status').textContent = account.totp ? 'On: a new device asks for a code from your app.' : 'Off: a new device asks for a code by email.';
@@ -822,6 +827,13 @@ workspaceForm('password-form', async () => {
   message('Password changed. Your notes did not need to be encrypted again.');
   await renderDevices();
 });
+workspaceForm('new-recovery-form', async () => {
+  const field = $('new-recovery-password');
+  const code = await newRecoveryCode(client, field.required ? { password: field.value } : {});
+  field.value = '';
+  message('New recovery code made. The old code no longer works.');
+  showRecoveryCode(code, 'Done');
+});
 $('totp-setup').addEventListener('click', () => setupTotp(client).then(({ secret }) => {
   $('totp-secret').value = secret;
   $('totp-enable').hidden = false;
@@ -864,12 +876,7 @@ $('connect-form').addEventListener('submit', async (event) => {
     await store('put', 'connection', sealed);
     $('access-message').textContent = '';
     await openWorkspace(connected);
-    if (recoveryCode) {
-      $('recovery-code').value = recoveryCode;
-      $('recovery-saved').checked = false;
-      $('finish-recovery').disabled = true;
-      $('recovery-dialog').showModal();
-    }
+    if (recoveryCode) showRecoveryCode(recoveryCode);
   } catch (error) { $('access-message').textContent = errorText(error); }
   finally { submit.disabled = false; }
 });

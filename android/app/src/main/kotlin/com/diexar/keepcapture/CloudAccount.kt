@@ -122,6 +122,15 @@ object CloudAccount {
             .with(credentials(newPassword, client.credentials.vaultKey)).put("signOutOtherDevices", signOutOtherDevices))
     }
 
+    /** Replaces the recovery code; the old one stops working. The password is only needed when the cloud has an account. */
+    fun newRecoveryCode(client: CloudClient, password: String?): String {
+        val recoveryToken = CloudCrypto.token()
+        val body = JSONObject().put("recoveryTokenHash", CloudCrypto.hashToken(recoveryToken))
+        if (password != null) body.put("currentAuthKey", currentAuthKey(client, password))
+        client.call("/recovery", "POST", body)
+        return encodeRecovery(client.credentials.vaultId, client.credentials.vaultKey, recoveryToken)
+    }
+
     /** Forgot password: the server mails a code that one of the three routes below needs. */
     fun startReset(url: String, email: String): CloudReset {
         val origin = origin(url)

@@ -639,6 +639,23 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
         });
         reply(200, { ok: true }); return;
       }
+      if (route === '/recovery' && method === 'POST') {
+        limit(`recovery:${vaultId}`, 5);
+        const value = await body(req, MAX_METADATA_BODY);
+        requireValue(validHash(value.recoveryTokenHash), 'Invalid token hash');
+        // With an account the password is required, so a stolen device token cannot replace the owner's recovery code.
+        const account = one('SELECT * FROM accounts WHERE vaultId=?', vaultId);
+        if (account) {
+          requireValue(validToken(value.currentAuthKey), 'Invalid login key');
+          if (!await checkAuthKey(value.currentAuthKey, account.authHash)) fail(401, 'Current password is incorrect');
+        }
+        transaction(() => {
+          requireActiveDevice(vaultId, deviceId);
+          run('UPDATE vaults SET recoveryHash=? WHERE id=?', value.recoveryTokenHash, vaultId);
+        });
+        if (account) sendMailLater({ to: account.email, kind: 'recovery-changed' });
+        reply(200, { ok: true }); return;
+      }
       if (method === 'GET' && route === '/status') {
         reply(200, { usedBytes: one('SELECT COALESCE(SUM(size),0) AS size FROM envelopes WHERE vaultId=?', vaultId).size, quotaBytes, sequence: one('SELECT COALESCE(MAX(sequence),0) AS sequence FROM changes WHERE vaultId=?', vaultId).sequence, history: historyUsage(vaultId), transport: { version: 1, chunkBytes: TRANSFER_CHUNK_BYTES, reservedBytes: one('SELECT COALESCE(SUM(reservedBytes),0) AS size FROM uploads WHERE vaultId=?', vaultId).size } }); return;
       }

@@ -297,6 +297,9 @@ internal fun CloudAccountSection(busy: Boolean, run: (suspend () -> Unit) -> Uni
     var code by remember { mutableStateOf("") }
     var changing by rememberSaveable { mutableStateOf(false) }
     var signOutOthers by rememberSaveable { mutableStateOf(false) }
+    var renewing by rememberSaveable { mutableStateOf(false) }
+    var recoveryPassword by remember { mutableStateOf("") }
+    val context = LocalContext.current
     var approvals by remember { mutableStateOf<List<CloudApproval>?>(null) }
     var approve by remember { mutableStateOf<CloudApproval?>(null) }
     LaunchedEffect(reload) {
@@ -367,6 +370,22 @@ internal fun CloudAccountSection(busy: Boolean, run: (suspend () -> Unit) -> Uni
                 }
             }
         }
+        if (loaded && !loadFailed && attach == null) {
+            if (!renewing) TextButton(onClick = { renewing = true }, enabled = !busy) { Text("Make a new recovery code") }
+            else {
+                Text("Recovery code", style = MaterialTheme.typography.titleMedium)
+                Text("A new code replaces your old recovery code. The old code stops working.", style = MaterialTheme.typography.bodySmall)
+                if (email != null) PasswordField(recoveryPassword, { recoveryPassword = it }, "Password", !busy)
+                Row {
+                    Button(onClick = { run { committed {
+                        val client = cloud()
+                        keepRecoveryCode(context, io { CloudAccount.newRecoveryCode(client, email?.let { recoveryPassword }) })
+                        recoveryPassword = ""; renewing = false
+                    } } }, enabled = !busy && (email == null || recoveryPassword.isNotEmpty())) { Text("Make new code") }
+                    TextButton(onClick = { renewing = false; recoveryPassword = "" }, enabled = !busy) { Text("Cancel") }
+                }
+            }
+        }
     }
     approve?.let { request -> AlertDialog(onDismissRequest = { approve = null }, title = { Text("Approve this device?") },
         text = { Text("Only approve if the new device shows exactly these words:\n\n${request.words.joinToString("   ")}\n\nThe device gets full access to your notes.") },
@@ -379,7 +398,7 @@ internal fun CloudAccountSection(busy: Boolean, run: (suspend () -> Unit) -> Uni
         dismissButton = { TextButton(onClick = { approve = null }) { Text("Cancel") } }) }
 }
 
-/** Shown once after creating a cloud; without this code a forgotten password can only start the cloud over. */
+/** Shown once after creating a cloud or making a new code; without this code a forgotten password can only start the cloud over. */
 @Composable
 internal fun CloudRecoveryDialog() {
     val context = LocalContext.current

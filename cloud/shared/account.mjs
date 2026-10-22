@@ -98,6 +98,14 @@ export async function changePassword(client, { currentPassword, newPassword, sig
   return client.call('/account/password', 'POST', { currentAuthKey: await currentAuthKey(client, currentPassword), ...await newCredentials(newPassword, client.credentials.vaultKey), signOutOtherDevices });
 }
 
+/** Replaces the recovery code; the old one stops working. The password is only asked when the cloud has an account. */
+export async function newRecoveryCode(client, { password: value } = {}) {
+  const recoveryToken = randomToken(), { vaultId, vaultKey } = client.credentials;
+  const currentKey = value === undefined ? {} : { currentAuthKey: await currentAuthKey(client, value) };
+  await client.call('/recovery', 'POST', { recoveryTokenHash: await hashToken(recoveryToken), ...currentKey });
+  return encodeRecovery({ vaultId, vaultKey, recoveryToken });
+}
+
 export const setupTotp = (client) => client.call('/account/totp', 'POST', {});
 export async function enableTotp(client, { password: value, code }) { return client.call('/account/totp/enable', 'POST', { code, currentAuthKey: await currentAuthKey(client, value) }); }
 export async function disableTotp(client, { password: value }) { return client.call('/account/totp/disable', 'POST', { currentAuthKey: await currentAuthKey(client, value) }); }

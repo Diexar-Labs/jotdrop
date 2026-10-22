@@ -78,6 +78,8 @@ De controlewoorden voorkomen dat een kwaadwillende server zijn eigen sleutel ert
 
 De bestaande herstelcode bevat de vaultsleutel en het hersteltoken. Met de code plus een e-mailcode kies je een nieuw wachtwoord. Bestaat al (`/recover`), wordt uitgebreid met het opnieuw inpakken.
 
+Herstelcode kwijt maar nog een verbonden apparaat: "Make a new recovery code" (web: Devices & recovery; Android: Account). Het apparaat maakt een nieuw hersteltoken en stuurt alleen de hash (`POST /recovery`, met apparaattoken); de oude code werkt daarna niet meer. Heeft de cloud een account, dan is ook het wachtwoord nodig (zodat een gestolen apparaattoken de code van de eigenaar niet kan vervangen) en krijgt het adres een melding `recovery-changed`. Toegevoegd 22 okt 2026.
+
 **(c) Allebei kwijt**
 
 Met alleen een e-mailcode: het cloudaccount opnieuw beginnen. De oude versleutelde cloudinhoud wordt na een bevestiging gewist (die kan niemand meer lezen), alle apparaten worden afgemeld. Je telefoon of pc met de Markdown-notities uploadt daarna alles opnieuw. JotDrop zegt dit duidelijk vóór de bevestiging.

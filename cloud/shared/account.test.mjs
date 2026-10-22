@@ -8,7 +8,7 @@ import { createCloudServer } from '../server.mjs';
 import { CloudClient } from './client.mjs';
 import { randomToken } from './crypto.mjs';
 import { WORDS } from './words.mjs';
-import { accountInfo, approveDevice, attachAccount, changePassword, checkApproval, completeApproval, confirmLogin, confirmSignup, deriveKeys, disableTotp, enableTotp, listApprovals, logIn, rejectDevice, requestApproval, resetWithRecoveryCode, setupTotp, signUp, startOver, startReset, verificationWords } from './account.mjs';
+import { accountInfo, approveDevice, attachAccount, changePassword, checkApproval, completeApproval, confirmLogin, confirmSignup, deriveKeys, disableTotp, enableTotp, listApprovals, logIn, newRecoveryCode, rejectDevice, requestApproval, resetWithRecoveryCode, setupTotp, signUp, startOver, startReset, verificationWords } from './account.mjs';
 
 const PASSWORD = 'correct horse battery staple';
 const text = (value) => new TextEncoder().encode(value);
@@ -115,6 +115,36 @@ test('forgot password with the recovery code', async (t) => {
   const laptop = await resetWithRecoveryCode(reset, { code: app.code('rc@example.com', 'reset'), recoveryCode, newPassword: 'recovered password', deviceName: 'Laptop' });
   assert.equal((await laptop.read(saved.id)).file.path, 'notes/kept.md');
   assert.ok(await login(app, 'rc@example.com', 'recovered password') instanceof CloudClient);
+});
+
+test('a new recovery code replaces the old one and needs the password when there is an account', async (t) => {
+  const app = await fixture(t);
+  const { client: phone, recoveryCode: oldCode } = await register(app, 'new-rc@example.com');
+  const saved = await phone.write('notes/rc.md', text('Recovered'), 0);
+  await assert.rejects(newRecoveryCode(phone), (error) => error.status === 400);
+  await assert.rejects(newRecoveryCode(phone, { password: 'not my password!' }), (error) => error.status === 401);
+  assert.ok(await CloudClient.recover({ url: app.url, recoveryCode: oldCode, deviceName: 'Still old' }) instanceof CloudClient);
+  const laptop = await login(app, 'new-rc@example.com');
+  await phone.revokeDevice(laptop.credentials.deviceId);
+  await assert.rejects(newRecoveryCode(laptop, { password: PASSWORD }), (error) => error.status === 401);
+  const newCode = await newRecoveryCode(phone, { password: PASSWORD });
+  assert.notEqual(newCode, oldCode);
+  assert.ok(app.mails.some((mail) => mail.to === 'new-rc@example.com' && mail.kind === 'recovery-changed' && !mail.code));
+  await assert.rejects(CloudClient.recover({ url: app.url, recoveryCode: oldCode, deviceName: 'Old code' }), (error) => error.status === 401);
+  const recovered = await CloudClient.recover({ url: app.url, recoveryCode: newCode, deviceName: 'New code' });
+  assert.equal((await recovered.read(saved.id)).file.path, 'notes/rc.md');
+  const reset = await startReset({ url: app.url, email: 'new-rc@example.com' });
+  assert.ok(await resetWithRecoveryCode(reset, { code: app.code('new-rc@example.com', 'reset'), recoveryCode: newCode, newPassword: 'recovered password', deviceName: 'Tablet' }) instanceof CloudClient);
+});
+
+test('a paired cloud without an account makes a new recovery code without a password', async (t) => {
+  const enrollmentToken = randomToken();
+  const app = await fixture(t, { enrollmentToken });
+  const { client: phone, recoveryCode: oldCode } = await CloudClient.create({ url: app.url, enrollmentToken, deviceName: 'Phone' });
+  const newCode = await newRecoveryCode(phone);
+  await assert.rejects(CloudClient.recover({ url: app.url, recoveryCode: oldCode, deviceName: 'Old code' }), (error) => error.status === 401);
+  assert.equal((await CloudClient.recover({ url: app.url, recoveryCode: newCode, deviceName: 'New code' })).credentials.vaultId, phone.credentials.vaultId);
+  assert.equal(app.mails.length, 0);
 });
 
 test('forgot password approved on the phone after comparing the same four words', async (t) => {
