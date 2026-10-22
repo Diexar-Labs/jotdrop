@@ -24,3 +24,25 @@ tasks.register<JavaExec>("checkListEditor") {
     classpath(provider { project(":app").configurations.getByName("debugCompileClasspath") })
     mainClass.set("com.diexar.keepcapture.ListEditorCheckKt")
 }
+
+val inlineTagsClasses = layout.buildDirectory.dir("inline-tags-check")
+val inlineTagsSources = files("app/src/main/kotlin/com/diexar/keepcapture/InlineTags.kt", "checks/InlineTagsCheck.kt")
+val inlineTagsCompile = tasks.register<JavaExec>("inlineTagsCompile") {
+    inputs.files(inlineTagsSources)
+    outputs.dir(inlineTagsClasses)
+    classpath(buildscript.configurations.getByName("classpath"))
+    mainClass.set("org.jetbrains.kotlin.cli.jvm.K2JVMCompiler")
+    doFirst {
+        args("-Xdisable-default-scripting-plugin", "-no-stdlib", "-no-reflect", "-jvm-target", "17", "-classpath",
+            project(":app").configurations.getByName("debugCompileClasspath").asPath,
+            "-d", inlineTagsClasses.get().asFile.absolutePath)
+        args(inlineTagsSources.files.map { it.absolutePath })
+    }
+}
+
+tasks.register<JavaExec>("checkInlineTags") {
+    dependsOn(inlineTagsCompile)
+    classpath(inlineTagsClasses)
+    classpath(provider { project(":app").configurations.getByName("debugCompileClasspath") })
+    mainClass.set("com.diexar.keepcapture.InlineTagsCheckKt")
+}

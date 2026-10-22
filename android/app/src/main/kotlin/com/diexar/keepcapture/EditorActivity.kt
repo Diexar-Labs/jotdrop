@@ -1823,15 +1823,13 @@ private fun attemptSaveAndClose(
         if (closeWhenClean) onClose()
         return
     }
-    // Neutraliseer inline `#hashtags` in de body voordat we wegschrijven —
-    // anders zou typen van `#fyp` in de editor alsnog Obsidian's graph view
-    // vervuilen. Spiegelt het gedrag van de plugin's edit-modal en de
-    // Storage.saveNote-path. Embeds worden niet aangeraakt (regex matcht ze niet).
+    // Hashtags die de gebruiker typt of die al in de notitie stonden blijven
+    // staan: dat zijn bewuste Obsidian-tags (issue #16). Alleen gedeelde inhoud
+    // wordt geneutraliseerd (ShareActivity, PreviewWorker).
     // Titel terug als leidende `# kop`; lege titel → geen kop, dan leidt de
     // kaart 'm af uit de body (ongewijzigd fallback-gedrag).
     val merged = joinHeadingTitle(title, bodyText, titleLevel)
-    val safeBody = Storage.neutralizeBodyHashtags(merged)
-    val combinedBody = combineBodyAndEmbeds(safeBody, embedLines)
+    val combinedBody = combineBodyAndEmbeds(merged, embedLines)
     if (combinedBody.isBlank()) {
         if (currentUri == null) {
             if (closeWhenClean) onClose()

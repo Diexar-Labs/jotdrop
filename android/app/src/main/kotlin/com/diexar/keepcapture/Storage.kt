@@ -1487,6 +1487,8 @@ object Storage {
             .replace(Regex("^(?:[-*+][ \\t]+|\\d{1,9}[.)][ \\t]+)"), "")
             .trimStart('#')
             .trim()
+            // `\#tag` (geneutraliseerde gedeelde tekst) tonen zoals Obsidian's leesweergave: zonder backslash.
+            .replace("\\#", "#")
         return cleaned.ifBlank { fallbackFilename.removeSuffix(".md") }
     }
 
@@ -1515,6 +1517,7 @@ object Storage {
             .map { it.trimEnd() }
             .joinToString("\n")
             .trimEnd()
+            .replace("\\#", "#")
         return stripped.take(280)
     }
 

@@ -85,7 +85,12 @@ data class NoteMeta(
     // Aantal keren al afgegaan (niet-negatief, door de engine bijgehouden).
     val reminderDone: Int = 0,
     val labels: List<String> = emptyList(),
-)
+    // `#hashtags` uit de body, zoals Obsidian ze telt. Alleen tonen en filteren;
+    // de editor en FrontmatterWriter gebruiken uitsluitend `tags`.
+    val inlineTags: List<String> = emptyList(),
+) {
+    val allTags: List<String> get() = tags + inlineTags
+}
 
 data class ParsedNote(
     val meta: NoteMeta,
@@ -108,12 +113,12 @@ object FrontmatterParser {
     fun parse(content: String): ParsedNote {
         val match = frontmatterRegex.find(content)
         if (match == null) {
-            return ParsedNote(NoteMeta(), content, "")
+            return ParsedNote(NoteMeta(inlineTags = InlineTags.find(content)), content, "")
         }
         val yaml = match.groupValues[1]
         val body = content.substring(match.range.last + 1)
         val meta = parseMeta(yaml)
-        return ParsedNote(meta, body, match.value)
+        return ParsedNote(meta.copy(inlineTags = InlineTags.find(body, meta.tags)), body, match.value)
     }
 
     private fun parseMeta(yaml: String): NoteMeta {

@@ -1,0 +1,42 @@
+// Issue #16: editors keep hashtags; only shared, clipped and preview text is neutralized.
+const assert = require("node:assert/strict");
+const esbuild = require("esbuild");
+const fs = require("node:fs");
+const path = require("node:path");
+
+const ROOT = path.join(__dirname, "..");
+const source = (file) => fs.readFileSync(path.join(ROOT, file), "utf8");
+
+(async () => {
+  const result = await esbuild.build({
+    stdin: { contents: `export { readMeta, neutralizeBodyHashtags } from "./src/metadata.ts";`, resolveDir: ROOT },
+    bundle: true, platform: "node", format: "cjs", write: false,
+    alias: { obsidian: path.join(__dirname, "mock-obsidian.cjs") },
+  });
+  const loaded = { exports: {} };
+  new Function("module", "exports", "require", result.outputFiles[0].text)(loaded, loaded.exports, require);
+  const { readMeta, neutralizeBodyHashtags } = loaded.exports;
+
+  // Obsidian's own index supplies the inline tags; frontmatter tags stay the only editable ones.
+  const cache = { frontmatter: { tags: ["home"] }, tags: [{ tag: "#Home" }, { tag: "#errand" }, { tag: "#project/alpha" }] };
+  const meta = readMeta({ metadataCache: { getFileCache: () => cache } }, { path: "n.md" });
+  assert.deepEqual(meta.tags, ["home"]);
+  assert.deepEqual(meta.inlineTags, ["errand", "project/alpha"]);
+  assert.deepEqual(readMeta({ metadataCache: { getFileCache: () => null } }, { path: "x.md" }).inlineTags, []);
+
+  // Shared and clipped text is still neutralized.
+  assert.equal(neutralizeBodyHashtags("Trending #fyp"), "Trending \\#fyp");
+
+  // Editors never neutralize; capture only for a bare link replaced by its page preview.
+  assert.doesNotMatch(source("src/edit.ts"), /neutraliz/i);
+  assert.match(source("src/capture.ts"), /const safeContent = fromPreview \? neutralizeBodyHashtags\(content\) : content;/);
+  assert.match(source("src/clipServer.ts"), /neutralizeBodyHashtags\(content\)/);
+  assert.doesNotMatch(source("android/app/src/main/kotlin/com/diexar/keepcapture/EditorActivity.kt"), /neutralizeBodyHashtags/);
+  assert.match(source("android/app/src/main/kotlin/com/diexar/keepcapture/Storage.kt"), /fun saveNote\(context: Context, content: String\): Result<String> \{\s*return createNote\(context, neutralizeBodyHashtags\(content\)\)/);
+  assert.match(source("android/app/src/main/kotlin/com/diexar/keepcapture/PreviewWorker.kt"), /neutralizeBodyHashtags/);
+
+  // Cards show escaped `\#tag` without the backslash, like Obsidian's reading view.
+  assert.equal(source("src/view.ts").match(/\.replace\(\/\\\\#\/g, "#"\)/g)?.length, 2);
+  assert.equal(source("android/app/src/main/kotlin/com/diexar/keepcapture/Storage.kt").match(/\.replace\("\\\\#", "#"\)/g)?.length, 2);
+  console.log("Hashtag checks passed");
+})().catch((error) => { console.error(error); process.exit(1); });

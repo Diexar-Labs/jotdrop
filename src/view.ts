@@ -81,6 +81,11 @@ function findEmbeddedAttachmentBasenames(content: string): string[] {
   return collectEmbedBasenames(content, (n) => IMAGE_EXT_RE.test(n) || AUDIO_EXT_RE.test(n));
 }
 
+/** Frontmatter tags plus inline `#hashtags`, as Obsidian's tag pane counts them. */
+function cardTags(meta: { tags: string[]; inlineTags: string[] }): string[] {
+  return [...meta.tags, ...meta.inlineTags];
+}
+
 function formatMemoDuration(ms: number): string {
   const totalSec = Math.max(0, Math.floor(ms / 1000));
   const minutes = Math.floor(totalSec / 60);
@@ -1627,7 +1632,7 @@ export class JotDropView extends ItemView {
       !q ||
       card.file.basename.toLowerCase().includes(q) ||
       card.content.toLowerCase().includes(q) ||
-      card.meta.tags.some((t) => t.toLowerCase().includes(q)) ||
+      cardTags(card.meta).some((t) => t.toLowerCase().includes(q)) ||
       card.meta.labels.some((l) => l.toLowerCase().includes(q));
     if (!matchesQuery) return false;
 
@@ -1636,7 +1641,7 @@ export class JotDropView extends ItemView {
     }
 
     if (this.selectedTags.size === 0) return true;
-    return card.meta.tags.some((t) => this.selectedTags.has(t));
+    return cardTags(card.meta).some((t) => this.selectedTags.has(t));
   }
 
   private renderCard(parent: HTMLElement, card: CardData): void {
@@ -1823,9 +1828,9 @@ export class JotDropView extends ItemView {
       }
     }
 
-    if (meta.tags.length > 0) {
+    if (cardTags(meta).length > 0) {
       const tagWrap = body.createDiv({ cls: "jotdrop-card-tags" });
-      for (const tag of meta.tags) {
+      for (const tag of cardTags(meta)) {
         tagWrap.createSpan({ cls: "jotdrop-card-tag", text: `#${tag}` });
       }
     }
@@ -2148,7 +2153,7 @@ export class JotDropView extends ItemView {
 function computeTagFrequency(cards: CardData[]): Map<string, number> {
   const freq = new Map<string, number>();
   for (const c of cards) {
-    for (const tag of c.meta.tags) {
+    for (const tag of cardTags(c.meta)) {
       freq.set(tag, (freq.get(tag) ?? 0) + 1);
     }
   }
@@ -2241,7 +2246,9 @@ function extractTitle(content: string, fallback: string): string {
       .replace(/^(?:[-*+][ \t]+|\d{1,9}[.)][ \t]+)/, "")
       .replace(/^#+\s*/, "")
       .replace(/^[*_`>]+\s*/, "")
-      .trim();
+      .trim()
+      // Show escaped `\#tag` from shared text as Obsidian's reading view does.
+      .replace(/\\#/g, "#");
     if (!cleaned) continue;
     return truncateWords(cleaned, TITLE_MAX_WORDS, TITLE_MAX_CHARS);
   }
@@ -2262,7 +2269,8 @@ function extractPreview(content: string): string {
     .replace(/<!--\s*(?:jotdrop|diexar)-preview:.*?-->/g, "")
     .replace(/^\s{0,3}#+\s+.*$/gm, "")
     .replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, "$1")
-    .replace(/https?:\/\/\S+/g, "");
+    .replace(/https?:\/\/\S+/g, "")
+    .replace(/\\#/g, "#");
   const lines = stripped
     .split("\n")
     .map((l) => l.trimEnd())
