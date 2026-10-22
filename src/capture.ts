@@ -335,6 +335,7 @@ export class QuickCaptureModal extends Modal {
       return;
     }
     let content = joinHeadingTitle(titleVal, bodyVal);
+    let fromPreview = false;
 
     // If the text contains a URL, fetch OG meta and embed the thumbnail.
     // With multiple URLs we try them sequentially until one yields an OG image.
@@ -363,6 +364,8 @@ export class QuickCaptureModal extends Modal {
           }
         }
         if (chosenUrl && chosenPreview) {
+          // A bare URL is replaced by the page's own title and description: outside text.
+          fromPreview = content.trim() === chosenUrl;
           content = buildLinkNote(chosenUrl, chosenPreview, content);
         }
       } catch (e) {
@@ -373,9 +376,9 @@ export class QuickCaptureModal extends Modal {
     }
 
     try {
-      // Escape inline #hashtags so they do not pollute Obsidian's vault-wide
-      // tag index. User tags are already in `state.tags` and go to frontmatter.
-      const safeContent = neutralizeBodyHashtags(content);
+      // Only text from a link preview is escaped, so a page's #hashtags do not
+      // pollute Obsidian's tag index. Hashtags the user typed are kept.
+      const safeContent = fromPreview ? neutralizeBodyHashtags(content) : content;
       const file = await createNoteInFolder(this.app, this.plugin.settings.notesFolder, safeContent);
       if (
         this.state.color !== "default" ||

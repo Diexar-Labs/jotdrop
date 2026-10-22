@@ -37,7 +37,10 @@ export function colorLabel(name: ColorName): string {
 
 export interface NoteMeta {
   color: ColorName;
+  /** Frontmatter `tags`: the only tags JotDrop's editors read and write. */
   tags: string[];
+  /** `#hashtags` in the body as Obsidian indexes them; shown and filtered, never written to frontmatter. */
+  inlineTags: string[];
   labels: string[];
   pinned: boolean;
   /** ISO 8601 local datetime string ("YYYY-MM-DDTHH:mm") for a reminder, or null. */
@@ -57,6 +60,7 @@ export interface NoteMeta {
 export const DEFAULT_META: NoteMeta = {
   color: "default",
   tags: [],
+  inlineTags: [],
   labels: [],
   pinned: false,
   reminder: null,
@@ -109,10 +113,11 @@ export function readMeta(app: App, file: TFile): NoteMeta {
   } else if (typeof fm.tags === "string") {
     for (const t of fm.tags.split(/[\s,]+/)) pushTag(t);
   }
-  // Deliberately NO inline #hashtags included. Otherwise tags from shared
-  // social-media posts (#fyp, #trending) pollute the card chips and the
-  // vault-wide graph view. User tags come via the capture/edit chip UI
-  // and land neatly in frontmatter.
+  // Inline #hashtags count as tags, as in Obsidian. Shared and clipped text is
+  // escaped on save (`\#fyp`), which Obsidian's own parser does not index.
+  const frontmatterTagCount = tags.length;
+  for (const tag of cache?.tags ?? []) pushTag(tag.tag);
+  const inlineTags = tags.splice(frontmatterTagCount);
 
   const labels = readLabels(fm.jotdrop_labels);
 
@@ -159,7 +164,7 @@ export function readMeta(app: App, file: TFile): NoteMeta {
     order = fm.order;
   }
 
-  return { color, tags, labels, pinned, reminder, reminderRepeat, reminderUntil, reminderLimit, reminderDone, order };
+  return { color, tags, inlineTags, labels, pinned, reminder, reminderRepeat, reminderUntil, reminderLimit, reminderDone, order };
 }
 
 /**

@@ -12,7 +12,6 @@ import {
   COLOR_NAMES,
   ColorName,
   getAllVaultTags,
-  neutralizeInlineHashtags,
   readMeta,
   stripFrontmatter,
   updateMeta,
@@ -649,9 +648,9 @@ export class EditNoteModal extends Modal {
         const fmMatch = current.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
         const fm = fmMatch ? fmMatch[0] : "";
         // Re-attach the title as the leading `# heading`; empty title → none.
+        // Hashtags the user typed or that were already in the note are kept: they are deliberate Obsidian tags.
         const merged = joinHeadingTitle(this.state.title, this.state.body, this.titleLevel);
-        const safeBody = neutralizeInlineHashtags(merged);
-        const combined = combineBodyAndEmbeds(safeBody, this.state.embedLines);
+        const combined = combineBodyAndEmbeds(merged, this.state.embedLines);
         const newContent = `${fm}${combined.replace(/^\n+/, "")}`;
         await this.app.vault.modify(this.file, newContent);
       }

@@ -788,7 +788,7 @@ private fun NotesListScreen(
     // "Alles selecteren".
     val loadedNotes = (state as? NotesUiState.Loaded)?.notes.orEmpty()
     val tagsByFrequency = remember(loadedNotes) {
-        loadedNotes.flatMap { it.meta.tags }
+        loadedNotes.flatMap { it.meta.allTags }
             .groupingBy { it }.eachCount()
             .entries
             .sortedWith(
@@ -798,7 +798,7 @@ private fun NotesListScreen(
             .map { it.key }
     }
     val allTagsAlpha = remember(loadedNotes) {
-        loadedNotes.flatMap { it.meta.tags }
+        loadedNotes.flatMap { it.meta.allTags }
             .distinctBy { it.lowercase() }.sortedBy { it.lowercase() }
     }
     val allLabels = remember(loadedNotes, storedLabels) {
@@ -1824,10 +1824,10 @@ private fun applyFilters(
         val matchesQuery = q.isEmpty() ||
             note.title.lowercase().contains(q) ||
             note.snippet.lowercase().contains(q) ||
-            note.meta.tags.any { it.lowercase().contains(q) }
+            note.meta.allTags.any { it.lowercase().contains(q) }
         // OR-semantiek binnen tags: notitie matcht als 'ie minstens één van de gekozen tags heeft.
         // Sparse handmatige tags maken AND-mode (vrijwel) altijd leeg, daarom OR.
-        val matchesTags = LabelNames.matchesSelection(note.meta.tags, selectedTags)
+        val matchesTags = LabelNames.matchesSelection(note.meta.allTags, selectedTags)
         val matchesLabel = selectedLabel == null || note.meta.labels.any { it.equals(selectedLabel, true) }
         matchesQuery && matchesTags && matchesLabel
     }
@@ -2268,9 +2268,9 @@ private fun NoteCard(
                             onChipClick = if (selectionMode) ({ onClick() }) else onUrlClick,
                         )
                     }
-                    if (note.meta.tags.isNotEmpty()) {
+                    if (note.meta.allTags.isNotEmpty()) {
                         Spacer(Modifier.height(8.dp))
-                        TagChips(note.meta.tags, foreground = fg)
+                        TagChips(note.meta.allTags, foreground = fg)
                     }
                     Spacer(Modifier.height(8.dp))
                     Row(

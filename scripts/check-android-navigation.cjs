@@ -69,7 +69,7 @@ assert(storage.includes('saveLabels(context, getLabels(context) + label)'), 'Cre
 assert(list.includes('Storage.refreshLabels('), 'Discovery must use the coordinated registry operation');
 const restoreAction = list.slice(list.indexOf('val toRestore ='), list.indexOf('onDelete = { showBulkDeleteDialog'));
 assert(restoreAction.includes('ReminderScheduler.rescheduleAll(context)'), 'Restore must schedule Notes even while Archive or Trash is displayed');
-assert(list.includes('LabelNames.matchesSelection(note.meta.tags, selectedTags)'), 'Tag filtering must match label case-folding');
+assert(list.includes('LabelNames.matchesSelection(note.meta.allTags, selectedTags)'), 'Tag filtering must match label case-folding');
 const manifest = fs.readFileSync(path.join(root, 'AndroidManifest.xml'), 'utf8');
 assert(manifest.includes('android:foregroundServiceType="microphone"'));
 assert(manifest.includes('android.permission.FOREGROUND_SERVICE_MICROPHONE'));
