@@ -8,6 +8,8 @@ import { ClipServer } from "./clipServer";
 import { CloudController } from "./cloud";
 import { fetchOg, safeMarkdownLink } from "./ogfetch";
 import { legacyAssetsPath } from "./attachments";
+import { ConfirmModal } from "./confirmModal";
+import { ImportFiles, KeepNote, keepNoteFileName, keepNoteMarkdown, parseKeepExport, readZip } from "./keepImport";
 import {
   ColorName,
   isColorName,
@@ -108,6 +110,12 @@ export default class JotDropPlugin extends Plugin {
       id: "neutralize-inline-hashtags",
       name: t("cmd_neutralize_hashtags"),
       callback: () => { void this.neutralizeExistingHashtags(); },
+    });
+
+    this.addCommand({
+      id: "import-google-keep",
+      name: t("cmd_import_keep"),
+      callback: () => this.importFromKeep(),
     });
 
   }
@@ -303,6 +311,116 @@ export default class JotDropPlugin extends Plugin {
       new Notice(t("notice_neutralized", String(changed)));
       this.refreshViews();
     }
+  }
+
+  /**
+   * Imports a Google Takeout export (zip parts, or loose Keep JSON plus its
+   * attachments) as JotDrop notes. Existing files are never overwritten: an
+   * identical note is skipped, a different one gets a numbered name.
+   */
+  importFromKeep(): void {
+    // Attached to the page so mobile webviews also open the picker.
+    const input = document.body.createEl("input", { type: "file", attr: { multiple: "", hidden: "" } });
+    input.addEventListener("cancel", () => input.remove());
+    input.addEventListener("change", () => {
+      const picked = Array.from(input.files ?? []);
+      input.remove();
+      void this.importKeepFiles(picked).catch((err) => {
+        console.error("JotDrop: Keep import failed", err);
+        new Notice(t("keep_import_failed", err instanceof Error ? err.message : String(err)));
+      });
+    });
+    input.click();
+  }
+
+  private async importKeepFiles(picked: File[]): Promise<void> {
+    if (picked.length === 0) return;
+    const files: ImportFiles = new Map();
+    for (const file of picked) {
+      if (/\.zip$/i.test(file.name)) for (const [path, load] of await readZip(file)) files.set(path, load);
+      else files.set(file.name, async () => new Uint8Array(await file.arrayBuffer()));
+    }
+    const { notes, trashed, failed, error } = await parseKeepExport(files);
+    if (notes.length === 0) {
+      new Notice(error ? t("keep_import_failed", error) : t("keep_import_none"));
+      return;
+    }
+    const archived = notes.filter((note) => note.archived).length;
+    const attachments = new Set(notes.flatMap((note) => note.attachments)).size;
+    const missing = notes.reduce((sum, note) => sum + note.missingAttachments, 0);
+    new ConfirmModal(this.app, {
+      title: t("keep_import_title"),
+      message: t("keep_import_confirm", String(notes.length), String(archived), String(attachments), String(trashed), this.settings.notesFolder) +
+        (missing ? ` ${t("keep_import_missing", String(missing))}` : ""),
+      confirmLabel: t("keep_import_action"),
+    }, () => {
+      void this.writeKeepNotes(notes, files, failed.length).catch((err) => {
+        console.error("JotDrop: Keep import failed", err);
+        new Notice(t("keep_import_failed", err instanceof Error ? err.message : String(err)));
+      });
+    }).open();
+  }
+
+  private async writeKeepNotes(notes: KeepNote[], files: ImportFiles, unreadable: number): Promise<void> {
+    const adapter = this.app.vault.adapter;
+    const ensureFolder = async (folder: string) => {
+      if (!(await adapter.exists(folder))) await adapter.mkdir(folder);
+    };
+    // An attachment with the same name and bytes is reused; otherwise the next free numbered name.
+    const freeAttachmentPath = async (folder: string, name: string, bytes: Uint8Array) => {
+      const dot = name.lastIndexOf(".") > 0 ? name.lastIndexOf(".") : name.length;
+      for (let n = 1; ; n++) {
+        const path = normalizePath(`${folder}/${n === 1 ? name : `${name.slice(0, dot)} ${n}${name.slice(dot)}`}`);
+        if (!(await adapter.exists(path))) return { path, exists: false };
+        const current = new Uint8Array(await adapter.readBinary(path));
+        if (current.length === bytes.length && current.every((byte, i) => byte === bytes[i])) return { path, exists: true };
+      }
+    };
+    const assets = this.resolveAssetsFolder();
+    const attachmentNames = new Map<string, string>();
+    const brokenAttachments = new Set<string>();
+    const progress = new Notice(t("keep_import_progress", "0", String(notes.length)), 0);
+    let imported = 0, existing = 0, failed = unreadable;
+    for (const [index, note] of notes.entries()) {
+      try {
+        const times = { ctime: note.createdMs, mtime: note.editedMs };
+        // Stamp and title identify the Keep note, so a note that was edited, archived or
+        // unarchived after an earlier import is still recognized.
+        const name = keepNoteFileName(note);
+        const folders = [this.settings.notesFolder, this.settings.archiveFolder].map((folder) => normalizePath(folder));
+        if ((await Promise.all(folders.map((folder) => adapter.exists(normalizePath(`${folder}/${name}`))))).some(Boolean)) {
+          existing += 1;
+          continue;
+        }
+        for (const source of note.attachments) {
+          if (attachmentNames.has(source) || brokenAttachments.has(source)) continue;
+          try {
+            const bytes = await files.get(source)!();
+            await ensureFolder(assets);
+            // `[ ] | # ^` would break the ![[…]] embed.
+            const target = await freeAttachmentPath(assets, source.slice(source.lastIndexOf("/") + 1).replace(/[[\]|#^]/g, "_"), bytes);
+            if (!target.exists) await adapter.writeBinary(target.path, bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, times);
+            attachmentNames.set(source, target.path.slice(target.path.lastIndexOf("/") + 1));
+          } catch (err) {
+            console.error("JotDrop: could not import attachment", source, err);
+            brokenAttachments.add(source);
+          }
+        }
+        const content = keepNoteMarkdown({ ...note, attachments: note.attachments.filter((source) => attachmentNames.has(source)) }, (source) => attachmentNames.get(source)!);
+        const folder = folders[note.archived ? 1 : 0];
+        await ensureFolder(folder);
+        await this.app.vault.create(normalizePath(`${folder}/${name}`), content, times);
+        imported += 1;
+      } catch (err) {
+        console.error("JotDrop: could not import", note.source, err);
+        failed += 1;
+      }
+      if (index % 25 === 24) progress.setMessage(t("keep_import_progress", String(index + 1), String(notes.length)));
+    }
+    progress.hide();
+    new Notice(t("keep_import_done", String(imported), String(existing), String(failed)) +
+      (brokenAttachments.size ? ` ${t("keep_import_missing_done", String(brokenAttachments.size))}` : ""), 0);
+    this.refreshViews();
   }
 
   refreshViews(): void {
