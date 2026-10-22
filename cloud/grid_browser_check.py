@@ -40,8 +40,15 @@ def check_grid(browser, url, token):
         pinned = cards.filter(has_text="Pinned one")
         assert pinned.locator("h3").inner_text() == "Pinned one"
 
-        box = lambda title: cards.filter(has_text=title).bounding_box()
-        tall, b, c, d = box("Tall A"), box("Short B"), box("Short C"), box("Short D")
+        # A re-render briefly resets row spans until the ResizeObserver runs (before paint),
+        # so measure all cards in one go once every span matches its height.
+        settled = """() => {
+          const children = [...document.getElementById('items').children];
+          if (!children.every(el => el.style.gridRowEnd === `span ${Math.ceil((el.getBoundingClientRect().height + 16) / 8)}`)) return false;
+          return Object.fromEntries(children.filter(el => el.matches('.note-card')).map(el => [el.querySelector('h3').textContent, el.getBoundingClientRect().toJSON()]));
+        }"""
+        layout = page.wait_for_function(settled).json_value()
+        tall, b, c, d = layout["Tall A"], layout["Short B"], layout["Short C"], layout["Short D"]
         # The first row of others still reads left to right.
         assert abs(tall["y"] - b["y"]) < 1 and abs(b["y"] - c["y"]) < 1, (tall, b, c)
         assert tall["x"] < b["x"] < c["x"], (tall, b, c)
@@ -79,8 +86,8 @@ def check_grid(browser, url, token):
         page.locator("#close-editor").click()
 
         page.set_viewport_size({"width": 390, "height": 844})
-        page.wait_for_timeout(300)
-        boxes = sorted((cards.nth(index).bounding_box() for index in range(cards.count())), key=lambda item: item["y"])
+        page.wait_for_function("() => innerWidth === 390")
+        boxes = sorted(page.wait_for_function(settled).json_value().values(), key=lambda item: item["y"])
         assert len({round(item["x"]) for item in boxes}) == 1, boxes
         assert all(upper["y"] + upper["height"] <= lower["y"] for upper, lower in zip(boxes, boxes[1:])), boxes
         assert not page.evaluate("document.documentElement.scrollWidth > innerWidth")
