@@ -103,7 +103,7 @@ def check_transfer(browser, url, token):
         assert page.evaluate("window.transferCheck.requests.filter(r => r.method === 'PUT').length") == 0
         page.locator('[data-view="files"]').click()
         card = page.locator(".note-card").filter(has_text="synthetic-resume.bin")
-        card.filter(has_text="Cloud version 1").wait_for()
+        page.locator('.note-card[data-revision="1"]').filter(has_text="synthetic-resume.bin").wait_for()
         with page.expect_download() as download:
             card.get_by_role("button", name="Download", exact=True).click()
         assert Path(download.value.path()).read_bytes() == data
@@ -146,7 +146,7 @@ def check_transfer(browser, url, token):
         page.locator("#sync-status").filter(has_text="Cloud unavailable").wait_for()
         assert draft()[0]["prepared"] == paused
         context.unroute("**/api/v1/status", unavailable)
-        edited = page.locator(".note-card").filter(has_text="edited-during-pause.md")
+        edited = page.locator('.note-card[data-path="notes/edited-during-pause.md"]')
         edited.get_by_role("button", name="Open note", exact=True).click()
         page.locator("#note-content").fill("# Newer local edit\n\nThe latest local content must also be kept.")
         page.evaluate("window.transferCheck.hold = false")
@@ -154,7 +154,7 @@ def check_transfer(browser, url, token):
         page.locator("#sync-status").filter(has_text="1 encrypted change(s) waiting").wait_for()
         page.locator("#sync").click()
         page.locator("#sync-status").filter(has_text="Cloud copy up to date").wait_for()
-        edited.filter(has_text="Cloud version 2").filter(has_text="latest local content").wait_for()
+        page.locator('.note-card[data-path="notes/edited-during-pause.md"][data-revision="2"]').filter(has_text="latest local content").wait_for()
         assert draft() == []
         assert page.evaluate("window.transferCheck.status.transport.reservedBytes") == 0
         # Delay real cache encryption after commit, then durably save a newer draft.
@@ -177,7 +177,7 @@ def check_transfer(browser, url, token):
         page.locator('#editor-form button[type="submit"]').click()
         page.wait_for_function("() => window.ackGate.held")
         acknowledged = draft()[0]
-        ack_card = page.locator(".note-card").filter(has_text="edited-during-ack.md")
+        ack_card = page.locator('.note-card[data-path="notes/edited-during-ack.md"]')
         ack_card.get_by_role("button", name="Open note", exact=True).click()
         page.locator("#note-content").fill(newer)
         page.locator('#editor-form button[type="submit"]').click()
@@ -193,7 +193,7 @@ def check_transfer(browser, url, token):
         page.reload(wait_until="networkidle")
         unlock()
         page.locator("#sync-status").filter(has_text="Cloud copy up to date").wait_for()
-        ack_card.filter(has_text="Cloud version 2").filter(has_text="Keep this exact local content.").wait_for()
+        page.locator('.note-card[data-path="notes/edited-during-ack.md"][data-revision="2"]').filter(has_text="Keep this exact local content.").wait_for()
         versions = page.evaluate("""async ({ password, id }) => {
           const { CloudClient } = await import('/shared/client.mjs');
           const { unsealLocal, base64ToBytes } = await import('/shared/crypto.mjs');

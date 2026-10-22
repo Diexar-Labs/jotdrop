@@ -42,14 +42,14 @@ def check_parity(browser, url, token):
         page.locator("#note-repeat").press("Tab")
         page.locator('#editor-form button[type="submit"]').click()
         card = page.locator(".note-card").filter(has_text="Parity note")
-        card.filter(has_text="Cloud version 1").wait_for()
+        page.locator('.note-card[data-revision="1"]').filter(has_text="Parity note").wait_for()
         assert card.locator(".task-row input").count() == 1
         assert "note-teal" in card.get_attribute("class")
-        assert "Pinned:" in card.locator("h2").inner_text()
+        assert page.locator("#items > h2").all_text_contents() == ["Pinned"]
         assert "2028-10-16T14:30 (daily)" in card.inner_text()
         assert card.locator("img").count() == 1
         card.locator(".task-row input").check()
-        card.filter(has_text="Cloud version 2").wait_for()
+        page.locator('.note-card[data-revision="2"]').filter(has_text="Parity note").wait_for()
         page.locator("#label-filter").select_option("work: notes")
         page.locator("#search").fill("Real task")
         assert page.locator(".note-card").count() == 1

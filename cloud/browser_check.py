@@ -183,7 +183,7 @@ def check_browser(browser, url, enrollment_token):
         first_context.set_offline(False)
         first.locator("#sync").click()
         first.locator("#sync-status").filter(has_text="Cloud copy up to date").wait_for()
-        first.locator(".note-card").filter(has_text="Offline draft").filter(has_text="Cloud version 1").wait_for()
+        first.locator('.note-card[data-revision="1"]').filter(has_text="Offline draft").wait_for()
         first.set_viewport_size({"width": 390, "height": 844})
         assert not first.evaluate("document.documentElement.scrollWidth > innerWidth")
         first.locator("#lock").click()

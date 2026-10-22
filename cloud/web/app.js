@@ -137,9 +137,16 @@ function appendMedia(card, entry, alt = '') {
   card.append(media);
 }
 
+// Masonry like Keep: each grid child spans as many 8px rows as its height needs, so
+// short cards pack under each other while the DOM (and reading) order stays row-wise.
+const gridSpans = new ResizeObserver((entries) => {
+  for (const { target } of entries) target.style.gridRowEnd = `span ${Math.ceil((target.getBoundingClientRect().height + 16) / 8)}`;
+});
+
 function render() {
   for (const url of mediaUrls) URL.revokeObjectURL(url);
   mediaUrls.clear();
+  gridSpans.disconnect();
   $('items').replaceChildren();
   $('items').hidden = view === 'devices';
   $('devices-panel').hidden = view !== 'devices';
@@ -186,26 +193,42 @@ function render() {
     empty.append(heading, paragraph(query ? 'Try a different word or filename.' : view === 'notes' ? 'Create a note or upload a Markdown file. Existing notes on your computer are never imported automatically.' : view === 'files' ? 'Upload an image, recording, or document. This local preview accepts files up to 4 MiB each.' : 'Files you move to trash will appear here.'));
     $('items').append(empty);
   }
+  const sections = view === 'notes' && matching.some((entry) => isMarkdown(entry.file.path) && noteParts(noteText(entry.file), entry.file.path).pinned);
+  let section;
   for (const entry of matching) {
     const card = document.createElement('article');
     card.className = `note-card${entry.pending ? ' is-pending' : ''}`;
-    const title = document.createElement('h2');
+    const title = document.createElement('h3');
     const markdown = isMarkdown(entry.file.path);
     const parts = markdown ? noteParts(noteText(entry.file), entry.file.path) : { title: entry.file.path.split('/').pop() };
     if (markdown) card.classList.add(`note-${parts.color}`);
-    title.textContent = `${parts.pinned ? 'Pinned: ' : ''}${parts.title}`;
+    if (sections && section !== Boolean(parts.pinned)) {
+      section = Boolean(parts.pinned);
+      const heading = document.createElement('h2');
+      heading.className = 'grid-section';
+      heading.textContent = section ? 'Pinned' : 'Others';
+      $('items').append(heading);
+    }
+    title.textContent = parts.title;
     card.append(title);
     if (markdown) {
-      card.append(paragraph(parts.preview.slice(0, 600), 'note-preview'));
       const fullText = noteText(entry.file);
       const bodyOffset = fullText.slice(0, fullText.length - parts.body.length).split('\n').length - 1;
-      let fence;
-      if (!entry.deleted) parts.body.split('\n').forEach((line, bodyIndex) => {
+      // Show the body in its own order: text as text, checklist lines only as checkboxes.
+      const titleLine = /^\s*#\s+/.test(parts.body) ? parts.body.split('\n').findIndex((line) => line.trim()) : -1;
+      let text = [], budget = 600, fence;
+      const flush = () => {
+        const value = text.join('\n').trim().slice(0, budget);
+        if (value) { card.append(paragraph(value, 'note-preview')); budget -= value.length; }
+        text = [];
+      };
+      parts.body.split('\n').forEach((line, bodyIndex) => {
+        if (bodyIndex === titleLine) return;
         const marker = /^\s{0,3}(`{3,}|~{3,})/.exec(line)?.[1];
-        if (marker) { if (!fence) fence = marker; else if (marker[0] === fence[0] && marker.length >= fence.length) fence = undefined; return; }
-        if (fence) return;
-        const task = /^\s*[-*+] \[([ xX])\] (.*)\r?$/.exec(line);
-        if (!task) return;
+        if (marker) { if (!fence) fence = marker; else if (marker[0] === fence[0] && marker.length >= fence.length) fence = undefined; }
+        const task = !marker && !fence && !entry.deleted && /^\s*[-*+] \[([ xX])\] (.*)\r?$/.exec(line);
+        if (!task) { if (budget > 0) text.push(line.replace(/\r$/, '')); return; }
+        flush();
         const row = document.createElement('label'); row.className = 'task-row';
         const input = document.createElement('input'); input.type = 'checkbox'; input.checked = task[1] !== ' ';
         input.disabled = entry.conflict || $('editor').open;
@@ -216,6 +239,11 @@ function render() {
         });
         row.append(input, document.createTextNode(task[2])); card.append(row);
       });
+      flush();
+      if (!entry.deleted) {
+        card.classList.add('opens');
+        card.addEventListener('click', (event) => { if (!event.target.closest('button, input, label, audio')) openEditor(entry); });
+      }
       if (parts.reminder) card.append(paragraph(`Reminder: ${parts.reminder}${parts.repeat ? ` (${parts.repeat})` : ''}. Scheduled by Android after sync.`, 'note-meta'));
       const available = [...files.values()].filter((item) => !item.deleted && !isMarkdown(item.file.path));
       const targets = [...parts.body.matchAll(/!\[\[([^\]]+)\]\]|!?\[[^\]]*\]\(([^)]+)\)/g)];
@@ -226,20 +254,27 @@ function render() {
         if (attachment && !shown.has(path)) { appendMedia(card, attachment); shown.add(path); }
       }
     } else appendMedia(card, entry);
-    card.append(paragraph(entry.pending ? 'Encrypted draft on this browser. Waiting for cloud.' : `Cloud version ${entry.revision}`, 'note-meta'));
+    if (entry.pending) card.append(paragraph('Encrypted draft on this browser. Waiting for cloud.', 'note-meta'));
     if (entry.conflict) card.append(paragraph('Another device saved a different version. Review both before choosing.', 'message'));
-    card.append(paragraph(entry.file.path, 'note-meta'));
     if (markdown) for (const label of parts.labels) card.append(button(label, () => { $('label-filter').value = label.toLowerCase(); render(); }, 'label-chip'));
-    if (entry.deleted) card.append(button('Restore', () => restoreEntry(entry)));
-    else {
-      if (markdown) card.append(button('Open note', () => openEditor(entry)));
-      if (markdown) card.append(button(view === 'trash' ? 'Restore note' : view === 'archive' ? 'Unarchive' : 'Archive', () => moveArchive(entry), 'archive-note'));
-      card.append(button('Download', () => download(base64ToBytes(entry.file.content), entry.file.path)));
-      if (!markdown) card.append(button('Move to trash', () => deleteEntry(entry), 'danger'));
-    }
     if (entry.conflict) card.append(button('Review cloud version', () => reviewConflict(entry)));
+    // Like Keep and the plugin: actions and file details show on hover or focus (always on touch).
+    const actions = document.createElement('div');
+    actions.className = 'card-actions';
+    if (entry.deleted) actions.append(button('Restore', () => restoreEntry(entry)));
+    else {
+      if (markdown) actions.append(button('Open note', () => openEditor(entry)));
+      if (markdown) actions.append(button(view === 'trash' ? 'Restore note' : view === 'archive' ? 'Unarchive' : 'Archive', () => moveArchive(entry), 'archive-note'));
+      actions.append(button('Download', () => download(base64ToBytes(entry.file.content), entry.file.path)));
+      if (!markdown) actions.append(button('Move to trash', () => deleteEntry(entry), 'danger'));
+    }
+    card.append(actions);
+    // Path and confirmed revision stay out of sight: the editor shows the filename and version history.
+    card.dataset.path = entry.file.path;
+    if (!entry.pending) card.dataset.revision = entry.revision;
     $('items').append(card);
   }
+  for (const child of $('items').children) gridSpans.observe(child);
 }
 
 async function cacheEntry(entry) {

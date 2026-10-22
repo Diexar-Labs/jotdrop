@@ -32,6 +32,7 @@
     "check:cloud-browser": "python cloud/browser_check.py",
     "check:cloud-photo": "python cloud/photo_browser_check.py",
     "check:cloud-parity": "python cloud/parity_browser_check.py",
+    "check:cloud-grid": "python cloud/grid_browser_check.py",
     "check:cloud-android": "node scripts/check-cloud-android.mjs",
     "check:cloud-account-android": "node scripts/check-cloud-account-android.mjs",
     "cloud:dev": "npm run verify:base && node cloud/server.mjs",
