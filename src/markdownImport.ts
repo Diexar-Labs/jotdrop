@@ -87,7 +87,7 @@ export function markdownNoteFileName(note: MarkdownNote): string {
 
 /** The note text with links to imported files turned into embeds; `names` maps export paths to vault file names. */
 export function markdownNoteMarkdown(note: MarkdownNote, names: Map<string, string>): string {
-  const files: ImportFiles = new Map(note.attachments.map((path) => [path, async () => new Uint8Array()]));
+  const files: ImportFiles = new Map(note.attachments.map((path) => [path, () => Promise.resolve(new Uint8Array())]));
   const byName = new Map(note.attachments.map((path) => [basename(path), path]));
   return note.text.replace(LINK, (link: string, bang: string, label: string, target: string) => {
     const found = resolveTarget(files, byName, note.source, target);

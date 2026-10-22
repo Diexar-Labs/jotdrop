@@ -11,6 +11,7 @@ import { legacyAssetsPath } from "./attachments";
 import { ConfirmModal } from "./confirmModal";
 import { ImportFiles, keepNoteFileName, keepNoteMarkdown, parseKeepExport, readZip } from "./keepImport";
 import { markdownNoteFileName, markdownNoteMarkdown, parseMarkdownExport } from "./markdownImport";
+import { evernoteNoteFileName, evernoteNoteMarkdown, parseEnexExport } from "./evernoteImport";
 
 /** One note ready to write; `render` gets the vault names of the attachments that were written. */
 interface ImportItem {
@@ -134,6 +135,12 @@ export default class JotDropPlugin extends Plugin {
       id: "import-markdown",
       name: t("cmd_import_markdown"),
       callback: () => this.importMarkdown(),
+    });
+
+    this.addCommand({
+      id: "import-evernote",
+      name: t("cmd_import_evernote"),
+      callback: () => this.importFromEvernote(),
     });
 
   }
@@ -347,6 +354,11 @@ export default class JotDropPlugin extends Plugin {
     this.pickImportFiles(folder, (picked) => this.importMarkdownFiles(picked));
   }
 
+  /** Imports Evernote notebooks exported as .enex files (loose or in a zip). */
+  importFromEvernote(): void {
+    this.pickImportFiles(false, (picked) => this.importEvernoteFiles(picked));
+  }
+
   private pickImportFiles(folder: boolean, handle: (picked: File[]) => Promise<void>): void {
     // Attached to the page so mobile webviews also open the picker.
     const input = document.body.createEl("input", { type: "file", attr: { multiple: "", hidden: "" } });
@@ -422,6 +434,30 @@ export default class JotDropPlugin extends Plugin {
       missing, items, files, failed.length);
   }
 
+  private async importEvernoteFiles(picked: File[]): Promise<void> {
+    if (picked.length === 0) return;
+    const files = await this.readImportFiles(picked);
+    const { notes, notebooks, failed, error } = await parseEnexExport(files);
+    if (notes.length === 0) {
+      new Notice(error ? t("import_failed", error) : t("evernote_import_none"));
+      return;
+    }
+    const attachments = notes.reduce((sum, note) => sum + note.attachments.length, 0);
+    const missing = notes.reduce((sum, note) => sum + note.missingAttachments, 0);
+    const items: ImportItem[] = notes.map((note) => ({
+      source: note.source,
+      name: evernoteNoteFileName(note),
+      archived: false,
+      createdMs: note.createdMs,
+      editedMs: note.editedMs,
+      attachments: note.attachments,
+      render: (names) => evernoteNoteMarkdown(note, names),
+    }));
+    this.confirmImport(t("evernote_import_title"),
+      t("evernote_import_confirm", String(notes.length), String(notebooks), String(attachments), this.settings.notesFolder),
+      missing, items, files, failed.length);
+  }
+
   private confirmImport(title: string, message: string, missing: number, items: ImportItem[], files: ImportFiles, unreadable: number): void {
     new ConfirmModal(this.app, {
       title,
@@ -459,12 +495,20 @@ export default class JotDropPlugin extends Plugin {
     const folders = [this.settings.notesFolder, this.settings.archiveFolder].map((folder) => normalizePath(folder));
     const attachmentNames = new Map<string, string>();
     const brokenAttachments = new Set<string>();
+    const exists = async (name: string) =>
+      (await Promise.all(folders.map((folder) => adapter.exists(normalizePath(`${folder}/${name}`))))).some(Boolean);
+    const written = new Set<string>();
     const progress = new Notice(t("import_progress", "0", String(items.length)), 0);
     let imported = 0, existing = 0, failed = unreadable;
     for (const [index, item] of items.entries()) {
       try {
         const times = { ctime: item.createdMs, mtime: item.editedMs };
-        if ((await Promise.all(folders.map((folder) => adapter.exists(normalizePath(`${folder}/${item.name}`))))).some(Boolean)) {
+        let name = item.name;
+        if (written.has(name)) {
+          // Two notes with the same stamp and title in one export: the next gets a number.
+          const stem = name.replace(/\.md$/, "");
+          for (let n = 2; written.has(name) || (await exists(name)); n++) name = `${stem} ${n}.md`;
+        } else if (await exists(name)) {
           existing += 1;
           continue;
         }
@@ -484,7 +528,8 @@ export default class JotDropPlugin extends Plugin {
         }
         const folder = folders[item.archived ? 1 : 0];
         await ensureFolder(folder);
-        await this.app.vault.create(normalizePath(`${folder}/${item.name}`), item.render(attachmentNames), times);
+        await this.app.vault.create(normalizePath(`${folder}/${name}`), item.render(attachmentNames), times);
+        written.add(item.name).add(name);
         imported += 1;
       } catch (err) {
         console.error("JotDrop: could not import", item.source, err);

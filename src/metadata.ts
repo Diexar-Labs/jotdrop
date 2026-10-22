@@ -346,25 +346,20 @@ export function stripFrontmatter(content: string): string {
  * them as tags. `#fyp` → `\#fyp`. In reading view it still renders as `#fyp`,
  * but graph view and tag pane stay clean.
  *
- * Operates outside code fences and inline code. Skips heading markers (`# Title`),
- * wiki-link anchors (`[[Note#Heading]]`) and URL anchors (`example.com#x`)
- * via lookbehind on `[\\\w/]`. Running it non-idempotently is safe: already-escaped
- * `\#` does not match again.
+ * Operates outside code fences (of any length), inline code, wiki links, link
+ * targets and bare URLs. Like Obsidian, a tag may hold any letter and must not be
+ * only digits (`#16` stays). Skips heading markers (`# Title`) and anchors after a
+ * word (`example.com#x`). Running it twice is safe: `\#` does not match again.
  */
 export function neutralizeInlineHashtags(text: string): string {
-  const fenceParts = text.split(/(```[\s\S]*?```|~~~[\s\S]*?~~~)/g);
-  return fenceParts
-    .map((part, i) => {
-      if (i % 2 === 1) return part;
-      return part
-        .split(/(`[^`\n]+`)/g)
-        .map((seg, j) => {
-          if (j % 2 === 1) return seg;
-          return seg.replace(/(?<![\\\w/])#([A-Za-z_/][\w/-]*)/g, "\\#$1");
-        })
-        .join("");
-    })
-    .join("");
+  const skipped = /(`{3,}|~{3,})[\s\S]*?\1|`[^`\n]+`|\[\[[^\]\n]*\]\]|\]\([^)\n]*\)|https?:\/\/[^\s<>]+/g;
+  const hashtag = /(?<![\\\p{L}\p{N}\p{M}_/])#(?=\p{N}*[\p{L}\p{M}_/\p{Extended_Pictographic}-])/gu;
+  let out = "", at = 0;
+  for (const match of text.matchAll(skipped)) {
+    out += text.slice(at, match.index).replace(hashtag, "\\#") + match[0];
+    at = match.index + match[0].length;
+  }
+  return out + text.slice(at).replace(hashtag, "\\#");
 }
 
 /**

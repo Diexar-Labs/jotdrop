@@ -213,7 +213,7 @@ export function keepNoteMarkdown(note: KeepNote, attachmentName: (source: string
     note.color !== "default" ? `color: ${note.color}` : "",
     note.pinned ? "pinned: true" : "",
     note.labels.length ? `jotdrop_labels: ${JSON.stringify(note.labels)}` : "",
-  ].filter(Boolean);
+  ];
   // Keep has labels, not tags: typed hashtags stay text, as with shared content.
   const blocks = [
     note.title ? `# ${neutralizeInlineHashtags(note.title)}` : "",
@@ -222,7 +222,12 @@ export function keepNoteMarkdown(note: KeepNote, attachmentName: (source: string
     note.attachments.map((source) => `![[${attachmentName(source)}]]`).join("\n\n"),
     note.links.map((link) => safeMarkdownLink(link.title || link.url, link.url)).join("\n"),
   ].filter(Boolean);
-  const body = blocks.join("\n\n") + "\n";
+  return withFrontmatter(frontmatter, blocks.join("\n\n") + "\n");
+}
+
+/** The body with the non-empty frontmatter lines on top. */
+export function withFrontmatter(lines: string[], body: string): string {
+  const frontmatter = lines.filter(Boolean);
   if (frontmatter.length) return `---\n${frontmatter.join("\n")}\n---\n${body}`;
   // Text that starts with a `---` line would otherwise be read as frontmatter.
   return /^---[ \t]*(\n|$)/.test(body) ? `\n${body}` : body;

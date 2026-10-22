@@ -26,6 +26,13 @@ const source = (file) => fs.readFileSync(path.join(ROOT, file), "utf8");
 
   // Shared and clipped text is still neutralized.
   assert.equal(neutralizeBodyHashtags("Trending #fyp"), "Trending \\#fyp");
+  // Tags as Obsidian reads them: any letter, digits only with a letter; not in code, links or URLs.
+  assert.equal(neutralizeBodyHashtags("#\u00e9migr\u00e9 #2024plan #ok issue #16 (#x) a#b \\#done"), "\\#\u00e9migr\u00e9 \\#2024plan \\#ok issue #16 (\\#x) a#b \\#done");
+  assert.equal(neutralizeBodyHashtags("# Title\n## Sub"), "# Title\n## Sub");
+  assert.equal(neutralizeBodyHashtags("https://x.com/a?b=#frag [s](#heading) [[Note#Part]] [[#Part]] `#c`"), "https://x.com/a?b=#frag [s](#heading) [[Note#Part]] [[#Part]] `#c`");
+  assert.equal(neutralizeBodyHashtags("````\n```\n#in\n```\n````\n#out"), "````\n```\n#in\n```\n````\n\\#out");
+  assert.equal(neutralizeBodyHashtags("~~~\n#in\n~~~ #out"), "~~~\n#in\n~~~ \\#out");
+  assert.equal(neutralizeBodyHashtags("---\ntags: [x]\n---\n#a"), "---\ntags: [x]\n---\n\\#a");
 
   // Editors never neutralize; capture only for a bare link replaced by its page preview.
   assert.doesNotMatch(source("src/edit.ts"), /neutraliz/i);
