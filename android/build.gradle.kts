@@ -81,3 +81,30 @@ tasks.register<JavaExec>("checkInlineTags") {
     classpath(provider { project(":app").configurations.getByName("debugCompileClasspath") })
     mainClass.set("com.diexar.keepcapture.InlineTagsCheckKt")
 }
+
+val cloudAccountClasses = layout.buildDirectory.dir("cloud-account-check")
+val cloudAccountSources = files("app/src/main/kotlin/com/diexar/keepcapture/CloudCrypto.kt",
+    "app/src/main/kotlin/com/diexar/keepcapture/CloudAccountCrypto.kt", "app/src/main/kotlin/com/diexar/keepcapture/CloudWords.kt",
+    "../cloud/android/CloudAccountCryptoCheck.kt")
+val cloudAccountCompile = tasks.register<JavaExec>("cloudAccountCompile") {
+    inputs.files(cloudAccountSources)
+    outputs.dir(cloudAccountClasses)
+    classpath(buildscript.configurations.getByName("classpath"))
+    mainClass.set("org.jetbrains.kotlin.cli.jvm.K2JVMCompiler")
+    doFirst {
+        args("-Xdisable-default-scripting-plugin", "-no-stdlib", "-no-reflect", "-jvm-target", "17", "-classpath",
+            project(":app").configurations.getByName("debugCompileClasspath").asPath,
+            "-d", cloudAccountClasses.get().asFile.absolutePath)
+        args(cloudAccountSources.files.map { it.absolutePath })
+    }
+}
+
+tasks.register<JavaExec>("checkCloudAccount") {
+    dependsOn(cloudAccountCompile)
+    classpath(cloudAccountClasses)
+    classpath(provider { project(":app").configurations.getByName("debugCompileClasspath") })
+    mainClass.set("com.diexar.keepcapture.CloudAccountCryptoCheckKt")
+    doFirst {
+        args(requireNotNull(System.getenv("JOTDROP_ACCOUNT_INPUT")), requireNotNull(System.getenv("JOTDROP_ACCOUNT_OUTPUT")))
+    }
+}

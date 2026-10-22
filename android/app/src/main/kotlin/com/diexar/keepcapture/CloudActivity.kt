@@ -9,6 +9,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -17,6 +18,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.diexar.keepcapture.ui.JotDropTheme
@@ -62,7 +65,7 @@ private fun CloudScreen(onBack: () -> Unit, onSettings: () -> Unit) {
     suspend fun refresh() {
         status = withContext(Dispatchers.IO) { CloudSyncManager.status(context) }
     }
-    fun run(action: suspend () -> Unit) {
+    fun run(account: Boolean = false, action: suspend () -> Unit) {
         if (busy) return
         busy = true
         error = null
@@ -70,12 +73,19 @@ private fun CloudScreen(onBack: () -> Unit, onSettings: () -> Unit) {
             try { action(); refresh() }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) {
-                error = if (failure is CloudSyncException) failure.message else if (failure is CloudRequestException) failure.message
-                    else "This action could not complete. Check the HTTPS connection and local vault settings; local notes were kept."
+                error = when {
+                    failure is CloudSyncException -> failure.message
+                    // Account screens show the server's own text ("Invalid email or password") and their own input checks.
+                    account && failure is CloudRequestException -> failure.serverMessage ?: failure.message
+                    account && (failure is IllegalArgumentException || failure is IllegalStateException) && failure.message != null -> failure.message
+                    failure is CloudRequestException -> failure.message
+                    else -> "This action could not complete. Check the HTTPS connection and local vault settings; local notes were kept."
+                }
                 runCatching { refresh() }
             } finally { busy = false }
         }
     }
+    fun accountRun(action: suspend () -> Unit) = run(true, action)
     suspend fun cloud(): CloudClient = withContext(Dispatchers.IO) { CloudSyncManager.client(context) ?: throw CloudSyncException("Pair this device first") }
     fun loadFiles() = run { val client = cloud(); files = withContext(Dispatchers.IO) {
         val coroutine = currentCoroutineContext()
@@ -87,11 +97,14 @@ private fun CloudScreen(onBack: () -> Unit, onSettings: () -> Unit) {
     }
     LaunchedEffect(Unit) { try { refresh() } catch (_: Exception) { error = "Encrypted cloud settings could not be opened. Do not clear app data; your local notes remain in the vault." } }
     LaunchedEffect(Unit) { CloudSyncManager.changes.collect { runCatching { refresh() } } }
+    val list = rememberLazyListState()
+    // Errors show at the top; a form further down would otherwise seem to do nothing.
+    LaunchedEffect(error) { if (error != null) list.animateScrollToItem(0) }
 
     Scaffold(topBar = {
         TopAppBar(title = { Text("JotDrop Cloud") }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back") } })
     }) { padding ->
-        LazyColumn(Modifier.fillMaxSize().padding(padding).imePadding(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        LazyColumn(Modifier.fillMaxSize().padding(padding).imePadding(), state = list, contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item {
                 Text("Your notes, across devices", style = MaterialTheme.typography.headlineSmall)
                 Text("Encrypted cloud sync is optional. Your Markdown files remain local and usable offline.", style = MaterialTheme.typography.bodyMedium)
@@ -107,14 +120,16 @@ private fun CloudScreen(onBack: () -> Unit, onSettings: () -> Unit) {
             }
             error?.let { message -> item { Text(message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) } }
             if (status?.connected != true) {
-                item {
-                    Text("Pair this device", style = MaterialTheme.typography.titleLarge)
-                    Text("Create a one-time pairing code on a connected device. A trusted HTTPS server is required; the local HTTP browser preview cannot pair with Android.")
-                }
-                item {
-                    OutlinedTextField(value = pairing, onValueChange = { if (it.length <= 4096) pairing = it }, label = { Text("One-time pairing code") },
-                        visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth(), enabled = !busy, maxLines = 3)
-                    Button(onClick = { run { CloudSyncManager.connect(context, pairing); pairing = "" } }, enabled = !busy && pairing.isNotBlank(), modifier = Modifier.padding(top = 12.dp)) { Text("Pair device") }
+                // Fixed keys: the progress row above comes and goes, and must not reset the forms below.
+                item(key = "sign-in") {
+                    CloudSignIn(busy, ::accountRun, { error = it }) {
+                        Text("Pair this device", style = MaterialTheme.typography.titleLarge)
+                        Text("Create a one-time pairing code on a connected device. A trusted HTTPS server is required; the local HTTP browser preview cannot pair with Android.")
+                        OutlinedTextField(value = pairing, onValueChange = { if (it.length <= 4096) pairing = it }, label = { Text("One-time pairing code") },
+                            visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth(), enabled = !busy, maxLines = 3,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrect = false))
+                        Button(onClick = { run { CloudSyncManager.connect(context, pairing); pairing = "" } }, enabled = !busy && pairing.isNotBlank()) { Text("Pair device") }
+                    }
                 }
             } else {
                 item {
@@ -136,6 +151,7 @@ private fun CloudScreen(onBack: () -> Unit, onSettings: () -> Unit) {
                     Text("Current safety limits: 500 files, 4 MiB per file, 64 MiB combined working set. No automatic merging or cleanup of recovery copies.", style = MaterialTheme.typography.bodySmall)
                     Button(onClick = { run { CloudSyncManager.sync(context) } }, enabled = !busy && status!!.enabled, modifier = Modifier.padding(top = 12.dp)) { Text("Sync now") }
                 }
+                item(key = "account") { CloudAccountSection(busy, ::accountRun) { cloud() } }
                 item {
                     TabRow(selectedTabIndex = tab) {
                         listOf("Files", "Trash", "Devices").forEachIndexed { index, title ->
@@ -178,6 +194,7 @@ private fun CloudScreen(onBack: () -> Unit, onSettings: () -> Unit) {
             }
         }
     }
+    CloudRecoveryDialog()
     if (confirmEnable) AlertDialog(onDismissRequest = { confirmEnable = false }, title = { Text("Enable sync for this vault?") },
         text = { Text("Cloud changes can update and remove synced local files. Recovery copies are kept. Do not use Syncthing or another sync system on the same folder. Confirm that this vault is dedicated to JotDrop Cloud.") },
         confirmButton = { TextButton(onClick = { confirmEnable = false; run { CloudSyncManager.setEnabled(context, true) } }) { Text("Enable cloud sync") } },

@@ -34,7 +34,8 @@ data class CloudCredentials(val url: String, val vaultId: String, val deviceId: 
 }
 
 data class CloudPreviewFile(val id: String, val revision: Int, val path: String, val bytes: ByteArray, val deleted: Boolean)
-class CloudRequestException(val status: Int) : Exception(if (status == 409) "A newer cloud version exists. Your local draft was kept; refresh and compare before saving." else "Cloud request failed ($status). Your local draft was kept.")
+/** [serverMessage] is the server's own short error text, shown by the account screens. */
+class CloudRequestException(val status: Int, val serverMessage: String? = null) : Exception(if (status == 409) "A newer cloud version exists. Your local draft was kept; refresh and compare before saving." else "Cloud request failed ($status). Your local draft was kept.")
 
 /** Encrypted HTTPS transport; local vault access belongs to the sync adapter. */
 class CloudClient(val credentials: CloudCredentials) {
@@ -120,7 +121,7 @@ class CloudClient(val credentials: CloudCredentials) {
         catch (error: CloudRequestException) { if (error.status != 404 && error.status != 410) throw error }
     }
 
-    private fun call(path: String, method: String = "GET", body: JSONObject? = null): JSONObject = request(credentials.url, path, method, body, credentials)
+    internal fun call(path: String, method: String = "GET", body: JSONObject? = null): JSONObject = request(credentials.url, path, method, body, credentials)
     private fun objectPath(id: String): String {
         require(id.matches(Regex("[0-9a-f]{64}"))) { "Invalid cloud object identity" }
         return "/objects/$id"
@@ -166,6 +167,16 @@ class CloudClient(val credentials: CloudCredentials) {
         }
         private fun validId(value: String): Boolean = value.matches(Regex("(?i)[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"))
         private fun revision(json: JSONObject): Int = json.getLong("revision").also { require(it in 1..Int.MAX_VALUE.toLong()) { "Invalid cloud revision" } }.toInt()
+        private fun serverMessage(connection: HttpURLConnection): String? = runCatching {
+            val bytes = connection.errorStream?.use { input ->
+                val output = ByteArrayOutputStream()
+                val buffer = ByteArray(1024)
+                while (output.size() <= 4096) { val count = input.read(buffer); if (count < 0) break; output.write(buffer, 0, count) }
+                output.toByteArray()
+            } ?: return null
+            if (bytes.size > 4096) return null
+            JSONObject(utf8(bytes)).optString("error").takeIf { it.isNotBlank() && it.length <= 200 && it.none { char -> char.code < 32 } }
+        }.getOrNull()
         private fun utf8(bytes: ByteArray): String = Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
             .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString()
         fun secureOrigin(value: String): String {
@@ -192,7 +203,7 @@ class CloudClient(val credentials: CloudCredentials) {
             require(keys.getString("vaultId") == response.getString("vaultId")) { "Pairing workspace mismatch" }
             return CloudClient(CloudCredentials(origin, response.getString("vaultId"), response.getString("deviceId"), keys.getString("token"), keys.getString("vaultKey")))
         }
-        private fun request(origin: String, path: String, method: String, value: JSONObject?, auth: CloudCredentials?, body: ByteArray? = null, binary: Boolean = false): JSONObject {
+        internal fun request(origin: String, path: String, method: String, value: JSONObject?, auth: CloudCredentials?, body: ByteArray? = null, binary: Boolean = false): JSONObject {
             val connection = URI(secureOrigin(origin) + "/api/v1" + path).toURL().openConnection() as HttpURLConnection
             val startedAt = System.nanoTime()
             val deadline = startedAt + 30_000_000_000L
@@ -221,7 +232,7 @@ class CloudClient(val credentials: CloudCredentials) {
                 }
                 phase = CloudDiagnostics.Phase.REQUEST_HEADERS
                 val status = connection.responseCode
-                if (status !in 200..299) throw CloudRequestException(status)
+                if (status !in 200..299) throw CloudRequestException(status, serverMessage(connection))
                 require(connection.contentLengthLong <= 12 * 1024 * 1024) { "Cloud response exceeds limit" }
                 val output = ByteArrayOutputStream()
                 phase = CloudDiagnostics.Phase.REQUEST_BODY
@@ -338,6 +349,10 @@ class CloudPreviewStore(context: Context) {
         file.delete()
         check(listOf("", ".bak", ".new").none { File(file.baseFile.path + it).exists() }) { "Encrypted upload cleanup failed" }
     }
+    /** A new recovery code waits here, encrypted, until the user confirms saving it; the process may die meanwhile. */
+    fun recoveryCode(): String? = load("recovery-code")?.getString("code")
+    fun saveRecoveryCode(code: String) = save("recovery-code", JSONObject().put("code", code))
+    fun clearRecoveryCode() = synchronized(lock) { AtomicFile(File(folder, "recovery-code")).delete() }
     fun settings(): JSONObject = load("sync-settings") ?: JSONObject()
     fun saveSettings(value: JSONObject) = save("sync-settings", value)
 }

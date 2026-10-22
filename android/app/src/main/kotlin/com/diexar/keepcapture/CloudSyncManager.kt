@@ -69,6 +69,15 @@ object CloudSyncManager {
         store.saveSettings(JSONObject().put("enabled", false).put("message", "Device paired. Enable sync only for a vault without another sync system."))
     }
 
+    /** Saves a connection made by signing in, the same way as a claimed pairing code. */
+    suspend fun connectAccount(context: Context, client: CloudClient) = serialized {
+        val store = CloudPreviewStore(context)
+        check(store.credentials() == null) { "Disconnect the current workspace before signing in to another one" }
+        store.saveCredentials(client.credentials)
+        store.saveSettings(JSONObject().put("enabled", false).put("message", "Signed in. Enable sync only for a vault without another sync system."))
+        changed.value++
+    }
+
     suspend fun setEnabled(context: Context, enabled: Boolean) {
         if (!enabled) { pauseRequested.set(true); cancel(context) }
         serialized {
