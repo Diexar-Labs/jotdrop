@@ -1,4 +1,5 @@
 import { CloudClient } from '/shared/client.mjs';
+import { accountInfo, approveDevice, attachAccount, changePassword, checkApproval, completeApproval, confirmLogin, confirmSignup, disableTotp, enableTotp, listApprovals, logIn, rejectDevice, requestApproval, resetWithRecoveryCode, setupTotp, signUp, startOver, startReset } from '/shared/account.mjs';
 import { base64ToBytes, bytesToBase64, decryptEnvelope, sealLocal, unsealLocal } from '/shared/crypto.mjs';
 import { exportZip } from '/export.mjs';
 import { noteSummary, updateMetadata, toggleTask, attachmentPath } from '/note.mjs';
@@ -616,12 +617,227 @@ function lock() {
   $('pair-code').value = '';
   $('recovery-code').value = '';
   $('editor').close();
+  message();
+  attaching = undefined;
+  $('totp-enable').hidden = true;
+  $('totp-secret').value = '';
   $('workspace').hidden = true;
   $('access').hidden = false;
+  void store('get', 'connection').then((saved) => (saved ? showUnlock() : showAccess('login-form')), () => showAccess('login-form'));
+}
+
+const DEVICE_NAME = 'Web browser';
+let codeStep;
+let reset;
+let attaching;
+let totpOn = false;
+let approvalRun = 0;
+const accessError = (error) => error?.message || 'Something went wrong. Try again.';
+// Account forms report the server's own reason (wrong password, wrong code), except a revoked device.
+const accountError = (error) => (error?.message && error.message !== 'Device access denied' ? error.message : errorText(error));
+
+function showAccess(id) {
+  approvalRun++;
+  for (const element of document.querySelectorAll('[data-access]')) element.hidden = element.id !== id;
+  $('unlock-form').hidden = true;
+  $('access-message').textContent = '';
+  $(id).querySelector('input:not([type="checkbox"]):not([type="radio"]), select, textarea')?.focus();
+}
+
+function showUnlock() {
+  for (const element of document.querySelectorAll('[data-access]')) element.hidden = true;
   $('unlock-form').hidden = false;
-  $('connect-form').hidden = true;
   $('unlock-password').focus();
 }
+
+document.addEventListener('click', (event) => {
+  const target = event.target.closest('[data-show]');
+  if (target) showAccess(target.dataset.show);
+});
+
+// A remembered browser keeps the connection sealed with the account password, like a device unlock passphrase.
+async function finishAccess(connected, { password, remember, recoveryCode }) {
+  if (remember) await store('put', 'connection', await sealLocal(connected.credentials, password));
+  else await store('delete', 'connection');
+  codeStep = undefined;
+  for (const input of $('access').querySelectorAll('input[type="password"], input[inputmode="numeric"], textarea')) input.value = '';
+  $('access-message').textContent = '';
+  await openWorkspace(connected);
+  if (recoveryCode) {
+    $('recovery-code').value = recoveryCode;
+    $('recovery-saved').checked = false;
+    $('finish-recovery').disabled = true;
+    $('recovery-dialog').showModal();
+  }
+}
+
+function accessForm(id, action) {
+  $(id).addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const submit = event.submitter;
+    submit.disabled = true;
+    $('access-message').textContent = 'Working securely on this device...';
+    try { await action(); }
+    catch (error) { $('access-message').textContent = accessError(error); }
+    finally { submit.disabled = false; }
+  });
+}
+
+function askCode(kind, pending, password, remember) {
+  codeStep = { kind, pending, password, remember };
+  $('code-label').textContent = pending.secondFactor === 'totp' ? 'Enter the 6-digit code from your authenticator app' : 'Enter the 6-digit code we emailed to you';
+  showAccess('code-form');
+}
+
+accessForm('login-form', async () => {
+  const password = $('login-password').value;
+  askCode('login', await logIn({ url: location.origin, email: $('login-email').value.trim(), password, deviceName: DEVICE_NAME }), password, $('login-remember').checked);
+});
+accessForm('signup-form', async () => {
+  const password = $('signup-password').value;
+  if (password !== $('signup-confirm').value) throw new Error('The passwords do not match.');
+  askCode('signup', await signUp({ url: location.origin, email: $('signup-email').value.trim(), password, deviceName: DEVICE_NAME }), password, $('signup-remember').checked);
+});
+accessForm('code-form', async () => {
+  const step = codeStep, code = $('code-input').value.trim();
+  if (!step) throw new Error('Start again from the log in screen.');
+  if (step.kind === 'login') await finishAccess(await confirmLogin(step.pending, code), step);
+  else {
+    const { client: connected, recoveryCode } = await confirmSignup(step.pending, code);
+    await finishAccess(connected, { ...step, recoveryCode });
+  }
+});
+accessForm('forgot-form', async () => {
+  reset = await startReset({ url: location.origin, email: $('forgot-email').value.trim() });
+  showAccess('reset-form');
+  $('access-message').textContent = 'If this address has an account, we emailed it a code.';
+});
+
+const resetRoute = () => document.querySelector('input[name="reset-route"]:checked').value;
+for (const radio of document.querySelectorAll('input[name="reset-route"]')) radio.addEventListener('change', () => {
+  $('reset-recovery').hidden = resetRoute() !== 'recover';
+  $('reset-restart').hidden = resetRoute() !== 'restart';
+});
+accessForm('reset-form', async () => {
+  const newPassword = $('reset-password').value, remember = $('reset-remember').checked, code = $('reset-code').value.trim(), options = { newPassword, deviceName: DEVICE_NAME };
+  if (newPassword !== $('reset-confirm').value) throw new Error('The passwords do not match.');
+  if (resetRoute() === 'recover') {
+    await finishAccess(await resetWithRecoveryCode(reset, { ...options, code, recoveryCode: $('reset-recovery-code').value.trim() }), { password: newPassword, remember });
+  } else if (resetRoute() === 'restart') {
+    if (!$('reset-restart-confirm').checked) throw new Error('Tick the box to confirm deleting the old cloud data.');
+    const { client: connected, recoveryCode } = await startOver(reset, { ...options, code });
+    await finishAccess(connected, { password: newPassword, remember, recoveryCode });
+  } else {
+    const pending = await requestApproval(reset, code);
+    showAccess('approval-wait');
+    const run = approvalRun;
+    $('approval-words').textContent = pending.words.join('  ');
+    $('approval-status').textContent = 'Waiting for approval...';
+    const poll = async () => {
+      if (run !== approvalRun) return;
+      try {
+        const approved = await checkApproval(pending);
+        if (run !== approvalRun) return;
+        if (!approved) { setTimeout(poll, 3000); return; }
+        $('approval-status').textContent = 'Approved. Setting your new password...';
+        await finishAccess(await completeApproval(approved, options), { password: newPassword, remember });
+      } catch (error) { $('approval-status').textContent = error?.status === 401 ? 'The request was rejected or has expired. Go back and start again.' : accessError(error); }
+    };
+    setTimeout(poll, 3000);
+  }
+});
+$('cancel-approval').addEventListener('click', () => showAccess('login-form'));
+
+async function renderApprovals() {
+  let approvals = [];
+  try { approvals = await listApprovals(client); } catch (error) { if (error.status !== 404) throw error; }
+  $('approval-requests').replaceChildren(...approvals.map((approval) => {
+    const row = document.createElement('div');
+    row.className = 'device-row';
+    const words = approval.words.join(' ');
+    row.append(paragraph(`A new device asks for access to your notes. Approve only if it shows exactly these words: ${words}`));
+    row.append(button('Approve', async () => {
+      if (!confirm(`Does the new device show exactly these words?\n\n${words}`)) return;
+      await approveDevice(client, approval);
+      message('Approved. The new device can now set a new password.');
+      await renderApprovals();
+    }, 'primary'));
+    row.append(button('Reject', async () => { await rejectDevice(client, approval.id); await renderApprovals(); }, 'danger'));
+    return row;
+  }));
+  return approvals.length;
+}
+
+async function renderAccount() {
+  let account;
+  try { account = await accountInfo(client); } catch (error) { if (error.status !== 404) throw error; }
+  $('account-status').textContent = account ? `Logged in as ${account.email}.` : 'This cloud has no account yet. New devices connect with a pairing code or your recovery code.';
+  $('attach-form').hidden = Boolean(account || attaching);
+  $('attach-code-form').hidden = Boolean(account || !attaching);
+  $('password-form').hidden = !account;
+  $('totp-form').hidden = !account;
+  if (account) {
+    totpOn = account.totp;
+    $('totp-status').textContent = account.totp ? 'On: a new device asks for a code from your app.' : 'Off: a new device asks for a code by email.';
+    $('totp-setup').hidden = account.totp;
+    $('totp-submit').hidden = !account.totp && $('totp-enable').hidden;
+    $('totp-submit').textContent = account.totp ? 'Turn off' : 'Turn on';
+  }
+  await renderApprovals();
+}
+
+function workspaceForm(id, action) {
+  $(id).addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const submit = event.submitter;
+    submit.disabled = true;
+    try { await action(); }
+    catch (error) { message(accountError(error)); }
+    finally { submit.disabled = false; }
+  });
+}
+
+workspaceForm('attach-form', async () => {
+  const password = $('attach-password').value;
+  if (password !== $('attach-confirm').value) throw new Error('The passwords do not match.');
+  attaching = await attachAccount(client, { email: $('attach-email').value.trim(), password });
+  $('attach-password').value = $('attach-confirm').value = '';
+  message('We emailed you a code to confirm the address.');
+  await renderAccount();
+});
+workspaceForm('attach-code-form', async () => {
+  await confirmSignup(attaching, $('attach-code').value.trim());
+  attaching = undefined;
+  $('attach-code').value = '';
+  message('Account created. You can now log in with your email and password in any browser.');
+  await renderAccount();
+});
+workspaceForm('password-form', async () => {
+  const newPassword = $('password-new').value;
+  if (newPassword !== $('password-confirm').value) throw new Error('The new passwords do not match.');
+  await changePassword(client, { currentPassword: $('password-current').value, newPassword, signOutOtherDevices: $('password-sign-out').checked });
+  // A remembered browser would otherwise keep unlocking with the old password.
+  if (await store('get', 'connection')) await store('put', 'connection', await sealLocal(client.credentials, newPassword));
+  for (const id of ['password-current', 'password-new', 'password-confirm']) $(id).value = '';
+  message('Password changed. Your notes did not need to be encrypted again.');
+  await renderDevices();
+});
+$('totp-setup').addEventListener('click', () => setupTotp(client).then(({ secret }) => {
+  $('totp-secret').value = secret;
+  $('totp-enable').hidden = false;
+  $('totp-setup').hidden = true;
+  $('totp-submit').hidden = false;
+  $('totp-code').focus();
+}, (error) => message(accountError(error))));
+workspaceForm('totp-form', async () => {
+  const password = $('totp-password').value;
+  if (totpOn) await disableTotp(client, { password });
+  else await enableTotp(client, { password, code: $('totp-code').value.trim() });
+  message(totpOn ? 'Authenticator app turned off. New devices get a code by email.' : 'Authenticator app turned on.');
+  for (const id of ['totp-password', 'totp-code', 'totp-secret']) $(id).value = '';
+  $('totp-enable').hidden = true;
+  await renderAccount();
+});
 
 $('connect-method').addEventListener('change', () => {
   $('access-code-label').textContent = ({ create: 'Local enrollment token from the server terminal', pair: 'One-time pairing code from another device', recover: 'Workspace recovery code' })[$('connect-method').value];
@@ -668,8 +884,7 @@ $('unlock-form').addEventListener('submit', async (event) => {
   finally { event.submitter.disabled = false; }
 });
 $('use-another').addEventListener('click', () => {
-  $('unlock-form').hidden = true;
-  $('connect-form').hidden = false;
+  showAccess('login-form');
   $('access-message').textContent = 'Existing encrypted drafts are kept. Connect the original device again to sync them.';
 });
 $('lock').addEventListener('click', lock);
@@ -862,7 +1077,7 @@ for (const navigation of document.querySelectorAll('[data-view]')) navigation.ad
   navigation.setAttribute('aria-current', 'page');
   message();
   render();
-  if (view === 'devices') void renderDevices().catch((error) => message(errorText(error)));
+  if (view === 'devices') void Promise.all([renderDevices(), renderAccount()]).catch((error) => message(errorText(error)));
 });
 $('pair-form').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -897,7 +1112,16 @@ window.addEventListener('beforeunload', (event) => {
   const unsaved = $('editor').open && (voiceJob || $('note-content').value !== (editing ? noteText(editing.file) : '# Untitled\n\n'));
   if (unsaved) { event.preventDefault(); event.returnValue = ''; }
 });
-setInterval(() => { if (client && !document.hidden) void sync(); }, 30000);
+setInterval(() => {
+  if (!client || document.hidden) return;
+  void sync();
+  // Someone who forgot their password waits for this device to approve.
+  void listApprovals(client).then((approvals) => {
+    if (!approvals.length) return;
+    if (view === 'devices') void renderApprovals();
+    else message('A new device asks for access to your notes. Open Devices & recovery to approve or reject it.');
+  }, () => {});
+}, 30000);
 try {
-  if (await store('get', 'connection')) { $('connect-form').hidden = true; $('unlock-form').hidden = false; }
+  if (await store('get', 'connection')) showUnlock();
 } catch (error) { $('access-message').textContent = errorText(error); $('connect-form').querySelector('button[type="submit"]').disabled = true; }

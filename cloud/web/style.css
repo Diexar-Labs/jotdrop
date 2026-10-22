@@ -32,6 +32,10 @@ h3 { font-size: 1.05rem; }
 .access p { color: var(--muted); }
 .access form button { margin-top: 1.2rem; }
 .access-footnote { border-top: 1px solid var(--line); padding-top: 1.2rem; font-size: .85rem; }
+.access-links { display: flex; flex-wrap: wrap; gap: .5rem; }
+.access .access-links button { margin-top: .8rem; font-weight: 500; }
+.access fieldset { border: 1px solid var(--line); border-radius: 8px; margin: 1rem 0; }
+.access .words, #approval-words { color: var(--ink); font-size: 1.5rem; font-weight: 700; letter-spacing: .02em; word-spacing: .4em; }
 .workspace { display: grid; grid-template-columns: 245px minmax(0, 1fr); min-height: calc(100dvh - 36px); }
 .sidebar { padding: 1.7rem 1rem; display: flex; flex-direction: column; border-right: 1px solid var(--line); }
 .sidebar .wordmark { margin: 0 .5rem 2rem; }

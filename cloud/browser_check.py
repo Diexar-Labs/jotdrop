@@ -61,6 +61,7 @@ def check_browser(browser, url, enrollment_token):
             check_theme(blocked, "rgb(248, 249, 250)")
         finally:
             blocked_context.close()
+        first.locator("#show-connect").click()
         first.locator("#access-code").fill(enrollment_token)
         first.locator("#new-password").fill(password)
         first.locator("#confirm-password").fill(password)
@@ -86,6 +87,7 @@ def check_browser(browser, url, enrollment_token):
         first.wait_for_function("() => document.getElementById('pair-code').value.length > 20")
         code = first.locator("#pair-code").input_value()
         second.goto(url, wait_until="networkidle")
+        second.locator("#show-connect").click()
         second.locator("#connect-method").select_option("pair")
         second.locator("#access-code").fill(code)
         second.locator("#new-password").fill(password)

@@ -15,6 +15,7 @@ def check_parity(browser, url, token):
     page.on("dialog", lambda dialog: dialog.accept())
     try:
         page.goto(url, wait_until="networkidle")
+        page.locator("#show-connect").click()
         page.locator("#access-code").fill(token)
         for field in ["#new-password", "#confirm-password"]:
             page.locator(field).fill("synthetic parity passphrase")

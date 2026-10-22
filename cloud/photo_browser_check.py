@@ -19,6 +19,7 @@ def check_photos(browser, url, token):
     second = other.new_page()
     try:
         page.goto(url, wait_until="networkidle")
+        page.locator("#show-connect").click()
         page.locator("#access-code").fill(token)
         for field in ["#new-password", "#confirm-password"]:
             page.locator(field).fill("synthetic OCR test passphrase")
@@ -50,6 +51,7 @@ def check_photos(browser, url, token):
         page.locator("#pair-form button").click()
         page.wait_for_function("() => document.getElementById('pair-code').value.length > 20")
         second.goto(url, wait_until="networkidle")
+        second.locator("#show-connect").click()
         second.locator("#connect-method").select_option("pair")
         second.locator("#access-code").fill(page.locator("#pair-code").input_value())
         for field in ["#new-password", "#confirm-password"]:

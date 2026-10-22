@@ -7,6 +7,7 @@
   <meta name="referrer" content="no-referrer">
   <title>JotDrop Cloud</title>
   <link rel="stylesheet" href="/style.css">
+  <script type="importmap">{"imports":{"hash-wasm":"/vendor/hash-wasm.mjs"}}</script>
   <script type="module" src="/app.js"></script>
 </head>
 <body>
@@ -18,14 +19,76 @@
   <section id="access" class="access" aria-labelledby="access-title">
     <div class="wordmark"><span class="brand-mark" aria-hidden="true">J</span> JotDrop <span>Cloud</span></div>
     <h1 id="access-title">Your notes, within reach.</h1>
-    <p>Open your encrypted workspace. Your unlock passphrase stays on this device.</p>
+    <p>Open your encrypted workspace. Your password never leaves this device, so nobody else can read your notes. Not even us.</p>
     <form id="unlock-form" hidden>
-      <label for="unlock-password">Device unlock passphrase</label>
+      <label for="unlock-password">Password or device unlock passphrase</label>
       <input id="unlock-password" type="password" autocomplete="current-password" required>
       <button class="primary" type="submit">Unlock workspace</button>
-      <button id="use-another" type="button">Connect another workspace</button>
+      <button id="use-another" type="button">Log in to another account</button>
     </form>
-    <form id="connect-form">
+    <form id="login-form" data-access>
+      <label for="login-email">Email</label>
+      <input id="login-email" type="email" autocomplete="username" maxlength="254" required>
+      <label for="login-password">Password</label>
+      <input id="login-password" type="password" autocomplete="current-password" maxlength="1024" required>
+      <label class="check-label"><input id="login-remember" type="checkbox">Remember this browser</label>
+      <button class="primary" type="submit">Log in</button>
+      <div class="access-links"><button data-show="signup-form" type="button">Create an account</button><button data-show="forgot-form" type="button">Forgot password?</button><button id="show-connect" data-show="connect-form" type="button">Other ways to connect</button></div>
+    </form>
+    <form id="signup-form" data-access hidden>
+      <label for="signup-email">Email</label>
+      <input id="signup-email" type="email" autocomplete="username" maxlength="254" required>
+      <label for="signup-password">Password (at least 12 characters)</label>
+      <input id="signup-password" type="password" minlength="12" maxlength="1024" autocomplete="new-password" required>
+      <label for="signup-confirm">Confirm password</label>
+      <input id="signup-confirm" type="password" minlength="12" maxlength="1024" autocomplete="new-password" required>
+      <label class="check-label"><input id="signup-remember" type="checkbox">Remember this browser</label>
+      <p>We cannot reset your password for you, because only you hold the key to your notes. You get a recovery code, and a connected phone can approve a new password.</p>
+      <button class="primary" type="submit">Create account</button>
+      <div class="access-links"><button data-show="login-form" type="button">I already have an account</button></div>
+    </form>
+    <form id="code-form" data-access hidden>
+      <label id="code-label" for="code-input">Enter the 6-digit code we emailed to you</label>
+      <input id="code-input" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required>
+      <button class="primary" type="submit">Continue</button>
+      <div class="access-links"><button data-show="login-form" type="button">Back</button></div>
+    </form>
+    <form id="forgot-form" data-access hidden>
+      <label for="forgot-email">Email</label>
+      <input id="forgot-email" type="email" autocomplete="username" maxlength="254" required>
+      <button class="primary" type="submit">Email me a code</button>
+      <div class="access-links"><button data-show="login-form" type="button">Back</button></div>
+    </form>
+    <form id="reset-form" data-access hidden>
+      <label for="reset-code">Code from the email</label>
+      <input id="reset-code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required>
+      <fieldset>
+        <legend>How do you want to get back in?</legend>
+        <label class="check-label"><input type="radio" name="reset-route" value="approve" checked>Approve on a connected device, such as my phone</label>
+        <label class="check-label"><input type="radio" name="reset-route" value="recover">Use my recovery code</label>
+        <label class="check-label"><input type="radio" name="reset-route" value="restart">I lost both: start an empty cloud</label>
+      </fieldset>
+      <div id="reset-recovery" hidden><label for="reset-recovery-code">Recovery code</label><textarea id="reset-recovery-code" rows="3" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea></div>
+      <div id="reset-restart" hidden>
+        <p>This deletes everything stored in the cloud. Nobody can read it any more without your keys. Notes on your phone or computer are not touched, and they upload again when those devices connect to the new cloud.</p>
+        <label class="check-label"><input id="reset-restart-confirm" type="checkbox">Delete the old cloud data and start empty</label>
+      </div>
+      <label for="reset-password">New password (at least 12 characters)</label>
+      <input id="reset-password" type="password" minlength="12" maxlength="1024" autocomplete="new-password" required>
+      <label for="reset-confirm">Confirm new password</label>
+      <input id="reset-confirm" type="password" minlength="12" maxlength="1024" autocomplete="new-password" required>
+      <label class="check-label"><input id="reset-remember" type="checkbox">Remember this browser</label>
+      <button class="primary" type="submit">Continue</button>
+      <div class="access-links"><button data-show="login-form" type="button">Back</button></div>
+    </form>
+    <section id="approval-wait" data-access hidden aria-labelledby="approval-wait-title">
+      <h2 id="approval-wait-title">Approve on your other device</h2>
+      <p>Open JotDrop on your phone or another connected device and approve this request. Only approve if it shows exactly these four words:</p>
+      <p id="approval-words" class="words"></p>
+      <p id="approval-status" role="status" aria-live="polite">Waiting for approval...</p>
+      <div class="access-links"><button id="cancel-approval" type="button">Cancel</button></div>
+    </section>
+    <form id="connect-form" data-access hidden>
       <label for="connect-method">Connect this device</label>
       <select id="connect-method"><option value="create">Create a local test workspace</option><option value="pair">Use a device pairing code</option><option value="recover">Use a recovery code</option></select>
       <label id="access-code-label" for="access-code">Local enrollment token from the server terminal</label>
@@ -37,6 +100,7 @@
       <label for="confirm-password">Confirm unlock passphrase</label>
       <input id="confirm-password" type="password" minlength="12" autocomplete="new-password" required>
       <button class="primary" type="submit">Connect workspace</button>
+      <div class="access-links"><button data-show="login-form" type="button">Back to log in</button></div>
     </form>
     <p id="access-message" role="status" aria-live="polite"></p>
     <p class="access-footnote">Local use of JotDrop never requires a cloud account. This preview does not change your existing notes or sync settings.</p>
@@ -80,6 +144,40 @@
         <p>Pairing codes expire after 10 minutes. Treat them like a password and send them only to your own device.</p>
         <label for="pair-code">Pairing code</label><textarea id="pair-code" rows="4" readonly spellcheck="false"></textarea>
         <button id="copy-pair" type="button">Copy pairing code</button>
+        <h2>Account</h2>
+        <p id="account-status">Checking account...</p>
+        <div id="approval-requests"></div>
+        <form id="attach-form" hidden>
+          <p>Log in to this cloud from any browser with an email address and password. Nothing is uploaded again.</p>
+          <label for="attach-email">Email</label><input id="attach-email" type="email" autocomplete="username" maxlength="254" required>
+          <label for="attach-password">Password (at least 12 characters)</label><input id="attach-password" type="password" minlength="12" maxlength="1024" autocomplete="new-password" required>
+          <label for="attach-confirm">Confirm password</label><input id="attach-confirm" type="password" minlength="12" maxlength="1024" autocomplete="new-password" required>
+          <button type="submit">Create account for this cloud</button>
+        </form>
+        <form id="attach-code-form" hidden>
+          <label for="attach-code">Enter the 6-digit code we emailed to you</label><input id="attach-code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required>
+          <button type="submit">Confirm email</button>
+        </form>
+        <form id="password-form" hidden>
+          <h3>Change password</h3>
+          <label for="password-current">Current password</label><input id="password-current" type="password" maxlength="1024" autocomplete="current-password" required>
+          <label for="password-new">New password (at least 12 characters)</label><input id="password-new" type="password" minlength="12" maxlength="1024" autocomplete="new-password" required>
+          <label for="password-confirm">Confirm new password</label><input id="password-confirm" type="password" minlength="12" maxlength="1024" autocomplete="new-password" required>
+          <label class="check-label"><input id="password-sign-out" type="checkbox">Sign out all other devices</label>
+          <button type="submit">Change password</button>
+        </form>
+        <form id="totp-form" hidden>
+          <h3>Authenticator app</h3>
+          <p id="totp-status"></p>
+          <button id="totp-setup" type="button">Set up an authenticator app</button>
+          <div id="totp-enable" hidden>
+            <p>Add this key to your authenticator app (choose "enter a setup key"), then enter the code it shows.</p>
+            <label for="totp-secret">Setup key</label><input id="totp-secret" readonly spellcheck="false">
+            <label for="totp-code">Code from the app</label><input id="totp-code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code">
+          </div>
+          <label for="totp-password">Password</label><input id="totp-password" type="password" maxlength="1024" autocomplete="current-password" required>
+          <button id="totp-submit" type="submit" hidden>Turn on</button>
+        </form>
         <h2>Recovery</h2><p>Your recovery code contains the keys to this workspace. Keep it in a password manager. We cannot recover encrypted files without your keys.</p>
         <p>The recovery code is shown when you create a workspace. Pairing a device does not create a replacement recovery code.</p>
       </section>

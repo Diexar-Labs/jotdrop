@@ -54,6 +54,7 @@ def check_transfer(browser, url, token):
 
     try:
         page.goto(url, wait_until="networkidle")
+        page.locator("#show-connect").click()
         page.locator("#access-code").fill(token)
         for field in ["#new-password", "#confirm-password"]:
             page.locator(field).fill(password)
