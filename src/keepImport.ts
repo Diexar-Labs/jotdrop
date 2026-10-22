@@ -1,8 +1,11 @@
 import { ColorName, isColorName, neutralizeInlineHashtags, readLabels } from "./metadata";
 import { safeMarkdownLink } from "./ogfetch";
 
+/** Lazy loader for one file, with its modification time (epoch ms) when known. */
+export type ImportLoader = (() => Promise<Uint8Array>) & { modified?: number };
+
 /** Zip entry path → lazy loader, so a large Takeout is only read where needed. */
-export type ImportFiles = Map<string, () => Promise<Uint8Array>>;
+export type ImportFiles = Map<string, ImportLoader>;
 
 export interface KeepNote {
   /** Path of the Keep JSON file inside the export. */
@@ -63,8 +66,16 @@ export async function readZip(blob: Blob): Promise<ImportFiles> {
     const extraEnd = at + 46 + nameLength + dv.getUint16(at + 30, true);
     // Windows PowerShell's Compress-Archive writes backslash separators.
     const name = decoder.decode(directory.subarray(at + 46, at + 46 + nameLength)).replace(/\\/g, "/");
+    // DOS date and time are local; zero fields mean "not set".
+    const dosTime = dv.getUint16(at + 12, true), dosDate = dv.getUint16(at + 14, true);
+    let modified = (dosDate >> 5 & 15) && (dosDate & 31)
+      ? new Date(1980 + (dosDate >> 9), (dosDate >> 5 & 15) - 1, dosDate & 31, dosTime >> 11, dosTime >> 5 & 63, (dosTime & 31) * 2).getTime()
+      : undefined;
     for (let e = at + 46 + nameLength; e + 4 <= extraEnd; e += 4 + dv.getUint16(e + 2, true)) {
-      if (dv.getUint16(e, true) !== 1) continue;
+      const id = dv.getUint16(e, true);
+      // Info-ZIP extended timestamp (macOS and Linux zips): UTC seconds, more precise than DOS time.
+      if (id === 0x5455 && dv.getUint16(e + 2, true) >= 5 && dv.getUint8(e + 4) & 1) modified = dv.getUint32(e + 5, true) * 1000;
+      if (id !== 1) continue;
       // ZIP64 extra field: only the values that overflowed are present, in this order.
       let p = e + 4;
       if (uncompressed === 0xffffffff) p += 8;
@@ -73,7 +84,7 @@ export async function readZip(blob: Blob): Promise<ImportFiles> {
     }
     at = extraEnd + dv.getUint16(at + 32, true);
     if (name.endsWith("/")) continue;
-    files.set(name, async () => {
+    files.set(name, Object.assign(async () => {
       const header = new DataView((await bytes(local, local + 30)).buffer);
       if (header.byteLength < 30 || header.getUint32(0, true) !== 0x04034b50) throw damaged();
       const start = local + 30 + header.getUint16(26, true) + header.getUint16(28, true);
@@ -81,7 +92,7 @@ export async function readZip(blob: Blob): Promise<ImportFiles> {
       if (method === 0) return new Uint8Array(await data.arrayBuffer());
       if (method !== 8) throw new Error(`"${name}" uses an unsupported zip compression.`);
       return new Uint8Array(await new Response(data.stream().pipeThrough(new DecompressionStream("deflate-raw"))).arrayBuffer());
-    });
+    }, { modified }));
   }
   return files;
 }
@@ -181,15 +192,19 @@ export async function parseKeepExport(files: ImportFiles): Promise<{ notes: Keep
 
 /** `<created stamp> <title>.md`, the same convention as quick capture, so the grid keeps Keep's creation order. */
 export function keepNoteFileName(note: KeepNote): string {
-  const date = new Date(note.createdMs);
+  return importFileName(note.createdMs, note.title || note.text.split("\n").find((line) => line.trim()) || note.items[0]?.text || "Keep note");
+}
+
+/** `<local stamp> <safe words>.md` for any imported note. */
+export function importFileName(createdMs: number, words: string): string {
+  const date = new Date(createdMs);
   const pad = (n: number) => String(n).padStart(2, "0");
   const stamp = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
     `${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
-  const words = note.title || note.text.split("\n").find((line) => line.trim()) || note.items[0]?.text || "Keep note";
   // Code points, not UTF-16 units, so an emoji is never cut in half.
   const name = Array.from(words.replace(/[\x00-\x1f\x7f\\/:*?"<>|#^[\]]/g, " ").replace(/\s+/g, " ").trim())
     .slice(0, 60).join("").replace(/[\s.]+$/, "");
-  return `${stamp} ${name || "Keep note"}.md`;
+  return `${stamp} ${name || "Note"}.md`;
 }
 
 /** JotDrop Markdown for a Keep note; `attachmentName` maps an export path to its final vault file name. */

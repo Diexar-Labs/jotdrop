@@ -1,56 +1,6 @@
 // Google Keep Takeout import: zip reading and conversion to JotDrop notes.
 const assert = require("node:assert/strict");
-const esbuild = require("esbuild");
-const path = require("node:path");
-const zlib = require("node:zlib");
-
-const ROOT = path.join(__dirname, "..");
-
-/** Minimal zip writer for fixtures: stored or deflated entries, optional ZIP64 records. */
-function makeZip(entries, { zip64 = false } = {}) {
-  const locals = [], centrals = [];
-  let offset = 0;
-  for (const [name, content, deflate] of entries) {
-    const raw = Buffer.from(content);
-    const data = deflate ? zlib.deflateRawSync(raw) : raw;
-    const nameBytes = Buffer.from(name, "utf8");
-    const crc = zlib.crc32(raw);
-    const local = Buffer.alloc(30);
-    local.writeUInt32LE(0x04034b50, 0); local.writeUInt16LE(20, 4); local.writeUInt16LE(0x800, 6);
-    local.writeUInt16LE(deflate ? 8 : 0, 8); local.writeUInt32LE(crc, 14);
-    local.writeUInt32LE(data.length, 18); local.writeUInt32LE(raw.length, 22); local.writeUInt16LE(nameBytes.length, 26);
-    const extra = zip64 ? Buffer.alloc(28) : Buffer.alloc(0);
-    if (zip64) {
-      extra.writeUInt16LE(1, 0); extra.writeUInt16LE(24, 2);
-      extra.writeBigUInt64LE(BigInt(raw.length), 4); extra.writeBigUInt64LE(BigInt(data.length), 12); extra.writeBigUInt64LE(BigInt(offset), 20);
-    }
-    const central = Buffer.alloc(46);
-    central.writeUInt32LE(0x02014b50, 0); central.writeUInt16LE(45, 4); central.writeUInt16LE(45, 6); central.writeUInt16LE(0x800, 8);
-    central.writeUInt16LE(deflate ? 8 : 0, 10); central.writeUInt32LE(crc, 16);
-    central.writeUInt32LE(zip64 ? 0xffffffff : data.length, 20); central.writeUInt32LE(zip64 ? 0xffffffff : raw.length, 24);
-    central.writeUInt16LE(nameBytes.length, 28); central.writeUInt16LE(extra.length, 30);
-    central.writeUInt32LE(zip64 ? 0xffffffff : offset, 42);
-    locals.push(local, nameBytes, data);
-    centrals.push(central, nameBytes, extra);
-    offset += local.length + nameBytes.length + data.length;
-  }
-  const directory = Buffer.concat(centrals);
-  const tail = [];
-  if (zip64) {
-    const record = Buffer.alloc(56);
-    record.writeUInt32LE(0x06064b50, 0); record.writeBigUInt64LE(44n, 4); record.writeUInt16LE(45, 12); record.writeUInt16LE(45, 14);
-    record.writeBigUInt64LE(BigInt(entries.length), 24); record.writeBigUInt64LE(BigInt(entries.length), 32);
-    record.writeBigUInt64LE(BigInt(directory.length), 40); record.writeBigUInt64LE(BigInt(offset), 48);
-    const locator = Buffer.alloc(20);
-    locator.writeUInt32LE(0x07064b50, 0); locator.writeBigUInt64LE(BigInt(offset + directory.length), 8); locator.writeUInt32LE(1, 16);
-    tail.push(record, locator);
-  }
-  const end = Buffer.alloc(22);
-  end.writeUInt32LE(0x06054b50, 0);
-  end.writeUInt16LE(zip64 ? 0xffff : entries.length, 8); end.writeUInt16LE(zip64 ? 0xffff : entries.length, 10);
-  end.writeUInt32LE(zip64 ? 0xffffffff : directory.length, 12); end.writeUInt32LE(zip64 ? 0xffffffff : offset, 16);
-  return new Blob([Buffer.concat([...locals, directory, ...tail, end])]);
-}
+const { makeZip, loadSource } = require("./zip-fixture.cjs");
 
 const usec = (iso) => String(Date.parse(iso) * 1000);
 const photo = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4]);
@@ -82,14 +32,7 @@ const fixture = [
 ];
 
 (async () => {
-  const result = await esbuild.build({
-    stdin: { contents: `export * from "./src/keepImport.ts";`, resolveDir: ROOT },
-    bundle: true, platform: "node", format: "cjs", write: false,
-    alias: { obsidian: path.join(__dirname, "mock-obsidian.cjs") },
-  });
-  const loaded = { exports: {} };
-  new Function("module", "exports", "require", result.outputFiles[0].text)(loaded, loaded.exports, require);
-  const { readZip, parseKeepExport, keepNoteFileName, keepNoteMarkdown } = loaded.exports;
+  const { readZip, parseKeepExport, keepNoteFileName, keepNoteMarkdown } = await loadSource("src/keepImport.ts");
 
   for (const zip64 of [false, true]) {
     const files = await readZip(makeZip(fixture, { zip64 }));

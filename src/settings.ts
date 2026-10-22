@@ -288,6 +288,16 @@ export class JotDropSettingTab extends PluginSettingTab {
         btn.setButtonText(t("settings_import_keep_button")).onClick(() => this.plugin.importFromKeep())
       );
 
+    new Setting(containerEl)
+      .setName(t("settings_import_markdown"))
+      .setDesc(t("settings_import_markdown_desc"))
+      .addButton((btn) =>
+        btn.setButtonText(t("settings_import_markdown_files")).onClick(() => this.plugin.importMarkdown())
+      )
+      .addButton((btn) =>
+        btn.setButtonText(t("settings_import_markdown_folder")).onClick(() => this.plugin.importMarkdown(true))
+      );
+
     // Chrome-extension clip server — deliberately below the basics; not everyone
     // uses it and it does not need to shout for attention at the top.
     new Setting(containerEl).setName(t("settings_clip_server_section")).setHeading();

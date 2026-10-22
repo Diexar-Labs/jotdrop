@@ -9,7 +9,19 @@ import { CloudController } from "./cloud";
 import { fetchOg, safeMarkdownLink } from "./ogfetch";
 import { legacyAssetsPath } from "./attachments";
 import { ConfirmModal } from "./confirmModal";
-import { ImportFiles, KeepNote, keepNoteFileName, keepNoteMarkdown, parseKeepExport, readZip } from "./keepImport";
+import { ImportFiles, keepNoteFileName, keepNoteMarkdown, parseKeepExport, readZip } from "./keepImport";
+import { markdownNoteFileName, markdownNoteMarkdown, parseMarkdownExport } from "./markdownImport";
+
+/** One note ready to write; `render` gets the vault names of the attachments that were written. */
+interface ImportItem {
+  source: string;
+  name: string;
+  archived: boolean;
+  createdMs: number;
+  editedMs: number;
+  attachments: string[];
+  render: (names: Map<string, string>) => string;
+}
 import {
   ColorName,
   isColorName,
@@ -116,6 +128,12 @@ export default class JotDropPlugin extends Plugin {
       id: "import-google-keep",
       name: t("cmd_import_keep"),
       callback: () => this.importFromKeep(),
+    });
+
+    this.addCommand({
+      id: "import-markdown",
+      name: t("cmd_import_markdown"),
+      callback: () => this.importMarkdown(),
     });
 
   }
@@ -315,53 +333,114 @@ export default class JotDropPlugin extends Plugin {
 
   /**
    * Imports a Google Takeout export (zip parts, or loose Keep JSON plus its
-   * attachments) as JotDrop notes. Existing files are never overwritten: an
-   * identical note is skipped, a different one gets a numbered name.
+   * attachments) as JotDrop notes. Existing files are never overwritten.
    */
   importFromKeep(): void {
+    this.pickImportFiles(false, (picked) => this.importKeepFiles(picked));
+  }
+
+  /**
+   * Imports Markdown notes exported by other apps (Apple Notes, Bear, Joplin, …):
+   * loose files, a zip, or with `folder` a whole export folder.
+   */
+  importMarkdown(folder = false): void {
+    this.pickImportFiles(folder, (picked) => this.importMarkdownFiles(picked));
+  }
+
+  private pickImportFiles(folder: boolean, handle: (picked: File[]) => Promise<void>): void {
     // Attached to the page so mobile webviews also open the picker.
     const input = document.body.createEl("input", { type: "file", attr: { multiple: "", hidden: "" } });
+    if (folder) input.webkitdirectory = true;
     input.addEventListener("cancel", () => input.remove());
     input.addEventListener("change", () => {
       const picked = Array.from(input.files ?? []);
       input.remove();
-      void this.importKeepFiles(picked).catch((err) => {
-        console.error("JotDrop: Keep import failed", err);
-        new Notice(t("keep_import_failed", err instanceof Error ? err.message : String(err)));
+      void handle(picked).catch((err) => {
+        console.error("JotDrop: import failed", err);
+        new Notice(t("import_failed", err instanceof Error ? err.message : String(err)));
       });
     });
     input.click();
   }
 
-  private async importKeepFiles(picked: File[]): Promise<void> {
-    if (picked.length === 0) return;
+  /** Picked files and the contents of picked zips, keyed by their path inside the export. */
+  private async readImportFiles(picked: File[]): Promise<ImportFiles> {
     const files: ImportFiles = new Map();
     for (const file of picked) {
       if (/\.zip$/i.test(file.name)) for (const [path, load] of await readZip(file)) files.set(path, load);
-      else files.set(file.name, async () => new Uint8Array(await file.arrayBuffer()));
+      else files.set(file.webkitRelativePath || file.name, Object.assign(async () => new Uint8Array(await file.arrayBuffer()), { modified: file.lastModified }));
     }
+    return files;
+  }
+
+  private async importKeepFiles(picked: File[]): Promise<void> {
+    if (picked.length === 0) return;
+    const files = await this.readImportFiles(picked);
     const { notes, trashed, failed, error } = await parseKeepExport(files);
     if (notes.length === 0) {
-      new Notice(error ? t("keep_import_failed", error) : t("keep_import_none"));
+      new Notice(error ? t("import_failed", error) : t("keep_import_none"));
       return;
     }
     const archived = notes.filter((note) => note.archived).length;
     const attachments = new Set(notes.flatMap((note) => note.attachments)).size;
     const missing = notes.reduce((sum, note) => sum + note.missingAttachments, 0);
+    const items: ImportItem[] = notes.map((note) => ({
+      source: note.source,
+      name: keepNoteFileName(note),
+      archived: note.archived,
+      createdMs: note.createdMs,
+      editedMs: note.editedMs,
+      attachments: note.attachments,
+      render: (names) => keepNoteMarkdown({ ...note, attachments: note.attachments.filter((source) => names.has(source)) }, (source) => names.get(source)!),
+    }));
+    this.confirmImport(t("keep_import_title"),
+      t("keep_import_confirm", String(notes.length), String(archived), String(attachments), String(trashed), this.settings.notesFolder),
+      missing, items, files, failed.length);
+  }
+
+  private async importMarkdownFiles(picked: File[]): Promise<void> {
+    if (picked.length === 0) return;
+    const files = await this.readImportFiles(picked);
+    const { notes, failed, error } = await parseMarkdownExport(files);
+    if (notes.length === 0) {
+      new Notice(error ? t("import_failed", error) : t("markdown_import_none"));
+      return;
+    }
+    const attachments = new Set(notes.flatMap((note) => note.attachments)).size;
+    const missing = notes.reduce((sum, note) => sum + note.missingAttachments, 0);
+    const items: ImportItem[] = notes.map((note) => ({
+      source: note.source,
+      name: markdownNoteFileName(note),
+      archived: false,
+      createdMs: note.createdMs,
+      editedMs: note.editedMs,
+      attachments: note.attachments,
+      render: (names) => markdownNoteMarkdown(note, names),
+    }));
+    this.confirmImport(t("markdown_import_title"),
+      t("markdown_import_confirm", String(notes.length), String(attachments), this.settings.notesFolder),
+      missing, items, files, failed.length);
+  }
+
+  private confirmImport(title: string, message: string, missing: number, items: ImportItem[], files: ImportFiles, unreadable: number): void {
     new ConfirmModal(this.app, {
-      title: t("keep_import_title"),
-      message: t("keep_import_confirm", String(notes.length), String(archived), String(attachments), String(trashed), this.settings.notesFolder) +
-        (missing ? ` ${t("keep_import_missing", String(missing))}` : ""),
-      confirmLabel: t("keep_import_action"),
+      title,
+      message: message + (missing ? ` ${t("import_missing", String(missing))}` : ""),
+      confirmLabel: t("import_action"),
     }, () => {
-      void this.writeKeepNotes(notes, files, failed.length).catch((err) => {
-        console.error("JotDrop: Keep import failed", err);
-        new Notice(t("keep_import_failed", err instanceof Error ? err.message : String(err)));
+      void this.writeImportedNotes(title, items, files, unreadable).catch((err) => {
+        console.error("JotDrop: import failed", err);
+        new Notice(t("import_failed", err instanceof Error ? err.message : String(err)));
       });
     }).open();
   }
 
-  private async writeKeepNotes(notes: KeepNote[], files: ImportFiles, unreadable: number): Promise<void> {
+  /**
+   * Writes imported notes and their attachments. A note whose stamped name already
+   * exists in the notes or archive folder counts as imported before, even after it
+   * was edited or (un)archived; existing files are never overwritten.
+   */
+  private async writeImportedNotes(title: string, items: ImportItem[], files: ImportFiles, unreadable: number): Promise<void> {
     const adapter = this.app.vault.adapter;
     const ensureFolder = async (folder: string) => {
       if (!(await adapter.exists(folder))) await adapter.mkdir(folder);
@@ -377,22 +456,19 @@ export default class JotDropPlugin extends Plugin {
       }
     };
     const assets = this.resolveAssetsFolder();
+    const folders = [this.settings.notesFolder, this.settings.archiveFolder].map((folder) => normalizePath(folder));
     const attachmentNames = new Map<string, string>();
     const brokenAttachments = new Set<string>();
-    const progress = new Notice(t("keep_import_progress", "0", String(notes.length)), 0);
+    const progress = new Notice(t("import_progress", "0", String(items.length)), 0);
     let imported = 0, existing = 0, failed = unreadable;
-    for (const [index, note] of notes.entries()) {
+    for (const [index, item] of items.entries()) {
       try {
-        const times = { ctime: note.createdMs, mtime: note.editedMs };
-        // Stamp and title identify the Keep note, so a note that was edited, archived or
-        // unarchived after an earlier import is still recognized.
-        const name = keepNoteFileName(note);
-        const folders = [this.settings.notesFolder, this.settings.archiveFolder].map((folder) => normalizePath(folder));
-        if ((await Promise.all(folders.map((folder) => adapter.exists(normalizePath(`${folder}/${name}`))))).some(Boolean)) {
+        const times = { ctime: item.createdMs, mtime: item.editedMs };
+        if ((await Promise.all(folders.map((folder) => adapter.exists(normalizePath(`${folder}/${item.name}`))))).some(Boolean)) {
           existing += 1;
           continue;
         }
-        for (const source of note.attachments) {
+        for (const source of item.attachments) {
           if (attachmentNames.has(source) || brokenAttachments.has(source)) continue;
           try {
             const bytes = await files.get(source)!();
@@ -406,20 +482,19 @@ export default class JotDropPlugin extends Plugin {
             brokenAttachments.add(source);
           }
         }
-        const content = keepNoteMarkdown({ ...note, attachments: note.attachments.filter((source) => attachmentNames.has(source)) }, (source) => attachmentNames.get(source)!);
-        const folder = folders[note.archived ? 1 : 0];
+        const folder = folders[item.archived ? 1 : 0];
         await ensureFolder(folder);
-        await this.app.vault.create(normalizePath(`${folder}/${name}`), content, times);
+        await this.app.vault.create(normalizePath(`${folder}/${item.name}`), item.render(attachmentNames), times);
         imported += 1;
       } catch (err) {
-        console.error("JotDrop: could not import", note.source, err);
+        console.error("JotDrop: could not import", item.source, err);
         failed += 1;
       }
-      if (index % 25 === 24) progress.setMessage(t("keep_import_progress", String(index + 1), String(notes.length)));
+      if (index % 25 === 24) progress.setMessage(t("import_progress", String(index + 1), String(items.length)));
     }
     progress.hide();
-    new Notice(t("keep_import_done", String(imported), String(existing), String(failed)) +
-      (brokenAttachments.size ? ` ${t("keep_import_missing_done", String(brokenAttachments.size))}` : ""), 0);
+    new Notice(t("import_done", title, String(imported), String(existing), String(failed)) +
+      (brokenAttachments.size ? ` ${t("import_missing_done", String(brokenAttachments.size))}` : ""), 0);
     this.refreshViews();
   }
 
