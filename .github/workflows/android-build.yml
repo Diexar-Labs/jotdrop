@@ -68,6 +68,10 @@ jobs:
         working-directory: .
         run: npm run check:list-editor
 
+      - name: Check hashtag handling
+        working-directory: .
+        run: npm run check:hashtags
+
       - name: Check mobile keyboard behavior
         working-directory: .
         run: npm run check:mobile-keyboard

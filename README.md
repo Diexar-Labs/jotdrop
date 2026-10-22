@@ -139,14 +139,14 @@ Install [JotDrop Web Clipper from the Chrome Web Store](https://chromewebstore.g
 
 **Manual install (for offline / pre-release versions):**
 
-1. Go to the [current plugin release](https://github.com/Diexar-Labs/jotdrop/releases/tag/0.20.14).
+1. Go to the [current plugin release](https://github.com/Diexar-Labs/jotdrop/releases/tag/0.20.15).
 2. Download `manifest.json`, `main.js`, and `styles.css`.
 3. Put them in `<your-vault>/.obsidian/plugins/jotdrop/` (create the folder if it doesn't exist).
 4. Open Obsidian → Settings → Community plugins → enable **JotDrop**.
 
 ### Android app
 
-1. Download [`jotdrop.apk` for Android 0.28.22](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.22/jotdrop.apk).
+1. Download [`jotdrop.apk` for Android 0.28.23](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.23/jotdrop.apk).
 2. Open the file on your phone → Android will ask permission to install from unknown sources → grant it.
 3. Open JotDrop → first screen lets you pick the vault folder (the same one you sync to your laptop).
 4. From now on, the share-sheet in any app includes JotDrop.
