@@ -1502,9 +1502,11 @@ object Storage {
         // Filter zowel Obsidian-wikilink-embeds (![[…]]) als standaard markdown-images (![alt](…)).
         val wikiEmbed = Regex("^\\s*!\\[\\[[^\\]]+]]\\s*$")
         val mdImage = Regex("^\\s*!\\[[^\\]]*]\\([^)]+\\)\\s*$")
+        // Preview-markering van PreviewWorker niet tonen (plugin-pariteit: extractPreview in view.ts).
+        val previewMarker = Regex("^\\s*<!--\\s*(?:jotdrop|diexar)-preview:.*?-->\\s*$")
         val lines = body.lineSequence()
             .map { it.trimEnd() }
-            .filter { it.isNotBlank() && !wikiEmbed.matches(it) && !mdImage.matches(it) }
+            .filter { it.isNotBlank() && !wikiEmbed.matches(it) && !mdImage.matches(it) && !previewMarker.matches(it) }
             .toList()
         // Een gewone eerste regel is al de kaarttitel en hoeft niet dubbel in de
         // snippet. Een lijstregel blijft juist staan, inclusief geneste checklists.
