@@ -50,11 +50,20 @@ object CloudSyncEngine {
         }
         // ponytail: bounded snapshot sync; use a streaming indexed journal for larger vaults.
         require(total <= 64 * 1024 * 1024) { "Cloud sync working set exceeds 64 MiB" }
+        // A full free cloud clears notes that sat in the trash for 30 days; then the name can start over at revision 1.
+        val cleared = tracked.filter { (name, base) -> base.deleted && (clouds[name]?.revision ?: 0) < base.revision }.keys
         for ((name, base) in tracked) {
             path(name)
             require(base.revision > 0 && CloudCrypto.decode(base.hash).size == 32) { "Invalid saved cloud baseline" }
+            if (name in cleared) continue
             require(clouds.containsKey(name)) { "A tracked cloud object disappeared. Local files were kept" }
             require(clouds.getValue(name).revision >= base.revision) { "Cloud history moved backwards. Local files were kept" }
+        }
+        if (cleared.isNotEmpty()) {
+            val next = tracked - cleared
+            persist(next)
+            tracked.clear()
+            tracked.putAll(next)
         }
         fun remember(entry: CloudSyncObject) {
             val next = tracked.toMutableMap()

@@ -31,6 +31,10 @@ let cameraStream;
 let cameraRequest = 0;
 let photoJob;
 let voiceJob;
+// The time machine: `moment` holds the files as they were while an earlier moment is shown.
+let moment;
+let momentRequest = 0;
+const moments = new Map();
 const database = new Promise((resolve, reject) => {
   const request = indexedDB.open('jotdrop-cloud-v1', 1);
   request.onupgradeneeded = () => request.result.createObjectStore('values');
@@ -161,13 +165,14 @@ function render() {
   $('view-description').textContent = descriptions[view][1];
   $('note-count').textContent = String([...files.values()].filter((entry) => !entry.deleted && isMarkdown(entry.file.path) && !/^notes\/(Archive|Trash)\//.test(entry.file.path)).length);
   if (view === 'devices') return;
+  const source = moment ? moment.files : files;
   const selectedLabel = $('label-filter').value;
   const labels = new Map();
-  for (const entry of files.values()) if (!entry.deleted && isMarkdown(entry.file.path)) for (const label of noteParts(noteText(entry.file), entry.file.path).labels) labels.set(label.toLowerCase(), label);
+  for (const entry of source.values()) if (!entry.deleted && isMarkdown(entry.file.path)) for (const label of noteParts(noteText(entry.file), entry.file.path).labels) labels.set(label.toLowerCase(), label);
   $('label-filter').replaceChildren(new Option('All labels', ''), ...[...labels].sort((a, b) => a[1].localeCompare(b[1])).map(([key, label]) => new Option(label, key)));
   $('label-filter').value = labels.has(selectedLabel) ? selectedLabel : '';
   const query = $('search').value.toLowerCase().trim();
-  const matching = [...files.values()].filter((entry) => {
+  const matching = [...source.values()].filter((entry) => {
     if (view === 'trash' ? !entry.deleted && !entry.file.path.startsWith('notes/Trash/') : entry.deleted) return false;
     if (view === 'notes' && !isMarkdown(entry.file.path)) return false;
     if (view === 'archive' && (!isMarkdown(entry.file.path) || !entry.file.path.startsWith('notes/Archive/'))) return false;
@@ -233,7 +238,7 @@ function render() {
         flush();
         const row = document.createElement('label'); row.className = 'task-row';
         const input = document.createElement('input'); input.type = 'checkbox'; input.checked = task[1] !== ' ';
-        input.disabled = entry.conflict || $('editor').open;
+        input.disabled = entry.conflict || $('editor').open || Boolean(moment);
         input.addEventListener('change', async () => {
           input.disabled = true;
           try { const latest = files.get(entry.id); if (latest !== entry) throw new Error('This checklist changed. Sync and try again.'); await queueFile(entry.file.path, encoder.encode(toggleTask(noteText(entry.file), bodyOffset + bodyIndex, input.checked)), entry.revision); }
@@ -242,12 +247,12 @@ function render() {
         row.append(input, document.createTextNode(plainPreviewText(task[2]))); card.append(row);
       });
       flush();
-      if (!entry.deleted) {
+      if (!entry.deleted && !moment) {
         card.classList.add('opens');
         card.addEventListener('click', (event) => { if (!event.target.closest('button, input, label, audio')) openEditor(entry); });
       }
       if (parts.reminder) card.append(paragraph(`Reminder: ${parts.reminder}${parts.repeat ? ` (${parts.repeat})` : ''}. Scheduled by Android after sync.`, 'note-meta'));
-      const available = [...files.values()].filter((item) => !item.deleted && !isMarkdown(item.file.path));
+      const available = [...source.values()].filter((item) => !item.deleted && !isMarkdown(item.file.path));
       const targets = [...parts.body.matchAll(/!\[\[([^\]]+)\]\]|!?\[[^\]]*\]\(([^)]+)\)/g)];
       const shown = new Set();
       for (const target of targets) {
@@ -261,6 +266,7 @@ function render() {
     if (markdown) for (const label of parts.labels) card.append(button(label, () => { $('label-filter').value = label.toLowerCase(); render(); }, 'label-chip'));
     if (entry.conflict) card.append(button('Review cloud version', () => reviewConflict(entry)));
     // Like Keep and the plugin: actions and file details show on hover or focus (always on touch).
+    // An earlier moment is read-only; the time machine restores it as a whole.
     const actions = document.createElement('div');
     actions.className = 'card-actions';
     if (entry.deleted) actions.append(button('Restore', () => restoreEntry(entry)));
@@ -270,7 +276,7 @@ function render() {
       actions.append(button('Download', () => download(base64ToBytes(entry.file.content), entry.file.path)));
       if (!markdown) actions.append(button('Move to trash', () => deleteEntry(entry), 'danger'));
     }
-    card.append(actions);
+    if (!moment) card.append(actions);
     // Path and confirmed revision stay out of sight: the editor shows the filename and version history.
     card.dataset.path = entry.file.path;
     if (!entry.pending) card.dataset.revision = entry.revision;
@@ -386,7 +392,18 @@ async function performSync(signal) {
     catch (error) {
       signal.throwIfAborted();
       if (error.status !== 409) throw error;
-      const remote = await activeClient.read(uploading.prepared.id);
+      let remote;
+      try { remote = await activeClient.read(uploading.prepared.id); }
+      catch (readError) {
+        if (readError.status !== 404) throw readError;
+        // The cloud cleared this file after 30 days in the trash: a deletion is done, an edit uploads as a new file next time.
+        await store('delete', uploadKey);
+        const latest = await store('get', key);
+        if (latest?.deleted) { await store('delete', key); files.delete(pending.prepared.id); }
+        else if (latest) { latest.prepared.baseRevision = 0; await store('put', key, latest); const entry = files.get(pending.prepared.id); if (entry) entry.revision = 0; }
+        changed = true;
+        continue;
+      }
       const expected = await decryptEnvelope(activeClient.credentials.vaultKey, JSON.parse(uploading.prepared.envelope), `jotdrop:object:v1:${activeClient.credentials.vaultId}:${uploading.prepared.id}`);
       if (remote.deleted === uploading.deleted && remote.file.path === expected.path && remote.file.content === expected.content) result = { revision: remote.revision };
       else {
@@ -414,8 +431,20 @@ async function performSync(signal) {
     const result = await activeClient.listChanges(cursor);
     for (const change of result.changes) {
       if (activeGeneration !== generation) return;
+      // The time machine steps per minute with a change.
+      const minute = change.updatedAt.slice(0, 16);
+      if (!(moments.get(minute) > change.updatedAt)) moments.set(minute, change.updatedAt);
       if (await store('get', `${keyPrefix}${change.id}`)) continue;
-      const entry = await activeClient.read(change.id);
+      let entry;
+      try { entry = await activeClient.read(change.id); }
+      catch (error) {
+        if (error.status !== 404) throw error;
+        // A full free cloud clears notes that sat in the trash for 30 days.
+        if (activeGeneration !== generation) return;
+        if (files.delete(change.id)) changed = true;
+        await store('delete', `${cachePrefix()}${change.id}`);
+        continue;
+      }
       if (activeGeneration !== generation) return;
       files.set(change.id, entry);
       changed = true;
@@ -424,6 +453,7 @@ async function performSync(signal) {
     cursor = result.cursor;
     more = result.hasMore;
   }
+  updateTimeline();
   const status = await activeClient.status();
   if (activeGeneration !== generation) return;
   $('storage-usage').textContent = `${(status.usedBytes / 1048576).toFixed(1)} / ${(status.quotaBytes / 1048576).toFixed(0)} MiB encrypted storage`;
@@ -589,6 +619,86 @@ async function restoreEntry(entry, revision = entry.revision) {
   await sync();
 }
 
+// The slider steps through the minutes with a change; its last step is now.
+function updateTimeline() {
+  const range = $('timeline-range'), atNow = Number(range.value) >= Number(range.max);
+  range.max = String(Math.max(moments.size - 1, 0));
+  if (atNow) range.value = range.max;
+}
+
+const momentSteps = () => [...moments.values()].sort();
+
+async function showMoment() {
+  const steps = momentSteps(), index = Number($('timeline-range').value), request = ++momentRequest, activeClient = client;
+  if (index >= steps.length - 1) {
+    moment = undefined;
+    $('timeline-moment').textContent = 'Now';
+    $('timeline-restore').hidden = true;
+    render();
+    return;
+  }
+  const at = steps[index];
+  $('timeline-moment').textContent = `Opening ${new Date(at).toLocaleString()}...`;
+  const { objects } = await activeClient.snapshot(at);
+  const shown = new Map(), unread = [];
+  let locked = 0, cleared = 0;
+  for (const object of objects) {
+    const current = files.get(object.id);
+    if (current && !current.pending && current.revision === object.revision) shown.set(object.id, current);
+    else if (object.cleared) cleared++;
+    else if (object.locked) locked++;
+    else unread.push(object);
+  }
+  // A few at a time: the server serves a limited number of requests at once.
+  for (let start = 0; start < unread.length; start += 8) {
+    if (request !== momentRequest) return;
+    for (const entry of await Promise.all(unread.slice(start, start + 8).map((object) => activeClient.read(object.id, object.revision)))) shown.set(entry.id, entry);
+  }
+  if (request !== momentRequest || activeClient !== client) return;
+  // A moment comes back whole or not at all.
+  moment = { at, objects, files: shown, locked: locked + cleared };
+  $('timeline-moment').textContent = `${new Date(at).toLocaleString()}. Read-only.${locked ? ` ${locked} file(s) from then changed more than 30 days ago. JotDrop Plus shows and restores them.` : ''}${cleared ? ` ${cleared} file(s) from then were cleared to make room in the free storage, so this moment cannot be restored.` : ''}`;
+  $('timeline-restore').hidden = false;
+  $('timeline-restore').disabled = locked + cleared > 0;
+  render();
+}
+
+function closeMoment() {
+  momentRequest++;
+  moment = undefined;
+  $('timeline').hidden = true;
+  $('time-machine').setAttribute('aria-expanded', 'false');
+  render();
+}
+
+// Every change is a new version: files come back, files made later move to the trash, and nothing is erased.
+async function restoreMoment() {
+  const target = moment;
+  if (!target || target.locked) return;
+  const when = new Date(target.at).toLocaleString();
+  if (!confirm(`Restore your notes and files to ${when}? Files made after that move to the trash. Every change is a new version, so the time machine can undo this.`)) return;
+  // Compare against the newest cloud versions.
+  await sync();
+  if ([...files.values()].some((entry) => entry.pending || entry.conflict)) throw new Error('Sync and resolve your changes before restoring a moment.');
+  const then = new Map(target.objects.map((object) => [object.id, object]));
+  let changed = 0;
+  try {
+    for (const entry of [...files.values()]) {
+      const object = then.get(entry.id);
+      if (object?.revision === entry.revision) continue;
+      if (!object || object.deleted) {
+        if (!entry.deleted) { await client.remove(entry.id, entry.revision); changed++; }
+      } else { await client.restore(entry.id, object.revision, entry.revision); changed++; }
+    }
+  } finally {
+    // Also after an error: show what did change.
+    closeMoment();
+    cursor = 0;
+    await sync();
+  }
+  message(`Restored ${changed} file(s) to ${when}.`);
+}
+
 async function reviewConflict(entry) {
   const remote = await client.read(entry.id);
   download(base64ToBytes(entry.file.content), `local-draft-${entry.file.path.split('/').pop()}`);
@@ -629,6 +739,8 @@ async function openWorkspace(connected) {
   generation++;
   cursor = 0;
   files.clear();
+  moments.clear();
+  closeMoment();
   $('access').hidden = true;
   $('workspace').hidden = false;
   $('access-code').value = '';
@@ -660,6 +772,8 @@ function lock() {
   generation++;
   client = undefined;
   files.clear();
+  moments.clear();
+  closeMoment();
   editing = undefined;
   for (const url of mediaUrls) URL.revokeObjectURL(url);
   mediaUrls.clear();
@@ -1159,6 +1273,23 @@ $('note-history').addEventListener('click', async () => {
     $('history').hidden = false;
   } catch (error) { $('editor-message').textContent = errorText(error); }
 });
+$('time-machine').addEventListener('click', () => {
+  if (!$('timeline').hidden) { closeMoment(); return; }
+  updateTimeline();
+  $('timeline-range').value = $('timeline-range').max;
+  $('timeline-moment').textContent = moments.size > 1 ? 'Now' : 'Now. Earlier moments appear here after your next changes.';
+  $('timeline-restore').hidden = true;
+  $('timeline').hidden = false;
+  $('time-machine').setAttribute('aria-expanded', 'true');
+  $('timeline-range').focus();
+});
+$('timeline-range').addEventListener('input', () => {
+  const steps = momentSteps(), index = Number($('timeline-range').value);
+  $('timeline-moment').textContent = index >= steps.length - 1 ? 'Now' : new Date(steps[index]).toLocaleString();
+});
+$('timeline-range').addEventListener('change', () => showMoment().catch((error) => message(errorText(error))));
+$('timeline-close').addEventListener('click', closeMoment);
+$('timeline-restore').addEventListener('click', () => restoreMoment().catch((error) => message(errorText(error))));
 $('upload').addEventListener('change', async () => {
   try {
     for (const file of $('upload').files) {

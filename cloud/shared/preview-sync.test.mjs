@@ -83,3 +83,33 @@ test('isolated sync reconciles uncertain create and update acknowledgments witho
   assert.equal((await client.history(id)).versions.length, 2);
   assert.equal((await client.listChanges()).changes.length, 2);
 });
+
+test('isolated sync forgets a deleted note that a full free cloud cleared, so its name can be used again', async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'jotdrop-sync-cleared-'));
+  let now = Date.parse('2026-10-23T08:00:00Z');
+  const enrollmentToken = randomToken(), server = await createCloudServer({ dataDir, enrollmentToken, quotaBytes: 4000, clock: () => now });
+  t.after(async () => { await server.close(); await rm(dataDir, { recursive: true, force: true }); });
+  const { client } = await CloudClient.create({ url: `http://127.0.0.1:${server.port}`, enrollmentToken, deviceName: 'Test plugin' });
+  const text = (value) => new TextEncoder().encode(value);
+  const files = new Map(), tracked = {};
+  const adapter = {
+    async list() { return [...files].map(([path, bytes]) => ({ path, bytes })); },
+    async writeNew(path, bytes) { if (files.has(path)) return false; files.set(path, bytes); return true; },
+    async replaceText() { return false; },
+    async writeConflict() {},
+  };
+  let persisted;
+  const persist = async (value) => { persisted = structuredClone(value); };
+  const saved = await client.write('notes/old.md', text('o'.repeat(1000)), 0);
+  await client.remove(saved.id, 1);
+  await syncPreview(client, adapter, tracked, persist);
+  assert.equal(tracked[saved.id].deleted, true);
+  now += 31 * 24 * 60 * 60 * 1000;
+  await client.write('notes/big.md', text('b'.repeat(1800)), 0);
+  await assert.rejects(client.read(saved.id), (error) => error.status === 404);
+  files.set('notes/old.md', text('same name, new note'));
+  const result = await syncPreview(client, adapter, tracked, persist);
+  assert.equal(result.uploaded, 1);
+  assert.equal(result.conflicts, 0);
+  assert.deepEqual(persisted[saved.id], { revision: 1, hash: tracked[saved.id].hash, deleted: false });
+});

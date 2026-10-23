@@ -148,6 +148,155 @@ test('eviction skips shared versions, deletes nothing when it cannot make room, 
   assert.equal(new TextDecoder().decode(base64ToBytes((await reopened.read(saved.id)).file.content)), '1'.repeat(400));
 });
 
+test('a snapshot shows each file as it was at a moment, and locks what the free plan cannot open', async (t) => {
+  const cloud = await fixture(t);
+  const { client } = await cloud.create();
+  const moment = () => new Date(Date.parse('2026-10-23T08:00:00Z') + elapsed).toISOString();
+  let elapsed = 0;
+  const step = () => { cloud.advance(DAY); elapsed += DAY; };
+  const a = await client.write('notes/a.md', text('a1'), 0);
+  const beforeB = moment();
+  step();
+  const b = await client.write('notes/b.md', text('b1'), 0);
+  const both = moment();
+  step();
+  await client.write('notes/a.md', text('a2'), 1);
+  step();
+  await client.remove(b.id, 1);
+  const afterDelete = moment();
+  step();
+  const c = await client.write('notes/c.md', text('c1'), 0);
+  const view = async (at) => Object.fromEntries((await client.snapshot(at)).objects.map((entry) => [entry.id, [entry.revision, entry.deleted, entry.locked]]));
+  assert.deepEqual(await view(beforeB), { [a.id]: [1, false, false] });
+  assert.deepEqual(await view(both), { [a.id]: [1, false, false], [b.id]: [1, false, false] });
+  assert.deepEqual(await view(afterDelete), { [a.id]: [2, false, false], [b.id]: [2, true, false] });
+  assert.deepEqual(await view('2026-10-01T00:00:00.000Z'), {});
+  await assert.rejects(client.call('/snapshot?at=yesterday'), (error) => error.status === 400);
+
+  cloud.advance(40 * DAY);
+  // Replaced, or in the trash, for more than 30 days: locked. Still current: open.
+  assert.deepEqual(await view(both), { [a.id]: [1, false, true], [b.id]: [1, false, true] });
+  assert.deepEqual(await view(new Date(Date.parse(afterDelete) + 50 * DAY).toISOString()), { [a.id]: [2, false, false], [b.id]: [2, true, true], [c.id]: [1, false, false] });
+  await trial(client);
+  assert.deepEqual(await view(both), { [a.id]: [1, false, false], [b.id]: [1, false, false] });
+});
+
+test('a snapshot comes in pages', async (t) => {
+  const cloud = await fixture(t);
+  const { client } = await cloud.create();
+  for (let index = 0; index < 3; index++) await client.write(`notes/${index}.md`, text(String(index)), 0);
+  const at = new Date(Date.parse('2026-10-23T08:00:00Z')).toISOString();
+  const first = await client.call(`/snapshot?at=${at}&limit=2`);
+  assert.equal(first.objects.length, 2);
+  assert.equal(first.hasMore, true);
+  const rest = await client.call(`/snapshot?at=${at}&limit=2&after=${first.cursor}`);
+  assert.equal(rest.objects.length, 1);
+  assert.equal(rest.hasMore, false);
+  assert.equal((await client.snapshot(at)).objects.length, 3);
+});
+
+test('a free note in the trash for more than 30 days needs Plus to come back', async (t) => {
+  const cloud = await fixture(t);
+  const { client } = await cloud.create();
+  const saved = await client.write('notes/a.md', text('keep me'), 0);
+  const deleted = await client.remove(saved.id, 1);
+  cloud.advance(29 * DAY);
+  assert.equal((await client.history(saved.id)).versions[0].locked, false);
+  cloud.advance(2 * DAY);
+  assert.deepEqual((await client.history(saved.id)).versions.map((version) => version.locked), [true, true]);
+  await assert.rejects(client.restore(saved.id, deleted.revision, deleted.revision), (error) => error.status === 402 && error.code === 'plus-required');
+  // Sync still reads the current, deleted version.
+  assert.equal((await client.read(saved.id)).deleted, true);
+  // A new note at the same place is not a restore.
+  await client.write('notes/a.md', text('new'), deleted.revision);
+  await client.remove(saved.id, 3);
+  cloud.advance(31 * DAY);
+  await trial(client);
+  await client.restore(saved.id, 1, 4);
+  assert.equal(new TextDecoder().decode(base64ToBytes((await client.read(saved.id)).file.content)), 'keep me');
+});
+
+test('a full free cloud first clears notes that sat in the trash for 30 days, all their versions at once', async (t) => {
+  const cloud = await fixture(t);
+  const { client } = await cloud.create();
+  const living = await client.write('notes/living.md', text('1'.repeat(400)), 0);
+  await client.write('notes/living.md', text('2'.repeat(400)), 1);
+  cloud.advance(DAY);
+  const trashed = await client.write('notes/trashed.md', text('t'.repeat(400)), 0);
+  await client.write('notes/trashed.md', text('u'.repeat(400)), 1);
+  await client.remove(trashed.id, 2);
+  const used = (await client.status()).usedBytes;
+  await cloud.restart({ quotaBytes: used + 100 });
+  const reopened = cloud.reconnect(client);
+  cloud.advance(31 * DAY);
+  // Too big even after clearing everything that is locked: nothing is deleted.
+  await assert.rejects(reopened.write('notes/huge.md', text('h'.repeat(4000)), 0), (error) => error.status === 507);
+  assert.equal((await reopened.read(trashed.id)).deleted, true);
+  const { cursor } = await reopened.listChanges(0);
+  // The old trashed note goes first, even though the living note has an older locked version.
+  await reopened.write('notes/b.md', text('b'.repeat(700)), 0);
+  await assert.rejects(reopened.read(trashed.id), (error) => error.status === 404);
+  await assert.rejects(reopened.history(trashed.id), (error) => error.status === 404);
+  assert.deepEqual((await reopened.history(living.id)).versions.map((version) => version.revision), [2, 1]);
+  // Clients see the cleared note in the feed and find it gone.
+  assert.ok((await reopened.listChanges(cursor)).changes.some((change) => change.id === trashed.id && change.deleted));
+  // The name is free again.
+  assert.equal((await reopened.write('notes/trashed.md', text('again'), 0)).revision, 1);
+});
+
+test('a snapshot reports a file whose version from then was cleared, instead of leaving it out', async (t) => {
+  const cloud = await fixture(t);
+  const { client } = await cloud.create();
+  const saved = await client.write('notes/f.md', text('1'.repeat(400)), 0);
+  const then = new Date(Date.parse('2026-10-23T08:00:00Z')).toISOString();
+  cloud.advance(10 * DAY);
+  await client.write('notes/f.md', text('2'.repeat(400)), 1);
+  cloud.advance(DAY);
+  await client.write('notes/f.md', text('3'.repeat(400)), 2);
+  const used = (await client.status()).usedBytes;
+  await cloud.restart({ quotaBytes: used + 100 });
+  const reopened = cloud.reconnect(client);
+  cloud.advance(60 * DAY);
+  // Clears revision 1 (the version from then) and revision 2.
+  await reopened.write('notes/b.md', text('b'.repeat(900)), 0);
+  assert.deepEqual((await reopened.history(saved.id)).versions.map((version) => version.revision), [3]);
+  assert.deepEqual((await reopened.snapshot(then)).objects, [{ id: saved.id, revision: null, deleted: false, size: 0, updatedAt: null, locked: true, cleared: true }]);
+});
+
+test('a snapshot does not offer an older version in place of a cleared one', async (t) => {
+  const cloud = await fixture(t);
+  const { client } = await cloud.create();
+  const saved = await client.write('notes/g.md', text('g'), 0);
+  cloud.advance(DAY);
+  await client.write('notes/g.md', text('h'), 1);
+  const between = new Date(Date.parse('2026-10-23T08:00:00Z') + DAY).toISOString();
+  cloud.advance(DAY);
+  await client.write('notes/g.md', text('i'), 2);
+  // As if a full cloud cleared revision 2, the version from then.
+  const db = new DatabaseSync(cloud.app().dbPath);
+  try { db.prepare('DELETE FROM revisions WHERE id=? AND revision=2').run(saved.id); } finally { db.close(); }
+  const [entry] = (await client.snapshot(between)).objects;
+  assert.equal(entry.cleared, true);
+  assert.equal(entry.locked, true);
+});
+
+test('writing to a note that sat in the trash for 30 days keeps its history when the cloud is full', async (t) => {
+  const cloud = await fixture(t);
+  const { client } = await cloud.create();
+  const saved = await client.write('notes/a.md', text('a'.repeat(400)), 0);
+  await client.remove(saved.id, 1);
+  await client.write('notes/old.md', text('o'.repeat(400)), 0);
+  const old = (await client.listChanges()).changes.at(-1).id;
+  await client.remove(old, 1);
+  const used = (await client.status()).usedBytes;
+  await cloud.restart({ quotaBytes: used + 100 });
+  const reopened = cloud.reconnect(client);
+  cloud.advance(31 * DAY);
+  await reopened.write('notes/a.md', text('b'.repeat(400)), 2);
+  assert.deepEqual((await reopened.history(saved.id)).versions.map((version) => version.revision), [3, 2, 1]);
+  await assert.rejects(reopened.read(old), (error) => error.status === 404);
+});
+
 test('at the device limit a wrong secret still fails as 401, and no pairing code is made', async (t) => {
   const cloud = await fixture(t);
   const { client: phone, recoveryCode } = await cloud.create();

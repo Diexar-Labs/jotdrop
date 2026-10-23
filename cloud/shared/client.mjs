@@ -164,6 +164,16 @@ export class CloudClient {
   remove(id, baseRevision) { return this.call(this.objectPath(id), 'DELETE', { baseRevision }); }
   history(id) { return this.call(`${this.objectPath(id)}/history`); }
   restore(id, revision, baseRevision) { return this.call(`${this.objectPath(id)}/restore`, 'POST', { revision, baseRevision }); }
+  /** Every file as it was at `at`, page by page: `{ id, revision, deleted, size, updatedAt, locked, cleared }`. */
+  async snapshot(at) {
+    if (!Number.isFinite(Date.parse(at))) throw new Error('Invalid moment.');
+    const objects = [];
+    for (let page = { cursor: '', hasMore: true }; page.hasMore;) {
+      page = await this.call(`/snapshot?at=${encodeURIComponent(new Date(at).toISOString())}&after=${page.cursor}`);
+      objects.push(...page.objects);
+    }
+    return { objects };
+  }
   status() { return this.call('/status'); }
   devices() { return this.call('/devices'); }
   revokeDevice(id) { if (!validId(id)) throw new Error('Invalid device ID.'); return this.call(`/devices/${id}`, 'DELETE'); }

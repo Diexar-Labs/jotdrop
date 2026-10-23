@@ -96,6 +96,11 @@ main { min-width: 0; padding: 0 2rem 3rem; }
 .device-row, .history-row { padding: 1rem 0; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; justify-content: space-between; }
 .device-row p, .history-row p { margin: 0; }
 .history-row.locked { color: var(--muted); }
+#timeline { display: grid; gap: .6rem; margin: 0 0 1rem; padding: 1rem; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+#timeline label { font-weight: 600; }
+#timeline input[type="range"] { padding: 0; border: 0; accent-color: var(--accent); }
+#timeline-moment { margin: 0; color: var(--muted); }
+.timeline-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
 #device-limit { display: grid; gap: .5rem; margin-top: 1rem; }
 #devices-panel { max-width: 760px; }
 #pair-form { margin-top: 2rem; }

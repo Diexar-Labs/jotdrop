@@ -133,11 +133,18 @@
         <label class="search-label" for="sort">Sort files</label><select id="sort"><option value="modified">Last edited: newest</option><option value="oldest">Last edited: oldest</option><option value="title">Title: A-Z</option><option value="manual">Manual order</option></select>
         <button id="sync" type="button">Sync now</button>
         <button id="pause-sync" type="button" hidden>Pause sync</button>
+        <button id="time-machine" type="button" aria-expanded="false" aria-controls="timeline">Time machine</button>
         <button id="new-note" class="primary" type="button">New note</button>
         <label class="upload-button" for="upload">Upload files<input id="upload" type="file" multiple></label>
         <label class="upload-button" for="import-notes" title="Google Keep (Takeout zip), Evernote (.enex), Apple Notes and other Markdown exports">Import notes<input id="import-notes" type="file" multiple></label>
       </header>
       <div class="workspace-heading"><div><h1 id="view-title">Notes</h1><p id="view-description">Plain Markdown. Your files, your workspace.</p></div><p id="sync-status" role="status" aria-live="polite">Connecting...</p></div>
+      <section id="timeline" aria-label="Time machine" hidden>
+        <label for="timeline-range">Slide back to see your notes as they were</label>
+        <input id="timeline-range" type="range" min="0" max="0" step="1" value="0">
+        <p id="timeline-moment" role="status" aria-live="polite">Now</p>
+        <div class="timeline-actions"><button id="timeline-restore" class="primary" type="button" hidden>Restore this moment</button><button id="timeline-close" type="button">Back to now</button></div>
+      </section>
       <progress id="upload-progress" aria-label="Encrypted upload" hidden></progress>
       <p id="workspace-message" class="message" role="status" aria-live="polite"></p>
       <section id="items" class="note-grid" aria-label="Notes"></section>

@@ -219,6 +219,21 @@ fun main() {
     resumedRemote.write(note, "newer remote edit".toByteArray(), 2)
     check(CloudSyncEngine.sync(resumedRemote, newerLocal, resumedBase) {}.conflicts == 1)
     check(String(newerLocal.files.getValue(note)) == "second offline edit" && String(resumedRemote.files.getValue(note).bytes) == "newer remote edit")
+    // A full free cloud clears a note that sat in the trash for 30 days; its name can be used again.
+    val clearing = CheckRemote()
+    val c = CheckLocal().also { it.files[note] = "old".toByteArray() }
+    val d = CheckLocal()
+    val tc = mutableMapOf<String, CloudSyncBase>()
+    val td = mutableMapOf<String, CloudSyncBase>()
+    var savedC: Map<String, CloudSyncBase> = emptyMap()
+    CloudSyncEngine.sync(clearing, c, tc) {}
+    CloudSyncEngine.sync(clearing, d, td) {}
+    c.files.remove(note)
+    check(CloudSyncEngine.sync(clearing, c, tc) {}.deleted == 1 && CloudSyncEngine.sync(clearing, d, td) {}.deleted == 1)
+    clearing.files.remove(note)
+    check(CloudSyncEngine.sync(clearing, c, tc) { savedC = it.toMap() }.conflicts == 0 && tc.isEmpty() && savedC.isEmpty())
+    clearing.write(note, "new note, same name".toByteArray(), 0)
+    check(CloudSyncEngine.sync(clearing, d, td) {}.downloaded == 1 && String(d.files.getValue(note)) == "new note, same name")
     for (path in listOf("../x", "notes/../x", ".obsidian/key", "notes/.stfolder/x.md", "notes/x.cloud-conflict-r1.md", "attachments/.git/x", "notes/file.exe")) {
         check(runCatching { CloudSyncEngine.path(path) }.isFailure)
     }

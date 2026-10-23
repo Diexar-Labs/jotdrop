@@ -36,7 +36,14 @@ export async function syncPreview(client, adapter, tracked, persist, { write = (
     await adapter.writeConflict(conflictPath, base64ToBytes(entry.file.content));
   }
   for (const [id] of remote) {
-    const entry = await client.read(id);
+    let entry;
+    try { entry = await client.read(id); }
+    catch (error) {
+      if (error.status !== 404) throw error;
+      // A full free cloud clears notes that sat in the trash for 30 days; then the name can start over.
+      if (tracked[id]?.deleted) { delete tracked[id]; await persist(tracked); }
+      continue;
+    }
     const path = normalizePath(entry.file.path);
     if (!/^(notes|attachments)\//.test(path)) throw new Error('Remote path is outside the preview note and attachment folders.');
     const bytes = local.get(path), base = tracked[id];

@@ -309,27 +309,43 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
   // A version is replaced when the next one is saved. After eviction the next remaining version still predates
   // the cutoff, because the cutoff only moves forward.
   const lockedVersions = 'FROM revisions r WHERE r.vaultId=? AND (SELECT n.updatedAt FROM revisions n WHERE n.vaultId=r.vaultId AND n.id=r.id AND n.revision>r.revision ORDER BY n.revision LIMIT 1)<?';
+  // A note deleted before the cutoff and still in the trash is locked as a whole.
+  const trashedNotes = 'FROM revisions r WHERE r.vaultId=? AND r.deleted=1 AND r.updatedAt<? AND r.revision=(SELECT MAX(m.revision) FROM revisions m WHERE m.vaultId=r.vaultId AND m.id=r.id)';
   function requireOpenVersion(vaultId, id, revision) {
     const cutoff = lockedBefore(vaultId);
-    if (cutoff && one(`SELECT 1 ${lockedVersions} AND r.id=? AND r.revision=?`, vaultId, cutoff, id, revision)) fail(402, 'This version is older than 30 days. JotDrop Plus restores it.', { code: 'plus-required' });
+    if (!cutoff) return;
+    if (one(`SELECT 1 ${trashedNotes} AND r.id=?`, vaultId, cutoff, id)) fail(402, 'This note was deleted more than 30 days ago. JotDrop Plus restores it.', { code: 'plus-required' });
+    if (one(`SELECT 1 ${lockedVersions} AND r.id=? AND r.revision=?`, vaultId, cutoff, id, revision)) fail(402, 'This version is older than 30 days. JotDrop Plus restores it.', { code: 'plus-required' });
   }
-  // A full free cloud makes room by deleting its oldest locked versions; the current version of a file always stays.
-  // One scan for candidates; nothing is deleted when even all locked versions would not make enough room.
+  // A full free cloud makes room by deleting, oldest first, notes locked in the trash and then locked versions;
+  // the current version of a file always stays. A cleared note is announced in the change feed and then reads as 404.
+  // One scan for candidates; nothing is deleted when even all of them would not make enough room.
   // ponytail: scans the vault's revision rows per full upload; keep a per-vault locked-bytes counter if large vaults make this slow.
-  function fits(vaultId, extra) {
+  // `id` is the file being written; it is never cleared to make room for itself.
+  function fits(vaultId, extra, deviceId, id) {
     let shortfall = storageUsage(vaultId) + extra - quotaFor(vaultId);
     if (shortfall <= 0) return true;
     const cutoff = lockedBefore(vaultId);
     if (!cutoff) return false;
+    const trashed = all(`SELECT r.id,r.revision,(SELECT COALESCE(SUM(e.size),0) FROM envelopes e WHERE e.vaultId=r.vaultId AND e.id=r.id) AS size ${trashedNotes} AND r.id<>? ORDER BY r.updatedAt`, vaultId, cutoff, id);
+    const cleared = new Set(trashed.map((note) => note.id));
     // Group by envelope, oldest first; an envelope a newer open version still uses (a restore) is never freed.
     const groups = new Map();
     for (const entry of all(`SELECT r.id,r.revision,r.envelopeHash,r.size ${lockedVersions} ORDER BY r.updatedAt,r.revision`, vaultId, cutoff)) {
+      if (cleared.has(entry.id)) continue;
       const key = `${entry.id}:${entry.envelopeHash}`;
       if (!groups.has(key)) groups.set(key, { ...entry, revisions: [] });
       groups.get(key).revisions.push(entry.revision);
     }
     const freeable = [...groups.values()].filter((group) => one('SELECT COUNT(*) AS count FROM revisions WHERE vaultId=? AND id=? AND envelopeHash=?', vaultId, group.id, group.envelopeHash).count === group.revisions.length);
-    if (freeable.reduce((sum, group) => sum + group.size, 0) < shortfall) return false;
+    if ([...trashed, ...freeable].reduce((sum, entry) => sum + entry.size, 0) < shortfall) return false;
+    const now = new Date(clock()).toISOString();
+    for (const note of trashed) {
+      run('DELETE FROM revisions WHERE vaultId=? AND id=?', vaultId, note.id);
+      run('DELETE FROM envelopes WHERE vaultId=? AND id=?', vaultId, note.id);
+      run('INSERT INTO changes(vaultId,id,revision,deleted,size,updatedAt,deviceId) VALUES(?,?,?,1,0,?,?)', vaultId, note.id, note.revision, now, deviceId);
+      if ((shortfall -= note.size) <= 0) return true;
+    }
     for (const group of freeable) {
       for (const revision of group.revisions) run('DELETE FROM revisions WHERE vaultId=? AND id=? AND revision=?', vaultId, group.id, revision);
       run('DELETE FROM envelopes WHERE vaultId=? AND id=? AND envelopeHash=?', vaultId, group.id, group.envelopeHash);
@@ -351,7 +367,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
       const history = historyUsage(vaultId);
       if (history.revisionCount >= maxHistoryEntries || history.changeCount >= maxHistoryEntries) fail(507, 'Cloud history safety limit reached. Existing versions remain readable; no history was deleted.');
       if (!stored) {
-        if (!fits(vaultId, size)) fail(507, 'Cloud storage is full. Your local files remain available.');
+        if (!fits(vaultId, size, deviceId, id)) fail(507, 'Cloud storage is full. Your local files remain available.');
         run('INSERT INTO envelopes VALUES(?,?,?,?,?)', vaultId, id, envelopeHash, envelope, size);
       }
       const revision = baseRevision + 1, now = new Date(clock()).toISOString();
@@ -744,6 +760,23 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
         if (hasMore) changes.pop();
         reply(200, { changes: changes.map((entry) => ({ ...entry, deleted: Boolean(entry.deleted) })), cursor: changes.at(-1)?.sequence ?? after, hasMore }); return;
       }
+      if (method === 'GET' && route === '/snapshot') {
+        // Each file as it was at a moment: its last version saved at or before it, deleted ones included.
+        const at = url.searchParams.get('at'), after = url.searchParams.get('after') || '', pageSize = Number(url.searchParams.get('limit') || 500);
+        requireValue(Number.isFinite(Date.parse(at)) && (!after || validHash(after)) && Number.isSafeInteger(pageSize) && pageSize >= 1 && pageSize <= 500, 'Invalid snapshot request');
+        const cutoff = lockedBefore(vaultId);
+        // A full free cloud may have cleared the version from then: a gap in revision numbers, or a file whose
+        // first remaining version is newer. That file is reported as cleared, never left out or replaced by an older version.
+        // ponytail: scans the vault's revision rows per page; index revisions by time if large vaults make this slow.
+        const objects = all('SELECT o.id,o.first,r.revision,r.deleted,r.size,r.updatedAt,(SELECT n.revision FROM revisions n WHERE n.vaultId=o.vaultId AND n.id=o.id AND n.revision>r.revision ORDER BY n.revision LIMIT 1) AS nextRevision,(SELECT n.updatedAt FROM revisions n WHERE n.vaultId=o.vaultId AND n.id=o.id AND n.revision>r.revision ORDER BY n.revision LIMIT 1) AS replacedAt FROM (SELECT vaultId,id,MIN(revision) AS first FROM revisions WHERE vaultId=? AND id>? GROUP BY id) o LEFT JOIN revisions r ON r.vaultId=o.vaultId AND r.id=o.id AND r.revision=(SELECT MAX(m.revision) FROM revisions m WHERE m.vaultId=o.vaultId AND m.id=o.id AND m.updatedAt<=?) WHERE r.revision IS NOT NULL OR o.first>1 ORDER BY o.id LIMIT ?', vaultId, after, new Date(at).toISOString(), pageSize + 1);
+        const hasMore = objects.length > pageSize;
+        if (hasMore) objects.pop();
+        reply(200, { objects: objects.map(({ first, nextRevision, replacedAt, ...entry }) => {
+          if (entry.revision === null) return { id: entry.id, revision: null, deleted: false, size: 0, updatedAt: null, locked: true, cleared: true };
+          const cleared = nextRevision !== null && nextRevision !== entry.revision + 1;
+          return { ...entry, deleted: Boolean(entry.deleted), locked: cleared || Boolean(cutoff) && (replacedAt ? replacedAt < cutoff : Boolean(entry.deleted) && entry.updatedAt < cutoff), cleared };
+        }), cursor: objects.at(-1)?.id ?? after, hasMore }); return;
+      }
       if (method === 'GET' && route === '/devices') { reply(200, { devices: all('SELECT id,name,createdAt,lastSeenAt,revoked FROM devices WHERE vaultId=? ORDER BY createdAt', vaultId).map((entry) => ({ ...entry, revoked: Boolean(entry.revoked) })) }); return; }
       const revoke = /^\/devices\/([0-9a-f-]+)$/.exec(route);
       if (method === 'DELETE' && revoke) {
@@ -814,7 +847,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
             const revision = latest(vaultId, id)?.revision || 0;
             if (revision !== baseRevision) fail(409, 'Another version was saved. Review both versions.', { currentRevision: revision });
             if (one('SELECT COUNT(*) AS count FROM uploads WHERE vaultId=?', vaultId).count >= 4) fail(507, 'Cloud pending upload limit reached');
-            if (!fits(vaultId, reservedBytes)) fail(507, 'Cloud storage is full. Your local files remain available.');
+            if (!fits(vaultId, reservedBytes, deviceId, id)) fail(507, 'Cloud storage is full. Your local files remain available.');
             run('INSERT INTO uploads VALUES(?,?,?,?,?,?,?,?,?)', ...key, value.size, reservedBytes, clock() + TRANSFER_LIFETIME, Buffer.alloc(0));
             return { offset: 0, size: value.size };
           });
@@ -871,7 +904,8 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
         if (!current) fail(404, 'File not found');
         // Newest first: once a newer version is older than the cutoff, every older version is locked.
         const cutoff = lockedBefore(vaultId);
-        let replacedEarlier = false;
+        // A note in the trash since before the cutoff is locked as a whole.
+        let replacedEarlier = Boolean(cutoff) && Boolean(current.deleted) && current.updatedAt < cutoff;
         reply(200, { versions: all('SELECT revision,deleted,size,updatedAt,deviceId FROM revisions WHERE vaultId=? AND id=? ORDER BY revision DESC LIMIT 100', vaultId, id).map((entry) => {
           const locked = replacedEarlier;
           replacedEarlier ||= Boolean(cutoff) && entry.updatedAt < cutoff;

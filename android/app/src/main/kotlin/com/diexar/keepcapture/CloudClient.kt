@@ -63,7 +63,12 @@ class CloudClient(val credentials: CloudCredentials) {
             cursor = next
         } while (more)
         var total = 0L
-        return ids.map { id -> checkActive(); read(id).also { total += it.bytes.size; require(total <= 64 * 1024 * 1024) { "Cloud sync working set exceeds 64 MiB" } } }
+        // A file cleared from a full free cloud after 30 days in the trash stays in the feed but reads as 404.
+        return ids.mapNotNull { id ->
+            checkActive()
+            val file = try { read(id) } catch (error: CloudRequestException) { if (error.status == 404) return@mapNotNull null else throw error }
+            file.also { total += it.bytes.size; require(total <= 64 * 1024 * 1024) { "Cloud sync working set exceeds 64 MiB" } }
+        }
     }
 
     fun read(id: String): CloudPreviewFile {
