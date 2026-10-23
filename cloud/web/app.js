@@ -2,7 +2,7 @@ import { CloudClient } from '/shared/client.mjs';
 import { accountInfo, approveDevice, attachAccount, changePassword, checkApproval, completeApproval, confirmLogin, confirmSignup, disableTotp, enableTotp, listApprovals, logIn, newRecoveryCode, rejectDevice, requestApproval, resetWithRecoveryCode, setupTotp, signUp, startOver, startReset } from '/shared/account.mjs';
 import { base64ToBytes, bytesToBase64, decryptEnvelope, sealLocal, unsealLocal } from '/shared/crypto.mjs';
 import { exportZip } from '/export.mjs';
-import { noteSummary, updateMetadata, toggleTask, attachmentPath } from '/note.mjs';
+import { noteSummary, updateMetadata, toggleTask, attachmentPath, plainPreviewText } from '/note.mjs';
 
 const $ = (id) => document.getElementById(id);
 try {
@@ -209,7 +209,7 @@ function render() {
       heading.textContent = section ? 'Pinned' : 'Others';
       $('items').append(heading);
     }
-    title.textContent = parts.title;
+    title.textContent = markdown ? plainPreviewText(parts.title) : parts.title;
     card.append(title);
     if (markdown) {
       const fullText = noteText(entry.file);
@@ -218,7 +218,9 @@ function render() {
       const titleLine = /^\s*#\s+/.test(parts.body) ? parts.body.split('\n').findIndex((line) => line.trim()) : -1;
       let text = [], budget = 600, fence;
       const flush = () => {
-        const value = text.join('\n').trim().slice(0, budget);
+        // Media show below the text; a link shows its label.
+        const value = plainPreviewText(text.join('\n').replace(/!\[\[[^\]]+\]\]|!\[[^\]]*\]\([^)]+\)/g, '').replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, '$1'))
+          .replace(/\n{3,}/g, '\n\n').trim().slice(0, budget);
         if (value) { card.append(paragraph(value, 'note-preview')); budget -= value.length; }
         text = [];
       };
@@ -237,7 +239,7 @@ function render() {
           try { const latest = files.get(entry.id); if (latest !== entry) throw new Error('This checklist changed. Sync and try again.'); await queueFile(entry.file.path, encoder.encode(toggleTask(noteText(entry.file), bodyOffset + bodyIndex, input.checked)), entry.revision); }
           catch (error) { input.checked = !input.checked; input.disabled = false; message(errorText(error)); }
         });
-        row.append(input, document.createTextNode(task[2])); card.append(row);
+        row.append(input, document.createTextNode(plainPreviewText(task[2]))); card.append(row);
       });
       flush();
       if (!entry.deleted) {
@@ -293,10 +295,10 @@ async function loadLocal() {
   }
 }
 
-async function queueFile(path, bytes, expectedRevision) {
+async function queueFile(path, bytes, expectedRevision, modifiedAt = new Date().toISOString()) {
   const activeClient = client, activeGeneration = generation;
   if (!activeClient) throw new Error('Unlock the workspace before saving.');
-  const prepared = await activeClient.prepareWrite(path, bytes, 0);
+  const prepared = await activeClient.prepareWrite(path, bytes, 0, modifiedAt);
   if (generation !== activeGeneration) throw new Error('Workspace changed before saving. Reopen the original workspace.');
   const current = files.get(prepared.id);
   if (expectedRevision === undefined && current) throw new Error('That filename already exists. Choose another filename or open the existing note to edit it.');
@@ -307,7 +309,7 @@ async function queueFile(path, bytes, expectedRevision) {
   const record = { prepared, deleted: false, queueId: crypto.randomUUID() };
   await store('queue', key, record);
   if (generation !== activeGeneration) return;
-  files.set(prepared.id, { id: prepared.id, revision: prepared.baseRevision, deleted: false, pending: true, file: { path, content: bytesToBase64(bytes), modifiedAt: new Date().toISOString() } });
+  files.set(prepared.id, { id: prepared.id, revision: prepared.baseRevision, deleted: false, pending: true, file: { path, content: bytesToBase64(bytes), modifiedAt } });
   render();
   void sync();
 }
@@ -1113,6 +1115,68 @@ $('upload').addEventListener('change', async () => {
   } catch (error) { message(errorText(error)); }
   finally { $('upload').value = ''; }
 });
+$('import-notes').addEventListener('change', async () => {
+  const picked = [...$('import-notes').files];
+  $('import-notes').value = '';
+  if (!picked.length) return;
+  try {
+    const { readImport } = await import('/import.mjs');
+    const result = await readImport(picked);
+    if (!result.items.length) { message(result.error ? `Import failed: ${result.error}` : 'No notes found. Choose a Google Takeout zip, Evernote .enex files, or Markdown files from Apple Notes or another app.'); return; }
+    const source = { keep: 'Google Keep', evernote: 'Evernote', markdown: 'Markdown files' }[result.kind];
+    const attachments = new Set(result.items.flatMap((item) => item.attachments)).size;
+    if (!confirm(`Import ${result.items.length} notes with ${attachments} attachments from ${source}? Existing notes are never overwritten.`
+      + (result.skipped ? ` ${result.skipped} notes in the Keep trash are left out.` : '') + (result.missing ? ` ${result.missing} attachments are not in the export.` : ''))) return;
+    await writeImport(result);
+  } catch (error) { message(errorText(error)); }
+});
+
+/** Like the plugin: a note whose name exists in Notes or Archive counts as imported before; nothing is overwritten. */
+async function writeImport({ items, files: sources, failed: unreadable }) {
+  const find = (path) => [...files.values()].find((entry) => entry.file.path === path);
+  const live = (path) => { const entry = find(path); return entry && !entry.deleted ? entry : undefined; };
+  // A deleted file at that path gets a new version on top of the deleted one.
+  const save = (path, bytes, modifiedAt) => queueFile(path, bytes, find(path)?.deleted ? find(path).revision : undefined, modifiedAt);
+  const names = new Map(), broken = new Set(), written = new Set();
+  let imported = 0, existing = 0, failed = unreadable, tooLarge = 0;
+  for (const [index, item] of items.entries()) {
+    if (index % 25 === 0) message(`Importing notes: ${index} of ${items.length}`);
+    try {
+      const exists = (name) => live(`notes/${name}`) || live(`notes/Archive/${name}`);
+      let name = item.name;
+      if (written.has(name)) {
+        // Two notes with the same stamp and title in one export: the next gets a number.
+        const stem = name.replace(/\.md$/, '');
+        for (let n = 2; written.has(name) || exists(name); n++) name = `${stem} ${n}.md`;
+      } else if (exists(name)) { existing += 1; continue; }
+      for (const source of item.attachments) {
+        if (names.has(source) || broken.has(source)) continue;
+        try {
+          const bytes = await sources.get(source)();
+          if (bytes.length > 4 * 1024 * 1024) { tooLarge += 1; broken.add(source); continue; }
+          // `[ ] | # ^` would break the ![[…]] embed; same name and bytes reuse the file, otherwise the next number.
+          const base = source.slice(source.lastIndexOf('/') + 1).replace(/[[\]|#^]/g, '_');
+          const dot = base.lastIndexOf('.') > 0 ? base.lastIndexOf('.') : base.length;
+          for (let n = 1; ; n++) {
+            const file = n === 1 ? base : `${base.slice(0, dot)} ${n}${base.slice(dot)}`;
+            const current = live(`attachments/${file}`);
+            if (current && current.file.content !== bytesToBase64(bytes)) continue;
+            if (!current) await save(`attachments/${file}`, bytes, new Date(item.editedMs).toISOString());
+            names.set(source, file);
+            break;
+          }
+        } catch (error) { console.error('Could not import attachment', source, error); broken.add(source); }
+      }
+      await save(`notes/${item.archived ? 'Archive/' : ''}${name}`, encoder.encode(item.render(names)), new Date(item.editedMs).toISOString());
+      written.add(item.name).add(name);
+      imported += 1;
+    } catch (error) { console.error('Could not import', item.name, error); failed += 1; }
+  }
+  message(`Import: ${imported} imported, ${existing} already there, ${failed} could not be imported.`
+    + (broken.size ? ` ${broken.size} attachments could not be added${tooLarge ? ` (${tooLarge} over 4 MiB)` : ''}.` : ''));
+  await sync();
+  void sync();
+}
 for (const navigation of document.querySelectorAll('[data-view]')) navigation.addEventListener('click', () => {
   view = navigation.dataset.view;
   for (const item of document.querySelectorAll('[data-view]')) item.removeAttribute('aria-current');

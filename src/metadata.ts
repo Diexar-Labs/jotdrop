@@ -392,6 +392,54 @@ export function checklistToGlyphs(text: string): string {
 }
 
 /**
+ * Turns note Markdown into plain card text: drops code-fence lines, rules,
+ * table separator rows and quote/callout markers, joins table cells with " · ",
+ * and removes emphasis, highlight, inline-code, `<br>` and escape marks. Lines
+ * inside a code fence keep their text. Links, wikilinks and list markers stay
+ * for `checklistToGlyphs` and `renderInlinePreview`.
+ */
+export function plainPreviewText(text: string): string {
+  const lines: string[] = [];
+  let fence = "";
+  for (const line of text.split("\n")) {
+    const marker = /^\s{0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+    if (marker) {
+      if (!fence) fence = marker;
+      else if (marker[0] === fence[0] && marker.length >= fence.length) fence = "";
+      continue;
+    }
+    if (fence) { lines.push(line); continue; }
+    if (/^\s{0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/.test(line)) continue;
+    if (/^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)+\|?\s*$/.test(line)) continue;
+    // A quoted checklist keeps its `>`: toggleChecklistItem does not count it, so it must not become a checkbox.
+    const unquoted = line.replace(/^(?:\s{0,3}>[ \t]?)+/, "");
+    const plain = (unquoted !== line && /^\s*[-*+][ \t]+\[[ xX]\]/.test(unquoted) ? line : unquoted).replace(/^\[![\w-]+\][+-]?[ \t]*/, "");
+    if (/^\s*\|.*\|\s*$/.test(plain)) {
+      const cells = (plain.match(/(?:\\.|[^|\\])+/g) ?? []).map((cell) => cell.trim()).filter(Boolean);
+      lines.push(cells.map(stripInlineMarks).join(" · "));
+    } else {
+      lines.push(stripInlineMarks(plain));
+    }
+  }
+  return lines.join("\n");
+}
+
+function stripInlineMarks(text: string): string {
+  return text.replace(
+    /\\([!-/:-@[-`{-~])|(`+)([^`\n]+?)\2|(\*{3}|_{3}|\*\*|__|~~|==)(?=\S)(.*?\S)\4|(^|[^\w*])\*(?=[^\s*])([^*\n]*?[^\s*])\*(?!\*)|(^|[^\w_])_(?=[^\s_])([^_\n]*?[^\s_])_(?!\w)|<br\s*\/?>/gi,
+    (_whole, escaped?: string, _ticks?: string, code?: string, _strong?: string, strongText?: string,
+      starLead?: string, starText?: string, underLead?: string, underText?: string) => {
+      if (escaped !== undefined) return escaped;
+      if (code !== undefined) return code;
+      if (strongText !== undefined) return stripInlineMarks(strongText);
+      if (starText !== undefined) return `${starLead ?? ""}${stripInlineMarks(starText)}`;
+      if (underText !== undefined) return `${underLead ?? ""}${stripInlineMarks(underText)}`;
+      return " ";
+    },
+  );
+}
+
+/**
  * Renders a limited inline preview into `parent` as real DOM nodes — never via
  * innerHTML, so user text is inserted as text content and can never inject
  * markup. Handles indented checklist glyphs, `[[wikilink]]` / `[[link|alias]]` as styled

@@ -127,7 +127,7 @@ function usecToMs(value: unknown): number | undefined {
 }
 
 function keepColor(value: unknown): ColorName {
-  const color = String(value ?? "").toLowerCase();
+  const color = typeof value === "string" ? value.toLowerCase() : "";
   if (color === "cerulean") return "blue";
   return isColorName(color) ? color : "default";
 }
@@ -147,7 +147,7 @@ export async function parseKeepExport(files: ImportFiles): Promise<{ notes: Keep
   for (const source of sources.sort()) {
     let json: Record<string, unknown>;
     try {
-      json = JSON.parse(decoder.decode(await files.get(source)!()));
+      json = JSON.parse(decoder.decode(await files.get(source)!())) as Record<string, unknown>;
     } catch (err) {
       failed.push(source);
       error ??= err instanceof Error ? err.message : String(err);
@@ -202,7 +202,7 @@ export function importFileName(createdMs: number, words: string): string {
   const stamp = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
     `${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
   // Code points, not UTF-16 units, so an emoji is never cut in half.
-  const name = Array.from(words.replace(/[\x00-\x1f\x7f\\/:*?"<>|#^[\]]/g, " ").replace(/\s+/g, " ").trim())
+  const name = Array.from(words.replace(/\p{Cc}|[\\/:*?"<>|#^[\]]/gu, " ").replace(/\s+/g, " ").trim())
     .slice(0, 60).join("").replace(/[\s.]+$/, "");
   return `${stamp} ${name || "Note"}.md`;
 }

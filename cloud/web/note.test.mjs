@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { noteSummary, updateMetadata, toggleTask, attachmentPath } from './note.mjs';
+import { noteSummary, updateMetadata, toggleTask, attachmentPath, plainPreviewText } from './note.mjs';
 
 test('browser reads canonical plugin/Android labels without treating tags or body hashtags as labels', () => {
   const markdown = '---\ntags: [not-a-label]\njotdrop_labels:\n  - Work\n  - "Work: notes"\n  - work\ncolor: teal\npinned: true\nunknown_key: preserve\n---\n\n# Heading\n\nText #not-a-label';
@@ -40,4 +40,15 @@ test('media resolves only unambiguous local files, including archived relative l
   assert.equal(attachmentPath('sound.webm', 'notes/test.md', files), 'attachments/sound.webm');
   assert.equal(attachmentPath('photo.png', 'notes/test.md', files), undefined);
   for (const path of ['https://example.com/a.png', 'javascript:alert(1)', '/attachments/photo.png', '../../../attachments/photo.png', '%2e%2e/%2e%2e/%2e%2e/attachments/photo.png']) assert.equal(attachmentPath(path, 'notes/test.md', files), undefined);
+});
+
+test('cards show plain text without Markdown marks, like the plugin', () => {
+  const marked = ['**Bold** and *italic* and _under_ and __strong__ and ~~gone~~ and ==mark==', '**Note:** use `npm run build` and ***both***',
+    'snake_case_name and 2 * 3 * 4 and a == b stay', '\\# not a heading, \\*star\\*, \\<tag\\>, 1986\\.', '> quoted **text**', '> [!note] Callout title', '> - [ ] **quoted** task',
+    '---', '* * *', '| Name | Qty |', '| --- | :-: |', '| Milk | 2 \\| 3 |', '```js', 'const x = **y**;', '```', '- [ ] **buy** milk', '* bullet *emph*', 'line<br>break',
+    '[[Wiki|alias]] and [label](https://x.y)'].join('\n');
+  const plain = ['Bold and italic and under and strong and gone and mark', 'Note: use npm run build and both', 'snake_case_name and 2 * 3 * 4 and a == b stay',
+    '# not a heading, *star*, <tag>, 1986.', 'quoted text', 'Callout title', '> - [ ] quoted task', 'Name · Qty', 'Milk · 2 | 3', 'const x = **y**;', '- [ ] buy milk', '* bullet emph', 'line break',
+    '[[Wiki|alias]] and [label](https://x.y)'].join('\n');
+  assert.equal(plainPreviewText(marked), plain);
 });

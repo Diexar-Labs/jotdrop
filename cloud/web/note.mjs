@@ -56,6 +56,37 @@ export function updateMetadata(text, changes) {
   return (kept.length ? `---${newline}${kept.join(newline)}${newline}---${newline}` : '') + (match ? text.slice(match[0].length) : text);
 }
 
+/** Plain card text, as the plugin shows it: no emphasis, code, quote, rule, table or escape marks. */
+export function plainPreviewText(text) {
+  const lines = [];
+  let fence = '';
+  for (const line of text.split('\n')) {
+    const marker = /^\s{0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+    if (marker) { if (!fence) fence = marker; else if (marker[0] === fence[0] && marker.length >= fence.length) fence = ''; continue; }
+    if (fence) { lines.push(line); continue; }
+    if (/^\s{0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/.test(line) || /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)+\|?\s*$/.test(line)) continue;
+    // A quoted checklist keeps its `>`, as in the plugin, where it must not become a checkbox.
+    const unquoted = line.replace(/^(?:\s{0,3}>[ \t]?)+/, '');
+    const plain = (unquoted !== line && /^\s*[-*+][ \t]+\[[ xX]\]/.test(unquoted) ? line : unquoted).replace(/^\[![\w-]+\][+-]?[ \t]*/, '');
+    lines.push(/^\s*\|.*\|\s*$/.test(plain)
+      ? (plain.match(/(?:\\.|[^|\\])+/g) || []).map((cell) => cell.trim()).filter(Boolean).map(stripInlineMarks).join(' · ')
+      : stripInlineMarks(plain));
+  }
+  return lines.join('\n');
+}
+
+function stripInlineMarks(text) {
+  return text.replace(/\\([!-/:-@[-`{-~])|(`+)([^`\n]+?)\2|(\*{3}|_{3}|\*\*|__|~~|==)(?=\S)(.*?\S)\4|(^|[^\w*])\*(?=[^\s*])([^*\n]*?[^\s*])\*(?!\*)|(^|[^\w_])_(?=[^\s_])([^_\n]*?[^\s_])_(?!\w)|<br\s*\/?>/gi,
+    (_whole, escaped, _ticks, code, _strong, strongText, starLead, starText, underLead, underText) => {
+      if (escaped !== undefined) return escaped;
+      if (code !== undefined) return code;
+      if (strongText !== undefined) return stripInlineMarks(strongText);
+      if (starText !== undefined) return starLead + stripInlineMarks(starText);
+      if (underText !== undefined) return underLead + stripInlineMarks(underText);
+      return ' ';
+    });
+}
+
 export function toggleTask(text, lineIndex, checked) {
   const lines = text.split('\n');
   if (!/^\s*[-*+] \[[ xX]\] /.test(lines[lineIndex] || '')) throw new Error('This checklist changed. Reopen the current note.');

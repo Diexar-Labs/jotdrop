@@ -67,7 +67,8 @@ def check_grid(browser, url, token):
         short = cards.filter(has_text="Short C")
         bar = short.locator(".card-actions")
         page.mouse.move(5, 5)
-        assert bar.evaluate("element => getComputedStyle(element).opacity") == "0"
+        # The bar fades (.15s) and a sync may re-render the card, so poll the current card.
+        page.wait_for_function("""() => getComputedStyle(document.querySelector('.note-card[data-path="notes/c.md"] .card-actions')).opacity === '0'""")
         assert short.get_by_role("button", name="Download", exact=True).count() == 1
         assert "Cloud version" not in short.inner_text() and "notes/c.md" not in short.inner_text()
         assert short.get_attribute("data-path") == "notes/c.md" and short.get_attribute("data-revision") == "1"

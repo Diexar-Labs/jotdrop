@@ -230,8 +230,8 @@ object Storage {
     /**
      * Escape inline `#hashtag`-syntax in vrije body-tekst zodat Obsidian de tags
      * niet vault-breed indexeert. Spiegel van TS `neutralizeBodyHashtags` in
-     * `src/metadata.ts` — frontmatter (`---`-blok) blijft ongemoeid, code-fences
-     * en inline-code worden overgeslagen.
+     * `src/metadata.ts` — frontmatter (`---`-blok) blijft ongemoeid; de regels
+     * (code, links, URL's, alleen cijfers) staan in `InlineTags.neutralize`.
      */
     fun neutralizeBodyHashtags(content: String): String {
         val fmRegex = Regex("^---\\r?\\n[\\s\\S]*?\\r?\\n---\\r?\\n?")
@@ -243,38 +243,7 @@ object Storage {
         }
     }
 
-    private fun neutralizeInlineHashtags(text: String): String {
-        val fencePattern = Regex("```[\\s\\S]*?```|~~~[\\s\\S]*?~~~")
-        val out = StringBuilder()
-        var idx = 0
-        for (m in fencePattern.findAll(text)) {
-            out.append(processOutsideFences(text.substring(idx, m.range.first)))
-            out.append(m.value)
-            idx = m.range.last + 1
-        }
-        out.append(processOutsideFences(text.substring(idx)))
-        return out.toString()
-    }
-
-    private fun processOutsideFences(segment: String): String {
-        val inlineCode = Regex("`[^`\\n]+`")
-        val out = StringBuilder()
-        var idx = 0
-        for (m in inlineCode.findAll(segment)) {
-            out.append(escapeHashtags(segment.substring(idx, m.range.first)))
-            out.append(m.value)
-            idx = m.range.last + 1
-        }
-        out.append(escapeHashtags(segment.substring(idx)))
-        return out.toString()
-    }
-
-    private fun escapeHashtags(segment: String): String {
-        // Negative lookbehind on `\` or word-char or `/` to skip heading-markers,
-        // wiki-link-anchors, URL-anchors en al-geescapete `\#`.
-        val tagPattern = Regex("(?<![\\\\\\w/])#([A-Za-z_/][\\w/-]*)")
-        return tagPattern.replace(segment, "\\\\#$1")
-    }
+    private fun neutralizeInlineHashtags(text: String): String = InlineTags.neutralize(text)
 
     /**
      * Kopieert een via share-intent ontvangen afbeelding naar de assets-map en
@@ -1519,13 +1488,13 @@ object Storage {
             .filter { it.isNotEmpty() && !wikiEmbed.matches(it) && !mdImage.matches(it) }
             .firstOrNull().orEmpty()
         // Lijstmarkers strippen zodat de kaarttitel niet met rauwe Markdown begint.
-        val cleaned = firstLine
+        // CardText haalt ook opmaaktekens weg en toont `\#tag` (geneutraliseerde gedeelde
+        // tekst) zoals Obsidian's leesweergave: zonder backslash.
+        val cleaned = CardText.plain(firstLine
             .replace(Regex("^-[ \\t]+\\[[ xX]\\](?:[ \\t]+|$)"), "")
             .replace(Regex("^(?:[-*+][ \\t]+|\\d{1,9}[.)][ \\t]+)"), "")
-            .trimStart('#')
+            .trimStart('#'))
             .trim()
-            // `\#tag` (geneutraliseerde gedeelde tekst) tonen zoals Obsidian's leesweergave: zonder backslash.
-            .replace("\\#", "#")
         return cleaned.ifBlank { fallbackFilename.removeSuffix(".md") }
     }
 
@@ -1547,14 +1516,14 @@ object Storage {
         else ""
         // URLs strippen — die worden als chips onderaan getoond (plugin-pariteit).
         // Markdown-link-syntax behoudt het label, losse URLs verdwijnen volledig.
-        val stripped = rest
+        // Daarna opmaaktekens weg (plugin-pariteit), en `\#tag` zonder backslash.
+        val stripped = CardText.plain(rest
             .replace(Regex("\\[([^\\]\\n]+)]\\(https?://[^)\\s]+\\)"), "$1")
-            .replace(Regex("https?://\\S+"), "")
+            .replace(Regex("https?://\\S+"), ""))
             .lineSequence()
             .map { it.trimEnd() }
             .joinToString("\n")
             .trimEnd()
-            .replace("\\#", "#")
         return stripped.take(280)
     }
 
