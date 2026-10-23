@@ -45,6 +45,7 @@ const source = (file) => fs.readFileSync(path.join(ROOT, file), "utf8");
   // Cards show escaped `\#tag` without the backslash, like Obsidian's reading view.
   assert.equal(plainPreviewText("Trending \\#fyp"), "Trending #fyp");
   assert.equal(source("src/view.ts").match(/plainPreviewText\(/g)?.length, 2);
-  assert.equal(source("android/app/src/main/kotlin/com/diexar/keepcapture/Storage.kt").match(/\.replace\("\\\\#", "#"\)/g)?.length, 2);
+  // Android: CardText.plain does the same for card titles and snippets (android/checks/InlineTagsCheck.kt).
+  assert.equal(source("android/app/src/main/kotlin/com/diexar/keepcapture/Storage.kt").match(/CardText\.plain\(/g)?.length, 2);
   console.log("Hashtag checks passed");
 })().catch((error) => { console.error(error); process.exit(1); });

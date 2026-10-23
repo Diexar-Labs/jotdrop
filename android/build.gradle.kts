@@ -26,7 +26,8 @@ tasks.register<JavaExec>("checkListEditor") {
 }
 
 val inlineTagsClasses = layout.buildDirectory.dir("inline-tags-check")
-val inlineTagsSources = files("app/src/main/kotlin/com/diexar/keepcapture/InlineTags.kt", "checks/InlineTagsCheck.kt")
+val inlineTagsSources = files("app/src/main/kotlin/com/diexar/keepcapture/InlineTags.kt",
+    "app/src/main/kotlin/com/diexar/keepcapture/CardText.kt", "checks/InlineTagsCheck.kt")
 val inlineTagsCompile = tasks.register<JavaExec>("inlineTagsCompile") {
     inputs.files(inlineTagsSources)
     outputs.dir(inlineTagsClasses)
