@@ -1,6 +1,6 @@
 {
   "name": "jotdrop",
-  "version": "0.20.15",
+  "version": "0.21.0",
   "description": "A private, open-source Google Keep alternative for Obsidian: a trio of quick-capture card grid, companion Android app, and Chrome web clipper. Install all three for the full Keep experience.",
   "main": "main.js",
   "scripts": {
@@ -20,6 +20,9 @@
     "check:android-startup": "node scripts/check-android-startup.cjs",
     "check:plugin-labels": "node scripts/check-plugin-labels.cjs",
     "check:hashtags": "node scripts/check-hashtags.cjs",
+    "check:keep-import": "node scripts/check-keep-import.cjs",
+    "check:markdown-import": "node scripts/check-markdown-import.cjs",
+    "check:evernote-import": "node scripts/check-evernote-import.cjs",
     "check:mobile-keyboard": "node scripts/check-mobile-keyboard.cjs",
     "check:toolbar": "node scripts/check-toolbar-containment.cjs",
     "check:preview-fallback": "node scripts/check-preview-fallback.cjs",

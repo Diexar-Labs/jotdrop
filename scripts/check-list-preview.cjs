@@ -3,7 +3,7 @@ const esbuild = require("esbuild");
 (async () => {
   const result = await esbuild.build({
     stdin: {
-      contents: 'export { checklistToGlyphs, renderInlinePreview, toggleChecklistItem } from "./src/metadata.ts";',
+      contents: 'export { checklistToGlyphs, plainPreviewText, renderInlinePreview, toggleChecklistItem } from "./src/metadata.ts";',
       resolveDir: process.cwd(),
     },
     bundle: true,
@@ -23,7 +23,7 @@ const esbuild = require("esbuild");
 
   const loaded = { exports: {} };
   new Function("module", "exports", "require", result.outputFiles[0].text)(loaded, loaded.exports, require);
-  const { checklistToGlyphs, renderInlinePreview, toggleChecklistItem } = loaded.exports;
+  const { checklistToGlyphs, plainPreviewText, renderInlinePreview, toggleChecklistItem } = loaded.exports;
 
   const input = [
     "- alpha",
@@ -78,6 +78,44 @@ const esbuild = require("esbuild");
 
   const toggled = toggleChecklistItem("# Lists\n- [ ] root\n  - [x] nested\n", 1);
   if (toggled !== "# Lists\n- [ ] root\n  - [ ] nested\n") throw new Error("nested toggle mismatch");
+
+  const marked = [
+    "**Bold** and *italic* and _under_ and __strong__ and ~~gone~~ and ==mark==",
+    "**Note:** use `npm run build` and ***both***",
+    "snake_case_name and 2 * 3 * 4 and a == b stay",
+    "\\# not a heading, \\*star\\*, \\<tag\\>, 1986\\.",
+    "> quoted **text**",
+    "> [!note] Callout title",
+    "---",
+    "* * *",
+    "| Name | Qty |",
+    "| --- | :-: |",
+    "| Milk | 2 \\| 3 |",
+    "```js",
+    "const x = **y**;",
+    "```",
+    "- [ ] **buy** milk",
+    "* bullet *emph*",
+    "line<br>break",
+    "[[Wiki|alias]] and [label](https://x.y)",
+  ].join("\n");
+  const plain = [
+    "Bold and italic and under and strong and gone and mark",
+    "Note: use npm run build and both",
+    "snake_case_name and 2 * 3 * 4 and a == b stay",
+    "# not a heading, *star*, <tag>, 1986.",
+    "quoted text",
+    "Callout title",
+    "Name · Qty",
+    "Milk · 2 | 3",
+    "const x = **y**;",
+    "- [ ] buy milk",
+    "* bullet emph",
+    "line break",
+    "[[Wiki|alias]] and [label](https://x.y)",
+  ].join("\n");
+  const actual = plainPreviewText(marked);
+  if (actual !== plain) throw new Error(`plain preview mismatch:\n${actual}`);
   console.log("Markdown list preview checks passed");
 })().catch((error) => {
   console.error(error);

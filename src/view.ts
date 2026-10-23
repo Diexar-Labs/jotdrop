@@ -17,6 +17,7 @@ import {
   readMeta,
   readLabels,
   checklistToGlyphs,
+  plainPreviewText,
   renderInlinePreview,
   stripFrontmatter,
   toggleChecklistItem,
@@ -2241,14 +2242,13 @@ function extractTitle(content: string, fallback: string): string {
     if (/^!\[\[[^\]]+\]\]$/.test(line)) continue;
     if (/^!\[[^\]]*\]\([^)]+\)$/.test(line)) continue;
     if (/^<!--/.test(line)) continue;
-    const cleaned = line
+    // plainPreviewText also shows escaped `\#tag` from shared text as Obsidian's reading view does.
+    const cleaned = plainPreviewText(line
       .replace(/^-[ \t]+\[[ xX]\](?:[ \t]+|$)/, "")
       .replace(/^(?:[-*+][ \t]+|\d{1,9}[.)][ \t]+)/, "")
-      .replace(/^#+\s*/, "")
+      .replace(/^#+\s*/, ""))
       .replace(/^[*_`>]+\s*/, "")
-      .trim()
-      // Show escaped `\#tag` from shared text as Obsidian's reading view does.
-      .replace(/\\#/g, "#");
+      .trim();
     if (!cleaned) continue;
     return truncateWords(cleaned, TITLE_MAX_WORDS, TITLE_MAX_CHARS);
   }
@@ -2257,7 +2257,8 @@ function extractTitle(content: string, fallback: string): string {
 
 /**
  * Body for the card: without frontmatter, embeds, heading lines, URLs,
- * preview-comment markers. Leading list indentation is preserved. Truncated to
+ * preview-comment markers and Markdown formatting marks. Leading list
+ * indentation is preserved. Truncated to
  * `PREVIEW_MAX_WORDS` with "…".
  * URLs are stripped because they are shown separately as chips at the bottom.
  */
@@ -2269,9 +2270,8 @@ function extractPreview(content: string): string {
     .replace(/<!--\s*(?:jotdrop|diexar)-preview:.*?-->/g, "")
     .replace(/^\s{0,3}#+\s+.*$/gm, "")
     .replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, "$1")
-    .replace(/https?:\/\/\S+/g, "")
-    .replace(/\\#/g, "#");
-  const lines = stripped
+    .replace(/https?:\/\/\S+/g, "");
+  const lines = plainPreviewText(stripped)
     .split("\n")
     .map((l) => l.trimEnd())
     .filter((l) => l.trim().length > 0);

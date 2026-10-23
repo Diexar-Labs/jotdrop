@@ -346,25 +346,20 @@ export function stripFrontmatter(content: string): string {
  * them as tags. `#fyp` → `\#fyp`. In reading view it still renders as `#fyp`,
  * but graph view and tag pane stay clean.
  *
- * Operates outside code fences and inline code. Skips heading markers (`# Title`),
- * wiki-link anchors (`[[Note#Heading]]`) and URL anchors (`example.com#x`)
- * via lookbehind on `[\\\w/]`. Running it non-idempotently is safe: already-escaped
- * `\#` does not match again.
+ * Operates outside code fences (of any length), inline code, wiki links, link
+ * targets and bare URLs. Like Obsidian, a tag may hold any letter and must not be
+ * only digits (`#16` stays). Skips heading markers (`# Title`) and anchors after a
+ * word (`example.com#x`). Running it twice is safe: `\#` does not match again.
  */
 export function neutralizeInlineHashtags(text: string): string {
-  const fenceParts = text.split(/(```[\s\S]*?```|~~~[\s\S]*?~~~)/g);
-  return fenceParts
-    .map((part, i) => {
-      if (i % 2 === 1) return part;
-      return part
-        .split(/(`[^`\n]+`)/g)
-        .map((seg, j) => {
-          if (j % 2 === 1) return seg;
-          return seg.replace(/(?<![\\\w/])#([A-Za-z_/][\w/-]*)/g, "\\#$1");
-        })
-        .join("");
-    })
-    .join("");
+  const skipped = /(`{3,}|~{3,})[\s\S]*?\1|`[^`\n]+`|\[\[[^\]\n]*\]\]|\]\([^)\n]*\)|https?:\/\/[^\s<>]+/g;
+  const hashtag = /(?<![\\\p{L}\p{N}\p{M}_/])#(?=\p{N}*[\p{L}\p{M}_/\p{Extended_Pictographic}-])/gu;
+  let out = "", at = 0;
+  for (const match of text.matchAll(skipped)) {
+    out += text.slice(at, match.index).replace(hashtag, "\\#") + match[0];
+    at = match.index + match[0].length;
+  }
+  return out + text.slice(at).replace(hashtag, "\\#");
 }
 
 /**
@@ -394,6 +389,52 @@ export function checklistToGlyphs(text: string): string {
     .replace(/^([ \t]*)-[ \t]+\[[xX]\]([ \t]|$)/gm, "$1☑$2")
     .replace(/^([ \t]*)[-*+][ \t]+/gm, "$1• ")
     .replace(/^([ \t]*)(\d{1,9})[.)][ \t]+/gm, "$1$2. ");
+}
+
+/**
+ * Turns note Markdown into plain card text: drops code-fence lines, rules,
+ * table separator rows and quote/callout markers, joins table cells with " · ",
+ * and removes emphasis, highlight, inline-code, `<br>` and escape marks. Lines
+ * inside a code fence keep their text. Links, wikilinks and list markers stay
+ * for `checklistToGlyphs` and `renderInlinePreview`.
+ */
+export function plainPreviewText(text: string): string {
+  const lines: string[] = [];
+  let fence = "";
+  for (const line of text.split("\n")) {
+    const marker = /^\s{0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+    if (marker) {
+      if (!fence) fence = marker;
+      else if (marker[0] === fence[0] && marker.length >= fence.length) fence = "";
+      continue;
+    }
+    if (fence) { lines.push(line); continue; }
+    if (/^\s{0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/.test(line)) continue;
+    if (/^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)+\|?\s*$/.test(line)) continue;
+    const plain = line.replace(/^(?:\s{0,3}>[ \t]?)+/, "").replace(/^\[![\w-]+\][+-]?[ \t]*/, "");
+    if (/^\s*\|.*\|\s*$/.test(plain)) {
+      const cells = (plain.match(/(?:\\.|[^|\\])+/g) ?? []).map((cell) => cell.trim()).filter(Boolean);
+      lines.push(cells.map(stripInlineMarks).join(" · "));
+    } else {
+      lines.push(stripInlineMarks(plain));
+    }
+  }
+  return lines.join("\n");
+}
+
+function stripInlineMarks(text: string): string {
+  return text.replace(
+    /\\([!-/:-@[-`{-~])|(`+)([^`\n]+?)\2|(\*{3}|_{3}|\*\*|__|~~|==)(?=\S)(.*?\S)\4|(^|[^\w*])\*(?=[^\s*])([^*\n]*?[^\s*])\*(?!\*)|(^|[^\w_])_(?=[^\s_])([^_\n]*?[^\s_])_(?!\w)|<br\s*\/?>/gi,
+    (_whole, escaped?: string, _ticks?: string, code?: string, _strong?: string, strongText?: string,
+      starLead?: string, starText?: string, underLead?: string, underText?: string) => {
+      if (escaped !== undefined) return escaped;
+      if (code !== undefined) return code;
+      if (strongText !== undefined) return stripInlineMarks(strongText);
+      if (starText !== undefined) return `${starLead ?? ""}${stripInlineMarks(starText)}`;
+      if (underText !== undefined) return `${underLead ?? ""}${stripInlineMarks(underText)}`;
+      return " ";
+    },
+  );
 }
 
 /**
