@@ -100,8 +100,9 @@ object CloudAccount {
         return CloudLoginChallenge(origin, id(started.getString("challengeId")), factor, keys.unlockKey, deviceToken)
     }
 
-    fun confirmLogin(pending: CloudLoginChallenge, code: String): CloudClient {
-        val result = post(pending.url, "/auth/login/verify", JSONObject().put("challengeId", pending.challengeId).put("code", code.trim()))
+    /** At the free device limit the server answers "device-limit"; call again with the same code and `replaceDeviceId`. */
+    fun confirmLogin(pending: CloudLoginChallenge, code: String, replaceDeviceId: String? = null): CloudClient {
+        val result = post(pending.url, "/auth/login/verify", JSONObject().put("challengeId", pending.challengeId).put("code", code.trim()).put("replaceDeviceId", replaceDeviceId))
         val wrapped = CloudClient.parseEnvelope(result.getString("wrappedVaultKey"))
         val vaultKey = JSONObject(String(CloudCrypto.decrypt(pending.unlockKey, wrapped, CloudAccountCrypto.WRAP_AAD), Charsets.UTF_8)).getString("vaultKey")
         return connect(pending.url, result, pending.deviceToken, vaultKey)
@@ -137,11 +138,12 @@ object CloudAccount {
         return CloudReset(origin, id(post(origin, "/auth/reset/start", JSONObject().put("email", email.trim())).getString("resetId")))
     }
 
-    fun resetWithRecoveryCode(reset: CloudReset, code: String, recoveryCode: String, newPassword: String, deviceName: String): CloudClient {
+    fun resetWithRecoveryCode(reset: CloudReset, code: String, recoveryCode: String, newPassword: String, deviceName: String, replaceDeviceId: String? = null): CloudClient {
         val recovery = decodeRecovery(recoveryCode)
         val (deviceToken, fields) = device(deviceName)
         val result = post(reset.url, "/auth/reset/recover", JSONObject().put("resetId", reset.resetId).put("code", code.trim())
-            .put("recoveryToken", recovery.getString("recoveryToken")).with(credentials(newPassword, recovery.getString("vaultKey"))).with(fields))
+            .put("recoveryToken", recovery.getString("recoveryToken")).with(credentials(newPassword, recovery.getString("vaultKey"))).with(fields)
+            .put("replaceDeviceId", replaceDeviceId))
         check(result.getString("vaultId") == recovery.getString("vaultId")) { "The recovery code belongs to another cloud." }
         return connect(reset.url, result, deviceToken, recovery.getString("vaultKey"))
     }
@@ -170,11 +172,11 @@ object CloudAccount {
         return true
     }
 
-    fun completeApproval(pending: CloudApprovalRequest, newPassword: String, deviceName: String): CloudClient {
+    fun completeApproval(pending: CloudApprovalRequest, newPassword: String, deviceName: String, replaceDeviceId: String? = null): CloudClient {
         val vaultKey = checkNotNull(pending.vaultKey) { "Wait until your other device approves this request." }
         val (deviceToken, fields) = device(deviceName)
         val result = post(pending.url, "/auth/reset/approval/${pending.approvalId}/complete", JSONObject().put("claimToken", pending.claimToken)
-            .with(credentials(newPassword, vaultKey)).with(fields))
+            .with(credentials(newPassword, vaultKey)).with(fields).put("replaceDeviceId", replaceDeviceId))
         check(result.getString("vaultId") == pending.vaultId) { "The server linked the account to another cloud." }
         return connect(pending.url, result, deviceToken, vaultKey)
     }

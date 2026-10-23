@@ -3,10 +3,12 @@ package com.diexar.keepcapture
 import android.content.Context
 import android.os.Build
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -37,7 +39,20 @@ internal object CloudAccountFlow {
     var approval by mutableStateOf<CloudApprovalRequest?>(null)
     var attach by mutableStateOf<CloudSignup?>(null)
     var recoveryCode by mutableStateOf<String?>(null)
-    fun clear() { signup = null; login = null; reset = null; approval = null }
+    var deviceChoice by mutableStateOf<CloudDeviceChoice?>(null)
+    fun clear() { signup = null; login = null; reset = null; approval = null; deviceChoice = null }
+}
+
+/** The free plan's device limit was reached: the person picks the device this phone replaces, and `retry` repeats the same sign-in. */
+internal class CloudDeviceChoice(val message: String, val devices: List<CloudDeviceInfo>, val retry: suspend (String) -> Unit)
+
+/** Runs a sign-in; at the device limit it asks which device to replace instead of failing. The server kept the code, so the retry reuses it. */
+private suspend fun withDeviceChoice(connect: suspend (String?) -> Unit) {
+    try { connect(null) }
+    catch (failure: CloudRequestException) {
+        if (failure.code != "device-limit" || failure.devices.isEmpty()) throw failure
+        CloudAccountFlow.deviceChoice = CloudDeviceChoice(failure.serverMessage ?: "This cloud has reached its device limit.", failure.devices) { connect(it) }
+    }
 }
 
 internal fun cloudDeviceName(): String =
@@ -56,6 +71,31 @@ private suspend fun keepRecoveryCode(context: Context, code: String) {
 private fun localTime(value: String): String = runCatching {
     DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT).withZone(ZoneId.systemDefault()).format(Instant.parse(value))
 }.getOrDefault(value)
+
+private fun localDate(value: String): String = runCatching {
+    DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).withZone(ZoneId.systemDefault()).format(Instant.parse(value))
+}.getOrDefault(value)
+
+@Composable
+private fun DeviceChoiceDialog(choice: CloudDeviceChoice, busy: Boolean, run: (suspend () -> Unit) -> Unit) {
+    AlertDialog(
+        onDismissRequest = { if (!busy) CloudAccountFlow.deviceChoice = null },
+        title = { Text("Choose a device to sign out") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.verticalScroll(rememberScrollState())) {
+                Text("${choice.message} This phone takes the place of the device you choose; that device is signed out.")
+                choice.devices.forEach { device ->
+                    OutlinedButton(onClick = { run { committed { CloudAccountFlow.deviceChoice = null; choice.retry(device.id) } } },
+                        enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                        Text("Sign out ${device.name}\nLast used ${localDate(device.lastSeenAt)}")
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = { CloudAccountFlow.deviceChoice = null }, enabled = !busy) { Text("Cancel") } },
+    )
+}
 
 private fun newPasswordProblem(password: String, confirm: String): String? = when {
     password.length < 12 -> "Use at least 12 characters."
@@ -119,6 +159,7 @@ internal fun CloudSignIn(busy: Boolean, run: (suspend () -> Unit) -> Unit, showE
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrect = false), modifier = Modifier.fillMaxWidth())
     }
 
+    flow.deviceChoice?.let { DeviceChoiceDialog(it, busy, run) }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         val login = flow.login
         val signup = flow.signup
@@ -130,11 +171,11 @@ internal fun CloudSignIn(busy: Boolean, run: (suspend () -> Unit) -> Unit, showE
                 Text(if (login.secondFactor == "totp") "Open your authenticator app and enter the 6-digit code for JotDrop."
                     else "We sent a 6-digit code to $email. It is valid for 15 minutes.")
                 CodeField(code, { code = it }, !busy)
-                Button(onClick = { run { committed {
-                    val client = io { CloudAccount.confirmLogin(login, code) }
+                Button(onClick = { run { committed { withDeviceChoice { replace ->
+                    val client = io { CloudAccount.confirmLogin(login, code, replace) }
                     CloudSyncManager.connectAccount(context, client)
                     startAgain()
-                } } }, enabled = !busy && code.length == 6) { Text("Sign in") }
+                } } } }, enabled = !busy && code.length == 6) { Text("Sign in") }
                 TextButton(onClick = ::startAgain, enabled = !busy) { Text("Start again") }
             }
             signup != null -> {
@@ -175,11 +216,11 @@ internal fun CloudSignIn(busy: Boolean, run: (suspend () -> Unit) -> Unit, showE
                         PasswordField(password, { password = it }, "New password", !busy)
                         PasswordField(confirm, { confirm = it }, "Repeat new password", !busy)
                         if (password.isNotEmpty()) Problem(newPasswordProblem(password, confirm))
-                        Button(onClick = { run { committed {
-                            val client = io { CloudAccount.resetWithRecoveryCode(reset, code, recovery, password, cloudDeviceName()) }
+                        Button(onClick = { run { committed { withDeviceChoice { replace ->
+                            val client = io { CloudAccount.resetWithRecoveryCode(reset, code, recovery, password, cloudDeviceName(), replace) }
                             CloudSyncManager.connectAccount(context, client)
                             startAgain()
-                        } } }, enabled = !busy && code.length == 6 && recovery.isNotBlank() && newPasswordProblem(password, confirm) == null) { Text("Set new password") }
+                        } } } }, enabled = !busy && code.length == 6 && recovery.isNotBlank() && newPasswordProblem(password, confirm) == null) { Text("Set new password") }
                     }
                     else -> {
                         Text("This permanently deletes the encrypted copy in the cloud, because nobody can read it any more. All devices are signed out. " +
@@ -271,12 +312,12 @@ private fun ApprovalWait(pending: CloudApprovalRequest, busy: Boolean, run: (sus
         PasswordField(confirm, { confirm = it }, "Repeat new password", !busy)
         if (password.isNotEmpty()) Problem(newPasswordProblem(password, confirm))
         Text("Finish within 10 minutes of asking for approval; after that, start again.", style = MaterialTheme.typography.bodySmall)
-        Button(onClick = { run { committed {
-            val client = try { io { CloudAccount.completeApproval(pending, password, cloudDeviceName()) } }
+        Button(onClick = { run { committed { withDeviceChoice { replace ->
+            val client = try { io { CloudAccount.completeApproval(pending, password, cloudDeviceName(), replace) } }
                 catch (failure: CloudRequestException) { if (failure.status == 401) onDone(); throw failure }
             CloudSyncManager.connectAccount(context, client)
             onDone()
-        } } }, enabled = !busy && newPasswordProblem(password, confirm) == null) { Text("Set new password") }
+        } } } }, enabled = !busy && newPasswordProblem(password, confirm) == null) { Text("Set new password") }
         TextButton(onClick = onDone, enabled = !busy) { Text("Start again") }
     }
 }

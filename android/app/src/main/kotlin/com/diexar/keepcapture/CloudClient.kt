@@ -35,7 +35,10 @@ data class CloudCredentials(val url: String, val vaultId: String, val deviceId: 
 
 data class CloudPreviewFile(val id: String, val revision: Int, val path: String, val bytes: ByteArray, val deleted: Boolean)
 /** [serverMessage] is the server's own short error text, shown by the account screens. */
-class CloudRequestException(val status: Int, val serverMessage: String? = null) : Exception(if (status == 409) "A newer cloud version exists. Your local draft was kept; refresh and compare before saving." else "Cloud request failed ($status). Your local draft was kept.")
+/** A device the server lists when a free cloud is at its device limit. */
+class CloudDeviceInfo(val id: String, val name: String, val lastSeenAt: String)
+/** `code` names a plan limit: "device-limit" comes with the active `devices` to choose from, "plus-required" with none. */
+class CloudRequestException(val status: Int, val serverMessage: String? = null, val code: String? = null, val devices: List<CloudDeviceInfo> = emptyList()) : Exception(if (status == 409) "A newer cloud version exists. Your local draft was kept; refresh and compare before saving." else "Cloud request failed ($status). Your local draft was kept.")
 
 /** Encrypted HTTPS transport; local vault access belongs to the sync adapter. */
 class CloudClient(val credentials: CloudCredentials) {
@@ -167,16 +170,26 @@ class CloudClient(val credentials: CloudCredentials) {
         }
         private fun validId(value: String): Boolean = value.matches(Regex("(?i)[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}"))
         private fun revision(json: JSONObject): Int = json.getLong("revision").also { require(it in 1..Int.MAX_VALUE.toLong()) { "Invalid cloud revision" } }.toInt()
-        private fun serverMessage(connection: HttpURLConnection): String? = runCatching {
+        private fun serverError(connection: HttpURLConnection): JSONObject? = runCatching {
             val bytes = connection.errorStream?.use { input ->
                 val output = ByteArrayOutputStream()
                 val buffer = ByteArray(1024)
-                while (output.size() <= 4096) { val count = input.read(buffer); if (count < 0) break; output.write(buffer, 0, count) }
+                while (output.size() <= 16384) { val count = input.read(buffer); if (count < 0) break; output.write(buffer, 0, count) }
                 output.toByteArray()
             } ?: return null
-            if (bytes.size > 4096) return null
-            JSONObject(utf8(bytes)).optString("error").takeIf { it.isNotBlank() && it.length <= 200 && it.none { char -> char.code < 32 } }
+            if (bytes.size > 16384) return null
+            JSONObject(utf8(bytes))
         }.getOrNull()
+        private fun plainText(value: String?, limit: Int): String? = value?.takeIf { it.isNotBlank() && it.length <= limit && it.none { char -> char.code < 32 } }
+        private fun requestFailure(status: Int, error: JSONObject?): CloudRequestException {
+            val list = error?.optJSONArray("devices")
+            val devices = (0 until (list?.length() ?: 0)).mapNotNull { index ->
+                val device = list?.optJSONObject(index) ?: return@mapNotNull null
+                val name = plainText(device.optString("name"), 80) ?: return@mapNotNull null
+                device.optString("id").takeIf(::validId)?.let { CloudDeviceInfo(it, name, device.optString("lastSeenAt")) }
+            }
+            return CloudRequestException(status, plainText(error?.optString("error"), 200), plainText(error?.optString("code"), 40), devices)
+        }
         private fun utf8(bytes: ByteArray): String = Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
             .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString()
         fun secureOrigin(value: String): String {
@@ -232,7 +245,7 @@ class CloudClient(val credentials: CloudCredentials) {
                 }
                 phase = CloudDiagnostics.Phase.REQUEST_HEADERS
                 val status = connection.responseCode
-                if (status !in 200..299) throw CloudRequestException(status, serverMessage(connection))
+                if (status !in 200..299) throw requestFailure(status, serverError(connection))
                 require(connection.contentLengthLong <= 12 * 1024 * 1024) { "Cloud response exceeds limit" }
                 val output = ByteArrayOutputStream()
                 phase = CloudDiagnostics.Phase.REQUEST_BODY

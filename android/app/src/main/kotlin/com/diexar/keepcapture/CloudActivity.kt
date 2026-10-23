@@ -77,6 +77,8 @@ private fun CloudScreen(onBack: () -> Unit, onSettings: () -> Unit) {
                     failure is CloudSyncException -> failure.message
                     // Account screens show the server's own text ("Invalid email or password") and their own input checks.
                     account && failure is CloudRequestException -> failure.serverMessage ?: failure.message
+                    // Plan limits (device limit, versions older than 30 days) explain themselves, also outside account screens.
+                    failure is CloudRequestException && failure.code != null -> failure.serverMessage ?: failure.message
                     account && (failure is IllegalArgumentException || failure is IllegalStateException) && failure.message != null -> failure.message
                     failure is CloudRequestException -> failure.message
                     else -> "This action could not complete. Check the HTTPS connection and local vault settings; local notes were kept."
