@@ -16,7 +16,6 @@ import androidx.activity.compose.ReportDrawnWhen
 import androidx.activity.enableEdgeToEdge
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
-import androidx.preference.PreferenceManager
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.FileProvider
@@ -729,29 +728,12 @@ private fun NotesListScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    val prefs = remember(context) { PreferenceManager.getDefaultSharedPreferences(context) }
     val isPlayInstall = remember(context) { UpdateChecker.isPlayInstall(context) }
-    var showTesterInvite by remember { mutableStateOf(!isPlayInstall && !prefs.getBoolean("play_tester_live_invite_seen", false)) }
-    val dismissTesterInvite: () -> Unit = {
-        prefs.edit().putBoolean("play_tester_live_invite_seen", true).apply()
-        showTesterInvite = false
-    }
     val openTesterLink: (String) -> Unit = { url ->
-        val isMailto = url.startsWith("mailto:")
-        val intent = if (isMailto) {
-            Intent(Intent.ACTION_SENDTO, Uri.parse(url))
-        } else {
-            Intent(Intent.ACTION_VIEW, Uri.parse(url))
-        }
         try {
-            context.startActivity(intent)
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
         } catch (e: Exception) {
-            val message = if (isMailto) {
-                context.getString(R.string.toast_mail_open_failed)
-            } else {
-                context.getString(R.string.toast_error, e.message ?: "")
-            }
-            Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, context.getString(R.string.toast_error, e.message ?: ""), Toast.LENGTH_SHORT).show()
         }
     }
     val openLinkLabel = stringResource(R.string.action_open_link)
@@ -1033,13 +1015,6 @@ private fun NotesListScreen(
                                 onDismissRequest = { overflowOpen = false },
                             ) {
                                 DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.play_tester_menu)) },
-                                    onClick = {
-                                        overflowOpen = false
-                                        showTesterInvite = true
-                                    },
-                                )
-                                DropdownMenuItem(
                                     text = { Text(stringResource(R.string.update_check)) },
                                     leadingIcon = { Icon(Icons.Filled.SystemUpdate, contentDescription = null) },
                                     onClick = {
@@ -1228,31 +1203,6 @@ private fun NotesListScreen(
                 }
             }
         }
-    }
-    if (showTesterInvite && state is NotesUiState.Loaded && !selectionMode && pendingMemo == null) {
-        AlertDialog(
-            onDismissRequest = dismissTesterInvite,
-            title = { Text(stringResource(R.string.play_tester_title)) },
-            text = {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
-                    Text(stringResource(R.string.play_tester_message))
-                    TextButton(onClick = {
-                        openTesterLink("mailto:eric@diexar.com?subject=JotDrop%20Play%20test%20access&body=Please%20add%20my%20Google%20Play%20account%20to%20the%20JotDrop%20closed%20test.%0A%0AGoogle%20account%20email%20used%20in%20Play%3A%20")
-                    }) { Text(stringResource(R.string.play_tester_join)) }
-                    TextButton(onClick = {
-                        openTesterLink("https://play.google.com/apps/testing/com.diexar.keepcapture")
-                    }) { Text(stringResource(R.string.play_tester_download)) }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = dismissTesterInvite) { Text(stringResource(R.string.play_tester_later)) }
-            },
-            dismissButton = {
-                TextButton(onClick = {
-                    openTesterLink("https://github.com/Diexar-Labs/jotdrop#help-test-jotdrop-on-google-play")
-                }) { Text(stringResource(R.string.play_tester_help)) }
-            },
-        )
     }
     if (tagSheetOpen) {
         TagPickerSheet(

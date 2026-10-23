@@ -261,13 +261,6 @@ const EN: Record<string, string> = {
   companions_blurb:
     "This plugin is one third of JotDrop. For the full Google Keep experience, also install the free Android app (share-sheet capture, OCR, voice memos) and the Chrome web clipper. All three meet in your vault.",
   companions_download: "⬇ Get the Android app & web clipper",
-  companions_tester_blurb:
-    "The GitHub APK works without signup. Play testing is optional; no Google Group is needed. Email eric@diexar.com with the Google account address you use in Play. We add it and send confirmation. Then choose Become a tester and download in Play. Already have access? Skip the email. Stay opted in for 14 days; APK/Obtainium installs do not count. Back up your vault before switching from the GitHub APK; see switching help.",
-  companions_tester_link: "1. Email your Play account to request access",
-  companions_tester_play: "2. After confirmation, join and download in Play",
-  play_tester_live_notice: "The GitHub APK works without signup; this Play invitation is optional. No Google Group is needed. Step 1: email eric@diexar.com with the Google account address you use in Play and wait for our confirmation. Step 2: choose Become a tester and download in Play. Already have access? Skip the email. Stay opted in for 14 consecutive days. Before replacing a GitHub APK, confirm Play access and back up your vault; see switching help.",
-  play_tester_instructions: "Help switching from the GitHub APK",
-  play_tester_not_now: "Not now",
 
   // Clip server (Chrome extension)
   settings_clip_server_section: "Web clipper (Chrome extension)",
@@ -544,13 +537,6 @@ const NL: Record<string, string> = {
   companions_blurb:
     "Deze plugin is een derde van JotDrop. Installeer voor de volledige Google Keep-ervaring ook de gratis Android-app (delen vanuit elke app, OCR, spraakmemo's) en de Chrome-web-clipper. Alle drie komen samen in je vault.",
   companions_download: "⬇ Download de Android-app & web-clipper",
-  companions_tester_blurb:
-    "De GitHub-APK werkt zonder aanmelding. De Play-test is vrijblijvend; geen Google Groep nodig. Mail eric@diexar.com het e-mailadres van je Google-account in Play. Wij voegen het toe en sturen een bevestiging. Kies daarna Become a tester en download in Play. Heb je al toegang? Sla de e-mail over. Blijf 14 dagen aangemeld; APK/Obtainium telt niet mee. Maak een vaultback-up voordat je van de GitHub-APK overstapt; zie de overstaphulp.",
-  companions_tester_link: "1. Mail je Play-account om toegang te vragen",
-  companions_tester_play: "2. Na bevestiging aanmelden en downloaden in Play",
-  play_tester_live_notice: "De GitHub-APK werkt zonder aanmelding; deze Play-uitnodiging is vrijblijvend. Geen Google Groep nodig. Stap 1: mail eric@diexar.com het e-mailadres van je Google-account in Play en wacht op onze bevestiging. Stap 2: kies Become a tester en download in Play. Heb je al toegang? Sla de e-mail over. Blijf 14 opeenvolgende dagen aangemeld. Bevestig Play-toegang en maak een vaultback-up voordat je een GitHub-APK vervangt; zie de overstaphulp.",
-  play_tester_instructions: "Hulp bij overstappen van de GitHub-APK",
-  play_tester_not_now: "Niet nu",
 
   settings_clip_server_section: "Web-clipper (Chrome-extensie)",
   settings_clip_server_desc:

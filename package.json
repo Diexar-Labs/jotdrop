@@ -29,7 +29,6 @@
     "check:recurrence": "node scripts/check-recurrence.cjs",
     "check:reminder-sound": "node scripts/check-reminder-sound.cjs",
     "check:web-clipper": "node scripts/check-web-clipper.mjs",
-    "check:play-invite": "node scripts/check-play-invite.cjs",
     "check:transport-safety": "node scripts/check-transport-safety.cjs",
     "check:cloud": "node --test \"cloud/**/*.test.mjs\"",
     "check:cloud-browser": "python cloud/browser_check.py",

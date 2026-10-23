@@ -21,31 +21,6 @@ JotDrop is a free, open-source **Google Keep alternative** for [Obsidian](https:
 
 ---
 
-## Help test JotDrop on Google Play
-
-**The Google Play test is live! We need at least 12 Android testers.** Keep using JotDrop normally, remain opted in for **14 consecutive days**, and share any bugs or confusing behavior. No scripted checklist or daily chores. Joining is voluntary, and the GitHub APK remains available.
-
-The GitHub APK works without any registration; the Play test is an optional invitation. Use your **existing Google account from Play**: no new account or signup form is needed, and you do not have to join a Google Group. Sending the request email does **not** grant access automatically; wait for our confirmation.
-
-1. **[Email your Play account to request access](mailto:eric@diexar.com?subject=JotDrop%20Play%20test%20access&body=Please%20add%20my%20Google%20Play%20account%20to%20the%20JotDrop%20closed%20test.%0A%0AGoogle%20account%20email%20used%20in%20Play%3A%20)**: send the exact Google account address you use in Play. Diexar adds you to the closed-test allowlist and replies with the Play link. This only requests access; it does not yet register you as a Play tester.
-2. **[After confirmation, join and download in Google Play](https://play.google.com/apps/testing/com.diexar.keepcapture)**: choose **Become a tester**, then follow the download link. Stay opted in as a Play tester for at least 14 days. If Play says unavailable, check that both pages use the same Google account and allow time for access to update.
-
-Already have Play access? Skip the email and go straight to step 2.
-
-**Existing group-based testers:** keep your current Play opt-in. While Google processes the access-method change, do not leave the old group or opt out. We have copied the existing group accounts into the email list; no new access request is needed. The group can remain an optional discussion channel after migration.
-
-**Already using the GitHub APK? Read this before uninstalling:** Play uses a different signing key and cannot update that APK in place. First confirm that Play offers the test to your account/device. Back up your vault and record its folder, note/attachment folder settings and other app preferences. Only then uninstall the GitHub JotDrop app, install from Play and select the same vault and folder settings. App preferences reset; external Markdown files are separate from the app, but keep a verified backup before switching. If Play says the test is unavailable, do not uninstall: check the Google account, allow time for access to propagate, then retry or ask for help.
-
-Feedback/help: [issue #10](https://github.com/Diexar-Labs/jotdrop/issues/10). Please share this invitation with another interested Android user. GitHub/Obtainium installs and extra phones using the same account do not count as additional Play testers.
-
-**Manual access handling:** verify the requested Google account address, then edit **JotDrop Play testers** in the existing Alpha track's Testers tab. Add the address without replacing existing entries. Before sending a confirmation, verify that the email-list configuration is published and the account is included. No automated inbox processing or reply service is configured.
-
-Reply only after access is available:
-
-> Your Google Play account has been added to the JotDrop test. Open https://play.google.com/apps/testing/com.diexar.keepcapture with that account, choose **Become a tester**, then install from Play. No Google Group is needed. Please stay opted in for 14 consecutive days. If you use the GitHub APK, confirm Play access and back up your vault before switching: https://github.com/Diexar-Labs/jotdrop/issues/10.
-
----
-
 ## Why JotDrop?
 
 JotDrop is a private, open-source **Google Keep alternative**. Google Keep is great - until you remember Google reads everything you put in there. JotDrop gives you the same fast, friction-free "dump a thought" experience, but every note is a plain Markdown file in your own Obsidian vault. No JotDrop cloud account, no ads, no lock-in. Sync between phone and laptop with Syncthing (free) or any folder-sync you already use. Android OCR processes your images locally; its ML Kit SDK sends technical diagnostics to Google, as explained in the [Android privacy policy](docs/android-privacy-policy.md).
