@@ -15,6 +15,11 @@ const CODE_LIFETIME = 15 * 60 * 1000;
 const LOCK_TIME = 15 * 60 * 1000;
 const CODE_LOCK_TIME = 24 * 60 * 60 * 1000;
 const APPROVAL_LIFETIME = 10 * 60 * 1000;
+const DAY = 24 * 60 * 60 * 1000;
+// JotDrop Plus: the free plan keeps 30 days of open history; after Plus ends, 90 more days stay open.
+const FREE_HISTORY = 30 * DAY;
+const PLUS_GRACE = 90 * DAY;
+const TRIAL_TIME = 14 * DAY;
 // Clients derive their login and unlock keys with Argon2id; the server only stores these settings.
 const DEFAULT_KDF = { memory: 65536, passes: 3, parallelism: 1 };
 // Second hash of the client's login key, so a copied database cannot be replayed as a login.
@@ -112,9 +117,9 @@ async function body(req, maximum = MAX_BODY) {
   return value;
 }
 
-/** Loopback-only server behind a trusted HTTPS proxy. Accounts need a mailer; no billing or provider credentials. */
-export async function createCloudServer({ dataDir, enrollmentToken, mailer, serverKey, quotaBytes = 100 * 1024 * 1024, maxHistoryEntries = 100000, maxDeviceEntries = 1000, maxPairingEntries = 128, maxConcurrentRequests = 16, webRoot = join(directory, 'web'), corsOrigins = [], publicOrigin, port = 0, enrollmentLimit = 1, clock = Date.now }) {
-  if (!dataDir || (enrollmentToken !== undefined && !validToken(enrollmentToken)) || !Number.isSafeInteger(quotaBytes) || quotaBytes < 1) throw new Error('Provide a data directory, random 32-byte enrollment token and positive quota.');
+/** Loopback-only server behind a trusted HTTPS proxy. Accounts need a mailer; no billing or provider credentials. `quotaBytes` and `freeDeviceLimit` are the free plan's limits. */
+export async function createCloudServer({ dataDir, enrollmentToken, mailer, serverKey, quotaBytes = 250 * 1024 * 1024, plusQuotaBytes = 10 * 1024 * 1024 * 1024, freeDeviceLimit = 2, maxHistoryEntries = 100000, maxDeviceEntries = 1000, maxPairingEntries = 128, maxConcurrentRequests = 16, webRoot = join(directory, 'web'), corsOrigins = [], publicOrigin, port = 0, enrollmentLimit = 1, clock = Date.now }) {
+  if (!dataDir || (enrollmentToken !== undefined && !validToken(enrollmentToken)) || [quotaBytes, plusQuotaBytes, freeDeviceLimit].some((value) => !Number.isSafeInteger(value) || value < 1)) throw new Error('Provide a data directory, random 32-byte enrollment token and positive quota.');
   if (mailer !== undefined && typeof mailer !== 'function') throw new Error('Provide the mailer as a function.');
   if (serverKey !== undefined && !validToken(serverKey)) throw new Error('Provide the server key as 32 random bytes.');
   // Kept outside the database: a copied database alone cannot verify codes or produce authenticator codes.
@@ -164,7 +169,9 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
         CREATE TABLE IF NOT EXISTS login_challenges(id TEXT PRIMARY KEY, accountId TEXT NOT NULL REFERENCES accounts(id), deviceName TEXT NOT NULL, deviceTokenHash TEXT NOT NULL, factor TEXT NOT NULL, codeHash TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, expiresAt INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS resets(id TEXT PRIMARY KEY, accountId TEXT NOT NULL REFERENCES accounts(id), codeHash TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, expiresAt INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS device_approvals(id TEXT PRIMARY KEY, accountId TEXT NOT NULL REFERENCES accounts(id), publicKey TEXT NOT NULL, claimTokenHash TEXT NOT NULL, envelope TEXT, expiresAt INTEGER NOT NULL);
-        CREATE TABLE IF NOT EXISTS secrets(name TEXT PRIMARY KEY, value TEXT NOT NULL);`);
+        CREATE TABLE IF NOT EXISTS secrets(name TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS plans(vaultId TEXT PRIMARY KEY, plusUntil INTEGER NOT NULL DEFAULT 0, trialUsed INTEGER NOT NULL DEFAULT 0);
+        CREATE INDEX IF NOT EXISTS envelopes_size ON envelopes(vaultId,size);`);
       run("INSERT INTO secrets VALUES('fake-salt',?) ON CONFLICT(name) DO NOTHING", randomBytes(32).toString('base64url'));
       const legacy = all('PRAGMA table_info(revisions)').some((column) => column.name === 'envelope');
       db.exec(`CREATE TABLE IF NOT EXISTS ${legacy ? 'revisions_migrated' : 'revisions'}(vaultId TEXT NOT NULL REFERENCES vaults(id), id TEXT NOT NULL, revision INTEGER NOT NULL, envelopeHash TEXT NOT NULL, deleted INTEGER NOT NULL, size INTEGER NOT NULL, updatedAt TEXT NOT NULL, deviceId TEXT NOT NULL, PRIMARY KEY(vaultId,id,revision), FOREIGN KEY(vaultId,id,envelopeHash) REFERENCES envelopes(vaultId,id,envelopeHash));`);
@@ -178,6 +185,8 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
         }
         db.exec('DROP TABLE revisions; ALTER TABLE revisions_migrated RENAME TO revisions;');
       }
+      // Serves eviction's reference count and the envelope foreign-key check on delete.
+      db.exec('CREATE INDEX IF NOT EXISTS revisions_by_envelope ON revisions(vaultId,id,envelopeHash);');
       if (all('PRAGMA foreign_key_check').length) throw new Error('Cloud database references are inconsistent.');
       db.exec('PRAGMA user_version=1;');
     });
@@ -191,9 +200,25 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
     if (!state || state.until <= now) { rate.set(key, { count: 1, until: now + 60000 }); return; }
     if (++state.count > maximum) fail(429, 'Too many attempts. Try again later.');
   }
-  function addDevice(vaultId, name, tokenHash) {
+  const planRow = (vaultId) => one('SELECT plusUntil,trialUsed FROM plans WHERE vaultId=?', vaultId) ?? { plusUntil: 0, trialUsed: 0 };
+  const isPlus = (vaultId) => planRow(vaultId).plusUntil > clock();
+  // The active devices of a free cloud at its device limit; empty when another device fits.
+  function devicesAtLimit(vaultId) {
+    const active = isPlus(vaultId) ? [] : all('SELECT id,name,lastSeenAt FROM devices WHERE vaultId=? AND revoked=0 ORDER BY lastSeenAt', vaultId);
+    return active.length >= freeDeviceLimit ? active : [];
+  }
+  const deviceLimitReached = (devices) => fail(403, `The free plan includes ${freeDeviceLimit} devices. Sign out one of them, or try JotDrop Plus.`, { code: 'device-limit', deviceLimit: freeDeviceLimit, devices });
+  // A free cloud at its device limit can only swap a device, so someone who lost their phone can still sign in.
+  function addDevice(vaultId, name, tokenHash, replaceDeviceId) {
     // Count revoked rows too: revocation must not bypass the local metadata ceiling.
     if (one('SELECT COUNT(*) AS count FROM devices WHERE vaultId=?', vaultId).count >= maxDeviceEntries) fail(507, 'Cloud device metadata safety limit reached. Existing devices and history were kept.');
+    const active = devicesAtLimit(vaultId);
+    if (active.length) {
+      const replaced = active.find((device) => device.id === replaceDeviceId);
+      if (!replaced) deviceLimitReached(active);
+      run('UPDATE devices SET revoked=1 WHERE id=?', replaced.id);
+      run('DELETE FROM uploads WHERE vaultId=? AND deviceId=?', vaultId, replaced.id);
+    }
     const id = randomUUID(), now = new Date(clock()).toISOString();
     run('INSERT INTO devices(id,vaultId,name,tokenHash,createdAt,lastSeenAt) VALUES(?,?,?,?,?,?)', id, vaultId, name.trim(), tokenHash, now, now);
     return { vaultId, deviceId: id };
@@ -275,6 +300,43 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
   }
   const pruneUploads = (vaultId) => run('DELETE FROM uploads WHERE vaultId=? AND expiresAt<=?', vaultId, clock());
   const storageUsage = (vaultId) => one('SELECT (SELECT COALESCE(SUM(size),0) FROM envelopes WHERE vaultId=?) + (SELECT COALESCE(SUM(reservedBytes),0) FROM uploads WHERE vaultId=?) AS used', vaultId, vaultId).used;
+  const quotaFor = (vaultId) => isPlus(vaultId) ? plusQuotaBytes : quotaBytes;
+  // Free clouds keep older versions, but only Plus opens one that was replaced before this moment.
+  function lockedBefore(vaultId) {
+    const now = clock();
+    return planRow(vaultId).plusUntil + PLUS_GRACE > now ? undefined : new Date(now - FREE_HISTORY).toISOString();
+  }
+  // A version is replaced when the next one is saved. After eviction the next remaining version still predates
+  // the cutoff, because the cutoff only moves forward.
+  const lockedVersions = 'FROM revisions r WHERE r.vaultId=? AND (SELECT n.updatedAt FROM revisions n WHERE n.vaultId=r.vaultId AND n.id=r.id AND n.revision>r.revision ORDER BY n.revision LIMIT 1)<?';
+  function requireOpenVersion(vaultId, id, revision) {
+    const cutoff = lockedBefore(vaultId);
+    if (cutoff && one(`SELECT 1 ${lockedVersions} AND r.id=? AND r.revision=?`, vaultId, cutoff, id, revision)) fail(402, 'This version is older than 30 days. JotDrop Plus restores it.', { code: 'plus-required' });
+  }
+  // A full free cloud makes room by deleting its oldest locked versions; the current version of a file always stays.
+  // One scan for candidates; nothing is deleted when even all locked versions would not make enough room.
+  // ponytail: scans the vault's revision rows per full upload; keep a per-vault locked-bytes counter if large vaults make this slow.
+  function fits(vaultId, extra) {
+    let shortfall = storageUsage(vaultId) + extra - quotaFor(vaultId);
+    if (shortfall <= 0) return true;
+    const cutoff = lockedBefore(vaultId);
+    if (!cutoff) return false;
+    // Group by envelope, oldest first; an envelope a newer open version still uses (a restore) is never freed.
+    const groups = new Map();
+    for (const entry of all(`SELECT r.id,r.revision,r.envelopeHash,r.size ${lockedVersions} ORDER BY r.updatedAt,r.revision`, vaultId, cutoff)) {
+      const key = `${entry.id}:${entry.envelopeHash}`;
+      if (!groups.has(key)) groups.set(key, { ...entry, revisions: [] });
+      groups.get(key).revisions.push(entry.revision);
+    }
+    const freeable = [...groups.values()].filter((group) => one('SELECT COUNT(*) AS count FROM revisions WHERE vaultId=? AND id=? AND envelopeHash=?', vaultId, group.id, group.envelopeHash).count === group.revisions.length);
+    if (freeable.reduce((sum, group) => sum + group.size, 0) < shortfall) return false;
+    for (const group of freeable) {
+      for (const revision of group.revisions) run('DELETE FROM revisions WHERE vaultId=? AND id=? AND revision=?', vaultId, group.id, revision);
+      run('DELETE FROM envelopes WHERE vaultId=? AND id=? AND envelopeHash=?', vaultId, group.id, group.envelopeHash);
+      if ((shortfall -= group.size) <= 0) break;
+    }
+    return true;
+  }
   function append(vaultId, deviceId, id, baseRevision, envelope, deleted) {
     return transaction(() => {
       requireActiveDevice(vaultId, deviceId);
@@ -289,8 +351,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
       const history = historyUsage(vaultId);
       if (history.revisionCount >= maxHistoryEntries || history.changeCount >= maxHistoryEntries) fail(507, 'Cloud history safety limit reached. Existing versions remain readable; no history was deleted.');
       if (!stored) {
-        const used = storageUsage(vaultId);
-        if (used + size > quotaBytes) fail(507, 'Cloud storage is full. Your local files remain available.');
+        if (!fits(vaultId, size)) fail(507, 'Cloud storage is full. Your local files remain available.');
         run('INSERT INTO envelopes VALUES(?,?,?,?,?)', vaultId, id, envelopeHash, envelope, size);
       }
       const revision = baseRevision + 1, now = new Date(clock()).toISOString();
@@ -371,7 +432,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
         requireValue(validId(value.vaultId) && validHash(value.deviceTokenHash), 'Invalid recovery request');
         const vault = one('SELECT recoveryHash FROM vaults WHERE id=?', value.vaultId);
         if (!validToken(value.recoveryToken) || !vault || !equal(hash(value.recoveryToken), vault.recoveryHash)) fail(401, 'Invalid recovery code');
-        reply(201, transaction(() => addDevice(value.vaultId, value.deviceName, value.deviceTokenHash))); return;
+        reply(201, transaction(() => addDevice(value.vaultId, value.deviceName, value.deviceTokenHash, value.replaceDeviceId))); return;
       }
       const claim = /^\/pairings\/([0-9a-f-]+)\/claim$/.exec(route);
       if (method === 'POST' && claim) {
@@ -471,7 +532,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
         }, (challenge) => {
           const account = one('SELECT vaultId,wrappedVaultKey FROM accounts WHERE id=?', challenge.accountId);
           if (step) run('UPDATE accounts SET totpLastStep=? WHERE id=?', step, challenge.accountId);
-          return { ...addDevice(account.vaultId, challenge.deviceName, challenge.deviceTokenHash), wrappedVaultKey: account.wrappedVaultKey };
+          return { ...addDevice(account.vaultId, challenge.deviceName, challenge.deviceTokenHash, value.replaceDeviceId), wrappedVaultKey: account.wrappedVaultKey };
         })); return;
       }
       if (method === 'POST' && route === '/auth/reset/start') {
@@ -500,7 +561,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
           const account = one('SELECT a.id,a.vaultId,v.recoveryHash FROM accounts a JOIN vaults v ON v.id=a.vaultId WHERE a.id=?', reset.accountId);
           if (!equal(hash(value.recoveryToken), account.recoveryHash)) fail(401, 'Invalid recovery code');
           setCredentials(account.id, next);
-          return addDevice(account.vaultId, value.deviceName, value.deviceTokenHash);
+          return addDevice(account.vaultId, value.deviceName, value.deviceTokenHash, value.replaceDeviceId);
         })); return;
       }
       if (method === 'POST' && route === '/auth/reset/approval') {
@@ -530,7 +591,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
           if (run('DELETE FROM device_approvals WHERE id=? AND envelope IS NOT NULL', request.id).changes !== 1) fail(401, 'Invalid or expired approval');
           const account = one('SELECT id,vaultId FROM accounts WHERE id=?', request.accountId);
           setCredentials(account.id, next);
-          return addDevice(account.vaultId, value.deviceName, value.deviceTokenHash);
+          return addDevice(account.vaultId, value.deviceName, value.deviceTokenHash, value.replaceDeviceId);
         })); return;
       }
       if (method === 'POST' && route === '/auth/reset/restart') {
@@ -543,6 +604,8 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
           const account = one('SELECT id,vaultId FROM accounts WHERE id=?', reset.accountId), vaultId = randomUUID();
           run('INSERT INTO vaults VALUES(?,?,?)', vaultId, value.recoveryTokenHash, 'account');
           run('UPDATE accounts SET vaultId=? WHERE id=?', vaultId, account.id);
+          // The subscription belongs to the person, not to the deleted ciphertext.
+          run('UPDATE plans SET vaultId=? WHERE vaultId=?', vaultId, account.vaultId);
           setCredentials(account.id, next);
           run('DELETE FROM device_approvals WHERE accountId=?', account.id);
           // Nobody can read the old ciphertext any more; deleting it is what the user confirmed.
@@ -657,8 +720,21 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
         if (account) sendMailLater({ to: account.email, kind: 'recovery-changed' });
         reply(200, { ok: true }); return;
       }
+      if (route === '/account/trial' && method === 'POST') {
+        const plusUntil = transaction(() => {
+          requireActiveDevice(vaultId, deviceId);
+          const plan = planRow(vaultId);
+          if (plan.trialUsed) fail(409, 'The free trial was already used.');
+          if (plan.plusUntil > clock()) fail(409, 'This cloud already has JotDrop Plus.');
+          const until = clock() + TRIAL_TIME;
+          run('INSERT INTO plans VALUES(?,?,1) ON CONFLICT(vaultId) DO UPDATE SET plusUntil=excluded.plusUntil,trialUsed=1', vaultId, until);
+          return until;
+        });
+        reply(200, { plusUntil: new Date(plusUntil).toISOString() }); return;
+      }
       if (method === 'GET' && route === '/status') {
-        reply(200, { usedBytes: one('SELECT COALESCE(SUM(size),0) AS size FROM envelopes WHERE vaultId=?', vaultId).size, quotaBytes, sequence: one('SELECT COALESCE(MAX(sequence),0) AS sequence FROM changes WHERE vaultId=?', vaultId).sequence, history: historyUsage(vaultId), transport: { version: 1, chunkBytes: TRANSFER_CHUNK_BYTES, reservedBytes: one('SELECT COALESCE(SUM(reservedBytes),0) AS size FROM uploads WHERE vaultId=?', vaultId).size } }); return;
+        const plan = planRow(vaultId), plus = plan.plusUntil > clock();
+        reply(200, { usedBytes: one('SELECT COALESCE(SUM(size),0) AS size FROM envelopes WHERE vaultId=?', vaultId).size, quotaBytes: quotaFor(vaultId), plan: { name: plus ? 'plus' : 'free', plusUntil: plan.plusUntil ? new Date(plan.plusUntil).toISOString() : null, trialAvailable: !plan.trialUsed && !plus, deviceLimit: plus ? null : freeDeviceLimit, historyDays: plus ? null : FREE_HISTORY / DAY }, sequence: one('SELECT COALESCE(MAX(sequence),0) AS sequence FROM changes WHERE vaultId=?', vaultId).sequence, history: historyUsage(vaultId), transport: { version: 1, chunkBytes: TRANSFER_CHUNK_BYTES, reservedBytes: one('SELECT COALESCE(SUM(reservedBytes),0) AS size FROM uploads WHERE vaultId=?', vaultId).size } }); return;
       }
       if (method === 'GET' && route === '/changes') {
         const after = Number(url.searchParams.get('after') || 0);
@@ -689,6 +765,9 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
         envelopeSize(value.envelope, 8192);
         const result = transaction(() => {
           requireActiveDevice(vaultId, deviceId);
+          // Say so before the code is scanned, not after.
+          const active = devicesAtLimit(vaultId);
+          if (active.length) deviceLimitReached(active);
           const now = clock(), pairingId = randomUUID(), expiresAt = now + 600000;
           run('DELETE FROM pairings WHERE vaultId=? AND expiresAt<=?', vaultId, now);
           if (one('SELECT COUNT(*) AS count FROM pairings WHERE vaultId=?', vaultId).count >= maxPairingEntries) fail(507, 'Cloud pairing metadata safety limit reached. Wait for existing codes to expire.');
@@ -735,7 +814,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
             const revision = latest(vaultId, id)?.revision || 0;
             if (revision !== baseRevision) fail(409, 'Another version was saved. Review both versions.', { currentRevision: revision });
             if (one('SELECT COUNT(*) AS count FROM uploads WHERE vaultId=?', vaultId).count >= 4) fail(507, 'Cloud pending upload limit reached');
-            if (storageUsage(vaultId) + reservedBytes > quotaBytes) fail(507, 'Cloud storage is full. Your local files remain available.');
+            if (!fits(vaultId, reservedBytes)) fail(507, 'Cloud storage is full. Your local files remain available.');
             run('INSERT INTO uploads VALUES(?,?,?,?,?,?,?,?,?)', ...key, value.size, reservedBytes, clock() + TRANSFER_LIFETIME, Buffer.alloc(0));
             return { offset: 0, size: value.size };
           });
@@ -790,11 +869,21 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
       const current = latest(vaultId, id);
       if (method === 'GET' && action === 'history') {
         if (!current) fail(404, 'File not found');
-        reply(200, { versions: all('SELECT revision,deleted,size,updatedAt,deviceId FROM revisions WHERE vaultId=? AND id=? ORDER BY revision DESC LIMIT 100', vaultId, id).map((entry) => ({ ...entry, deleted: Boolean(entry.deleted) })) }); return;
+        // Newest first: once a newer version is older than the cutoff, every older version is locked.
+        const cutoff = lockedBefore(vaultId);
+        let replacedEarlier = false;
+        reply(200, { versions: all('SELECT revision,deleted,size,updatedAt,deviceId FROM revisions WHERE vaultId=? AND id=? ORDER BY revision DESC LIMIT 100', vaultId, id).map((entry) => {
+          const locked = replacedEarlier;
+          replacedEarlier ||= Boolean(cutoff) && entry.updatedAt < cutoff;
+          return { ...entry, deleted: Boolean(entry.deleted), locked };
+        }) }); return;
       }
       if (method === 'GET' && !action) {
         const revision = url.searchParams.has('revision') ? Number(url.searchParams.get('revision')) : undefined;
-        if (revision !== undefined) requireValue(Number.isSafeInteger(revision) && revision >= 1, 'Invalid revision');
+        if (revision !== undefined) {
+          requireValue(Number.isSafeInteger(revision) && revision >= 1, 'Invalid revision');
+          requireOpenVersion(vaultId, id, revision);
+        }
         const entry = revision === undefined ? current : one(`${revisionQuery} WHERE vaultId=? AND id=? AND revision=?`, vaultId, id, revision);
         if (!entry) fail(404, 'File not found');
         reply(200, { id, revision: entry.revision, deleted: Boolean(entry.deleted), envelope: entry.envelope, updatedAt: entry.updatedAt, deviceId: entry.deviceId }); return;
@@ -806,6 +895,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
         if (method === 'DELETE') { if (!current) fail(404, 'File not found'); envelope = current.envelope; }
         if (action === 'restore') {
           requireValue(Number.isSafeInteger(value.revision) && value.revision >= 1, 'Invalid restore revision');
+          requireOpenVersion(vaultId, id, value.revision);
           const old = one(`${revisionQuery} WHERE vaultId=? AND id=? AND revision=?`, vaultId, id, value.revision);
           if (!old) fail(404, 'Version not found');
           envelope = old.envelope;

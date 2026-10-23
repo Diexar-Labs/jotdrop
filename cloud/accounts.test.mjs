@@ -18,7 +18,8 @@ async function fixture(t, options = {}) {
   const dataDir = await mkdtemp(join(tmpdir(), 'jotdrop-accounts-test-'));
   const mails = [];
   let now = Date.parse('2026-10-22T08:00:00Z');
-  const app = await createCloudServer({ dataDir, mailer: async (mail) => { mails.push(mail); }, serverKey: randomToken(), clock: () => now, ...options });
+  // Most tests sign in on several devices; plans.test.mjs covers the free device limit.
+  const app = await createCloudServer({ dataDir, mailer: async (mail) => { mails.push(mail); }, serverKey: randomToken(), clock: () => now, freeDeviceLimit: 100, ...options });
   t.after(async () => { await app.close(); await rm(dataDir, { recursive: true, force: true }); });
   const url = `http://127.0.0.1:${app.port}`;
   const api = async (path, body, headers = {}) => {
@@ -288,6 +289,7 @@ test('starting over deletes the unreadable old cloud and signs out every old dev
   const app = await fixture(t);
   const phone = await signUp(app, 'over@example.com');
   await phone.write('notes/lost.md', text('Encrypted with a lost key'), 0);
+  await phone.call('/account/trial', 'POST', {});
   const vaultKey = generateVaultKey(), reset = await startReset(app, 'over@example.com', 'fresh start password', vaultKey);
   const restart = { ...reset, recoveryTokenHash: await hashToken(randomToken()) };
   assert.equal((await app.api('/auth/reset/restart', restart)).status, 400);
@@ -297,12 +299,28 @@ test('starting over deletes the unreadable old cloud and signs out every old dev
   await assert.rejects(phone.status(), (error) => error.status === 401);
   const laptop = new CloudClient({ url: app.url, vaultId: done.body.vaultId, deviceId: done.body.deviceId, token: reset.deviceToken, vaultKey });
   assert.deepEqual((await laptop.listChanges()).changes, []);
+  assert.equal((await laptop.status()).plan.name, 'plus');
   const relogged = await logIn(app, 'over@example.com', 'fresh start password');
   assert.equal(relogged.credentials.vaultKey, vaultKey);
   const db = new DatabaseSync(app.dbPath, { readOnly: true });
   try {
-    for (const table of ['devices', 'envelopes', 'revisions', 'changes', 'vaults']) assert.equal(db.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE ${table === 'vaults' ? 'id' : 'vaultId'}=?`).get(phone.credentials.vaultId).count, 0);
+    for (const table of ['devices', 'envelopes', 'revisions', 'changes', 'plans', 'vaults']) assert.equal(db.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE ${table === 'vaults' ? 'id' : 'vaultId'}=?`).get(phone.credentials.vaultId).count, 0);
   } finally { db.close(); }
+});
+
+test('a free account at its device limit signs in by replacing a lost device, with the same code', async (t) => {
+  const app = await fixture(t, { freeDeviceLimit: 2 });
+  const phone = await signUp(app, 'full@example.com');
+  assert.ok((await logIn(app, 'full@example.com')) instanceof CloudClient);
+  const { kdf } = (await app.api('/auth/prelogin', { email: 'full@example.com' })).body;
+  const started = await app.api('/auth/login', { email: 'full@example.com', authKey: derive(PASSWORD, kdf).authKey, deviceName: 'New phone', deviceTokenHash: await hashToken(randomToken()) });
+  const login = { challengeId: started.body.challengeId, code: app.lastCode('full@example.com', 'login') };
+  const blocked = await app.api('/auth/login/verify', login);
+  assert.equal(blocked.status, 403);
+  assert.equal(blocked.body.code, 'device-limit');
+  assert.deepEqual(blocked.body.devices.map((device) => device.name).sort(), ['Laptop', 'Phone']);
+  assert.equal((await app.api('/auth/login/verify', { ...login, replaceDeviceId: phone.credentials.deviceId })).status, 201);
+  await assert.rejects(phone.status(), (error) => error.status === 401);
 });
 
 test('a reset for an unknown address looks the same and sends nothing', async (t) => {

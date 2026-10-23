@@ -79,8 +79,9 @@ export async function logIn({ url, email, password: value, deviceName, fetcher }
   return { url, challengeId: started.challengeId, secondFactor: started.secondFactor, unlockKey, deviceToken: device.deviceToken };
 }
 
-export async function confirmLogin(pending, code, { fetcher } = {}) {
-  const result = await post(pending.url, '/auth/login/verify', { challengeId: pending.challengeId, code }, fetcher);
+/** At the free device limit the server answers 'device-limit'; call again with the same code and `replaceDeviceId`. */
+export async function confirmLogin(pending, code, { fetcher, replaceDeviceId } = {}) {
+  const result = await post(pending.url, '/auth/login/verify', { challengeId: pending.challengeId, code, replaceDeviceId }, fetcher);
   const { vaultKey } = await decryptEnvelope(pending.unlockKey, JSON.parse(result.wrappedVaultKey), WRAP_AAD);
   return connect(pending.url, result, pending.deviceToken, vaultKey, fetcher);
 }
@@ -115,9 +116,9 @@ export async function startReset({ url, email, fetcher }) {
   return { url, resetId: (await post(url, '/auth/reset/start', { email }, fetcher)).resetId };
 }
 
-export async function resetWithRecoveryCode(reset, { code, recoveryCode, newPassword, deviceName }, { fetcher } = {}) {
+export async function resetWithRecoveryCode(reset, { code, recoveryCode, newPassword, deviceName, replaceDeviceId }, { fetcher } = {}) {
   const recovery = decodeRecovery(recoveryCode), device = await newDevice(deviceName);
-  const result = await post(reset.url, '/auth/reset/recover', { resetId: reset.resetId, code, recoveryToken: recovery.recoveryToken, ...await newCredentials(newPassword, recovery.vaultKey), ...device.fields }, fetcher);
+  const result = await post(reset.url, '/auth/reset/recover', { resetId: reset.resetId, code, recoveryToken: recovery.recoveryToken, ...await newCredentials(newPassword, recovery.vaultKey), ...device.fields, replaceDeviceId }, fetcher);
   if (result.vaultId !== recovery.vaultId) throw new Error('The recovery code belongs to another cloud.');
   return connect(reset.url, result, device.deviceToken, recovery.vaultKey, fetcher);
 }
@@ -155,10 +156,10 @@ export async function checkApproval(pending, { fetcher } = {}) {
   return { ...pending, vaultId, vaultKey };
 }
 
-export async function completeApproval(approved, { newPassword, deviceName }, { fetcher } = {}) {
+export async function completeApproval(approved, { newPassword, deviceName, replaceDeviceId }, { fetcher } = {}) {
   if (!approved?.vaultKey) throw new Error('Wait until your other device approves this request.');
   const device = await newDevice(deviceName);
-  const result = await post(approved.url, `/auth/reset/approval/${approved.approvalId}/complete`, { claimToken: approved.claimToken, ...await newCredentials(newPassword, approved.vaultKey), ...device.fields }, fetcher);
+  const result = await post(approved.url, `/auth/reset/approval/${approved.approvalId}/complete`, { claimToken: approved.claimToken, ...await newCredentials(newPassword, approved.vaultKey), ...device.fields, replaceDeviceId }, fetcher);
   if (result.vaultId !== approved.vaultId) throw new Error('The server linked the account to another cloud.');
   return connect(approved.url, result, device.deviceToken, approved.vaultKey, fetcher);
 }

@@ -45,7 +45,8 @@ export async function request(url, path, { method = 'GET', body, headers = {}, f
   let result;
   try { result = JSON.parse(chunks.join('')); } catch { throw new CloudError('The server did not return a valid response.', response.status); }
   if (!result || typeof result !== 'object' || Array.isArray(result)) throw new CloudError('The server did not return a valid response.', response.status);
-  if (!response.ok) throw new CloudError(typeof result.error === 'string' ? result.error : 'Cloud request failed.', response.status, result.currentRevision);
+  // `code` names a plan limit ('device-limit' lists the devices to choose from, 'plus-required').
+  if (!response.ok) throw Object.assign(new CloudError(typeof result.error === 'string' ? result.error : 'Cloud request failed.', response.status, result.currentRevision), { code: result.code, devices: result.devices });
   return result;
 }
 
@@ -69,9 +70,9 @@ export class CloudClient {
     return { client, recoveryCode: encodeRecovery({ vaultId: created.vaultId, vaultKey, recoveryToken }) };
   }
 
-  static async recover({ url, recoveryCode, deviceName, fetcher = globalThis.fetch }) {
+  static async recover({ url, recoveryCode, deviceName, replaceDeviceId, fetcher = globalThis.fetch }) {
     const recovery = decodeRecovery(recoveryCode), deviceToken = randomToken();
-    const recovered = await request(url, '/recover', { method: 'POST', body: { vaultId: recovery.vaultId, recoveryToken: recovery.recoveryToken, deviceName: name(deviceName), deviceTokenHash: await hashToken(deviceToken) }, fetcher });
+    const recovered = await request(url, '/recover', { method: 'POST', body: { vaultId: recovery.vaultId, recoveryToken: recovery.recoveryToken, deviceName: name(deviceName), deviceTokenHash: await hashToken(deviceToken), replaceDeviceId }, fetcher });
     if (recovered.vaultId !== recovery.vaultId) throw new Error('Recovery returned the wrong workspace.');
     return new CloudClient({ url, ...recovered, token: deviceToken, vaultKey: recovery.vaultKey, fetcher });
   }

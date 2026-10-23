@@ -16,7 +16,8 @@ const text = (value) => new TextEncoder().encode(value);
 async function fixture(t, options = {}) {
   const dataDir = await mkdtemp(join(tmpdir(), 'jotdrop-account-client-'));
   const mails = [];
-  const app = await createCloudServer({ dataDir, mailer: async (mail) => { mails.push(mail); }, serverKey: randomToken(), ...options });
+  // These flows sign in on several devices; plans.test.mjs covers the free device limit.
+  const app = await createCloudServer({ dataDir, mailer: async (mail) => { mails.push(mail); }, serverKey: randomToken(), freeDeviceLimit: 100, ...options });
   t.after(async () => { await app.close(); await rm(dataDir, { recursive: true, force: true }); });
   const url = `http://127.0.0.1:${app.port}`;
   return { ...app, url, mails, code: (to, kind) => mails.filter((mail) => mail.to === to && mail.kind === kind).at(-1)?.code };

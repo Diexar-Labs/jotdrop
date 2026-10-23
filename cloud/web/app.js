@@ -1,6 +1,6 @@
 import { CloudClient } from '/shared/client.mjs';
 import { accountInfo, approveDevice, attachAccount, changePassword, checkApproval, completeApproval, confirmLogin, confirmSignup, disableTotp, enableTotp, listApprovals, logIn, newRecoveryCode, rejectDevice, requestApproval, resetWithRecoveryCode, setupTotp, signUp, startOver, startReset } from '/shared/account.mjs';
-import { base64ToBytes, bytesToBase64, decryptEnvelope, sealLocal, unsealLocal } from '/shared/crypto.mjs';
+import { base64ToBytes, bytesToBase64, decodeRecovery, decryptEnvelope, sealLocal, unsealLocal } from '/shared/crypto.mjs';
 import { exportZip } from '/export.mjs';
 import { noteSummary, updateMetadata, toggleTask, attachmentPath, plainPreviewText } from '/note.mjs';
 
@@ -427,6 +427,9 @@ async function performSync(signal) {
   const status = await activeClient.status();
   if (activeGeneration !== generation) return;
   $('storage-usage').textContent = `${(status.usedBytes / 1048576).toFixed(1)} / ${(status.quotaBytes / 1048576).toFixed(0)} MiB encrypted storage`;
+  const plan = status.plan;
+  $('plan-status').textContent = plan.name === 'plus' ? `JotDrop Plus until ${new Date(plan.plusUntil).toLocaleDateString()}` : `Free plan: ${plan.deviceLimit} devices, ${plan.historyDays} days of history`;
+  $('start-trial').hidden = !plan.trialAvailable;
   const pending = await store('entries', keyPrefix);
   const conflicts = [...files.values()].filter((entry) => entry.conflict).length;
   $('sync-status').textContent = conflicts ? `${conflicts} conflict(s) need review. Local drafts are preserved.` : pending.length ? `${pending.length} encrypted change(s) waiting to upload.` : `Cloud copy up to date at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`;
@@ -637,8 +640,20 @@ async function openWorkspace(connected) {
   await sync();
 }
 
+// A browser that is not remembered signs in as a new device next time, so it gives its device slot back when it closes.
+let forgetOnClose = false;
+function releaseDevice() {
+  if (!client || !forgetOnClose) return;
+  forgetOnClose = false;
+  const c = client.credentials;
+  void fetch(`${c.url}/api/v1/devices/${c.deviceId}`, { method: 'DELETE', keepalive: true, headers: { Authorization: `Bearer ${c.token}`, 'X-JotDrop-Vault': c.vaultId, 'X-JotDrop-Device': c.deviceId } }).catch(() => {});
+}
+// A page kept for the back button can come back, so it keeps its device.
+window.addEventListener('pagehide', (event) => { if (!event.persisted) releaseDevice(); });
+
 function lock() {
   if (voiceJob && !confirm('Discard the current recording and lock?')) return;
+  releaseDevice();
   discardVoice();
   resetPhoto();
   syncController?.abort();
@@ -677,6 +692,7 @@ function showAccess(id) {
   approvalRun++;
   for (const element of document.querySelectorAll('[data-access]')) element.hidden = element.id !== id;
   $('unlock-form').hidden = true;
+  $('device-limit').hidden = true;
   $('access-message').textContent = '';
   $(id).querySelector('input:not([type="checkbox"]):not([type="radio"]), select, textarea')?.focus();
 }
@@ -696,6 +712,7 @@ document.addEventListener('click', (event) => {
 async function finishAccess(connected, { password, remember, recoveryCode }) {
   if (remember) await store('put', 'connection', await sealLocal(connected.credentials, password));
   else await store('delete', 'connection');
+  forgetOnClose = !remember;
   codeStep = undefined;
   for (const input of $('access').querySelectorAll('input[type="password"], input[inputmode="numeric"], textarea')) input.value = '';
   $('access-message').textContent = '';
@@ -723,6 +740,28 @@ function accessForm(id, action) {
   });
 }
 
+// At the free device limit this browser takes the place of a device the person no longer uses.
+// `connect(replaceDeviceId)` repeats the sign-in; the server kept the code, so it still works.
+async function withDeviceChoice(connect) {
+  try { await connect(undefined); }
+  catch (error) {
+    if (error.code !== 'device-limit') throw error;
+    const box = $('device-limit');
+    box.replaceChildren(paragraph(`${error.message} Choose the device this browser replaces:`));
+    for (const device of error.devices) {
+      const choice = button(`Sign out ${device.name} (last used ${new Date(device.lastSeenAt).toLocaleDateString()})`, async () => {
+        choice.disabled = true;
+        try { await connect(device.id); box.hidden = true; }
+        catch (failure) { $('access-message').textContent = accessError(failure); }
+        finally { choice.disabled = false; }
+      });
+      box.append(choice);
+    }
+    box.hidden = false;
+    $('access-message').textContent = '';
+  }
+}
+
 function askCode(kind, pending, password, remember) {
   codeStep = { kind, pending, password, remember };
   $('code-label').textContent = pending.secondFactor === 'totp' ? 'Enter the 6-digit code from your authenticator app' : 'Enter the 6-digit code we emailed to you';
@@ -741,7 +780,7 @@ accessForm('signup-form', async () => {
 accessForm('code-form', async () => {
   const step = codeStep, code = $('code-input').value.trim();
   if (!step) throw new Error('Start again from the log in screen.');
-  if (step.kind === 'login') await finishAccess(await confirmLogin(step.pending, code), step);
+  if (step.kind === 'login') await withDeviceChoice(async (replaceDeviceId) => finishAccess(await confirmLogin(step.pending, code, { replaceDeviceId }), step));
   else {
     const { client: connected, recoveryCode } = await confirmSignup(step.pending, code);
     await finishAccess(connected, { ...step, recoveryCode });
@@ -762,7 +801,8 @@ accessForm('reset-form', async () => {
   const newPassword = $('reset-password').value, remember = $('reset-remember').checked, code = $('reset-code').value.trim(), options = { newPassword, deviceName: DEVICE_NAME };
   if (newPassword !== $('reset-confirm').value) throw new Error('The passwords do not match.');
   if (resetRoute() === 'recover') {
-    await finishAccess(await resetWithRecoveryCode(reset, { ...options, code, recoveryCode: $('reset-recovery-code').value.trim() }), { password: newPassword, remember });
+    const recoveryCode = $('reset-recovery-code').value.trim();
+    await withDeviceChoice(async (replaceDeviceId) => finishAccess(await resetWithRecoveryCode(reset, { ...options, code, recoveryCode, replaceDeviceId }), { password: newPassword, remember }));
   } else if (resetRoute() === 'restart') {
     if (!$('reset-restart-confirm').checked) throw new Error('Tick the box to confirm deleting the old cloud data.');
     const { client: connected, recoveryCode } = await startOver(reset, { ...options, code });
@@ -780,7 +820,7 @@ accessForm('reset-form', async () => {
         if (run !== approvalRun) return;
         if (!approved) { setTimeout(poll, 3000); return; }
         $('approval-status').textContent = 'Approved. Setting your new password...';
-        await finishAccess(await completeApproval(approved, options), { password: newPassword, remember });
+        await withDeviceChoice(async (replaceDeviceId) => finishAccess(await completeApproval(approved, { ...options, replaceDeviceId }), { password: newPassword, remember }));
       } catch (error) { $('approval-status').textContent = error?.status === 401 ? 'The request was rejected or has expired. Go back and start again.' : accessError(error); }
     };
     setTimeout(poll, 3000);
@@ -903,17 +943,19 @@ $('connect-form').addEventListener('submit', async (event) => {
     const method = $('connect-method').value;
     const options = { url: location.origin, deviceName: $('device-name').value.trim() };
     const code = $('access-code').value.trim();
-    let connected, recoveryCode;
-    if (method === 'create') ({ client: connected, recoveryCode } = await CloudClient.create({ ...options, enrollmentToken: code }));
-    else if (method === 'pair') connected = await CloudClient.claim({ pairingCode: code });
-    else connected = await CloudClient.recover({ ...options, recoveryCode: code });
-    const sealed = await sealLocal(connected.credentials, password);
-    const existing = await store('entries', `pending:${connected.credentials.vaultId}:`);
-    if (existing.length && !confirm('This workspace has encrypted drafts on this browser. Continue and sync them using the new device connection?')) return;
-    await store('put', 'connection', sealed);
-    $('access-message').textContent = '';
-    await openWorkspace(connected);
-    if (recoveryCode) showRecoveryCode(recoveryCode);
+    const keepDrafts = async (vaultId) => !(await store('entries', `pending:${vaultId}:`)).length || confirm('This workspace has encrypted drafts on this browser. Continue and sync them using the new device connection?');
+    const open = async (connected, recoveryCode, asked = false) => {
+      const sealed = await sealLocal(connected.credentials, password);
+      if (!asked && !await keepDrafts(connected.credentials.vaultId)) return;
+      await store('put', 'connection', sealed);
+      $('access-message').textContent = '';
+      await openWorkspace(connected);
+      if (recoveryCode) showRecoveryCode(recoveryCode);
+    };
+    if (method === 'create') { const created = await CloudClient.create({ ...options, enrollmentToken: code }); await open(created.client, created.recoveryCode); }
+    else if (method === 'pair') await open(await CloudClient.claim({ pairingCode: code }));
+    // Ask about drafts first: recovering can sign out another device, which a cancel here must not waste.
+    else if (await keepDrafts(decodeRecovery(code).vaultId)) await withDeviceChoice(async (replaceDeviceId) => open(await CloudClient.recover({ ...options, recoveryCode: code, replaceDeviceId }), undefined, true));
   } catch (error) { $('access-message').textContent = errorText(error); }
   finally { submit.disabled = false; }
 });
@@ -932,6 +974,13 @@ $('use-another').addEventListener('click', () => {
   $('access-message').textContent = 'Existing encrypted drafts are kept. Connect the original device again to sync them.';
 });
 $('lock').addEventListener('click', lock);
+$('start-trial').addEventListener('click', async () => {
+  try {
+    await client.call('/account/trial', 'POST', {});
+    message('JotDrop Plus is on for 14 days. No payment details needed.');
+    await sync();
+  } catch (error) { message(errorText(error)); }
+});
 $('sync').addEventListener('click', () => { syncPaused = false; $('sync').textContent = 'Sync now'; message(); void sync(); });
 $('pause-sync').addEventListener('click', () => { syncPaused = true; syncController?.abort(); });
 $('search').addEventListener('input', render);
@@ -1091,6 +1140,12 @@ $('note-history').addEventListener('click', async () => {
       const row = document.createElement('div');
       row.className = 'history-row';
       row.append(paragraph(`Version ${version.revision}${version.deleted ? ' (moved to trash)' : ''} - ${new Date(version.updatedAt).toLocaleString()}`));
+      if (version.locked) {
+        row.classList.add('locked');
+        row.append(paragraph('Replaced more than 30 days ago. JotDrop Plus restores it.'));
+        $('history-list').append(row);
+        continue;
+      }
       row.append(button('Download version', async () => {
         const old = await client.read(editing.id, version.revision);
         download(base64ToBytes(old.file.content), old.file.path);

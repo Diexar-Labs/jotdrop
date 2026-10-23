@@ -95,6 +95,8 @@ main { min-width: 0; padding: 0 2rem 3rem; }
 .empty-state p { color: var(--muted); }
 .device-row, .history-row { padding: 1rem 0; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; justify-content: space-between; }
 .device-row p, .history-row p { margin: 0; }
+.history-row.locked { color: var(--muted); }
+#device-limit { display: grid; gap: .5rem; margin-top: 1rem; }
 #devices-panel { max-width: 760px; }
 #pair-form { margin-top: 2rem; }
 #pair-form button { margin-top: 1rem; }

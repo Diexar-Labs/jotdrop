@@ -11,10 +11,11 @@ import { CloudClient } from './shared/client.mjs';
 import { base64ToBytes, decodeRecovery, randomToken } from './shared/crypto.mjs';
 import { backupCloudDatabase } from './backup.mjs';
 
+// These tests cover metadata ceilings with many devices; plans.test.mjs covers the free device limit.
 async function fixture(t, options = {}) {
   const dataDir = await mkdtemp(join(tmpdir(), 'jotdrop-cloud-test-'));
   const enrollmentToken = randomToken();
-  const app = await createCloudServer({ dataDir, enrollmentToken, ...options });
+  const app = await createCloudServer({ freeDeviceLimit: 100, dataDir, enrollmentToken, ...options });
   t.after(async () => { await app.close(); await rm(dataDir, { recursive: true, force: true }); });
   const url = `http://127.0.0.1:${app.port}`;
   return { ...app, dataDir, url, enrollmentToken, create: (deviceName = 'Test browser') => CloudClient.create({ url, enrollmentToken, deviceName }) };
@@ -103,7 +104,7 @@ test('public proxy configuration requires one canonical HTTPS origin, not a URL 
   const app = await fixture(t);
   for (const publicOrigin of ['', null, 1, 'http://api.example.test', 'https://*.example.test', 'https://api.example.test/', 'https://api.example.test/path', 'https://user:password@api.example.test', 'https://api.example.test?query', 'https://api.example.test#fragment', 'https://api.example.test:443', 'https://API.example.test', 'https://api.example.test,https://evil.example']) {
     await assert.rejects(async () => {
-      const started = await createCloudServer({ dataDir: app.dataDir, enrollmentToken: app.enrollmentToken, publicOrigin });
+      const started = await createCloudServer({ freeDeviceLimit: 100, dataDir: app.dataDir, enrollmentToken: app.enrollmentToken, publicOrigin });
       await started.close();
     }, /HTTPS origin/);
   }
@@ -150,7 +151,7 @@ test('nearly full storage can trash and restore immutable versions without copyi
     assert.ok(!db.prepare('PRAGMA table_info(revisions)').all().some((column) => column.name === 'envelope'));
   } finally { db.close(); }
   await app.close();
-  const restarted = await createCloudServer({ dataDir: app.dataDir, enrollmentToken: app.enrollmentToken, quotaBytes: used });
+  const restarted = await createCloudServer({ freeDeviceLimit: 100, dataDir: app.dataDir, enrollmentToken: app.enrollmentToken, quotaBytes: used });
   try {
     const reopened = new CloudClient({ ...client.credentials, url: `http://127.0.0.1:${restarted.port}` });
     await reopened.remove(saved.id, 3);
@@ -237,7 +238,7 @@ test('SQLite storage failures preserve readable history, atomic writes and retry
         const restoredDir = await mkdtemp(join(tmpdir(), 'jotdrop-full-restore-'));
         try {
           await backupCloudDatabase(app.dbPath, join(restoredDir, 'cloud.db'));
-          const restored = await createCloudServer({ dataDir: restoredDir, enrollmentToken: randomToken() });
+          const restored = await createCloudServer({ freeDeviceLimit: 100, dataDir: restoredDir, enrollmentToken: randomToken() });
           try {
             const reopened = new CloudClient({ ...client.credentials, url: `http://127.0.0.1:${restored.port}` });
             assert.equal((await reopened.read(saved.id)).revision, 1);
@@ -385,7 +386,7 @@ test('history capacity is atomic across connections, failed inserts and stale re
   await client.commitWrite(first);
   const a = await client.prepareWrite('notes/a.md', text('A'), 0);
   const b = await client.prepareWrite('notes/b.md', text('B'), 0);
-  const peer = await createCloudServer({ dataDir: app.dataDir, enrollmentToken: app.enrollmentToken, maxHistoryEntries: 2 });
+  const peer = await createCloudServer({ freeDeviceLimit: 100, dataDir: app.dataDir, enrollmentToken: app.enrollmentToken, maxHistoryEntries: 2 });
   const second = new CloudClient({ ...client.credentials, url: `http://127.0.0.1:${peer.port}` });
   const db = new DatabaseSync(app.dbPath);
   try {
@@ -410,7 +411,7 @@ test('history capacity is atomic across connections, failed inserts and stale re
 test('history limits validate configuration and independently bound revision and changefeed rows', async (t) => {
   const app = await fixture(t, { maxHistoryEntries: 2 });
   for (const maxHistoryEntries of [0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, '2', null]) {
-    await assert.rejects(createCloudServer({ dataDir: app.dataDir, enrollmentToken: app.enrollmentToken, maxHistoryEntries }), /history entry limit/);
+    await assert.rejects(createCloudServer({ freeDeviceLimit: 100, dataDir: app.dataDir, enrollmentToken: app.enrollmentToken, maxHistoryEntries }), /history entry limit/);
   }
   const { client } = await app.create();
   const prepared = await client.prepareWrite('notes/independent.md', text('independent counts'), 0);
@@ -443,8 +444,8 @@ test('history counts survive lower restart limits and live WAL backup without pu
   await backupCloudDatabase(app.dbPath, join(restoredDir, 'cloud.db'));
   await client.remove(saved.id, 3);
   await app.close();
-  const restarted = await createCloudServer({ dataDir: app.dataDir, enrollmentToken: app.enrollmentToken, maxHistoryEntries: 2 });
-  const restored = await createCloudServer({ dataDir: restoredDir, enrollmentToken: randomToken(), maxHistoryEntries: 4 });
+  const restarted = await createCloudServer({ freeDeviceLimit: 100, dataDir: app.dataDir, enrollmentToken: app.enrollmentToken, maxHistoryEntries: 2 });
+  const restored = await createCloudServer({ freeDeviceLimit: 100, dataDir: restoredDir, enrollmentToken: randomToken(), maxHistoryEntries: 4 });
   try {
     const reopened = new CloudClient({ ...client.credentials, url: `http://127.0.0.1:${restarted.port}` });
     assert.deepEqual((await reopened.status()).history, { revisionCount: 4, changeCount: 4, maxEntries: 2 });
@@ -503,14 +504,14 @@ test('legacy inline history migrates atomically and survives restart and WAL bac
       DROP TABLE revisions; DROP TABLE envelopes; ALTER TABLE revisions_legacy RENAME TO revisions;
       PRAGMA user_version=0; COMMIT;`);
     legacy.exec('UPDATE revisions SET size=size+1 WHERE revision=4');
-    await assert.rejects(createCloudServer({ dataDir: app.dataDir, enrollmentToken: app.enrollmentToken }), /size mismatch/);
+    await assert.rejects(createCloudServer({ freeDeviceLimit: 100, dataDir: app.dataDir, enrollmentToken: app.enrollmentToken }), /size mismatch/);
     assert.equal(legacy.prepare('PRAGMA user_version').get().user_version, 0);
     assert.equal(legacy.prepare('SELECT COUNT(*) AS count FROM revisions').get().count, 4);
     assert.ok(legacy.prepare('PRAGMA table_info(revisions)').all().some((column) => column.name === 'envelope'));
     assert.equal(legacy.prepare("SELECT COUNT(*) AS count FROM sqlite_master WHERE name IN ('envelopes','revisions_migrated')").get().count, 0);
     legacy.exec('UPDATE revisions SET size=size-1 WHERE revision=4');
   } finally { legacy.close(); }
-  const capped = await createCloudServer({ dataDir: app.dataDir, enrollmentToken: app.enrollmentToken, maxHistoryEntries: 3 });
+  const capped = await createCloudServer({ freeDeviceLimit: 100, dataDir: app.dataDir, enrollmentToken: app.enrollmentToken, maxHistoryEntries: 3 });
   try {
     const existing = new CloudClient({ ...client.credentials, url: `http://127.0.0.1:${capped.port}` });
     assert.deepEqual((await existing.status()).history, { revisionCount: 4, changeCount: 4, maxEntries: 3 });
@@ -518,7 +519,7 @@ test('legacy inline history migrates atomically and survives restart and WAL bac
     assert.deepEqual(await existing.listChanges(), changes);
     await assert.rejects(existing.remove(saved.id, 4), (error) => error.status === 507);
   } finally { await capped.close(); }
-  const migrated = await createCloudServer({ dataDir: app.dataDir, enrollmentToken: app.enrollmentToken, quotaBytes: used });
+  const migrated = await createCloudServer({ freeDeviceLimit: 100, dataDir: app.dataDir, enrollmentToken: app.enrollmentToken, quotaBytes: used });
   const restoredDir = await mkdtemp(join(tmpdir(), 'jotdrop-migrated-restore-'));
   try {
     const reopened = new CloudClient({ ...client.credentials, url: `http://127.0.0.1:${migrated.port}` });
@@ -535,7 +536,7 @@ test('legacy inline history migrates atomically and survives restart and WAL bac
     await reopened.remove(saved.id, 4);
     await backupCloudDatabase(migrated.dbPath, join(restoredDir, 'cloud.db'));
     await reopened.restore(saved.id, 1, 5);
-    const restored = await createCloudServer({ dataDir: restoredDir, enrollmentToken: randomToken(), quotaBytes: used });
+    const restored = await createCloudServer({ freeDeviceLimit: 100, dataDir: restoredDir, enrollmentToken: randomToken(), quotaBytes: used });
     try {
       const recovered = new CloudClient({ ...client.credentials, url: `http://127.0.0.1:${restored.port}` });
       assert.equal((await recovered.read(saved.id)).revision, 5);
@@ -581,7 +582,7 @@ test('device admission is atomic across recovery and pairing connections and cla
   const app = await fixture(t, { maxDeviceEntries: 2 });
   const { client, recoveryCode } = await app.create();
   const pairing = await client.makePairing('Pairing contender');
-  const peer = await createCloudServer({ dataDir: app.dataDir, enrollmentToken: app.enrollmentToken, maxDeviceEntries: 2 });
+  const peer = await createCloudServer({ freeDeviceLimit: 100, dataDir: app.dataDir, enrollmentToken: app.enrollmentToken, maxDeviceEntries: 2 });
   const db = new DatabaseSync(app.dbPath);
   try {
     db.exec(`CREATE TRIGGER fail_claim BEFORE UPDATE OF claimed ON pairings WHEN NEW.claimed=1 BEGIN SELECT RAISE(ABORT, 'Synthetic claim failure'); END;`);
@@ -631,7 +632,7 @@ test('pairing entries retain used codes until expiry and reclaim exactly expired
 test('device and pairing ceilings survive lower-limit restart and WAL restore without purging metadata', async (t) => {
   const app = await fixture(t, { maxDeviceEntries: 3, maxPairingEntries: 3 });
   for (const option of ['maxDeviceEntries', 'maxPairingEntries']) for (const value of [0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, '2', null]) {
-    await assert.rejects(createCloudServer({ dataDir: app.dataDir, enrollmentToken: app.enrollmentToken, [option]: value }), /metadata entry limits/);
+    await assert.rejects(createCloudServer({ freeDeviceLimit: 100, dataDir: app.dataDir, enrollmentToken: app.enrollmentToken, [option]: value }), /metadata entry limits/);
   }
   const db = new DatabaseSync(app.dbPath);
   try {
@@ -653,8 +654,8 @@ test('device and pairing ceilings survive lower-limit restart and WAL restore wi
   await client.makePairing('Second code');
   await client.makePairing('Third code');
   await app.close();
-  const restarted = await createCloudServer({ dataDir: app.dataDir, enrollmentToken: app.enrollmentToken, maxDeviceEntries: 1, maxPairingEntries: 1 });
-  const restored = await createCloudServer({ dataDir: restoredDir, enrollmentToken: randomToken(), maxDeviceEntries: 3, maxPairingEntries: 1 });
+  const restarted = await createCloudServer({ freeDeviceLimit: 100, dataDir: app.dataDir, enrollmentToken: app.enrollmentToken, maxDeviceEntries: 1, maxPairingEntries: 1 });
+  const restored = await createCloudServer({ freeDeviceLimit: 100, dataDir: restoredDir, enrollmentToken: randomToken(), maxDeviceEntries: 3, maxPairingEntries: 1 });
   try {
     const reopened = new CloudClient({ ...client.credentials, url: `http://127.0.0.1:${restarted.port}` });
     assert.equal((await reopened.devices()).devices.length, 3);
@@ -676,7 +677,7 @@ test('device and pairing ceilings survive lower-limit restart and WAL restore wi
 test('pairing admission respects the last persisted slot across separate server connections', async (t) => {
   const app = await fixture(t, { maxPairingEntries: 1 });
   const { client } = await app.create();
-  const peer = await createCloudServer({ dataDir: app.dataDir, enrollmentToken: app.enrollmentToken, maxPairingEntries: 1 });
+  const peer = await createCloudServer({ freeDeviceLimit: 100, dataDir: app.dataDir, enrollmentToken: app.enrollmentToken, maxPairingEntries: 1 });
   try {
     const second = new CloudClient({ ...client.credentials, url: `http://127.0.0.1:${peer.port}` });
     const results = await Promise.allSettled([client.makePairing('A'), second.makePairing('B')]);
@@ -799,7 +800,7 @@ test('concurrent request admission bounds slow uploads across vaults and never c
 test('request capacity is released after aborts, validation errors and failed transactions', { timeout: 5000 }, async (t) => {
   const app = await fixture(t, { maxConcurrentRequests: 1 });
   for (const maxConcurrentRequests of [0, -1, 1.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, '2', null]) {
-    await assert.rejects(createCloudServer({ dataDir: app.dataDir, enrollmentToken: app.enrollmentToken, maxConcurrentRequests }), /concurrent request limit/);
+    await assert.rejects(createCloudServer({ freeDeviceLimit: 100, dataDir: app.dataDir, enrollmentToken: app.enrollmentToken, maxConcurrentRequests }), /concurrent request limit/);
   }
   const { client } = await app.create();
   const prepared = await client.prepareWrite('notes/aborted.md', text('aborted draft'), 0);
@@ -855,7 +856,7 @@ test('blocked WAL checkpoints preserve live history and backups until readers re
     assert.equal((await client.history(first.id)).versions.length, 4);
     assert.equal((await client.listChanges()).changes.length, 4);
     await backupCloudDatabase(app.dbPath, join(restoredDir, 'cloud.db'));
-    const restored = await createCloudServer({ dataDir: restoredDir, enrollmentToken: randomToken() });
+    const restored = await createCloudServer({ freeDeviceLimit: 100, dataDir: restoredDir, enrollmentToken: randomToken() });
     try {
       const reopened = new CloudClient({ ...client.credentials, url: `http://127.0.0.1:${restored.port}` });
       assert.equal((await reopened.read(first.id)).revision, 4);
@@ -869,7 +870,7 @@ test('blocked WAL checkpoints preserve live history and backups until readers re
     assert.equal(checkpoint.prepare('PRAGMA integrity_check').get().integrity_check, 'ok');
   } finally { reader.close(); checkpoint.close(); await rm(restoredDir, { recursive: true, force: true }); }
   await app.close();
-  const restarted = await createCloudServer({ dataDir: app.dataDir, enrollmentToken: app.enrollmentToken });
+  const restarted = await createCloudServer({ freeDeviceLimit: 100, dataDir: app.dataDir, enrollmentToken: app.enrollmentToken });
   try {
     const reopened = new CloudClient({ ...client.credentials, url: `http://127.0.0.1:${restarted.port}` });
     assert.equal((await reopened.read(first.id)).revision, 4);
@@ -895,7 +896,7 @@ test('restart retains committed WAL writes and discards a process-interrupted tr
     let connection;
     const prepare = DatabaseSync.prototype.prepare;
     DatabaseSync.prototype.prepare = function(sql) { connection = this; return prepare.call(this, sql); };
-    const app = await createCloudServer({ dataDir: input.dataDir, enrollmentToken: input.enrollmentToken });
+    const app = await createCloudServer({ freeDeviceLimit: 100, dataDir: input.dataDir, enrollmentToken: input.enrollmentToken });
     DatabaseSync.prototype.prepare = prepare;
     connection.exec('PRAGMA wal_autocheckpoint=0; PRAGMA cache_size=2');
     const client = new CloudClient({ ...input.credentials, url: 'http://127.0.0.1:' + app.port });
@@ -920,7 +921,7 @@ test('restart retains committed WAL writes and discards a process-interrupted tr
   assert.equal(evidence.transactionOpen, true);
   assert.ok(evidence.committedWalBytes > 32);
   assert.ok(evidence.walBytes > evidence.committedWalBytes);
-  const restarted = await createCloudServer({ dataDir: app.dataDir, enrollmentToken: app.enrollmentToken });
+  const restarted = await createCloudServer({ freeDeviceLimit: 100, dataDir: app.dataDir, enrollmentToken: app.enrollmentToken });
   try {
     const reopened = new CloudClient({ ...client.credentials, url: `http://127.0.0.1:${restarted.port}` });
     assert.equal((await reopened.read(first.id)).envelope, committed.envelope);
@@ -947,7 +948,7 @@ test('encrypted files, authorization and history survive verified backup and ser
   const restoredDir = await mkdtemp(join(tmpdir(), 'jotdrop-restored-test-'));
   await backupCloudDatabase(app.dbPath, join(restoredDir, 'cloud.db'));
   await app.close();
-  const restored = await createCloudServer({ dataDir: restoredDir, enrollmentToken: randomToken() });
+  const restored = await createCloudServer({ freeDeviceLimit: 100, dataDir: restoredDir, enrollmentToken: randomToken() });
   t.after(async () => { await restored.close(); await rm(restoredDir, { recursive: true, force: true }); });
   const reopened = new CloudClient({ ...client.credentials, url: `http://127.0.0.1:${restored.port}` });
   assert.equal((await reopened.read(saved.id)).file.path, 'notes/persist.md');

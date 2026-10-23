@@ -102,6 +102,7 @@
       <button class="primary" type="submit">Connect workspace</button>
       <div class="access-links"><button data-show="login-form" type="button">Back to log in</button></div>
     </form>
+    <div id="device-limit" hidden></div>
     <p id="access-message" role="status" aria-live="polite"></p>
     <p class="access-footnote">Local use of JotDrop never requires a cloud account. This preview does not change your existing notes or sync settings.</p>
   </section>
@@ -118,6 +119,8 @@
       </nav>
       <div class="sidebar-bottom">
         <p id="storage-usage">Checking storage...</p>
+        <p id="plan-status"></p>
+        <button id="start-trial" type="button" hidden>Try JotDrop Plus free for 14 days</button>
         <button id="export-all" type="button">Export files</button>
         <button id="lock" type="button">Lock workspace</button>
       </div>
