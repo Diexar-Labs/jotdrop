@@ -3,9 +3,6 @@ import type JotDropPlugin from "./main";
 import { legacyAssetsPath, normalizeAssetsFolder } from "./attachments";
 import { t } from "./i18n";
 
-const PLAY_TEST_EMAIL_URL = "mailto:eric@diexar.com?subject=JotDrop%20Play%20test%20access&body=Please%20add%20my%20Google%20Play%20account%20to%20the%20JotDrop%20closed%20test.%0A%0AGoogle%20account%20email%20used%20in%20Play%3A%20";
-const PLAY_TEST_URL = "https://play.google.com/apps/testing/com.diexar.keepcapture";
-
 function generateToken(): string {
   const bytes = new Uint8Array(24);
   crypto.getRandomValues(bytes);
@@ -41,7 +38,6 @@ export interface JotDropSettings {
    * choice of "modified-desc" by the user.
    */
   sortMigratedToCreated: boolean;
-  playTestLiveNoticeSeen: boolean;
   /**
    * Locally persisted label names that have no notes yet (empty collection).
    * Discovery for the menu comes only from `jotdrop_labels` in managed
@@ -62,45 +58,8 @@ export const DEFAULT_SETTINGS: JotDropSettings = {
   clipServerPort: 27124,
   clipServerToken: "",
   sortMigratedToCreated: false,
-  playTestLiveNoticeSeen: false,
   localLabels: [],
 };
-
-export async function notifyPlayTest(plugin: JotDropPlugin): Promise<void> {
-  if (plugin.settings.playTestLiveNoticeSeen) return;
-  const message = document.createDocumentFragment();
-  const text = document.createElement("p");
-  text.textContent = t("play_tester_live_notice");
-  message.appendChild(text);
-  for (const [href, label] of [[PLAY_TEST_EMAIL_URL, "companions_tester_link"], [PLAY_TEST_URL, "companions_tester_play"]] as const) {
-    const step = document.createElement("p");
-    const action = document.createElement("a");
-    action.href = href;
-    action.target = "_blank";
-    action.rel = "noopener noreferrer";
-    action.textContent = t(label);
-    step.appendChild(action);
-    message.appendChild(step);
-  }
-  const link = document.createElement("a");
-  link.href = "https://github.com/Diexar-Labs/jotdrop#help-test-jotdrop-on-google-play";
-  link.target = "_blank";
-  link.rel = "noopener noreferrer";
-  link.textContent = t("play_tester_instructions");
-  message.appendChild(link);
-  const dismiss = document.createElement("button");
-  dismiss.textContent = t("play_tester_not_now");
-  message.appendChild(dismiss);
-  plugin.settings.playTestLiveNoticeSeen = true;
-  try {
-    await plugin.saveSettings();
-  } catch (error) {
-    plugin.settings.playTestLiveNoticeSeen = false;
-    throw error;
-  }
-  const notice = new Notice(message, 0);
-  dismiss.addEventListener("click", () => notice.hide());
-}
 
 export class JotDropSettingTab extends PluginSettingTab {
   plugin: JotDropPlugin;
@@ -139,34 +98,6 @@ export class JotDropSettingTab extends PluginSettingTab {
       },
     });
     releasesLink.setText(t("companions_download"));
-    companions.createEl("p", { text: t("companions_tester_blurb") });
-    const testerRow = companions.createDiv({ cls: "jotdrop-support-buttons" });
-    const testerLink = testerRow.createEl("a", {
-      cls: "jotdrop-support-button",
-      attr: {
-        href: PLAY_TEST_EMAIL_URL,
-        target: "_blank",
-        rel: "noopener noreferrer",
-      },
-    });
-    testerLink.setText(t("companions_tester_link"));
-    testerRow.createEl("a", {
-      cls: "jotdrop-support-button",
-      text: t("companions_tester_play"),
-      attr: {
-        href: PLAY_TEST_URL,
-        target: "_blank",
-        rel: "noopener noreferrer",
-      },
-    });
-    companions.createEl("p").createEl("a", {
-      text: t("play_tester_instructions"),
-      attr: {
-        href: "https://github.com/Diexar-Labs/jotdrop#help-test-jotdrop-on-google-play",
-        target: "_blank",
-        rel: "noopener noreferrer",
-      },
-    });
 
     new Setting(containerEl)
       .setName(t("settings_notes_folder"))
