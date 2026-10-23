@@ -411,7 +411,9 @@ export function plainPreviewText(text: string): string {
     if (fence) { lines.push(line); continue; }
     if (/^\s{0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/.test(line)) continue;
     if (/^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)+\|?\s*$/.test(line)) continue;
-    const plain = line.replace(/^(?:\s{0,3}>[ \t]?)+/, "").replace(/^\[![\w-]+\][+-]?[ \t]*/, "");
+    // A quoted checklist keeps its `>`: toggleChecklistItem does not count it, so it must not become a checkbox.
+    const unquoted = line.replace(/^(?:\s{0,3}>[ \t]?)+/, "");
+    const plain = (unquoted !== line && /^\s*[-*+][ \t]+\[[ xX]\]/.test(unquoted) ? line : unquoted).replace(/^\[![\w-]+\][+-]?[ \t]*/, "");
     if (/^\s*\|.*\|\s*$/.test(plain)) {
       const cells = (plain.match(/(?:\\.|[^|\\])+/g) ?? []).map((cell) => cell.trim()).filter(Boolean);
       lines.push(cells.map(stripInlineMarks).join(" · "));

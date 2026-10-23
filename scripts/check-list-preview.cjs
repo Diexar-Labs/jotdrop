@@ -86,6 +86,7 @@ const esbuild = require("esbuild");
     "\\# not a heading, \\*star\\*, \\<tag\\>, 1986\\.",
     "> quoted **text**",
     "> [!note] Callout title",
+    "> - [ ] **quoted** task",
     "---",
     "* * *",
     "| Name | Qty |",
@@ -106,6 +107,7 @@ const esbuild = require("esbuild");
     "# not a heading, *star*, <tag>, 1986.",
     "quoted text",
     "Callout title",
+    "> - [ ] quoted task",
     "Name · Qty",
     "Milk · 2 | 3",
     "const x = **y**;",
@@ -116,6 +118,10 @@ const esbuild = require("esbuild");
   ].join("\n");
   const actual = plainPreviewText(marked);
   if (actual !== plain) throw new Error(`plain preview mismatch:\n${actual}`);
+  // A quoted checklist is no checkbox on the card, so the next checkbox still toggles its own item.
+  const withQuote = "- [ ] a\n> - [ ] quoted\n- [ ] b\n";
+  if (checklistToGlyphs(plainPreviewText(withQuote)).match(/[☐☑]/g).length !== 2) throw new Error("quoted checklist became a checkbox");
+  if (toggleChecklistItem(withQuote, 1) !== "- [ ] a\n> - [ ] quoted\n- [x] b\n") throw new Error("second checkbox toggles the wrong item");
   console.log("Markdown list preview checks passed");
 })().catch((error) => {
   console.error(error);
