@@ -5,6 +5,7 @@ import { mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+import { createSesMailer } from './mailer.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const MAX_BODY = 12 * 1024 * 1024;
@@ -20,6 +21,10 @@ const DAY = 24 * 60 * 60 * 1000;
 const FREE_HISTORY = 30 * DAY;
 const PLUS_GRACE = 90 * DAY;
 const TRIAL_TIME = 14 * DAY;
+// Managed Payments needs this API version or later.
+const STRIPE_VERSION = '2025-03-31.basil';
+// A past-due renewal is not paid yet; it still counts as a running subscription.
+const PAID = ['active', 'trialing'], RUNNING = ['active', 'trialing', 'past_due'], FINAL = ['canceled', 'incomplete_expired'];
 // Clients derive their login and unlock keys with Argon2id; the server only stores these settings.
 const DEFAULT_KDF = { memory: 65536, passes: 3, parallelism: 1 };
 // Second hash of the client's login key, so a copied database cannot be replayed as a login.
@@ -118,10 +123,12 @@ async function body(req, maximum = MAX_BODY) {
 }
 
 /** Loopback-only server behind a trusted HTTPS proxy. Accounts need a mailer; no billing or provider credentials. `quotaBytes` and `freeDeviceLimit` are the free plan's limits. */
-export async function createCloudServer({ dataDir, enrollmentToken, mailer, serverKey, quotaBytes = 250 * 1024 * 1024, plusQuotaBytes = 10 * 1024 * 1024 * 1024, freeDeviceLimit = 2, maxHistoryEntries = 100000, maxDeviceEntries = 1000, maxPairingEntries = 128, maxConcurrentRequests = 16, webRoot = join(directory, 'web'), corsOrigins = [], publicOrigin, port = 0, enrollmentLimit = 1, clock = Date.now }) {
+export async function createCloudServer({ dataDir, enrollmentToken, mailer, serverKey, stripe, fetcher = globalThis.fetch, quotaBytes = 250 * 1024 * 1024, plusQuotaBytes = 10 * 1024 * 1024 * 1024, freeDeviceLimit = 2, maxHistoryEntries = 100000, maxDeviceEntries = 1000, maxPairingEntries = 128, maxConcurrentRequests = 16, webRoot = join(directory, 'web'), corsOrigins = [], publicOrigin, port = 0, enrollmentLimit = 1, clock = Date.now }) {
   if (!dataDir || (enrollmentToken !== undefined && !validToken(enrollmentToken)) || [quotaBytes, plusQuotaBytes, freeDeviceLimit].some((value) => !Number.isSafeInteger(value) || value < 1)) throw new Error('Provide a data directory, random 32-byte enrollment token and positive quota.');
   if (mailer !== undefined && typeof mailer !== 'function') throw new Error('Provide the mailer as a function.');
   if (serverKey !== undefined && !validToken(serverKey)) throw new Error('Provide the server key as 32 random bytes.');
+  // JotDrop Plus is sold through Stripe Managed Payments (Stripe is the seller and handles VAT); without settings there is no checkout.
+  if (stripe !== undefined && !['secretKey', 'webhookSecret', 'monthPrice', 'yearPrice'].every((name) => typeof stripe[name] === 'string' && stripe[name].length > 0)) throw new Error('Provide the Stripe secret key, webhook secret and both prices.');
   // Kept outside the database: a copied database alone cannot verify codes or produce authenticator codes.
   const serverSubkey = (purpose) => Buffer.from(hkdfSync('sha256', Buffer.from(serverKey, 'base64url'), Buffer.alloc(0), `jotdrop:server:${purpose}:v1`, 32));
   const codeKey = serverKey && serverSubkey('code'), totpKey = serverKey && serverSubkey('totp');
@@ -171,6 +178,8 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
         CREATE TABLE IF NOT EXISTS device_approvals(id TEXT PRIMARY KEY, accountId TEXT NOT NULL REFERENCES accounts(id), publicKey TEXT NOT NULL, claimTokenHash TEXT NOT NULL, envelope TEXT, expiresAt INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS secrets(name TEXT PRIMARY KEY, value TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS plans(vaultId TEXT PRIMARY KEY, plusUntil INTEGER NOT NULL DEFAULT 0, trialUsed INTEGER NOT NULL DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS subscriptions(subscriptionId TEXT PRIMARY KEY, vaultId TEXT NOT NULL, status TEXT NOT NULL, paidUntil INTEGER NOT NULL);
+        CREATE INDEX IF NOT EXISTS subscriptions_by_vault ON subscriptions(vaultId);
         CREATE INDEX IF NOT EXISTS envelopes_size ON envelopes(vaultId,size);`);
       run("INSERT INTO secrets VALUES('fake-salt',?) ON CONFLICT(name) DO NOTHING", randomBytes(32).toString('base64url'));
       const legacy = all('PRAGMA table_info(revisions)').some((column) => column.name === 'envelope');
@@ -200,8 +209,51 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
     if (!state || state.until <= now) { rate.set(key, { count: 1, until: now + 60000 }); return; }
     if (++state.count > maximum) fail(429, 'Too many attempts. Try again later.');
   }
-  const planRow = (vaultId) => one('SELECT plusUntil,trialUsed FROM plans WHERE vaultId=?', vaultId) ?? { plusUntil: 0, trialUsed: 0 };
+  // Plus runs until the latest of the trial or a manual grant (plans) and every paid subscription period.
+  function planRow(vaultId) {
+    const plan = one('SELECT plusUntil,trialUsed FROM plans WHERE vaultId=?', vaultId) ?? { plusUntil: 0, trialUsed: 0 };
+    return { ...plan, plusUntil: Math.max(plan.plusUntil, one('SELECT COALESCE(MAX(paidUntil),0) AS until FROM subscriptions WHERE vaultId=?', vaultId).until) };
+  }
   const isPlus = (vaultId) => planRow(vaultId).plusUntil > clock();
+  const subscribed = (vaultId) => Boolean(one(`SELECT 1 FROM subscriptions WHERE vaultId=? AND status IN (${RUNNING.map(() => '?').join(',')})`, vaultId, ...RUNNING));
+  // Abandoned payments do not use a founder place.
+  const founderPrice = () => Boolean(stripe?.founderYearPrice) && one('SELECT COUNT(DISTINCT vaultId) AS count FROM subscriptions WHERE paidUntil>0').count < (stripe.founderLimit ?? 500);
+  const stripeCall = (path, init = {}, timeout = 15000) => fetcher(`https://api.stripe.com/v1${path}`, { ...init, headers: { ...init.headers, Authorization: `Bearer ${stripe.secretKey}`, 'Stripe-Version': STRIPE_VERSION }, signal: AbortSignal.timeout(timeout) });
+  // Stripe signs "<timestamp>.<body>" with the webhook secret; older events are refused, so a copied one cannot be replayed.
+  function stripeEvent(raw, header) {
+    const at = Number(/(?:^|,)t=(\d{1,12})(?:,|$)/.exec(header)?.[1]);
+    const expected = createHmac('sha256', stripe.webhookSecret).update(`${at}.`).update(raw).digest('hex');
+    if (!at || Math.abs(clock() / 1000 - at) > 300 || ![...header.matchAll(/(?:^|,)v1=([0-9a-f]{64})/g)].some((match) => equal(match[1], expected))) fail(400, 'Invalid Stripe signature');
+    try { return JSON.parse(raw.toString('utf8')); } catch { fail(400, 'Invalid Stripe event'); }
+  }
+  // Events only say which subscription changed; its current state comes from Stripe, so delivery order does not matter.
+  async function applySubscription(event) {
+    const id = event?.data?.object?.id;
+    if (!/^customer\.subscription\./.test(event?.type) || typeof id !== 'string' || !/^sub_\w{1,250}$/.test(id)) return;
+    let subscription;
+    try {
+      // Within Stripe's wait for the webhook reply.
+      const response = await stripeCall(`/subscriptions/${id}`, {}, 8000);
+      // For example a test-mode key receiving a live event.
+      if (response.status === 404) { console.error(`Stripe event ${event.id} ignored: subscription ${id} not found with this key.`); return; }
+      subscription = await response.json();
+      if (!response.ok || subscription?.id !== id) throw new Error('Stripe returned another subscription');
+    } catch { fail(502, 'Could not read the subscription from Stripe. Stripe retries the event.'); }
+    transaction(() => {
+      const row = one('SELECT * FROM subscriptions WHERE subscriptionId=?', id), metadata = subscription.metadata ?? {};
+      // The account follows the person: after starting over the cloud has a new id, while Stripe keeps the old one.
+      const vaultId = row?.vaultId ?? ((validId(metadata.accountId) && one('SELECT vaultId FROM accounts WHERE id=?', metadata.accountId)?.vaultId) || metadata.vaultId);
+      if (!validId(vaultId) || !one('SELECT 1 FROM vaults WHERE id=?', vaultId)) { console.error(`Stripe event ${event.id} ignored: no cloud for subscription ${id}.`); return; }
+      // Stripe never reopens these; a slower, older read must not bring Plus back.
+      if (FINAL.includes(row?.status)) return;
+      const status = String(subscription.status), previous = row?.paidUntil ?? 0;
+      const periodEnd = Number(subscription.items?.data?.[0]?.current_period_end ?? subscription.current_period_end) * 1000;
+      const endedAt = Number.isSafeInteger(subscription.ended_at) ? subscription.ended_at * 1000 : clock();
+      // Paid: until the period ends plus a day of grace for the renewal. Past due: no further. Ended: no later than the end.
+      const paidUntil = PAID.includes(status) && Number.isSafeInteger(periodEnd) ? Math.max(previous, periodEnd + DAY) : status === 'past_due' ? previous : Math.min(previous, endedAt);
+      run('INSERT INTO subscriptions VALUES(?,?,?,?) ON CONFLICT(subscriptionId) DO UPDATE SET status=excluded.status,paidUntil=excluded.paidUntil', id, vaultId, status, paidUntil);
+    });
+  }
   // The active devices of a free cloud at its device limit; empty when another device fits.
   function devicesAtLimit(vaultId) {
     const active = isPlus(vaultId) ? [] : all('SELECT id,name,lastSeenAt FROM devices WHERE vaultId=? AND revoked=0 ORDER BY lastSeenAt', vaultId);
@@ -622,6 +674,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
           run('UPDATE accounts SET vaultId=? WHERE id=?', vaultId, account.id);
           // The subscription belongs to the person, not to the deleted ciphertext.
           run('UPDATE plans SET vaultId=? WHERE vaultId=?', vaultId, account.vaultId);
+          run('UPDATE subscriptions SET vaultId=? WHERE vaultId=?', vaultId, account.vaultId);
           setCredentials(account.id, next);
           run('DELETE FROM device_approvals WHERE accountId=?', account.id);
           // Nobody can read the old ciphertext any more; deleting it is what the user confirmed.
@@ -629,6 +682,12 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
           run('DELETE FROM vaults WHERE id=?', account.vaultId);
           return addDevice(vaultId, value.deviceName, value.deviceTokenHash);
         })); return;
+      }
+      if (method === 'POST' && route === '/stripe/webhook') {
+        if (!stripe) fail(503, 'Payments are not available on this server.');
+        // Unknown clouds and other event types are acknowledged too, so Stripe does not retry them.
+        await applySubscription(stripeEvent(await bodyBytes(req, 256 * 1024), String(req.headers['stripe-signature'] || '')));
+        reply(200, { received: true }); return;
       }
       const vaultId = req.headers['x-jotdrop-vault'], deviceId = req.headers['x-jotdrop-device'];
       const token = /^Bearer (.+)$/.exec(req.headers.authorization || '')?.[1];
@@ -748,9 +807,28 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
         });
         reply(200, { plusUntil: new Date(plusUntil).toISOString() }); return;
       }
+      if (route === '/account/checkout' && method === 'POST') {
+        if (!stripe) fail(503, 'Payments are not available on this server.');
+        limit(`checkout:${vaultId}`, 10);
+        const value = await body(req, MAX_METADATA_BODY);
+        requireValue(['month', 'year'].includes(value.interval), 'Choose a monthly or yearly plan');
+        if (subscribed(vaultId)) fail(409, 'This cloud already has a JotDrop Plus subscription. Manage it at link.com.');
+        const origin = publicOrigin ?? `http://${req.headers.host}`, account = one('SELECT id,email FROM accounts WHERE vaultId=?', vaultId);
+        // The session expires after 30 minutes (Stripe's minimum), so an old open one is not paid next to a newer one.
+        const form = new URLSearchParams({ mode: 'subscription', 'managed_payments[enabled]': 'true', 'line_items[0][price]': value.interval === 'month' ? stripe.monthPrice : founderPrice() ? stripe.founderYearPrice : stripe.yearPrice,
+          'line_items[0][quantity]': '1', client_reference_id: vaultId, 'subscription_data[metadata][vaultId]': vaultId, success_url: `${origin}/?plus=welcome`, cancel_url: `${origin}/`, expires_at: String(Math.floor(clock() / 1000) + 30 * 60) });
+        if (account) { form.set('subscription_data[metadata][accountId]', account.id); form.set('customer_email', account.email); }
+        let session;
+        try {
+          const response = await stripeCall('/checkout/sessions', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form.toString() });
+          session = await response.json();
+          if (!response.ok || typeof session.url !== 'string' || !session.url.startsWith('https://checkout.stripe.com/')) throw new Error('Stripe refused the checkout');
+        } catch { fail(502, 'Could not start the payment. Try again later.'); }
+        reply(200, { url: session.url }); return;
+      }
       if (method === 'GET' && route === '/status') {
         const plan = planRow(vaultId), plus = plan.plusUntil > clock();
-        reply(200, { usedBytes: one('SELECT COALESCE(SUM(size),0) AS size FROM envelopes WHERE vaultId=?', vaultId).size, quotaBytes: quotaFor(vaultId), plan: { name: plus ? 'plus' : 'free', plusUntil: plan.plusUntil ? new Date(plan.plusUntil).toISOString() : null, trialAvailable: !plan.trialUsed && !plus, deviceLimit: plus ? null : freeDeviceLimit, historyDays: plus ? null : FREE_HISTORY / DAY }, sequence: one('SELECT COALESCE(MAX(sequence),0) AS sequence FROM changes WHERE vaultId=?', vaultId).sequence, history: historyUsage(vaultId), transport: { version: 1, chunkBytes: TRANSFER_CHUNK_BYTES, reservedBytes: one('SELECT COALESCE(SUM(reservedBytes),0) AS size FROM uploads WHERE vaultId=?', vaultId).size } }); return;
+        reply(200, { usedBytes: one('SELECT COALESCE(SUM(size),0) AS size FROM envelopes WHERE vaultId=?', vaultId).size, quotaBytes: quotaFor(vaultId), plan: { name: plus ? 'plus' : 'free', plusUntil: plan.plusUntil ? new Date(plan.plusUntil).toISOString() : null, trialAvailable: !plan.trialUsed && !plus, deviceLimit: plus ? null : freeDeviceLimit, historyDays: plus ? null : FREE_HISTORY / DAY, subscribed: subscribed(vaultId), checkout: Boolean(stripe), founderPrice: founderPrice() }, sequence: one('SELECT COALESCE(MAX(sequence),0) AS sequence FROM changes WHERE vaultId=?', vaultId).sequence, history: historyUsage(vaultId), transport: { version: 1, chunkBytes: TRANSFER_CHUNK_BYTES, reservedBytes: one('SELECT COALESCE(SUM(reservedBytes),0) AS size FROM uploads WHERE vaultId=?', vaultId).size } }); return;
       }
       if (method === 'GET' && route === '/changes') {
         const after = Number(url.searchParams.get('after') || 0);
@@ -956,11 +1034,16 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   if (!process.env.JOTDROP_CLOUD_DATA_DIR) throw new Error('Set JOTDROP_CLOUD_DATA_DIR to a dedicated test-data directory. Never point it at an Obsidian vault.');
   const enrollmentToken = process.env.JOTDROP_CLOUD_ENROLLMENT_TOKEN || randomBytes(32).toString('base64url');
-  // ponytail: development mailer writes codes to the console; production needs a real email provider.
-  const mailer = async ({ to, kind, code }) => console.log(`[mail] ${kind} to ${to}${code ? `: ${code}` : ''}`);
+  // With SES settings mail goes through Amazon SES; without them the development mailer writes codes to the console.
+  const mailer = process.env.JOTDROP_CLOUD_SES_REGION
+    ? createSesMailer({ region: process.env.JOTDROP_CLOUD_SES_REGION, accessKeyId: process.env.JOTDROP_CLOUD_SES_ACCESS_KEY_ID, secretAccessKey: process.env.JOTDROP_CLOUD_SES_SECRET_ACCESS_KEY, from: process.env.JOTDROP_CLOUD_MAIL_FROM })
+    : async ({ to, kind, code }) => console.log(`[mail] ${kind} to ${to}${code ? `: ${code}` : ''}`);
+  if (!process.env.JOTDROP_CLOUD_SES_REGION && process.env.JOTDROP_CLOUD_PUBLIC_ORIGIN) console.warn('No SES settings: email codes are written to this log. Set JOTDROP_CLOUD_SES_* before real users sign up.');
   // Without a fixed key, pending codes and authenticator setups stop working after a restart.
   const serverKey = process.env.JOTDROP_CLOUD_SERVER_KEY || randomBytes(32).toString('base64url');
-  const app = await createCloudServer({ dataDir: process.env.JOTDROP_CLOUD_DATA_DIR, enrollmentToken, mailer, serverKey, maxHistoryEntries: Number(process.env.JOTDROP_CLOUD_MAX_HISTORY_ENTRIES ?? 100000), maxDeviceEntries: Number(process.env.JOTDROP_CLOUD_MAX_DEVICE_ENTRIES ?? 1000), maxPairingEntries: Number(process.env.JOTDROP_CLOUD_MAX_PAIRING_ENTRIES ?? 128), maxConcurrentRequests: Number(process.env.JOTDROP_CLOUD_MAX_CONCURRENT_REQUESTS ?? 16), publicOrigin: process.env.JOTDROP_CLOUD_PUBLIC_ORIGIN, port: Number(process.env.JOTDROP_CLOUD_PORT || 8787), corsOrigins: (process.env.JOTDROP_CLOUD_CORS_ORIGINS || '').split(',').map((entry) => entry.trim()).filter(Boolean) });
+  const env = (name) => process.env[`JOTDROP_CLOUD_STRIPE_${name}`];
+  const stripe = env('SECRET_KEY') ? { secretKey: env('SECRET_KEY'), webhookSecret: env('WEBHOOK_SECRET'), monthPrice: env('PRICE_MONTH'), yearPrice: env('PRICE_YEAR'), founderYearPrice: env('PRICE_FOUNDER_YEAR') || undefined } : undefined;
+  const app = await createCloudServer({ dataDir: process.env.JOTDROP_CLOUD_DATA_DIR, enrollmentToken, mailer, serverKey, stripe, maxHistoryEntries: Number(process.env.JOTDROP_CLOUD_MAX_HISTORY_ENTRIES ?? 100000), maxDeviceEntries: Number(process.env.JOTDROP_CLOUD_MAX_DEVICE_ENTRIES ?? 1000), maxPairingEntries: Number(process.env.JOTDROP_CLOUD_MAX_PAIRING_ENTRIES ?? 128), maxConcurrentRequests: Number(process.env.JOTDROP_CLOUD_MAX_CONCURRENT_REQUESTS ?? 16), publicOrigin: process.env.JOTDROP_CLOUD_PUBLIC_ORIGIN, port: Number(process.env.JOTDROP_CLOUD_PORT || 8787), corsOrigins: (process.env.JOTDROP_CLOUD_CORS_ORIGINS || '').split(',').map((entry) => entry.trim()).filter(Boolean) });
   console.log(`Local cloud preview: http://127.0.0.1:${app.port}. Test data only, not production.`);
   if (!process.env.JOTDROP_CLOUD_ENROLLMENT_TOKEN) console.log(`Single-use local enrollment token: ${enrollmentToken}`);
   for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { void app.close().then(() => process.exit(0)); });

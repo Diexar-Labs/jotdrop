@@ -180,6 +180,8 @@ private fun CloudScreen(onBack: () -> Unit, onSettings: () -> Unit) {
                     Text("Notes: ${Storage.getSubfolder(context)}  |  Attachments: ${Storage.resolveAssetsFolder(context)}", style = MaterialTheme.typography.bodySmall)
                     Text("Local vault: ${status!!.localVault ?: "No folder selected"}", style = MaterialTheme.typography.bodySmall)
                     TextButton(onClick = onSettings, enabled = !busy) { Text("Choose local vault in Settings") }
+                    // Google Play allows naming the website, without a link or button, when the app sells nothing itself.
+                    Text("JotDrop Plus adds more storage, devices and history. Upgrade on our website.", style = MaterialTheme.typography.bodySmall)
                 }
                 item {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

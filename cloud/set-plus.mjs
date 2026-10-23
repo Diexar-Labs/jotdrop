@@ -2,7 +2,7 @@ import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 
-/** Gives the cloud of an account email or vault ID JotDrop Plus until `plusUntil` (ms); 0 ends it. Until billing exists, this is how Plus is granted. */
+/** Gives the cloud of an account email or vault ID JotDrop Plus until `plusUntil` (ms); 0 ends this grant. A paid Stripe subscription keeps Plus on regardless. */
 export function setPlusUntil(dbPath, who, plusUntil) {
   if (!Number.isSafeInteger(plusUntil) || plusUntil < 0) throw new Error('Provide the end of Plus as a time in milliseconds, or 0.');
   const db = new DatabaseSync(dbPath, { timeout: 5000 });

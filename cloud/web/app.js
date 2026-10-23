@@ -460,6 +460,9 @@ async function performSync(signal) {
   const plan = status.plan;
   $('plan-status').textContent = plan.name === 'plus' ? `JotDrop Plus until ${new Date(plan.plusUntil).toLocaleDateString()}` : `Free plan: ${plan.deviceLimit} devices, ${plan.historyDays} days of history`;
   $('start-trial').hidden = !plan.trialAvailable;
+  $('plus-offer').hidden = !plan.checkout || plan.subscribed;
+  $('buy-year').textContent = plan.founderPrice ? '€29 per year (founder price)' : '€39 per year';
+  $('plus-manage').hidden = !plan.subscribed;
   const pending = await store('entries', keyPrefix);
   const conflicts = [...files.values()].filter((entry) => entry.conflict).length;
   $('sync-status').textContent = conflicts ? `${conflicts} conflict(s) need review. Local drafts are preserved.` : pending.length ? `${pending.length} encrypted change(s) waiting to upload.` : `Cloud copy up to date at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`;
@@ -749,6 +752,11 @@ async function openWorkspace(connected) {
   $('unlock-password').value = '';
   await loadLocal();
   render();
+  // Back from the Stripe payment page.
+  if (new URLSearchParams(location.search).get('plus') === 'welcome') {
+    history.replaceState(null, '', '/');
+    message('Thank you. JotDrop Plus turns on as soon as Stripe confirms your payment.');
+  }
   await sync();
 }
 
@@ -1094,6 +1102,11 @@ $('start-trial').addEventListener('click', async () => {
     message('JotDrop Plus is on for 14 days. No payment details needed.');
     await sync();
   } catch (error) { message(errorText(error)); }
+});
+// Stripe shows the payment page and is the seller; Plus turns on when Stripe confirms the payment to the server.
+for (const [id, interval] of [['buy-month', 'month'], ['buy-year', 'year']]) $(id).addEventListener('click', async () => {
+  try { location.assign((await client.call('/account/checkout', 'POST', { interval })).url); }
+  catch (error) { message(errorText(error)); }
 });
 $('sync').addEventListener('click', () => { syncPaused = false; $('sync').textContent = 'Sync now'; message(); void sync(); });
 $('pause-sync').addEventListener('click', () => { syncPaused = true; syncController?.abort(); });

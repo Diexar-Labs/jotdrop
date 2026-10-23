@@ -52,6 +52,10 @@ def check_plans(browser, url, codes, database):
     phone.locator("#finish-recovery").click()
     phone.locator("#plan-status").filter(has_text="Free plan: 2 devices, 30 days of history").wait_for()
     assert phone.locator("#start-trial").is_visible()
+    # Buy buttons only; a click would contact Stripe with the synthetic settings below.
+    phone.locator("#plus-offer").filter(has_text="€3.99 per month").wait_for()
+    assert phone.locator("#buy-year").inner_text() == "€29 per year (founder price)"
+    assert phone.locator("#plus-manage").is_hidden()
 
     for content in ["# List\n\nmilk", "# List\n\nmilk, eggs", "# List\n\nmilk, eggs, bread"]:
         card = phone.locator('.note-card[data-path="notes/list.md"]')
@@ -128,7 +132,8 @@ def main():
         with socket.socket() as candidate:
             candidate.bind(("127.0.0.1", 0))
             port = candidate.getsockname()[1]
-        environment = dict(os.environ, JOTDROP_CLOUD_DATA_DIR=directory, JOTDROP_CLOUD_PORT=str(port), JOTDROP_CLOUD_SERVER_KEY=secrets.token_urlsafe(32))
+        environment = dict(os.environ, JOTDROP_CLOUD_DATA_DIR=directory, JOTDROP_CLOUD_PORT=str(port), JOTDROP_CLOUD_SERVER_KEY=secrets.token_urlsafe(32),
+                           JOTDROP_CLOUD_STRIPE_SECRET_KEY="sk_test_synthetic", JOTDROP_CLOUD_STRIPE_WEBHOOK_SECRET="whsec_synthetic", JOTDROP_CLOUD_STRIPE_PRICE_MONTH="price_month", JOTDROP_CLOUD_STRIPE_PRICE_YEAR="price_year", JOTDROP_CLOUD_STRIPE_PRICE_FOUNDER_YEAR="price_founder")
         process = subprocess.Popen(["node", "cloud/server.mjs"], cwd=root, env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         codes = queue.Queue()
 
