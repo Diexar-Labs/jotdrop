@@ -72,6 +72,14 @@ jobs:
         working-directory: .
         run: npm run check:hashtags
 
+      - name: Check card preview text
+        working-directory: .
+        run: npm run check:list-preview
+
+      - name: Check note imports
+        working-directory: .
+        run: npm run check:keep-import && npm run check:markdown-import && npm run check:evernote-import
+
       - name: Check mobile keyboard behavior
         working-directory: .
         run: npm run check:mobile-keyboard
