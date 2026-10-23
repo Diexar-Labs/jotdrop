@@ -71,9 +71,47 @@ class CloudClient(val credentials: CloudCredentials) {
         }
     }
 
-    fun read(id: String): CloudPreviewFile {
-        require(id.matches(Regex("[0-9a-f]{64}"))) { "Invalid cloud object identity" }
-        val response = request(credentials.url, "/objects/$id", "GET", null, credentials)
+    /** The steps of the time machine: the last change time of each minute with a change, oldest first. */
+    fun moments(checkActive: () -> Unit = {}): List<String> {
+        var cursor = 0L
+        val times = mutableListOf<String>()
+        do {
+            checkActive()
+            val page = request(credentials.url, "/changes?after=$cursor", "GET", null, credentials)
+            val changes = page.getJSONArray("changes")
+            for (index in 0 until changes.length()) times += changes.getJSONObject(index).getString("updatedAt").also { Instant.parse(it) }
+            val next = page.getLong("cursor")
+            val more = page.getBoolean("hasMore")
+            require(!more || next > cursor) { "Invalid cloud changes cursor" }
+            cursor = next
+        } while (more)
+        return CloudTimeMachine.steps(times)
+    }
+
+    /** Every file as it was at `at`, page by page. */
+    fun snapshot(at: String): List<CloudMomentFile> {
+        Instant.parse(at)
+        val files = mutableListOf<CloudMomentFile>()
+        var after = ""
+        do {
+            val page = call("/snapshot?at=$at&after=$after")
+            val objects = page.getJSONArray("objects")
+            for (index in 0 until objects.length()) {
+                val entry = objects.getJSONObject(index)
+                require(entry.getString("id").matches(Regex("[0-9a-f]{64}"))) { "Invalid cloud object identity" }
+                files += CloudMomentFile(entry.getString("id"), if (entry.isNull("revision")) null else revision(entry), entry.getBoolean("deleted"), entry.getBoolean("locked"), entry.optBoolean("cleared"))
+            }
+            val more = page.getBoolean("hasMore")
+            val next = page.getString("cursor")
+            require(!more || next > after) { "Invalid cloud snapshot cursor" }
+            after = next
+        } while (more)
+        return files
+    }
+
+    fun read(id: String, version: Int? = null): CloudPreviewFile {
+        require(id.matches(Regex("[0-9a-f]{64}")) && (version == null || version > 0)) { "Invalid cloud object identity" }
+        val response = request(credentials.url, "/objects/$id${if (version == null) "" else "?revision=$version"}", "GET", null, credentials)
         val encrypted = parseEnvelope(response.getString("envelope"))
         val payload = JSONObject(utf8(CloudCrypto.decrypt(credentials.vaultKey, encrypted, "jotdrop:object:v1:${credentials.vaultId}:$id")))
         val path = CloudCrypto.safePath(payload.getString("path"))

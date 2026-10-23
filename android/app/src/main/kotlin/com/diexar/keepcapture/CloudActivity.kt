@@ -30,6 +30,11 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
+import kotlin.math.roundToInt
 
 class CloudActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -61,6 +66,12 @@ private fun CloudScreen(onBack: () -> Unit, onSettings: () -> Unit) {
     var revoke by remember { mutableStateOf<JSONObject?>(null) }
     var restore by remember { mutableStateOf<Int?>(null) }
     var resolveLocal by remember { mutableStateOf<Boolean?>(null) }
+    // Time machine: the steps, the slider position (last step = now) and the moment shown, read-only.
+    var moments by remember { mutableStateOf<List<String>>(emptyList()) }
+    var step by remember { mutableStateOf(0f) }
+    var moment by remember { mutableStateOf<TimeMoment?>(null) }
+    var confirmMoment by remember { mutableStateOf(false) }
+    var notice by remember { mutableStateOf<String?>(null) }
 
     suspend fun refresh() {
         status = withContext(Dispatchers.IO) { CloudSyncManager.status(context) }
@@ -96,6 +107,33 @@ private fun CloudScreen(onBack: () -> Unit, onSettings: () -> Unit) {
     fun loadDevices() = run {
         val client = cloud()
         devices = withContext(Dispatchers.IO) { val array = client.devices().getJSONArray("devices"); List(array.length()) { array.getJSONObject(it) } }
+    }
+    fun loadTimeline() = run {
+        val client = cloud()
+        moments = withContext(Dispatchers.IO) { val coroutine = currentCoroutineContext(); client.moments { coroutine.ensureActive() } }
+        step = (moments.size - 1).coerceAtLeast(0).toFloat()
+        moment = null
+    }
+    fun showMoment() = run {
+        val index = step.roundToInt()
+        moment = null
+        notice = null
+        if (index >= moments.size - 1) return@run
+        val at = moments[index]
+        val client = cloud()
+        moment = withContext(Dispatchers.IO) {
+            val coroutine = currentCoroutineContext()
+            val current = client.changesAndFiles { coroutine.ensureActive() }
+            val then = client.snapshot(at)
+            val currentFiles = current.map { CloudCurrentFile(it.id, it.revision, it.deleted) }
+            val unavailable = CloudTimeMachine.unavailable(currentFiles, then)
+            val byId = current.associateBy { it.id }
+            val shown = (then - unavailable.toSet()).map { file ->
+                coroutine.ensureActive()
+                byId[file.id]?.takeIf { it.revision == file.revision } ?: client.read(file.id, requireNotNull(file.revision))
+            }
+            TimeMoment(at, then, shown.sortedBy { it.path }, unavailable.count { !it.cleared }, unavailable.count { it.cleared })
+        }
     }
     LaunchedEffect(Unit) { try { refresh() } catch (_: Exception) { error = "Encrypted cloud settings could not be opened. Do not clear app data; your local notes remain in the vault." } }
     LaunchedEffect(Unit) { CloudSyncManager.changes.collect { runCatching { refresh() } } }
@@ -156,13 +194,39 @@ private fun CloudScreen(onBack: () -> Unit, onSettings: () -> Unit) {
                 item(key = "account") { CloudAccountSection(busy, ::accountRun) { cloud() } }
                 item {
                     TabRow(selectedTabIndex = tab) {
-                        listOf("Files", "Trash", "Devices").forEachIndexed { index, title ->
-                            Tab(selected = tab == index, onClick = { if (!busy) { tab = index; if (index == 2) loadDevices() else loadFiles() } }, text = { Text(title) })
+                        listOf("Files", "Trash", "Devices", "Time machine").forEachIndexed { index, title ->
+                            Tab(selected = tab == index, onClick = { if (!busy) { tab = index; when (index) { 2 -> loadDevices(); 3 -> loadTimeline(); else -> loadFiles() } } }, text = { Text(title) })
                         }
                     }
-                    TextButton(onClick = { if (tab == 2) loadDevices() else loadFiles() }, enabled = !busy) { Text("Refresh ${if (tab == 2) "devices" else "files"}") }
+                    TextButton(onClick = { when (tab) { 2 -> loadDevices(); 3 -> loadTimeline(); else -> loadFiles() } }, enabled = !busy) { Text("Refresh ${when (tab) { 2 -> "devices"; 3 -> "moments"; else -> "files" }}") }
                 }
-                if (tab == 2) {
+                if (tab == 3) {
+                    item {
+                        Text("Slide back to see your cloud as it was", style = MaterialTheme.typography.titleMedium)
+                        if (moments.size > 1) {
+                            Slider(value = step, onValueChange = { step = it }, onValueChangeFinished = { showMoment() }, enabled = !busy,
+                                valueRange = 0f..(moments.size - 1).toFloat(), steps = (moments.size - 2).coerceAtLeast(0),
+                                modifier = Modifier.semantics { contentDescription = "Moment to show" })
+                            Text(if (step.roundToInt() >= moments.size - 1) "Now" else momentLabel(moments[step.roundToInt()]))
+                        } else Text("Earlier moments appear here after your next changes.")
+                        notice?.let { Text(it) }
+                    }
+                    moment?.let { shown ->
+                        item {
+                            Text("${momentLabel(shown.at)}. Read-only.", style = MaterialTheme.typography.titleSmall)
+                            if (shown.locked > 0) Text("${shown.locked} file(s) from then changed more than 30 days ago. JotDrop Plus shows and restores them.")
+                            if (shown.cleared > 0) Text("${shown.cleared} file(s) from then were cleared to make room in the free storage, so this moment cannot be restored.")
+                            shown.files.count { it.deleted }.takeIf { it > 0 }?.let { Text("$it file(s) were in the trash then.", style = MaterialTheme.typography.bodySmall) }
+                            Button(onClick = { confirmMoment = true }, enabled = !busy && shown.locked + shown.cleared == 0, modifier = Modifier.padding(top = 8.dp)) { Text("Restore this moment") }
+                        }
+                        items(shown.files.filter { !it.deleted }, key = { "moment-${it.id}" }) { file ->
+                            Column {
+                                Text(file.path, style = MaterialTheme.typography.titleMedium)
+                                if (file.path.endsWith(".md", true)) Text(String(file.bytes, Charsets.UTF_8).take(200), style = MaterialTheme.typography.bodySmall, maxLines = 4)
+                            }
+                        }
+                    }
+                } else if (tab == 2) {
                     if (devices.isEmpty()) item { Text("Refresh to view connected devices.") }
                     items(devices, key = { it.getString("id") }) { device ->
                         Column {
@@ -232,6 +296,37 @@ private fun CloudScreen(onBack: () -> Unit, onSettings: () -> Unit) {
             restore = null
             run { val client = cloud(); withContext(Dispatchers.IO) { client.restore(file.id, version, file.revision) }; selected = null; files = emptyList(); if (status?.enabled == true) CloudSyncManager.sync(context) }
         }, enabled = !busy) { Text("Restore") } }, dismissButton = { TextButton(onClick = { restore = null }) { Text("Cancel") } }) }
+    if (confirmMoment) moment?.let { shown -> AlertDialog(onDismissRequest = { confirmMoment = false }, title = { Text("Restore ${momentLabel(shown.at)}?") },
+        text = { Text("Files from then come back and files made later move to the trash. Every change is a new cloud version, so the time machine can undo this. Changed local files are kept as conflict copies.") },
+        confirmButton = { TextButton(onClick = {
+            confirmMoment = false
+            run {
+                // Send local changes first, then compare against the newest cloud versions.
+                if (status?.enabled == true) CloudSyncManager.sync(context)
+                val client = cloud()
+                var done = 0
+                try {
+                    withContext(Dispatchers.IO) {
+                        val current = client.changesAndFiles().map { CloudCurrentFile(it.id, it.revision, it.deleted) }
+                        for (change in CloudTimeMachine.restorePlan(current, shown.then)) {
+                            when (change) {
+                                is CloudMomentStep.Restore -> client.restore(change.id, change.revision, change.baseRevision)
+                                is CloudMomentStep.Delete -> client.remove(change.id, change.baseRevision)
+                            }
+                            done++
+                        }
+                    }
+                } finally {
+                    // Also after an error: say what did change.
+                    moment = null
+                    files = emptyList()
+                    notice = "Restored $done file(s) to ${momentLabel(shown.at)}."
+                }
+                if (status?.enabled == true) CloudSyncManager.sync(context)
+                moments = withContext(Dispatchers.IO) { client.moments() }
+                step = (moments.size - 1).coerceAtLeast(0).toFloat()
+            }
+        }, enabled = !busy) { Text("Restore") } }, dismissButton = { TextButton(onClick = { confirmMoment = false }) { Text("Cancel") } }) }
     resolveLocal?.let { keepLocal -> AlertDialog(onDismissRequest = { resolveLocal = null }, title = { Text(if (keepLocal) "Keep the saved local version?" else "Use the current cloud version?") },
         text = { Text(if (keepLocal) "The saved local file, or its deletion, becomes the current cloud version. Unsaved editor text is not included. Cloud history remains available."
             else "The latest cloud version, or its deletion, is applied locally. A verified recovery copy is kept before changing an existing file.") },
@@ -241,3 +336,7 @@ private fun CloudScreen(onBack: () -> Unit, onSettings: () -> Unit) {
             run { CloudSyncManager.resolve(context, file.path, keepLocal); selected = null; files = emptyList() }
         }, enabled = !busy) { Text("Confirm choice") } }, dismissButton = { TextButton(onClick = { resolveLocal = null }) { Text("Cancel") } }) }
 }
+
+private data class TimeMoment(val at: String, val then: List<CloudMomentFile>, val files: List<CloudPreviewFile>, val locked: Int, val cleared: Int)
+
+private fun momentLabel(at: String): String = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM).withZone(ZoneId.systemDefault()).format(Instant.parse(at))

@@ -234,6 +234,22 @@ fun main() {
     check(CloudSyncEngine.sync(clearing, c, tc) { savedC = it.toMap() }.conflicts == 0 && tc.isEmpty() && savedC.isEmpty())
     clearing.write(note, "new note, same name".toByteArray(), 0)
     check(CloudSyncEngine.sync(clearing, d, td) {}.downloaded == 1 && String(d.files.getValue(note)) == "new note, same name")
+    // Time machine: one step per minute with a change, and a restore plan like the web app's.
+    check(CloudTimeMachine.steps(listOf("2026-10-23T08:00:05.000Z", "2026-10-23T08:00:40.000Z", "2026-10-22T07:00:00.000Z", "2026-10-23T08:01:00.000Z")) ==
+        listOf("2026-10-22T07:00:00.000Z", "2026-10-23T08:00:40.000Z", "2026-10-23T08:01:00.000Z"))
+    val now = listOf(CloudCurrentFile("same", 2, false), CloudCurrentFile("edited", 3, false), CloudCurrentFile("trashed", 2, true),
+        CloudCurrentFile("later", 1, false), CloudCurrentFile("laterTrashed", 2, true), CloudCurrentFile("wasTrashed", 4, false))
+    val then = listOf(CloudMomentFile("same", 2, false, false, false), CloudMomentFile("edited", 1, false, false, false),
+        CloudMomentFile("trashed", 1, false, false, false), CloudMomentFile("wasTrashed", 2, true, false, false))
+    check(CloudTimeMachine.restorePlan(now, then) == listOf(CloudMomentStep.Restore("edited", 1, 3), CloudMomentStep.Restore("trashed", 1, 2),
+        CloudMomentStep.Delete("later", 1), CloudMomentStep.Delete("wasTrashed", 4)))
+    // Locked or cleared files from then block the moment, unless that version is still the current one.
+    val inTrashLongAgo = CloudMomentFile("trashed", 2, true, true, false)
+    check(CloudTimeMachine.unavailable(now, listOf(inTrashLongAgo)).isEmpty())
+    val locked = CloudMomentFile("edited", 1, false, true, false)
+    val cleared = CloudMomentFile("same", null, false, true, true)
+    check(CloudTimeMachine.unavailable(now, listOf(locked, cleared)) == listOf(locked, cleared))
+    check(runCatching { CloudTimeMachine.restorePlan(now, listOf(locked)) }.isFailure)
     for (path in listOf("../x", "notes/../x", ".obsidian/key", "notes/.stfolder/x.md", "notes/x.cloud-conflict-r1.md", "attachments/.git/x", "notes/file.exe")) {
         check(runCatching { CloudSyncEngine.path(path) }.isFailure)
     }

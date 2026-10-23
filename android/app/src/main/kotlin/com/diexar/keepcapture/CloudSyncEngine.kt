@@ -146,3 +146,37 @@ object CloudSyncEngine {
         return result
     }
 }
+
+data class CloudCurrentFile(val id: String, val revision: Int, val deleted: Boolean)
+/** A file as it was at a moment; `revision` is null when a full free cloud cleared that version. */
+data class CloudMomentFile(val id: String, val revision: Int?, val deleted: Boolean, val locked: Boolean, val cleared: Boolean)
+sealed interface CloudMomentStep {
+    data class Restore(val id: String, val revision: Int, val baseRevision: Int) : CloudMomentStep
+    data class Delete(val id: String, val baseRevision: Int) : CloudMomentStep
+}
+
+/** The time machine, like the web app's: steps through the minutes with a change and restores a moment as new versions. */
+object CloudTimeMachine {
+    /** The last change time of each minute with a change, oldest first. */
+    fun steps(times: List<String>): List<String> = times.groupBy { it.take(16) }.values.map { it.max() }.sorted()
+
+    /** Files from then that the free plan cannot open or that were cleared; a moment comes back whole or not at all. */
+    fun unavailable(current: List<CloudCurrentFile>, then: List<CloudMomentFile>): List<CloudMomentFile> {
+        val revisions = current.associate { it.id to it.revision }
+        return then.filter { (it.locked || it.cleared) && revisions[it.id] != it.revision }
+    }
+
+    /** Files from then come back, files made later move to the trash; nothing is erased. */
+    fun restorePlan(current: List<CloudCurrentFile>, then: List<CloudMomentFile>): List<CloudMomentStep> {
+        require(unavailable(current, then).isEmpty()) { "JotDrop Plus restores this moment" }
+        val old = then.associateBy { it.id }
+        return current.mapNotNull { file ->
+            val version = old[file.id]
+            when {
+                version?.revision == file.revision -> null
+                version == null || version.deleted -> if (file.deleted) null else CloudMomentStep.Delete(file.id, file.revision)
+                else -> CloudMomentStep.Restore(file.id, requireNotNull(version.revision), file.revision)
+            }
+        }
+    }
+}
