@@ -14,7 +14,7 @@ Stand gemeten op `ee57d58` (feature-branch), bijgewerkt met elke afgeronde funct
 | Spraakmemo opnemen | ja (knop "Voice memo" in de werkbalk, 24 okt) | ja (microfoonknop bovenaan) | ja (microfoonknop) |
 | Foto maken of kiezen als notitie | deels (uploaden; camera via "Text from photo") | ja (cameraknop > Add photo, 24 okt; camera via systeemkiezer op telefoon) | ja |
 | Foto in notitie invoegen (editor) | NEE | NEE | ja |
-| Tekst uit foto (OCR) | ja (knop "Text from photo", Tesseract nl/en lokaal, 24 okt) | ja (cameraknop > Text from photo, Tesseract nl/en lokaal, taaldata eenmalig uit release `ocr-data-1`, 24 okt) | ja (ML Kit, Latijns schrift) |
+| Tekst uit foto (OCR) (Eric 24 okt: liefst alle talen, ook Arabisch; lage prioriteit) | ja (knop "Text from photo", Tesseract nl/en lokaal, 24 okt; zin "Recognize English and Dutch…" weggehaald) | ja (cameraknop > Text from photo, Tesseract nl/en lokaal, taaldata eenmalig uit release `ocr-data-1`, 24 okt) | ja (ML Kit, Latijns schrift) |
 | Spraak naar tekst (dicteren) | NEE | NEE | ja (6 talen) |
 | Linkvoorbeeld (titel, plaatje) ophalen | NEE | ja | ja |
 
@@ -30,6 +30,7 @@ Stand gemeten op `ee57d58` (feature-branch), bijgewerkt met elke afgeronde funct
 | Foto op de kaart | ja | ja | ja |
 | Spraakmemo afspelen op de kaart | ja | ja | NEE (alleen in editor) |
 | Linkchips (domeinnaam) | NEE | ja | ja |
+| Geen Markdown-tekens op de kaart (Eric 24 okt): links tonen alleen hun naam, `[[notitie\|alias]]` de alias | ja (24 okt; link naar een bijlage die als speler/foto op de kaart staat verdwijnt) | ja (24 okt) | ja (24 okt) |
 | Herinnering op de kaart (over 3 uur, te laat) | deels (alleen tekst) | ja | deels (alleen herhaling) |
 
 ## Acties op kaarten

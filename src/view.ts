@@ -2446,7 +2446,9 @@ function extractPreview(content: string): string {
     .replace(/!\[[^\]]*\]\([^)]+\)/g, "")
     .replace(/<!--\s*(?:jotdrop|diexar)-preview:.*?-->/g, "")
     .replace(/^\s{0,3}#+\s+.*$/gm, "")
-    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, "$1")
+    // A card shows no Markdown signs (Eric): any link keeps only its label.
+    .replace(/\[([^\]\n]+)\]\(([^)\n]+)\)/g, "$1")
+    .replace(/\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\]/g, (_link: string, name: string, alias?: string) => alias || name.replace(/#.*$/, ""))
     .replace(/https?:\/\/\S+/g, "");
   const lines = plainPreviewText(stripped)
     .split("\n")

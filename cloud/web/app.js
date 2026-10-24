@@ -295,9 +295,16 @@ function render() {
       // Show the body in its own order: text as text, checklist lines only as checkboxes.
       const titleLine = /^\s*#\s+/.test(parts.body) ? parts.body.split('\n').findIndex((line) => line.trim()) : -1;
       let text = [], budget = 600, fence;
+      const available = [...source.values()].filter((item) => !item.deleted && !isMarkdown(item.file.path));
+      const shownAsMedia = (target) => {
+        const path = attachmentPath(target, entry.file.path, available.map((item) => item.file.path));
+        return Boolean(path && mediaType(path) && available.some((item) => item.file.path === path));
+      };
       const flush = () => {
-        // Media show below the text; a link shows its label.
-        const value = plainPreviewText(text.join('\n').replace(/!\[\[[^\]]+\]\]|!\[[^\]]*\]\([^)]+\)/g, '').replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, '$1'))
+        // Media show below the text, so their links go; any other link shows only its label (Eric: no Markdown signs on a card).
+        const value = plainPreviewText(text.join('\n').replace(/!\[\[[^\]]+\]\]|!\[[^\]]*\]\([^)]+\)/g, '')
+          .replace(/\[([^\]\n]+)\]\(([^)\n]+)\)/g, (_link, label, target) => (!/^https?:/i.test(target) && shownAsMedia(target) ? '' : label))
+          .replace(/\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\]/g, (_link, name, alias) => alias || name.replace(/#.*$/, '')))
           .replace(/\n{3,}/g, '\n\n').trim().slice(0, budget);
         if (value) { card.append(paragraph(value, 'note-preview')); budget -= value.length; }
         text = [];
@@ -325,8 +332,7 @@ function render() {
         card.addEventListener('click', (event) => { if (!event.target.closest('button, input, label, audio')) openEditor(entry); });
       }
       if (parts.reminder) card.append(paragraph(`Reminder: ${parts.reminder}${parts.repeat ? ` (${parts.repeat})` : ''}. Scheduled by Android after sync.`, 'note-meta'));
-      const available = [...source.values()].filter((item) => !item.deleted && !isMarkdown(item.file.path));
-      const targets = [...parts.body.matchAll(/!\[\[([^\]]+)\]\]|!?\[[^\]]*\]\(([^)]+)\)/g)];
+      const targets =[...parts.body.matchAll(/!\[\[([^\]]+)\]\]|!?\[[^\]]*\]\(([^)]+)\)/g)];
       const shown = new Set();
       for (const target of targets) {
         const path = attachmentPath(target[1] || target[2], entry.file.path, available.map((item) => item.file.path));

@@ -81,6 +81,8 @@ def check_parity(browser, url, token):
         assert "[Voice memo](../attachments/voice-" in page.locator("#note-content").input_value()
         page.locator('#editor-form button[type="submit"]').click()
         card.locator("audio").wait_for()
+        # The card shows the player, not the Markdown link to it (Eric).
+        assert "Voice memo" not in card.inner_text() and "](" not in card.inner_text()
         page.locator("#sync-status").filter(has_text="Cloud copy up to date").wait_for()
         # The toolbar button starts a voice memo in a new note straight away.
         page.locator("#new-voice").click()

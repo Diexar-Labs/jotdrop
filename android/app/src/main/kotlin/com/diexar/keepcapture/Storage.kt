@@ -1591,7 +1591,11 @@ object Storage {
         // Markdown-link-syntax behoudt het label, losse URLs verdwijnen volledig.
         // Daarna opmaaktekens weg (plugin-pariteit), en `\#tag` zonder backslash.
         val stripped = CardText.plain(rest
-            .replace(Regex("\\[([^\\]\\n]+)]\\(https?://[^)\\s]+\\)"), "$1")
+            // Geen Markdown-tekens op de kaart (Eric): elke link toont alleen zijn label.
+            .replace(Regex("\\[([^\\]\\n]+)]\\([^)\\n]+\\)"), "$1")
+            .replace(Regex("\\[\\[([^\\]|\\n]+)(?:\\|([^\\]\\n]+))?]]")) { m ->
+                m.groupValues[2].ifEmpty { m.groupValues[1].substringBefore('#') }
+            }
             .replace(Regex("https?://\\S+"), ""))
             .lineSequence()
             .map { it.trimEnd() }
