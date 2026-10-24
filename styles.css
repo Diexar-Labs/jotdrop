@@ -1620,3 +1620,9 @@
   font-family: var(--font-monospace);
   word-break: break-all;
 }
+.jotdrop-approval-words {
+  font-family: var(--font-monospace);
+  font-size: 1.3em;
+  font-weight: 600;
+  text-align: center;
+}

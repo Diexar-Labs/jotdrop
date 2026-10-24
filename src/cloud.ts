@@ -2,7 +2,8 @@ import { FileSystemAdapter, Modal, Notice, Platform, Setting, TFile, normalizePa
 import type JotDropPlugin from "./main";
 import { ConfirmModal } from "./confirmModal";
 import { CloudClient } from "../cloud/shared/client.mjs";
-import { confirmLogin, confirmSignup, logIn, signUp } from "../cloud/shared/account.mjs";
+import { checkApproval, completeApproval, confirmLogin, confirmSignup, logIn, requestApproval, resetWithRecoveryCode, signUp, startOver, startReset } from "../cloud/shared/account.mjs";
+import { RecoveryCodeModal } from "./cloudAccount";
 import { base64ToBytes, decryptEnvelope, MAX_FILE_BYTES, objectId } from "../cloud/shared/crypto.mjs";
 import { copyName, hash, isPreserved, MAX_SYNC_BYTES, MAX_SYNC_FILES, remoteFiles, syncFolder, syncPath } from "../cloud/shared/sync.mjs";
 
@@ -271,6 +272,8 @@ export class CloudController {
   }
 
   get signedIn(): boolean { return !!this.client; }
+  /** The signed-in device, for the account screens. */
+  get connection(): CloudClient | undefined { return this.client; }
   get enabled(): boolean { return !!this.state?.enabled; }
   get lastSynced(): string | undefined { return this.state?.lastSynced; }
   onChange(listener: () => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
@@ -502,12 +505,15 @@ export class CloudController {
 }
 
 type Pending = Awaited<ReturnType<typeof logIn>> & { secondFactor?: string };
+type LimitError = { code?: string; message?: string; devices?: Array<{ id: string; name: string; lastSeenAt: string }> };
 
-/** Log in or create an account, with the email code, the free device limit and the recovery code. */
+/** Log in or create an account, with the email code, the free device limit, the recovery code and "forgot password". */
 class CloudSignInModal extends Modal {
   private message!: HTMLElement;
 
   constructor(private plugin: JotDropPlugin, private cloud: CloudController, private signup: boolean) { super(plugin.app); }
+
+  private get url(): string { return this.plugin.settings.cloudServer || DEFAULT_CLOUD_SERVER; }
 
   onOpen(): void { this.form(); }
   onClose(): void { this.contentEl.empty(); }
@@ -528,24 +534,43 @@ class CloudSignInModal extends Modal {
     finally { button.disabled = false; }
   }
 
+  private field(el: HTMLElement, name: string, type: string, autocomplete: AutoFill, set: (value: string) => void, desc = ""): void {
+    new Setting(el).setName(name).setDesc(desc).addText((input) => { input.inputEl.type = type; input.inputEl.autocomplete = autocomplete; input.onChange(set); });
+  }
+
+  /** At the free device limit this device takes the place of one the person no longer uses; `connect` repeats the step. */
+  private async withDeviceChoice(choices: HTMLElement, connect: (replaceDeviceId?: string) => Promise<void>): Promise<void> {
+    try { await connect(); }
+    catch (error) {
+      const limit = error as LimitError;
+      if (limit.code !== "device-limit" || !limit.devices) throw error;
+      choices.empty();
+      choices.createEl("p", { text: `${limit.message} Choose the device this one replaces:` });
+      for (const device of limit.devices) {
+        new Setting(choices).setName(device.name).setDesc(`Last used ${new Date(device.lastSeenAt).toLocaleDateString()}`)
+          .addButton((choice) => choice.setButtonText("Sign out that device").onClick(() => this.busy(choice.buttonEl, () => connect(device.id))));
+      }
+      this.status("");
+    }
+  }
+
   private form(): void {
     const el = this.start(this.signup ? "Create a JotDrop Cloud account" : "Log in to JotDrop Cloud");
     el.createEl("p", { text: this.signup ? "Your notes are encrypted on this device with a key made from your password. The server never sees your password or your notes." : "Use the same email and password as on the website and in the Android app." });
     let email = "", password = "", confirm = "";
-    new Setting(el).setName("Email").addText((input) => { input.inputEl.type = "email"; input.inputEl.autocomplete = "email"; input.onChange((value) => { email = value.trim(); }); });
-    new Setting(el).setName("Password").setDesc(this.signup ? "At least 12 characters." : "").addText((input) => {
-      input.inputEl.type = "password"; input.inputEl.autocomplete = this.signup ? "new-password" : "current-password"; input.onChange((value) => { password = value; });
-    });
-    if (this.signup) new Setting(el).setName("Repeat password").addText((input) => { input.inputEl.type = "password"; input.inputEl.autocomplete = "new-password"; input.onChange((value) => { confirm = value; }); });
+    this.field(el, "Email", "email", "email", (value) => { email = value.trim(); });
+    this.field(el, "Password", "password", this.signup ? "new-password" : "current-password", (value) => { password = value; }, this.signup ? "At least 12 characters." : "");
+    if (this.signup) this.field(el, "Repeat password", "password", "new-password", (value) => { confirm = value; });
     this.message = el.createEl("p", { attr: { role: "status" } });
-    const url = this.plugin.settings.cloudServer || DEFAULT_CLOUD_SERVER;
-    new Setting(el)
+    const actions = new Setting(el);
+    if (!this.signup) actions.addButton((button) => button.setButtonText("Forgot password?").onClick(() => this.forgot(email)));
+    actions
       .addButton((button) => button.setButtonText(this.signup ? "I have an account" : "Create an account").onClick(() => { this.signup = !this.signup; this.form(); }))
       .addButton((button) => button.setButtonText(this.signup ? "Create account" : "Log in").setCta().onClick(() => this.busy(button.buttonEl, async () => {
         if (this.signup && password !== confirm) throw new Error("The passwords do not match.");
         const pending = this.signup
-          ? await signUp({ url, email, password, deviceName: deviceName(), fetcher: cloudFetch })
-          : await logIn({ url, email, password, deviceName: deviceName(), fetcher: cloudFetch });
+          ? await signUp({ url: this.url, email, password, deviceName: deviceName(), fetcher: cloudFetch })
+          : await logIn({ url: this.url, email, password, deviceName: deviceName(), fetcher: cloudFetch });
         this.code(pending as Pending, email);
       })));
   }
@@ -562,43 +587,102 @@ class CloudSignInModal extends Modal {
         const { client, recoveryCode } = await confirmSignup(pending, code, { fetcher: cloudFetch });
         if (!client || !recoveryCode) throw new Error("The server did not finish creating the account. Try again.");
         await this.cloud.finishSignIn(client, email);
-        this.recovery(recoveryCode);
+        this.done(recoveryCode);
         return;
       }
-      // At the free device limit this device takes the place of one the person no longer uses.
-      const connect = async (replaceDeviceId?: string) => {
+      await this.withDeviceChoice(choices, async (replaceDeviceId) => {
         await this.cloud.finishSignIn(await confirmLogin(pending, code, { fetcher: cloudFetch, replaceDeviceId }), email);
         this.done();
-      };
-      try { await connect(); }
-      catch (error) {
-        const limit = error as { code?: string; message?: string; devices?: Array<{ id: string; name: string; lastSeenAt: string }> };
-        if (limit.code !== "device-limit" || !limit.devices) throw error;
-        choices.empty();
-        choices.createEl("p", { text: `${limit.message} Choose the device this one replaces:` });
-        for (const device of limit.devices) {
-          new Setting(choices).setName(device.name).setDesc(`Last used ${new Date(device.lastSeenAt).toLocaleDateString()}`)
-            .addButton((choice) => choice.setButtonText("Sign out that device").onClick(() => this.busy(choice.buttonEl, () => connect(device.id))));
-        }
-        this.status("");
-      }
+      });
     })));
   }
 
-  private recovery(recoveryCode: string): void {
-    const el = this.start("Save your recovery code");
-    el.createEl("p", { text: "If you forget your password, this code is the only way back into your notes. Store it in a password manager. Nobody, including JotDrop, can recover your notes without it." });
-    const box = el.createEl("textarea", { cls: "jotdrop-recovery-code", attr: { readonly: "", rows: "4", "aria-label": "Recovery code" } });
-    box.value = recoveryCode;
-    let saved = false;
-    let finish: HTMLButtonElement;
-    new Setting(el).addButton((button) => button.setButtonText("Copy").onClick(async () => { await navigator.clipboard.writeText(recoveryCode); new Notice("Recovery code copied."); }));
-    new Setting(el).setName("I saved my recovery code").addToggle((toggle) => toggle.onChange((value) => { saved = value; finish.disabled = !saved; }));
-    new Setting(el).addButton((button) => { finish = button.buttonEl; button.setButtonText("Done").setCta().setDisabled(true).onClick(() => this.done()); });
+  /** Forgot password: a mailed code, then one of the three routes the website offers. */
+  private forgot(known: string): void {
+    const el = this.start("Forgot your password?");
+    el.createEl("p", { text: "We email you a code. Then you choose how to get back in." });
+    let email = known;
+    new Setting(el).setName("Email").addText((input) => { input.inputEl.type = "email"; input.inputEl.autocomplete = "email"; input.setValue(known).onChange((value) => { email = value.trim(); }); });
+    this.message = el.createEl("p", { attr: { role: "status" } });
+    new Setting(el)
+      .addButton((button) => button.setButtonText("Back").onClick(() => this.form()))
+      .addButton((button) => button.setButtonText("Email me a code").setCta().onClick(() => this.busy(button.buttonEl, async () => {
+        this.reset(await startReset({ url: this.url, email, fetcher: cloudFetch }), email);
+      })));
   }
 
-  private done(): void {
+  private reset(reset: Awaited<ReturnType<typeof startReset>>, email: string): void {
+    const el = this.start("Choose a new password");
+    el.createEl("p", { text: "If this address has an account, we emailed it a code." });
+    let code = "", password = "", repeat = "", route = "approve", recoveryCode = "", confirmed = false;
+    new Setting(el).setName("Code from the email").addText((input) => { input.inputEl.inputMode = "numeric"; input.inputEl.autocomplete = "one-time-code"; input.onChange((value) => { code = value.trim(); }); });
+    this.field(el, "New password", "password", "new-password", (value) => { password = value; }, "At least 12 characters.");
+    this.field(el, "Repeat new password", "password", "new-password", (value) => { repeat = value; });
+    const extra = el.createDiv();
+    const showRoute = () => {
+      extra.empty();
+      if (route === "recover") new Setting(extra).setName("Recovery code").addTextArea((input) => input.onChange((value) => { recoveryCode = value.trim(); }));
+      if (route === "restart") {
+        extra.createEl("p", { text: "This deletes the notes in your cloud for good and starts an empty cloud. Notes on your devices are not touched. Use it only when you have no signed-in device and no recovery code." });
+        new Setting(extra).setName("Delete my old cloud notes").addToggle((toggle) => toggle.onChange((value) => { confirmed = value; }));
+      }
+    };
+    new Setting(el).setName("How do you get back in?").addDropdown((dropdown) => dropdown
+      .addOption("approve", "Approve on a device that is still signed in")
+      .addOption("recover", "Use my recovery code")
+      .addOption("restart", "Start over with an empty cloud")
+      .setValue(route).onChange((value) => { route = value; showRoute(); }));
+    showRoute();
+    this.message = el.createEl("p", { attr: { role: "status" } });
+    const choices = el.createDiv();
+    new Setting(el).addButton((button) => button.setButtonText("Continue").setCta().onClick(() => this.busy(button.buttonEl, async () => {
+      if (password !== repeat) throw new Error("The passwords do not match.");
+      const options = { newPassword: password, deviceName: deviceName() };
+      if (route === "recover") {
+        await this.withDeviceChoice(choices, async (replaceDeviceId) => {
+          await this.cloud.finishSignIn(await resetWithRecoveryCode(reset, { ...options, code, recoveryCode, replaceDeviceId }, { fetcher: cloudFetch }), email);
+          this.done();
+        });
+      } else if (route === "restart") {
+        if (!confirmed) throw new Error("Turn on \"Delete my old cloud notes\" to confirm.");
+        const { client, recoveryCode: fresh } = await startOver(reset, { ...options, code }, { fetcher: cloudFetch });
+        await this.cloud.finishSignIn(client, email);
+        this.done(fresh);
+      } else this.waitForApproval(await requestApproval(reset, code, { fetcher: cloudFetch }), options, email);
+    })));
+  }
+
+  private waitForApproval(pending: Awaited<ReturnType<typeof requestApproval>>, options: { newPassword: string; deviceName: string }, email: string): void {
+    const el = this.start("Approve on your other device");
+    el.createEl("p", { text: "On a device that is still signed in, open JotDrop Cloud (website: Devices & recovery; Obsidian: JotDrop settings). Approve only if it shows exactly these words:" });
+    el.createEl("p", { cls: "jotdrop-approval-words", text: pending.words.join("  ") });
+    this.message = el.createEl("p", { attr: { role: "status" }, text: "Waiting for approval..." });
+    const choices = el.createDiv();
+    let active = true;
+    new Setting(el).addButton((button) => button.setButtonText("Cancel").onClick(() => { active = false; this.form(); }));
+    const poll = async () => {
+      if (!active || !this.contentEl.isConnected) return;
+      try {
+        const approved = await checkApproval(pending, { fetcher: cloudFetch });
+        if (!active) return;
+        if (!approved) { window.setTimeout(() => void poll(), 3000); return; }
+        active = false;
+        this.status("Approved. Setting your new password...");
+        await this.withDeviceChoice(choices, async (replaceDeviceId) => {
+          await this.cloud.finishSignIn(await completeApproval(approved, { ...options, replaceDeviceId }, { fetcher: cloudFetch }), email);
+          this.done();
+        });
+      } catch (error) {
+        active = false;
+        this.status((error as { status?: number }).status === 401 ? "The request was rejected or has expired. Go back and start again." : error instanceof Error ? error.message : "Something went wrong.");
+      }
+    };
+    window.setTimeout(() => void poll(), 3000);
+  }
+
+  private done(recoveryCode?: string): void {
     this.close();
     new Notice("Signed in to JotDrop Cloud.");
+    if (recoveryCode) new RecoveryCodeModal(this.app, recoveryCode).open();
   }
 }

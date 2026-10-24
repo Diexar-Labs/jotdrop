@@ -93,18 +93,18 @@ Stand gemeten op `ee57d58` (feature-branch), bijgewerkt met elke afgeronde funct
 | Functie | Website | Plugin | Android |
 |---|---|---|---|
 | Inloggen met e-mail en wachtwoord | ja | ja (instellingen, JotDrop Cloud; ook account maken met herstelcode, apparatengrens) | ja |
-| Wachtwoord wijzigen/vergeten | ja | NEE | ja |
+| Wachtwoord wijzigen/vergeten | ja | ja (vergeten: goedkeuren, herstelcode of opnieuw beginnen) | ja |
 | Authenticator-app (TOTP) | ja | NEE | NEE |
-| Apparaten bekijken en intrekken | ja | NEE | ja |
-| Koppelcode maken | ja | NEE | ja |
-| Nieuw apparaat goedkeuren (4 woorden) | ja | NEE | ja |
+| Apparaten bekijken en intrekken | ja | ja | ja |
+| Koppelcode maken | ja | ja | ja |
+| Nieuw apparaat goedkeuren (4 woorden) | ja | ja (goedkeuren en zelf laten goedkeuren) | ja |
 | Automatisch synchroniseren | ja | ja (notitiemap met Archive/Trash + bijlagen, zelfde regels als Android; stopt bij Syncthing of gekoppelde Obsidian Sync) | ja |
 | Conflict beoordelen | ja | deels (beide versies blijven, `.cloud-conflict`-kopie als kaart; nog geen vergelijkscherm) | ja |
 | Tijdmachine | ja | NEE | ja |
-| Herstelcode opnieuw maken | ja | NEE | ja |
-| Plus bekijken | ja | NEE | deels (tekst) |
+| Herstelcode opnieuw maken | ja | ja | ja |
+| Plus bekijken | ja | ja (plan en opslag, knop naar de website) | deels (tekst) |
 | Plus kopen | ja | NEE (bewust: alleen website) | NEE (bewust: alleen website) |
-| "Manage or cancel your subscription at link.com." (Eric 24 okt: vindbaar maar verstopt, ingeklapt kopje "Subscription" onderaan de instellingen) | ja (onderaan Devices & recovery, alleen met abonnement) | NEE (komt mee met stap 4, cloud in plugin, op dezelfde verstopte manier) | ja (onderaan cloudscherm, altijd: app kent de abonnementsstatus niet) |
+| "Manage or cancel your subscription at link.com." (Eric 24 okt: vindbaar maar verstopt, ingeklapt kopje "Subscription" onderaan de instellingen) | ja (onderaan Devices & recovery, alleen met abonnement) | ja (ingeklapt "Subscription" onder Plan, alleen met abonnement) | ja (onderaan cloudscherm, altijd: app kent de abonnementsstatus niet) |
 
 ## Instellingen
 

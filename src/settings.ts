@@ -3,6 +3,7 @@ import type JotDropPlugin from "./main";
 import { legacyAssetsPath, normalizeAssetsFolder } from "./attachments";
 import { t } from "./i18n";
 import { ConfirmModal } from "./confirmModal";
+import { renderCloudAccount } from "./cloudAccount";
 
 function generateToken(): string {
   const bytes = new Uint8Array(24);
@@ -69,6 +70,7 @@ export class JotDropSettingTab extends PluginSettingTab {
   plugin: JotDropPlugin;
   private lastInvalidNotice = 0;
   private cloudListener?: () => void;
+  private cloudAccountStop?: () => void;
 
   constructor(app: App, plugin: JotDropPlugin) {
     super(app, plugin);
@@ -331,7 +333,17 @@ export class JotDropSettingTab extends PluginSettingTab {
     const cloud = this.plugin.cloud;
     const refresh = () => { el.empty(); this.displayCloud(el); };
     this.cloudListener?.();
-    this.cloudListener = cloud.onChange(() => { if (el.isConnected) refresh(); });
+    this.cloudAccountStop?.();
+    this.cloudAccountStop = undefined;
+    // Sign-in and on/off redraw everything; a sync only updates the status line.
+    const shown = { signedIn: cloud.signedIn, enabled: cloud.enabled };
+    let statusRow: Setting | undefined;
+    const statusText = () => `${cloud.status}${cloud.lastSynced ? ` Last sync: ${new Date(cloud.lastSynced).toLocaleString()}.` : ""}`;
+    this.cloudListener = cloud.onChange(() => {
+      if (!el.isConnected) return;
+      if (cloud.signedIn !== shown.signedIn || cloud.enabled !== shown.enabled || !statusRow) refresh();
+      else statusRow.setDesc(statusText());
+    });
     new Setting(el).setName("JotDrop Cloud").setHeading();
     el.createEl("p", { text: "Optional. Sync your JotDrop notes with the website and the Android app, end-to-end encrypted: notes are locked on this device before they leave it. Without the cloud, everything keeps working offline." });
     if (!cloud.signedIn) {
@@ -358,17 +370,19 @@ export class JotDropSettingTab extends PluginSettingTab {
         if (on) cloud.confirmEnable(refresh);
         else void cloud.setEnabled(false).then(refresh);
       }));
-    const last = cloud.lastSynced ? ` Last sync: ${new Date(cloud.lastSynced).toLocaleString()}.` : "";
-    new Setting(el).setName("Status").setDesc(`${cloud.status}${last}`)
+    statusRow = new Setting(el).setName("Status").setDesc(statusText())
       .addButton((button) => button.setButtonText("Sync now").setDisabled(!cloud.enabled).onClick(async () => {
         button.setDisabled(true);
         try { await cloud.syncNow(); } catch (error) { new Notice(error instanceof Error ? error.message : String(error), 10000); }
         finally { button.setDisabled(false); }
       }));
+    this.cloudAccountStop = renderCloudAccount(this.app, el.createDiv(), cloud);
   }
 
   hide(): void {
     this.cloudListener?.();
     this.cloudListener = undefined;
+    this.cloudAccountStop?.();
+    this.cloudAccountStop = undefined;
   }
 }
