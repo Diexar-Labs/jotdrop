@@ -15,6 +15,9 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 
+sys.dont_write_bytecode = True
+from browser_check import use_markdown_editor  # noqa: E402
+
 EMAIL = "timeline@example.com"
 PASSWORD = "synthetic timeline passphrase"
 
@@ -177,6 +180,7 @@ def main():
             threading.Thread(target=read_mail, daemon=True).start()
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(headless=True, channel=sys.argv[1] if len(sys.argv) > 1 else "msedge")
+                use_markdown_editor(browser)
                 try:
                     print(check_timeline(browser, f"http://127.0.0.1:{port}", codes, str(Path(directory) / "cloud.db")))
                 finally:

@@ -2,7 +2,7 @@ import { CloudClient } from '/shared/client.mjs';
 import { accountInfo, approveDevice, attachAccount, changePassword, checkApproval, completeApproval, confirmLogin, confirmSignup, disableTotp, enableTotp, listApprovals, logIn, newRecoveryCode, rejectDevice, requestApproval, resetWithRecoveryCode, setupTotp, signUp, startOver, startReset } from '/shared/account.mjs';
 import { base64ToBytes, bytesToBase64, decodeRecovery, decryptEnvelope, sealLocal, unsealLocal } from '/shared/crypto.mjs';
 import { exportZip } from '/export.mjs';
-import { noteSummary, updateMetadata, toggleTask, attachmentPath, plainPreviewText } from '/note.mjs';
+import { noteSummary, updateMetadata, toggleTask, attachmentPath, plainPreviewText, splitNote, joinNote, noteFilename } from '/note.mjs';
 
 const $ = (id) => document.getElementById(id);
 try {
@@ -33,6 +33,8 @@ let photoJob;
 let voiceJob;
 // The time machine: `moment` holds the files as they were while an earlier moment is shown.
 let moment;
+// Card order of the notes shown, for previous/next in the editor.
+let navOrder = [];
 let momentRequest = 0;
 const moments = new Map();
 const database = new Promise((resolve, reject) => {
@@ -102,6 +104,74 @@ function button(text, action, className) {
   return element;
 }
 
+// Lucide icons (ISC licence), the same set as the plugin's buttons.
+const icons = {
+  pin: '<path d="M12 17v5"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/>',
+  palette: '<circle cx="13.5" cy="6.5" r="1"/><circle cx="17.5" cy="10.5" r="1"/><circle cx="8.5" cy="7.5" r="1"/><circle cx="6.5" cy="12.5" r="1"/><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10c.93 0 1.65-.75 1.65-1.69 0-.44-.18-.84-.44-1.13-.29-.29-.44-.65-.44-1.13a1.64 1.64 0 0 1 1.67-1.67h2c3.05 0 5.56-2.5 5.56-5.55C21.97 6.01 17.46 2 12 2z"/>',
+  tag: '<path d="M12.59 2.59A2 2 0 0 0 11.17 2H4a2 2 0 0 0-2 2v7.17a2 2 0 0 0 .59 1.42l8.7 8.7a2.43 2.43 0 0 0 3.42 0l6.58-6.58a2.43 2.43 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r="1"/>',
+  archive: '<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>',
+  pencil: '<path d="M21.17 6.81a1 1 0 0 0-3.99-3.99L3.84 16.17a2 2 0 0 0-.5.83l-1.32 4.35a.5.5 0 0 0 .62.62l4.35-1.32a2 2 0 0 0 .83-.5z"/><path d="m15 5 4 4"/>',
+  more: '<circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/>',
+};
+
+function iconButton(icon, label, action, className = '') {
+  const element = button('', action, `icon-button ${className}`.trim());
+  element.setAttribute('aria-label', label);
+  element.title = label;
+  element.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${icons[icon]}</svg>`;
+  return element;
+}
+
+// One small popup menu at a time, closed by Escape, an outside click or a choice.
+let openMenu;
+function closeMenu() {
+  if (!openMenu) return;
+  const { menu, anchor, onKey, onPointer } = openMenu;
+  openMenu = undefined;
+  menu.remove();
+  document.removeEventListener('keydown', onKey, true);
+  document.removeEventListener('pointerdown', onPointer, true);
+  if (anchor.isConnected) anchor.focus();
+}
+
+function showMenu(anchor, items) {
+  closeMenu();
+  const menu = document.createElement('div');
+  menu.className = 'card-menu';
+  menu.setAttribute('role', 'menu');
+  for (const item of items) {
+    const entry = document.createElement('button');
+    entry.type = 'button';
+    entry.setAttribute('role', item.checked === undefined ? 'menuitem' : item.radio ? 'menuitemradio' : 'menuitemcheckbox');
+    if (item.checked !== undefined) entry.setAttribute('aria-checked', String(item.checked));
+    if (item.swatch) { const swatch = document.createElement('span'); swatch.className = `swatch note-${item.swatch}`; entry.append(swatch); }
+    entry.append(item.label);
+    if (item.checked) { const mark = document.createElement('span'); mark.className = 'menu-check'; mark.textContent = '✓'; mark.setAttribute('aria-hidden', 'true'); entry.append(mark); }
+    entry.addEventListener('click', () => { closeMenu(); Promise.resolve().then(item.action).catch((error) => message(errorText(error))); });
+    menu.append(entry);
+  }
+  // Inside an open dialog the menu must live in the dialog, or the modal hides it.
+  (anchor.closest('dialog') || document.body).append(menu);
+  const box = anchor.getBoundingClientRect(), size = menu.getBoundingClientRect();
+  menu.style.left = `${Math.max(8, Math.min(box.left, innerWidth - size.width - 8))}px`;
+  menu.style.top = `${box.bottom + size.height + 8 <= innerHeight ? box.bottom + 4 : Math.max(8, box.top - size.height - 4)}px`;
+  const onKey = (event) => {
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeMenu(); }
+    else if (['ArrowDown', 'ArrowUp'].includes(event.key)) {
+      const entries = [...menu.children], index = entries.indexOf(document.activeElement);
+      entries[(index + (event.key === 'ArrowDown' ? 1 : entries.length - 1)) % entries.length].focus();
+      event.preventDefault();
+    }
+  };
+  const onPointer = (event) => { if (!menu.contains(event.target) && !anchor.contains(event.target)) closeMenu(); };
+  document.addEventListener('keydown', onKey, true);
+  document.addEventListener('pointerdown', onPointer, true);
+  openMenu = { menu, anchor, onKey, onPointer };
+  menu.firstChild?.focus();
+}
+
+const colorNames = [['default', 'Default'], ['red', 'Red'], ['orange', 'Orange'], ['yellow', 'Yellow'], ['green', 'Cream'], ['teal', 'Slate blue'], ['blue', 'Blue'], ['purple', 'Purple'], ['pink', 'Pink'], ['brown', 'Brown'], ['gray', 'Gray']];
+
 function paragraph(text, className) {
   const element = document.createElement('p');
   element.textContent = text;
@@ -148,6 +218,7 @@ const gridSpans = new ResizeObserver((entries) => {
 });
 
 function render() {
+  closeMenu();
   for (const url of mediaUrls) URL.revokeObjectURL(url);
   mediaUrls.clear();
   gridSpans.disconnect();
@@ -198,6 +269,7 @@ function render() {
     empty.append(heading, paragraph(query ? 'Try a different word or filename.' : view === 'notes' ? 'Create a note or upload a Markdown file. Existing notes on your computer are never imported automatically.' : view === 'files' ? 'Upload an image, recording, or document. This local preview accepts files up to 4 MiB each.' : 'Files you move to trash will appear here.'));
     $('items').append(empty);
   }
+  navOrder = matching.filter((entry) => !entry.deleted && isMarkdown(entry.file.path)).map((entry) => entry.id);
   const sections = view === 'notes' && matching.some((entry) => isMarkdown(entry.file.path) && noteParts(noteText(entry.file), entry.file.path).pinned);
   let section;
   for (const entry of matching) {
@@ -215,7 +287,8 @@ function render() {
       $('items').append(heading);
     }
     title.textContent = markdown ? plainPreviewText(parts.title) : parts.title;
-    card.append(title);
+    // Like the plugin: a note without a heading shows its text, not its filename.
+    if (!markdown || /^#\s+.+$/m.test(parts.body) || !parts.body.trim()) card.append(title);
     if (markdown) {
       const fullText = noteText(entry.file);
       const bodyOffset = fullText.slice(0, fullText.length - parts.body.length).split('\n').length - 1;
@@ -269,11 +342,31 @@ function render() {
     // An earlier moment is read-only; the time machine restores it as a whole.
     const actions = document.createElement('div');
     actions.className = 'card-actions';
+    const save = () => download(base64ToBytes(entry.file.content), entry.file.path);
     if (entry.deleted) actions.append(button('Restore', () => restoreEntry(entry)));
-    else {
-      if (markdown) actions.append(button('Open note', () => openEditor(entry)));
-      if (markdown) actions.append(button(view === 'trash' ? 'Restore note' : view === 'archive' ? 'Unarchive' : 'Archive', () => moveArchive(entry), 'archive-note'));
-      actions.append(button('Download', () => download(base64ToBytes(entry.file.content), entry.file.path)));
+    else if (markdown && view !== 'trash') {
+      // The plugin's card bar: edit, color, labels, archive and a menu with the rest.
+      if (view === 'notes' && !moment) {
+        const pin = iconButton('pin', parts.pinned ? 'Unpin' : 'Pin', () => changeNote(entry, { pinned: parts.pinned ? null : true }), 'card-pin');
+        pin.setAttribute('aria-pressed', String(Boolean(parts.pinned)));
+        card.append(pin);
+      }
+      const color = iconButton('palette', 'Color', () => showMenu(color, colorNames.map(([value, label]) => ({
+        label, swatch: value, radio: true, checked: parts.color === value, action: () => changeNote(entry, { color: value === 'default' ? null : value }),
+      }))));
+      const labels = iconButton('tag', 'Labels', () => showMenu(labels, [
+        ...allLabels().map((label) => ({ label, checked: parts.labels.some((own) => own.toLowerCase() === label.toLowerCase()), action: () => toggleLabel(entry, parts.labels, label) })),
+        { label: 'New label…', action: () => { const label = prompt('Label name')?.trim(); if (label) return toggleLabel(entry, parts.labels, label); } },
+      ]));
+      const more = iconButton('more', 'More', () => showMenu(more, [
+        { label: 'Download', action: save },
+        { label: 'Move to trash', action: () => deleteEntry(entry) },
+      ]));
+      actions.append(iconButton('pencil', 'Open note', () => openEditor(entry)), color, labels,
+        iconButton('archive', view === 'archive' ? 'Unarchive' : 'Archive', () => moveArchive(entry), 'archive-note'), more);
+    } else {
+      if (markdown) actions.append(button('Open note', () => openEditor(entry)), button('Restore note', () => moveArchive(entry), 'archive-note'));
+      actions.append(button('Download', save));
       if (!markdown) actions.append(button('Move to trash', () => deleteEntry(entry), 'danger'));
     }
     if (!moment) card.append(actions);
@@ -283,6 +376,24 @@ function render() {
     $('items').append(card);
   }
   for (const child of $('items').children) gridSpans.observe(child);
+}
+
+// Card actions write the same frontmatter as the editor, on the version shown.
+async function changeNote(entry, changes) {
+  if (files.get(entry.id) !== entry) throw new Error('This note changed. Sync and try again.');
+  await queueFile(entry.file.path, encoder.encode(updateMetadata(noteText(entry.file), changes)), entry.revision);
+}
+
+function allLabels() {
+  const labels = new Map();
+  for (const entry of files.values()) if (!entry.deleted && isMarkdown(entry.file.path)) for (const label of noteParts(noteText(entry.file), entry.file.path).labels) labels.set(label.toLowerCase(), label);
+  return [...labels.values()].sort((a, b) => a.localeCompare(b));
+}
+
+function toggleLabel(entry, current, label) {
+  const has = current.some((own) => own.toLowerCase() === label.toLowerCase());
+  const next = has ? current.filter((own) => own.toLowerCase() !== label.toLowerCase()) : [...current, label];
+  return changeNote(entry, { jotdrop_labels: next.length ? next : null });
 }
 
 async function cacheEntry(entry) {
@@ -501,42 +612,261 @@ function openEditor(entry) {
   editingRevision = entry?.revision;
   $('note-path').value = entry?.file.path || `notes/${new Date().toISOString().replace(/[:.]/g, '-')}-${crypto.randomUUID().slice(0, 8)}.md`;
   $('note-path').readOnly = Boolean(entry);
-  $('note-content').value = entry ? noteText(entry.file) : '# Untitled\n\n';
+  pathTyped = false;
+  $('note-content').value = entry ? noteText(entry.file) : '';
+  syncSimple();
   refreshProperties();
   $('editor-message').textContent = 'Changes are saved only when you select Save note.';
   $('history').hidden = true;
   $('history-list').replaceChildren();
   for (const id of ['note-history', 'note-download', 'note-delete']) $(id).hidden = !entry;
-  $('editor').showModal();
-  $('note-content').focus();
+  const index = entry ? navOrder.indexOf(entry.id) : -1;
+  $('note-prev').hidden = $('note-next').hidden = index < 0 || navOrder.length < 2;
+  $('note-prev').disabled = index <= 0;
+  $('note-next').disabled = index >= navOrder.length - 1;
+  if (!$('editor').open) $('editor').showModal();
+  (markdownMode ? $('note-content') : entry ? $('note-body') : $('note-title')).focus();
 }
 
+// The Markdown file in #note-content is the single source; title, text and the controls edit it.
+let markdownMode = false;
+let pathTyped = false;
+$('note-path').addEventListener('input', () => { pathTyped = true; });
+try { markdownMode = localStorage.getItem('jotdrop-editor-mode') === 'markdown'; } catch { /* The simple editor is the default. */ }
+function setMarkdownMode(on) {
+  markdownMode = on;
+  $('markdown-mode').setAttribute('aria-pressed', String(on));
+  $('markdown-editor').hidden = !on;
+  $('simple-editor').hidden = on;
+  if (!on) syncSimple();
+  try { localStorage.setItem('jotdrop-editor-mode', on ? 'markdown' : 'simple'); } catch { /* Keep the choice for this page. */ }
+}
+setMarkdownMode(markdownMode);
+$('markdown-mode').addEventListener('click', () => setMarkdownMode(!markdownMode));
+
+function syncSimple() {
+  const { title, body } = splitNote($('note-content').value);
+  $('note-title').value = title;
+  $('note-body').value = body;
+}
+function syncRaw() {
+  $('note-content').value = joinNote({ front: splitNote($('note-content').value).front, title: $('note-title').value, body: $('note-body').value });
+  refreshProperties();
+}
+$('note-title').addEventListener('input', syncRaw);
+$('note-body').addEventListener('input', syncRaw);
+$('note-title').addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); $('note-body').focus(); } });
+$('note-content').addEventListener('input', refreshProperties);
+// Voice memos and recognized text are added to the end of the note in either view.
+function appendToNote(text) {
+  $('note-content').value += text;
+  syncSimple();
+  refreshProperties();
+}
+
+function changeProperties(changes) {
+  try {
+    if (changes.reminder === null) for (const field of ['reminder_repeat', 'reminder_until', 'reminder_limit', 'reminder_done']) changes[field] = null;
+    if ('reminder' in changes || 'reminder_repeat' in changes) changes.reminder_done = null;
+    $('note-content').value = updateMetadata($('note-content').value, changes);
+    $('editor-message').textContent = 'Changes are saved only when you select Save note.';
+  } catch (error) { $('editor-message').textContent = errorText(error); }
+  refreshProperties();
+}
+
+for (const [value, label] of colorNames) {
+  const swatch = document.createElement('button');
+  swatch.type = 'button';
+  swatch.className = `swatch note-${value}`;
+  swatch.setAttribute('role', 'radio');
+  swatch.setAttribute('aria-label', label);
+  swatch.title = label;
+  swatch.dataset.color = value;
+  swatch.addEventListener('click', () => changeProperties({ color: value === 'default' ? null : value }));
+  $('note-colors').append(swatch);
+}
+
+function chips(container, values, prefix, onRemove) {
+  container.replaceChildren(...values.map((value) => {
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.append(`${prefix}${value}`);
+    const remove = button('×', () => onRemove(value));
+    remove.setAttribute('aria-label', `Remove ${prefix}${value}`);
+    chip.append(remove);
+    return chip;
+  }));
+}
+
+let repeatShown;
 function refreshProperties() {
   const parts = noteParts($('note-content').value, $('note-path').value);
-  $('note-labels').value = parts.labels.join('\n');
-  $('note-color').value = parts.color;
-  $('note-pinned').checked = parts.pinned;
+  $('note-pinned').setAttribute('aria-pressed', String(parts.pinned));
+  for (const swatch of $('note-colors').children) swatch.setAttribute('aria-checked', String(swatch.dataset.color === parts.color));
+  // The chosen color is also named in text, so it never depends on seeing color.
+  $('color-name').textContent = colorNames.find(([value]) => value === parts.color)[1];
+  chips($('label-chips'), parts.labels, '', (label) => changeProperties({ jotdrop_labels: parts.labels.filter((own) => own !== label).length ? parts.labels.filter((own) => own !== label) : null }));
+  chips($('tag-chips'), parts.tags, '#', (tag) => changeProperties({ tags: parts.tags.filter((own) => own !== tag).length ? parts.tags.filter((own) => own !== tag) : null }));
+  $('label-options').replaceChildren(...allLabels().map((label) => new Option(label)));
+  $('tag-options').replaceChildren(...allTags().map((tag) => new Option(tag)));
   $('note-order').value = parts.order ?? '';
   $('note-reminder').value = parts.reminder;
-  $('note-repeat').value = parts.repeat;
+  // Re-render the repeat picker only when its value changed, so typing in it keeps focus.
+  const key = JSON.stringify([parts.reminder ? 1 : 0, parts.repeat, parts.until, parts.limit]);
+  if (key !== repeatShown) { repeatShown = key; renderRepeat(parts); }
 }
 
-for (const [id, key] of [['note-labels', 'jotdrop_labels'], ['note-color', 'color'], ['note-pinned', 'pinned'], ['note-order', 'order'], ['note-reminder', 'reminder'], ['note-repeat', 'reminder_repeat']]) $(id).addEventListener('change', () => {
-  try {
-    const input = $(id);
-    let value = input.type === 'checkbox' ? input.checked : input.value.trim();
-    if (key === 'jotdrop_labels') value = [...new Map(value.split('\n').map((label) => label.trim()).filter(Boolean).map((label) => [label.toLowerCase(), label])).values()];
-    if (key === 'order' && value !== '') { value = Number(value); if (!Number.isFinite(value)) throw new Error('Manual position must be a finite number.'); }
-    if (key === 'reminder_repeat' && value && !/^(daily|monthly|yearly|weekly:[1-7](,[1-7])*|every:[1-9]\d*:(days|weeks|months)|ordinal:[1-5]:[1-7])$/.test(value)) throw new Error('Use daily, weekly:1,3,5, monthly, yearly, every:N:days|weeks|months, or ordinal:K:weekday.');
-    const changes = { [key]: value === '' || value === false || Array.isArray(value) && !value.length ? null : value };
-    if (key === 'reminder' && !value) for (const field of ['reminder_repeat', 'reminder_until', 'reminder_limit', 'reminder_done']) changes[field] = null;
-    if (key === 'reminder' || key === 'reminder_repeat') changes.reminder_done = null;
-    $('note-content').value = updateMetadata($('note-content').value, changes);
-    $('editor-message').textContent = 'Properties updated in Markdown. Select Save note to keep them.';
-    refreshProperties();
-  } catch (error) { $('editor-message').textContent = errorText(error); refreshProperties(); }
+function allTags() {
+  const tags = new Map();
+  for (const entry of files.values()) if (!entry.deleted && isMarkdown(entry.file.path)) for (const tag of noteParts(noteText(entry.file), entry.file.path).tags) tags.set(tag.toLowerCase(), tag);
+  return [...tags.values()].sort((a, b) => a.localeCompare(b));
+}
+
+for (const [id, field] of [['label-input', 'labels'], ['tag-input', 'tags']]) {
+  const add = () => {
+    let value = $(id).value.trim();
+    // Tags are single words, as in Obsidian.
+    if (field === 'tags') value = value.replace(/^#/, '').replace(/\s+/g, '-');
+    $(id).value = '';
+    if (!value) return;
+    const parts = noteParts($('note-content').value, $('note-path').value);
+    const current = field === 'tags' ? parts.tags : parts.labels;
+    if (current.some((own) => own.toLowerCase() === value.toLowerCase())) return;
+    changeProperties({ [field === 'tags' ? 'tags' : 'jotdrop_labels']: [...current, value] });
+  };
+  $(id).addEventListener('keydown', (event) => { if (event.key === 'Enter' || event.key === ',') { event.preventDefault(); add(); } });
+  $(id).addEventListener('change', add);
+}
+
+$('note-pinned').addEventListener('click', () => changeProperties({ pinned: $('note-pinned').getAttribute('aria-pressed') === 'true' ? null : true }));
+$('note-reminder').addEventListener('change', () => changeProperties({ reminder: $('note-reminder').value || null }));
+$('clear-reminder').addEventListener('click', () => changeProperties({ reminder: null }));
+$('note-order').addEventListener('change', () => {
+  const value = $('note-order').value.trim();
+  if (value !== '' && !Number.isFinite(Number(value))) { $('editor-message').textContent = 'Manual position must be a finite number.'; refreshProperties(); return; }
+  changeProperties({ order: value === '' ? null : Number(value) });
 });
-$('note-content').addEventListener('input', refreshProperties);
+
+// The plugin's repeat picker: type, its details, and when it ends. Writes reminder_repeat/until/limit.
+function renderRepeat(parts) {
+  const root = $('repeat-editor');
+  root.replaceChildren();
+  const make = (tag, props = {}) => Object.assign(document.createElement(tag), props);
+  const select = (label, options, value, onChange) => {
+    const element = make('select');
+    element.setAttribute('aria-label', label);
+    element.append(...options.map(([optionValue, text]) => new Option(text, optionValue)));
+    element.value = value;
+    element.addEventListener('change', () => onChange(element.value));
+    return element;
+  };
+  const repeat = parts.repeat;
+  const type = !repeat ? 'none' : repeat.split(':')[0];
+  const row = make('div', { className: 'repeat-row' });
+  const typeLabel = make('label', { textContent: 'Repeat', htmlFor: 'repeat-type' });
+  const typeSelect = select('Repeat', [['none', 'None'], ['daily', 'Daily'], ['weekly', 'Weekly'], ['monthly', 'Monthly'], ['yearly', 'Yearly'], ['every', 'Every'], ['ordinal', 'On the']], type, (value) => {
+    changeProperties(value === 'none' ? { reminder_repeat: null, reminder_until: null, reminder_limit: null } : { reminder_repeat: { daily: 'daily', weekly: 'weekly:1', monthly: 'monthly', yearly: 'yearly', every: 'every:1:days', ordinal: 'ordinal:1:1' }[value] });
+  });
+  typeSelect.id = 'repeat-type';
+  typeSelect.disabled = !parts.reminder;
+  row.append(typeLabel, typeSelect);
+  root.append(row);
+  if (!parts.reminder) { root.append(paragraph('Set a reminder first to repeat it.', 'editor-hint')); return; }
+  const weekdays = [[1, 'Mon'], [2, 'Tue'], [3, 'Wed'], [4, 'Thu'], [5, 'Fri'], [6, 'Sat'], [7, 'Sun']];
+  if (type === 'weekly') {
+    const chosen = new Set(repeat.slice(7).split(',').map(Number));
+    const days = make('div', { className: 'repeat-row' });
+    for (const [day, label] of weekdays) {
+      const toggle = button(label, () => {
+        const next = new Set(chosen);
+        if (next.has(day)) next.delete(day); else next.add(day);
+        if (next.size) changeProperties({ reminder_repeat: `weekly:${[...next].sort((a, b) => a - b).join(',')}` });
+      }, 'weekday');
+      toggle.setAttribute('aria-pressed', String(chosen.has(day)));
+      days.append(toggle);
+    }
+    root.append(days);
+  } else if (type === 'every') {
+    const [, n = '1', unit = 'days'] = repeat.split(':');
+    const count = make('input', { type: 'number', min: '1', max: '999', step: '1', value: n });
+    count.setAttribute('aria-label', 'Every how many');
+    const units = select('Unit', [['days', 'days'], ['weeks', 'weeks'], ['months', 'months']], unit, (value) => changeProperties({ reminder_repeat: `every:${count.value}:${value}` }));
+    count.addEventListener('change', () => { const value = Math.trunc(Number(count.value)); if (value >= 1 && value <= 999) changeProperties({ reminder_repeat: `every:${value}:${units.value}` }); else refreshProperties(); });
+    const row = make('div', { className: 'repeat-row' });
+    row.append(count, units);
+    root.append(row);
+  } else if (type === 'ordinal') {
+    const [, k = '1', day = '1'] = repeat.split(':');
+    const which = select('Which week', [['1', '1st'], ['2', '2nd'], ['3', '3rd'], ['4', '4th'], ['5', 'Last']], k, (value) => changeProperties({ reminder_repeat: `ordinal:${value}:${weekday.value}` }));
+    const weekday = select('Weekday', weekdays.map(([value, label]) => [String(value), label]), day, (value) => changeProperties({ reminder_repeat: `ordinal:${which.value}:${value}` }));
+    const row = make('div', { className: 'repeat-row' });
+    row.append(which, weekday);
+    root.append(row);
+  }
+  if (type === 'none') return;
+  const ends = make('div', { className: 'repeat-row' });
+  const endType = parts.limit ? 'after' : parts.until ? 'until' : 'never';
+  ends.append(make('span', { textContent: 'Ends' }), select('Ends', [['never', 'Never'], ['after', 'After a number of times'], ['until', 'On date']], endType, (value) => {
+    changeProperties(value === 'never' ? { reminder_until: null, reminder_limit: null } : value === 'after' ? { reminder_until: null, reminder_limit: 10 } : { reminder_limit: null, reminder_until: (parts.reminder || new Date().toISOString()).slice(0, 10) });
+  }));
+  if (endType === 'after') {
+    const times = make('input', { type: 'number', min: '1', max: '9999', step: '1', value: parts.limit });
+    times.setAttribute('aria-label', 'Number of times');
+    times.addEventListener('change', () => { const value = Math.trunc(Number(times.value)); if (value >= 1) changeProperties({ reminder_limit: value }); else refreshProperties(); });
+    ends.append(times);
+  } else if (endType === 'until') {
+    const date = make('input', { type: 'date', value: parts.until });
+    date.setAttribute('aria-label', 'End date');
+    date.addEventListener('change', () => { if (date.value) changeProperties({ reminder_until: date.value }); });
+    ends.append(date);
+  }
+  root.append(ends);
+}
+
+// Checklist button, as in the plugin and Android: toggle the line's checkbox or start one.
+$('insert-checklist').addEventListener('click', () => {
+  const area = markdownMode ? $('note-content') : $('note-body');
+  const value = area.value, caret = area.selectionStart ?? value.length;
+  const lineStart = value.lastIndexOf('\n', caret - 1) + 1, next = value.indexOf('\n', caret), lineEnd = next < 0 ? value.length : next;
+  const line = value.slice(lineStart, lineEnd);
+  const updated = /^- \[ \]/.test(line) ? `- [x]${line.slice(5)}` : /^- \[[xX]\]/.test(line) ? `- [ ]${line.slice(5)}` : `- [ ] ${line}`;
+  area.value = value.slice(0, lineStart) + updated + value.slice(lineEnd);
+  area.selectionStart = area.selectionEnd = caret + (updated.length - line.length);
+  area.focus();
+  area.dispatchEvent(new Event('input'));
+});
+
+// Insert link: a [[wikilink]] to another note, by its name when that is unique (Obsidian's convention).
+$('insert-link').addEventListener('click', () => {
+  const notes = [...files.values()].filter((entry) => !entry.deleted && isMarkdown(entry.file.path) && entry.file.path !== $('note-path').value);
+  const name = (path) => path.split('/').pop().replace(/\.md$/i, '');
+  const area = markdownMode ? $('note-content') : $('note-body');
+  const start = area.selectionStart ?? area.value.length, end = area.selectionEnd ?? start;
+  showMenu($('insert-link'), notes.length ? notes.map((entry) => ({
+    label: noteParts(noteText(entry.file), entry.file.path).title,
+    action: () => {
+      const unique = notes.filter((other) => name(other.file.path) === name(entry.file.path)).length === 1;
+      const link = `[[${unique ? name(entry.file.path) : entry.file.path.replace(/\.md$/i, '')}]]`;
+      area.value = area.value.slice(0, start) + link + area.value.slice(end);
+      area.selectionStart = area.selectionEnd = start + link.length;
+      area.focus();
+      area.dispatchEvent(new Event('input'));
+    },
+  })).sort((a, b) => a.label.localeCompare(b.label)) : [{ label: 'No other notes yet', action: () => {} }]);
+});
+
+// Previous/next follow the card order, like the plugin; unsaved edits are saved first.
+async function navigateEditor(delta) {
+  const target = files.get(navOrder[navOrder.indexOf(editing?.id) + delta]);
+  if (!target) return;
+  if ($('note-content').value !== noteText(editing.file) && !await saveEditor()) return;
+  openEditor(files.get(target.id) || target);
+}
+$('note-prev').addEventListener('click', () => void navigateEditor(-1));
+$('note-next').addEventListener('click', () => void navigateEditor(1));
+$('editor').addEventListener('keydown', (event) => {
+  if (event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight') && !$('note-prev').hidden) { event.preventDefault(); void navigateEditor(event.key === 'ArrowLeft' ? -1 : 1); }
+});
 
 function discardVoice() {
   if (voiceJob) {
@@ -558,7 +888,7 @@ async function keepVoice() {
     if (job.blob.size > 4 * 1024 * 1024) throw new Error('This recording exceeds 4 MiB. Download it before closing this note.');
     await queueFile(job.path, new Uint8Array(await job.blob.arrayBuffer()));
     if (voiceJob !== job || job.generation !== generation || !$('editor').open) return;
-    $('note-content').value += `\n\n[Voice memo](${'../'.repeat($('note-path').value.split('/').length - 1)}${job.path})\n`;
+    appendToNote(`\n\n[Voice memo](${'../'.repeat($('note-path').value.split('/').length - 1)}${job.path})\n`);
     discardVoice();
     $('voice-message').textContent = 'Recording kept as an encrypted attachment. Select Save note to keep its link.';
   } catch (error) {
@@ -605,7 +935,7 @@ $('retry-voice').addEventListener('click', () => { void keepVoice(); });
 $('download-voice').addEventListener('click', async () => { if (voiceJob?.blob) download(new Uint8Array(await voiceJob.blob.arrayBuffer()), voiceJob.path, voiceJob.blob.type); });
 
 function closeEditor() {
-  const original = editing ? noteText(editing.file) : '# Untitled\n\n';
+  const original = editing ? noteText(editing.file) : '';
   if (($('note-content').value !== original || voiceJob) && !confirm('Close without saving these edits or recording?')) return;
   discardVoice();
   resetPhoto();
@@ -1169,7 +1499,7 @@ async function recognizePhoto(photo) {
     const path = `attachments/photo-${crypto.randomUUID()}.${extension}`;
     await queueFile(path, bytes);
     if (!current()) return;
-    $('note-content').value += `\n\n![Source photo](../${path})\n`;
+    appendToNote(`\n\n![Source photo](../${path})\n`);
     $('photo-message').textContent = 'Loading local text recognition. Your source photo is kept in Files.';
     $('cancel-ocr').hidden = false;
     job.worker = new Worker('/ocr-worker.js', { type: 'module' });
@@ -1185,7 +1515,7 @@ async function recognizePhoto(photo) {
       if (data.error) { failed(); return; }
       if (typeof data.text === 'string') {
         const text = data.text.trim();
-        if (text) $('note-content').value += `\n${text}\n`;
+        if (text) appendToNote(`\n${text}\n`);
         finish(text ? 'Review the recognized text, correct any mistakes, then select Save note. The source photo is kept.' : 'No text was recognized. The source photo is kept in Files and linked here. Try a clearer photo, or enter text manually.');
       } else if (data.status) $('photo-message').textContent = `Local OCR: ${data.status} ${Math.round((data.progress || 0) * 100)}%. Source photo kept.`;
     };
@@ -1243,19 +1573,31 @@ $('photo-upload').addEventListener('change', async () => {
 });
 $('close-editor').addEventListener('click', closeEditor);
 $('editor').addEventListener('cancel', (event) => { event.preventDefault(); closeEditor(); });
+async function saveEditor() {
+  try {
+    if (photoJob || voiceJob) throw new Error('Finish text recognition or keep your recording before saving the note.');
+    // A new note is named like in the plugin and Android, unless a filename was typed.
+    if (!editing && !pathTyped) {
+      const name = noteFilename($('note-content').value);
+      let path = `notes/${name}`;
+      for (let copy = 2; [...files.values()].some((entry) => entry.file.path === path); copy++) path = `notes/${name.slice(0, -3)} ${copy}.md`;
+      $('note-path').value = path;
+    }
+    if (!isMarkdown($('note-path').value)) throw new Error('Notes must use a .md filename.');
+    await queueFile($('note-path').value, encoder.encode($('note-content').value), editingRevision);
+    return true;
+  } catch (error) { $('editor-message').textContent = errorText(error); return false; }
+}
 $('editor-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   event.submitter.disabled = true;
   try {
-    if (photoJob || voiceJob) throw new Error('Finish text recognition or keep your recording before saving the note.');
-    if (!isMarkdown($('note-path').value)) throw new Error('Notes must use a .md filename.');
-    await queueFile($('note-path').value, encoder.encode($('note-content').value), editingRevision);
+    if (!await saveEditor()) return;
     resetPhoto();
     $('editor').close();
     $('note-content').value = '';
     editing = undefined;
-  } catch (error) { $('editor-message').textContent = errorText(error); }
-  finally { event.submitter.disabled = false; }
+  } finally { event.submitter.disabled = false; }
 });
 $('note-download').addEventListener('click', () => download(encoder.encode($('note-content').value), $('note-path').value, 'text/markdown'));
 $('note-delete').addEventListener('click', async () => {
@@ -1417,7 +1759,7 @@ window.addEventListener('online', () => { if (client) void sync(); });
 window.addEventListener('pagehide', () => { syncController?.abort(); resetPhoto(); discardVoice(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) { stopCamera(); if (voiceJob?.recorder?.state === 'recording') voiceJob.recorder.stop(); } });
 window.addEventListener('beforeunload', (event) => {
-  const unsaved = $('editor').open && (voiceJob || $('note-content').value !== (editing ? noteText(editing.file) : '# Untitled\n\n'));
+  const unsaved = $('editor').open && (voiceJob || $('note-content').value !== (editing ? noteText(editing.file) : ''));
   if (unsaved) { event.preventDefault(); event.returnValue = ''; }
 });
 setInterval(() => {

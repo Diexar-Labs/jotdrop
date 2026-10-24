@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { noteSummary, updateMetadata, toggleTask, attachmentPath, plainPreviewText } from './note.mjs';
+import { noteSummary, updateMetadata, toggleTask, attachmentPath, plainPreviewText, splitNote, joinNote, noteFilename } from './note.mjs';
 
 test('browser reads canonical plugin/Android labels without treating tags or body hashtags as labels', () => {
   const markdown = '---\ntags: [not-a-label]\njotdrop_labels:\n  - Work\n  - "Work: notes"\n  - work\ncolor: teal\npinned: true\nunknown_key: preserve\n---\n\n# Heading\n\nText #not-a-label';
@@ -51,4 +51,32 @@ test('cards show plain text without Markdown marks, like the plugin', () => {
     '# not a heading, *star*, <tag>, 1986.', 'quoted text', 'Callout title', '> - [ ] quoted task', 'Name · Qty', 'Milk · 2 | 3', 'const x = **y**;', '- [ ] buy milk', '* bullet emph', 'line break',
     '[[Wiki|alias]] and [label](https://x.y)'].join('\n');
   assert.equal(plainPreviewText(marked), plain);
+});
+
+test('editor reads frontmatter tags in every YAML form and writes them like labels', () => {
+  assert.deepEqual(noteSummary('---\ntags: [a, "#b", a]\n---\nx', 'n.md').tags, ['a', 'b']);
+  assert.deepEqual(noteSummary('---\ntags:\n  - x\n  - "y z"\n---\nx', 'n.md').tags, ['x', 'y z']);
+  assert.deepEqual(noteSummary('---\ntags: one, two\n---\nx', 'n.md').tags, ['one', 'two']);
+  assert.deepEqual(noteSummary('---\njotdrop_labels: [a, b]\n---\nx #inline', 'n.md').tags, []);
+  const changed = updateMetadata('---\ncustom: 1\ntags:\n  - old\n---\nBody #inline', { tags: ['new', 'two'] });
+  assert.equal(changed, '---\ncustom: 1\ntags: ["new","two"]\n---\nBody #inline');
+  assert.deepEqual(noteSummary(changed, 'n.md').tags, ['new', 'two']);
+  assert.equal(updateMetadata(changed, { tags: null }), '---\ncustom: 1\n---\nBody #inline');
+});
+
+test('editor splits a note into frontmatter, title and text and joins it back', () => {
+  const note = '---\r\ncustom: x\r\n---\r\n# Shopping list\r\n\r\n- [ ] milk\r\n';
+  assert.deepEqual(splitNote(note), { front: '---\r\ncustom: x\r\n---\r\n', title: 'Shopping list', body: '- [ ] milk\r\n' });
+  assert.deepEqual(splitNote('Just text\n# Not a title'), { front: '', title: '', body: 'Just text\n# Not a title' });
+  assert.deepEqual(splitNote('# Only'), { front: '', title: 'Only', body: '' });
+  assert.equal(joinNote({ front: '', title: 'A\ntitle ', body: 'text' }), '# A title\n\ntext');
+  assert.equal(joinNote({ front: '---\na: 1\n---\n', title: '', body: 'text' }), '---\na: 1\n---\ntext');
+  for (const text of ['# T\n\nBody', '---\na: 1\n---\n# T\n\nBody', 'Body only']) assert.equal(joinNote(splitNote(text)), text);
+});
+
+test('new notes get the plugin and Android filename from their first words', () => {
+  const date = new Date(2026, 9, 24, 9, 5, 7);
+  assert.equal(noteFilename('---\npinned: true\n---\n# Shopping: list?\n\nmilk', date), '2026-10-24 090507 Shopping list.md');
+  assert.equal(noteFilename('\n![[photo.png]]\n- [ ] Call *mum* about (dinner)', date), '2026-10-24 090507 Call mum about dinner.md');
+  assert.equal(noteFilename('', date), '2026-10-24 090507.md');
 });

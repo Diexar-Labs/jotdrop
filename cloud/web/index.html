@@ -205,17 +205,25 @@
 
   <dialog id="editor" aria-labelledby="editor-title">
     <form id="editor-form">
-      <div class="dialog-heading"><h2 id="editor-title">Edit note</h2><button id="close-editor" type="button" aria-label="Close editor">Close</button></div>
-      <label for="note-path">Filename</label><input id="note-path" required maxlength="512" spellcheck="false">
-      <details id="note-properties"><summary>Labels, color &amp; reminder</summary>
-        <label for="note-labels">Labels (one per line)</label><textarea id="note-labels" rows="2" maxlength="4096"></textarea>
-        <div class="property-row"><label for="note-color">Color<select id="note-color"><option value="default">Default</option><option value="red">Red</option><option value="orange">Orange</option><option value="yellow">Yellow</option><option value="green">Cream</option><option value="teal">Slate blue</option><option value="blue">Blue</option><option value="purple">Purple</option><option value="pink">Pink</option><option value="brown">Brown</option><option value="gray">Gray</option></select></label><label class="check-label"><input id="note-pinned" type="checkbox">Pinned</label></div>
-        <label for="note-order">Manual position (lower comes first)</label><input id="note-order" type="number" step="any">
-        <label for="note-reminder">Reminder (local date and time)</label><input id="note-reminder" type="datetime-local">
-        <label for="note-repeat">Repeat</label><input id="note-repeat" list="repeat-options" placeholder="No repeat"><datalist id="repeat-options"><option value="daily"><option value="weekly:1,3,5"><option value="monthly"><option value="yearly"></datalist>
-        <p>Reminder metadata syncs to Android. This browser does not deliver alarms in the background. Android must sync and schedule the note. Advanced repeat limits remain editable in Markdown.</p>
-      </details>
-      <label for="note-content">Markdown content</label><textarea id="note-content" rows="14" spellcheck="true"></textarea>
+      <div class="dialog-heading"><h2 id="editor-title">Edit note</h2>
+        <div class="editor-heading-actions"><button id="note-prev" type="button">Previous</button><button id="note-next" type="button">Next</button><button id="markdown-mode" type="button" aria-pressed="false">Markdown</button><button id="close-editor" type="button" aria-label="Close editor">Close</button></div></div>
+      <!-- Like the plugin editor: title and text. The Markdown view shows the whole file. -->
+      <div id="simple-editor">
+        <label for="note-title">Title</label><input id="note-title" maxlength="300" placeholder="Title (optional)" autocomplete="off">
+        <label for="note-body">Note</label><textarea id="note-body" rows="12" spellcheck="true"></textarea>
+      </div>
+      <div id="markdown-editor" hidden>
+        <label for="note-path">Filename</label><input id="note-path" required maxlength="512" spellcheck="false">
+        <label for="note-content">Markdown content</label><textarea id="note-content" rows="14" spellcheck="true"></textarea>
+      </div>
+      <div class="editor-tools"><button id="note-pinned" type="button" aria-pressed="false">Pin</button><button id="insert-checklist" type="button">Checklist item</button><button id="insert-link" type="button">Insert link</button></div>
+      <div class="editor-colors"><span>Color</span><div id="note-colors" class="swatches" role="radiogroup" aria-label="Color"></div><span id="color-name" aria-hidden="true"></span></div>
+      <div class="chip-field"><label for="label-input">Labels</label><div class="chips" id="label-chips"></div><input id="label-input" list="label-options" placeholder="Add label" autocomplete="off" maxlength="80"><datalist id="label-options"></datalist></div>
+      <div class="chip-field"><label for="tag-input">Tags</label><div class="chips" id="tag-chips"></div><input id="tag-input" list="tag-options" placeholder="Add tag" autocomplete="off" maxlength="80"><datalist id="tag-options"></datalist></div>
+      <div class="reminder-row"><label for="note-reminder">Reminder</label><input id="note-reminder" type="datetime-local"><button id="clear-reminder" type="button">Clear</button></div>
+      <div id="repeat-editor" class="repeat-editor"></div>
+      <p class="editor-hint">Reminders sync to Android, which rings them. This browser does not ring reminders in the background.</p>
+      <label for="note-order">Manual position (lower comes first)</label><input id="note-order" type="number" step="any">
       <div class="photo-actions"><button id="start-voice" type="button">Record voice memo</button><button id="stop-voice" type="button" hidden>Stop &amp; keep recording</button><button id="retry-voice" type="button" hidden>Retry keeping recording</button><button id="download-voice" type="button" hidden>Download recording</button></div>
       <p id="voice-message" role="status" aria-live="polite">Voice recording needs HTTPS or localhost and microphone permission. You can also upload an existing recording.</p>
       <details id="photo-tools">

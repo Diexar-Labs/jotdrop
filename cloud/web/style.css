@@ -75,20 +75,32 @@ main { min-width: 0; padding: 0 2rem 3rem; }
 #note-properties summary { cursor: pointer; padding-top: 1rem; font-weight: 600; }
 #note-properties p, #voice-message { color: var(--muted); font-size: .9rem; }
 .note-card.is-pending { border-style: dashed; }
-.note-card.note-red { --note: light-dark(#fbe5e4, #432d30); }
-.note-card.note-orange { --note: light-dark(#fcebd9, #433526); }
-.note-card.note-yellow { --note: light-dark(#fff4ca, #403b25); }
-.note-card.note-green { --note: light-dark(#fce0bd, #584320); }
-.note-card.note-teal { --note: light-dark(#c6d3e0, #334758); }
-.note-card.note-blue { --note: light-dark(#e1edf9, #29384a); }
-.note-card.note-purple { --note: light-dark(#ece4f7, #362f45); }
-.note-card.note-pink { --note: light-dark(#f7e3ee, #422d3c); }
-.note-card.note-brown { --note: light-dark(#eee4da, #3c352e); }
-.note-card.note-gray { --note: light-dark(#e8ebef, #33383f); }
+:is(.note-card, .swatch).note-red { --note: light-dark(#fbe5e4, #432d30); }
+:is(.note-card, .swatch).note-orange { --note: light-dark(#fcebd9, #433526); }
+:is(.note-card, .swatch).note-yellow { --note: light-dark(#fff4ca, #403b25); }
+:is(.note-card, .swatch).note-green { --note: light-dark(#fce0bd, #584320); }
+:is(.note-card, .swatch).note-teal { --note: light-dark(#c6d3e0, #334758); }
+:is(.note-card, .swatch).note-blue { --note: light-dark(#e1edf9, #29384a); }
+:is(.note-card, .swatch).note-purple { --note: light-dark(#ece4f7, #362f45); }
+:is(.note-card, .swatch).note-pink { --note: light-dark(#f7e3ee, #422d3c); }
+:is(.note-card, .swatch).note-brown { --note: light-dark(#eee4da, #3c352e); }
+:is(.note-card, .swatch).note-gray { --note: light-dark(#e8ebef, #33383f); }
 .card-actions { display: flex; flex-wrap: wrap; gap: .15rem; margin: .5rem -.4rem -.5rem; padding-top: .3rem; border-top: 1px dashed var(--line); opacity: 0; transition: opacity .15s ease; }
 .note-card:hover .card-actions, .note-card:focus-within .card-actions { opacity: 1; }
 .note-card .card-actions button { margin: 0; padding: .3rem .45rem; border-color: transparent; font-size: .8rem; }
 @media (hover: none) { .card-actions { opacity: 1; } }
+.icon-button { display: inline-flex; align-items: center; justify-content: center; }
+.icon-button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.note-card { position: relative; }
+.note-card:has(.card-pin) h3 { padding-right: 2rem; }
+.note-card .card-pin { position: absolute; top: .5rem; right: .5rem; margin: 0; padding: .3rem; border-color: transparent; opacity: 0; transition: opacity .15s ease; }
+.note-card:hover .card-pin, .note-card:focus-within .card-pin, .note-card .card-pin[aria-pressed="true"] { opacity: 1; }
+.note-card .card-pin[aria-pressed="true"] svg { fill: currentColor; }
+@media (hover: none) { .note-card .card-pin { opacity: 1; } }
+.card-menu { position: fixed; z-index: 20; display: flex; flex-direction: column; min-width: 180px; max-height: calc(100dvh - 16px); overflow-y: auto; padding: .3rem; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 6px 24px rgb(0 0 0 / .18); }
+.card-menu button { display: flex; align-items: center; gap: .6rem; width: 100%; border: 0; border-radius: 6px; padding: .45rem .6rem; text-align: left; background: transparent; font-weight: 400; }
+.card-menu .swatch { width: 1.1rem; height: 1.1rem; border-radius: 50%; border: 1px solid var(--line); background: var(--note); flex: none; }
+.card-menu .menu-check { margin-left: auto; font-weight: 700; }
 .note-card button.label-chip { display: inline-block; border-radius: 20px; font-size: .75rem; font-weight: 500; }
 .empty-state { grid-column: 1 / -1; padding: 3rem 0; max-width: 480px; }
 .empty-state h2 { margin-top: 0; }
@@ -135,3 +147,25 @@ dialog::backdrop { background: rgb(15 23 36 / .4); }
   dialog { padding: 1rem; }
 }
 @media (prefers-reduced-motion: no-preference) { .note-card { animation: appear .16s ease-out; } @keyframes appear { from { opacity: .7; transform: translateY(3px); } to { opacity: 1; transform: none; } } }
+/* Editor, like the plugin's: title and text, then the tool rows. */
+.dialog-heading { flex-wrap: wrap; }
+.editor-heading-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
+#note-title { font-size: 1.15rem; font-weight: 600; }
+.editor-tools, .editor-colors, .chip-field, .reminder-row, .repeat-row { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin-top: .75rem; }
+.editor-tools button[aria-pressed="true"]::before, .repeat-row button[aria-pressed="true"]::before { content: "✓ "; }
+.editor-tools button[aria-pressed="true"], .repeat-row button[aria-pressed="true"] { background: var(--selected); border-color: var(--accent); }
+.swatches { display: flex; flex-wrap: wrap; gap: .4rem; }
+.editor-colors > span:first-child, .repeat-row > span { min-width: 5.5rem; font-weight: 600; }
+#color-name { min-width: 0; color: var(--muted); }
+.repeat-row select { width: auto; }
+.editor-colors .swatch { width: 1.9rem; height: 1.9rem; padding: 0; border-radius: 50%; border: 1px solid var(--line); background: var(--note); display: inline-flex; align-items: center; justify-content: center; }
+.editor-colors .swatch[aria-checked="true"] { outline: 2px solid var(--accent); outline-offset: 2px; }
+.editor-colors .swatch[aria-checked="true"]::after { content: "✓"; font-weight: 700; color: var(--ink); }
+.chip-field > label, .reminder-row > label, .repeat-row > label, .repeat-row > span, .editor-colors > span:first-child { margin: 0; min-width: 5.5rem; }
+.chip-field input, .repeat-row input[type="number"] { width: auto; flex: 1 1 8rem; min-width: 6rem; }
+.chips { display: contents; }
+.chip { display: inline-flex; align-items: center; gap: .2rem; padding: .1rem .2rem .1rem .6rem; border: 1px solid var(--line); border-radius: 20px; font-size: .85rem; }
+.chip button { padding: .1rem .4rem; border: 0; background: transparent; }
+.reminder-row input { width: auto; }
+.editor-hint { color: var(--muted); font-size: .8rem; margin: .5rem 0 0; }
+.weekday { min-width: 3.2rem; }

@@ -2,7 +2,7 @@
 
 Besluit van Eric (24 oktober 2026): "zorg ervoor dat de functionaliteit overal hetzelfde is. Dus wat in de website kan, dat kan ook in de plugin, wat in de plugin kan, dat kan ook in de app, etc."
 
-Stand gemeten op `ee57d58` (feature-branch). Ja = aanwezig, deels = gedeeltelijk, NEE = ontbreekt, n.v.t. = hoort niet bij dit platform. Bij elke afgeronde functie deze lijst bijwerken.
+Stand gemeten op `ee57d58` (feature-branch), bijgewerkt met elke afgeronde functie. Ja = aanwezig, deels = gedeeltelijk, NEE = ontbreekt, n.v.t. = hoort niet bij dit platform. Bij elke afgeronde functie deze lijst bijwerken.
 
 ## Vastleggen
 
@@ -36,9 +36,9 @@ Stand gemeten op `ee57d58` (feature-branch). Ja = aanwezig, deels = gedeeltelijk
 
 | Functie | Website | Plugin | Android |
 |---|---|---|---|
-| Snel vastzetten vanaf de kaart | NEE | ja | ja |
-| Kleur kiezen vanaf de kaart | NEE | ja | NEE |
-| Labels geven vanaf de kaart | NEE | ja | deels (via meervoudige selectie) |
+| Snel vastzetten vanaf de kaart | ja (24 okt) | ja | ja |
+| Kleur kiezen vanaf de kaart | ja (24 okt) | ja | NEE |
+| Labels geven vanaf de kaart | ja (24 okt) | ja | deels (via meervoudige selectie) |
 | Archiveren vanaf de kaart | ja | ja | deels (via selectie of editor) |
 | Naar prullenbak | ja | NEE (verwijdert direct) | ja |
 | Verplaatsen/kopiëren naar map | NEE | ja | NEE |
@@ -51,16 +51,16 @@ Stand gemeten op `ee57d58` (feature-branch). Ja = aanwezig, deels = gedeeltelijk
 
 | Functie | Website | Plugin | Android |
 |---|---|---|---|
-| Apart titelveld | NEE (Markdown-tekstvak) | ja | ja |
-| Vinklijst-knop/editor | NEE | ja | ja |
-| Kleur | deels (keuzelijst, ingeklapt) | ja | ja |
-| Tags invoeren als chips | NEE | ja | ja |
-| Labels kiezen uit lijst | NEE (typen) | ja | ja |
-| Link naar andere notitie invoegen | NEE | ja | ja |
-| Vorige/volgende notitie | NEE | ja | ja |
+| Apart titelveld | ja (24 okt; knop Markdown toont het hele bestand) | ja | ja |
+| Vinklijst-knop/editor | ja (24 okt) | ja | ja |
+| Kleur | ja (24 okt; kleurvlakjes met naam) | ja | ja |
+| Tags invoeren als chips | ja (24 okt) | ja | ja |
+| Labels kiezen uit lijst | ja (24 okt) | ja | ja |
+| Link naar andere notitie invoegen | ja (24 okt) | ja | ja |
+| Vorige/volgende notitie | ja (24 okt) | ja | ja |
 | Foto groot bekijken (lightbox) | NEE | ja | ja |
 | Herinnering met datum en tijd | ja | ja | ja |
-| Herhalen: keuzescherm (dagelijks, weekdagen, elke N, n-de weekdag, eindigt) | deels (code typen) | ja | ja |
+| Herhalen: keuzescherm (dagelijks, weekdagen, elke N, n-de weekdag, eindigt) | ja (24 okt) | ja | ja |
 | Versiegeschiedenis van een notitie | ja | NEE | ja |
 
 ## Herinneringen, labels, zoeken

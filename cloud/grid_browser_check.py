@@ -69,7 +69,7 @@ def check_grid(browser, url, token):
         page.mouse.move(5, 5)
         # The bar fades (.15s) and a sync may re-render the card, so poll the current card.
         page.wait_for_function("""() => getComputedStyle(document.querySelector('.note-card[data-path="notes/c.md"] .card-actions')).opacity === '0'""")
-        assert short.get_by_role("button", name="Download", exact=True).count() == 1
+        assert [short.get_by_role("button", name=name, exact=True).count() for name in ("Open note", "Color", "Labels", "Archive", "More", "Pin")] == [1] * 6
         assert "Cloud version" not in short.inner_text() and "notes/c.md" not in short.inner_text()
         assert short.get_attribute("data-path") == "notes/c.md" and short.get_attribute("data-revision") == "1"
         # One compact strip, so the hidden bar does not leave a big empty block on every card.

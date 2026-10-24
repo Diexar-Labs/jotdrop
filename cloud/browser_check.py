@@ -230,6 +230,18 @@ def check_browser(browser, url, enrollment_token):
         second_context.close()
 
 
+def use_markdown_editor(browser):
+    """Most checks type whole Markdown files, so open the editor in its Markdown view.
+    The simple title/text view has its own check (editor_browser_check.py)."""
+    new_context = browser.new_context
+
+    def with_markdown_editor(*args, **kwargs):
+        context = new_context(*args, **kwargs)
+        context.add_init_script("try { localStorage.setItem('jotdrop-editor-mode', 'markdown'); } catch {}")
+        return context
+    browser.new_context = with_markdown_editor
+
+
 def main(check=check_browser, history_limit=5, camera=False):
     root = Path(__file__).resolve().parent.parent
     with tempfile.TemporaryDirectory(prefix="jotdrop-browser-test-") as directory:
@@ -244,6 +256,7 @@ def main(check=check_browser, history_limit=5, camera=False):
             assert "Local cloud preview" in line, "Local test server did not start."
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(headless=True, channel=sys.argv[1] if len(sys.argv) > 1 else "msedge", args=["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"] if camera else [])
+                use_markdown_editor(browser)
                 try:
                     result = check(browser, f"http://127.0.0.1:{port}", token)
                     with closing(sqlite3.connect((Path(directory) / "cloud.db").as_uri() + "?mode=ro", uri=True)) as database:
