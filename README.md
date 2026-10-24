@@ -59,6 +59,7 @@ JotDrop is a private, open-source **Google Keep alternative**. Google Keep is gr
 - **Voice memos** - one-tap recording on the dashboard, on both Android (`.m4a`) and the Obsidian plugin (`.webm`/opus); a confirmation dialog asks before saving, audio lands as a card with an equalizer-banner thumbnail
 - **Voice-to-text** on Android (uses system speech recognizer)
 - **OCR** on photos via ML Kit (text-recognition v2, bundled in APK - no Google Play Services needed)
+- **Photo notes and text from photos** in the Obsidian plugin: the camera button adds a photo as a card, or reads its English and Dutch text on your own device (Tesseract)
 - **Link previews** (Open Graph) - paste a URL, get a card with title, image, and source
 
 ### Organize
@@ -212,6 +213,8 @@ JotDrop is intentionally simple plumbing:
   ```
 - The Android app writes the file. The Obsidian plugin reads it. They never talk to each other - they meet in the vault.
 - Link-preview cards are written as a "pending" placeholder by Android, then the plugin (or Android) fetches the Open Graph data and rewrites the note. A race-safe marker check prevents either side from overwriting user edits.
+
+**Network use (Obsidian plugin).** The plugin only goes online for two things. It fetches the web page of a link you capture, to build the preview card. And the first time you use "Text from photo", it asks before downloading the English and Dutch language data (about 6 MB) once from the [JotDrop GitHub release `ocr-data-1`](https://github.com/Diexar-Labs/jotdrop/releases/tag/ocr-data-1), checks it against a fixed SHA-256 and stores it in the plugin folder. The recognition code itself ships inside the plugin, and your photos never leave your device.
 
 This is why JotDrop **needs no server, no account, no API key** - and why anything that can write to the same folder (e.g. a `curl` script, a Shortcuts automation) can capture into it.
 

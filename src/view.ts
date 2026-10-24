@@ -6,6 +6,7 @@ import { FolderPickerModal } from "./folderPicker";
 import { TagPickerModal, TagItem } from "./tagPicker";
 import { ConfirmModal } from "./confirmModal";
 import { VoiceMemoRecorder, RecordResult } from "./recorder";
+import { LocalOcr } from "./ocr";
 import {
   colorLabel,
   COLOR_NAMES,
@@ -364,6 +365,7 @@ export class JotDropView extends ItemView {
   private lastFiltered: CardData[] = [];
   private micBtnEl: HTMLButtonElement | null = null;
   private recorder: VoiceMemoRecorder | null = null;
+  private ocr: LocalOcr;
   // Windowed rendering state. renderLimit survives re-renders (selection
   // toggles, external modifies) so the scroll position is not thrown away;
   // it resets to one chunk whenever the filter set changes.
@@ -381,6 +383,7 @@ export class JotDropView extends ItemView {
   constructor(leaf: WorkspaceLeaf, plugin: JotDropPlugin) {
     super(leaf);
     this.plugin = plugin;
+    this.ocr = new LocalOcr(this.app, plugin.manifest.dir ?? normalizePath(`${this.app.vault.configDir}/plugins/${plugin.manifest.id}`));
   }
 
   getViewType(): string {
@@ -415,6 +418,19 @@ export class JotDropView extends ItemView {
     });
     setIcon(this.micBtnEl, "mic");
     this.micBtnEl.addEventListener("click", () => void this.toggleRecord());
+
+    // Like the Android main screen: a photo note, or a photo with its recognized text.
+    const photoBtn = this.normalToolbarEl.createEl("button", {
+      cls: "jotdrop-mic-btn",
+      attr: { "aria-label": t("action_photo"), "aria-haspopup": "true" },
+    });
+    setIcon(photoBtn, "camera");
+    photoBtn.addEventListener("click", (e) => {
+      const menu = new Menu();
+      menu.addItem((item) => item.setTitle(t("action_add_photo")).setIcon("image-plus").onClick(() => this.pickPhoto(false)));
+      menu.addItem((item) => item.setTitle(t("action_text_from_photo")).setIcon("scan-text").onClick(() => void this.startTextFromPhoto()));
+      menu.showAtMouseEvent(e);
+    });
 
     this.searchEl = this.normalToolbarEl.createEl("input", {
       cls: "jotdrop-search",
@@ -692,6 +708,74 @@ export class JotDropView extends ItemView {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       new Notice(t("record_save_failed", msg));
+    }
+  }
+
+  private async startTextFromPhoto(): Promise<void> {
+    if (await this.ocr.hasData()) { this.pickPhoto(true); return; }
+    new ConfirmModal(
+      this.app,
+      { title: t("ocr_download_title"), message: t("ocr_download_message"), confirmLabel: t("ocr_download_button") },
+      () => void this.downloadOcrData(),
+    ).open();
+  }
+
+  private async downloadOcrData(): Promise<void> {
+    const notice = new Notice(t("ocr_downloading"), 0);
+    try {
+      await this.ocr.download();
+      notice.hide();
+      this.pickPhoto(true);
+    } catch (err) {
+      notice.hide();
+      new Notice(t("ocr_download_failed", err instanceof Error ? err.message : String(err)));
+    }
+  }
+
+  private pickPhoto(withOcr: boolean): void {
+    // On a phone the system picker also offers the camera.
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/png,image/jpeg,image/webp,image/gif";
+    input.addEventListener("change", () => {
+      const file = input.files?.[0];
+      if (file) void this.savePhotoNote(file, withOcr);
+    });
+    input.click();
+  }
+
+  /** Same note as the Android app: `# Foto <stamp>`, the image embed, then any recognized text. */
+  private async savePhotoNote(file: File, withOcr: boolean): Promise<void> {
+    const extension = ({ "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif" } as Record<string, string>)[file.type];
+    if (!extension) { new Notice(t("photo_invalid")); return; }
+    let text = "";
+    if (withOcr) {
+      const notice = new Notice(t("ocr_running", "0"), 0);
+      try {
+        text = await this.ocr.recognize(file, (progress) => notice.setMessage(t("ocr_running", String(Math.round(progress * 100)))));
+        if (!text) new Notice(t("ocr_no_text"));
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        new Notice(msg === "no-simd" ? t("ocr_no_simd") : msg === "data-missing" ? t("ocr_data_missing") : t("ocr_failed", msg));
+      } finally {
+        notice.hide();
+      }
+    }
+    const stamp = formatStamp(new Date());
+    const basename = `diexar-${stamp}.${extension}`;
+    const attachmentsDir = this.plugin.resolveAssetsFolder();
+    const notesFolder = this.plugin.settings.notesFolder;
+    const title = `Foto ${stamp}`;
+    try {
+      if (!(await this.app.vault.adapter.exists(attachmentsDir))) await this.app.vault.adapter.mkdir(attachmentsDir);
+      await this.app.vault.adapter.writeBinary(normalizePath(`${attachmentsDir}/${basename}`), await file.arrayBuffer());
+      if (!(await this.app.vault.adapter.exists(notesFolder))) await this.app.vault.adapter.mkdir(notesFolder);
+      const body = [`# ${title}`, "", `![[${basename}]]`, ...(text ? ["", text] : []), ""].join("\n");
+      await this.app.vault.create(normalizePath(`${notesFolder}/${stamp} ${title}.md`), body);
+      new Notice(t("photo_saved"));
+      void this.render();
+    } catch (err) {
+      new Notice(t("notice_save_failed", err instanceof Error ? err.message : String(err)));
     }
   }
 

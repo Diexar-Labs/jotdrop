@@ -24,6 +24,8 @@ const context = await esbuild.context({
     ...builtinModules,
     ...builtinModules.map((m) => `node:${m}`),
   ],
+  // Tesseract's worker and core run from blob URLs inside the plugin (no code downloads).
+  loader: { ".min.js": "text", ".wasm.js": "text" },
   format: "cjs",
   target: "es2020",
   logLevel: "info",

@@ -25,6 +25,7 @@
     "check:evernote-import": "node scripts/check-evernote-import.cjs",
     "check:mobile-keyboard": "node scripts/check-mobile-keyboard.cjs",
     "check:toolbar": "node scripts/check-toolbar-containment.cjs",
+    "check:plugin-ocr": "python scripts/check-plugin-ocr-browser.py",
     "check:preview-fallback": "node scripts/check-preview-fallback.cjs",
     "check:recurrence": "node scripts/check-recurrence.cjs",
     "check:reminder-sound": "node scripts/check-reminder-sound.cjs",
