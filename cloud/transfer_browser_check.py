@@ -48,6 +48,15 @@ def check_transfer(browser, url, token):
           db.close(); return rows;
         }""")
 
+    def reopen():
+        # These checks decide when sync starts, so a reopened page asks for the password again instead of staying signed in.
+        page.evaluate("""async () => {
+          const db = await new Promise(done => { const r = indexedDB.open('jotdrop-cloud-v1', 1); r.onsuccess = () => done(r.result); });
+          await new Promise(done => { const t = db.transaction('values', 'readwrite'); t.objectStore('values').delete('session'); t.oncomplete = done; });
+          db.close();
+        }""")
+        page.reload(wait_until="networkidle")
+
     def unlock():
         page.locator("#unlock-password").fill(password)
         page.locator('#unlock-form button[type="submit"]').click()
@@ -82,7 +91,7 @@ def check_transfer(browser, url, token):
         page.locator("#lock").click()
         page.locator("#access").wait_for()
         assert draft()[0]["prepared"] == prepared
-        page.reload(wait_until="networkidle")
+        reopen()
         page.evaluate("window.transferCheck.hold = false")
         # Lose both successful commit responses: no local acknowledgment may erase the draft.
         def lose_commit(route):
@@ -95,7 +104,7 @@ def check_transfer(browser, url, token):
         assert page.evaluate("window.transferCheck.starts[0].offset") == 65536
         assert max(page.evaluate("window.transferCheck.requests.map(r => r.size)")) == 65536
         context.unroute("**/api/v1/objects/**/commit", lose_commit)
-        page.reload(wait_until="networkidle")
+        reopen()
         page.evaluate("window.transferCheck.hold = false")
         unlock()
         page.locator("#sync-status").filter(has_text="Cloud copy up to date").wait_for(timeout=60000)
@@ -141,7 +150,7 @@ def check_transfer(browser, url, token):
         def unavailable(route):
             route.fulfill(status=503, json={"error": "Synthetic server busy"})
         context.route("**/api/v1/status", unavailable)
-        page.reload(wait_until="networkidle")
+        reopen()
         unlock()
         page.locator("#sync-status").filter(has_text="Cloud unavailable").wait_for()
         assert draft()[0]["prepared"] == paused
@@ -190,7 +199,7 @@ def check_transfer(browser, url, token):
         assert len(remaining) == 1 and remaining[0]["queueId"] == latest["queueId"], "Acknowledgment must not erase a newer durable draft"
         assert remaining[0]["prepared"]["envelope"] == latest["prepared"]["envelope"]
         assert remaining[0]["prepared"]["baseRevision"] == 1
-        page.reload(wait_until="networkidle")
+        reopen()
         unlock()
         page.locator("#sync-status").filter(has_text="Cloud copy up to date").wait_for()
         page.locator('.note-card[data-path="notes/edited-during-ack.md"][data-revision="2"]').filter(has_text="Keep this exact local content.").wait_for()

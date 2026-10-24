@@ -23,6 +23,8 @@ let view = 'notes';
 let labelFilter = '';
 let localLabels = [];
 const selectedTags = new Set();
+const selectedIds = new Set();
+let selectableIds = new Set();
 let editing;
 let editingRevision;
 let syncing;
@@ -115,6 +117,7 @@ const icons = {
   archive: '<rect width="20" height="5" x="2" y="3" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/>',
   pencil: '<path d="M21.17 6.81a1 1 0 0 0-3.99-3.99L3.84 16.17a2 2 0 0 0-.5.83l-1.32 4.35a.5.5 0 0 0 .62.62l4.35-1.32a2 2 0 0 0 .83-.5z"/><path d="m15 5 4 4"/>',
   more: '<circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/>',
+  check: '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
 };
 
 function iconButton(icon, label, action, className = '') {
@@ -255,6 +258,7 @@ function render() {
   $('items').hidden = view === 'devices';
   $('devices-panel').hidden = view !== 'devices';
   $('tag-filter').hidden = true;
+  $('selection-bar').hidden = true;
   const labelName = renderLabelList();
   const descriptions = {
     notes: labelFilter ? [labelName, 'Notes with this label.'] : ['Notes', 'Plain Markdown. Your files, your workspace.'],
@@ -308,6 +312,10 @@ function render() {
     $('items').append(empty);
   }
   navOrder = matching.filter((entry) => !entry.deleted && isMarkdown(entry.file.path)).map((entry) => entry.id);
+  // Like Keep: notes can be chosen together; a note that left this view is no longer chosen.
+  selectableIds = new Set(moment || view === 'files' ? [] : matching.filter((entry) => isMarkdown(entry.file.path)).map((entry) => entry.id));
+  for (const id of selectedIds) if (!selectableIds.has(id)) selectedIds.delete(id);
+  renderSelectionBar();
   const sections = view === 'notes' && matching.some((entry) => isMarkdown(entry.file.path) && noteParts(noteText(entry.file), entry.file.path).pinned);
   let section;
   for (const entry of matching) {
@@ -365,9 +373,16 @@ function render() {
         row.append(input, document.createTextNode(plainPreviewText(task[2]))); card.append(row);
       });
       flush();
-      if (!entry.deleted && !moment) {
-        card.classList.add('opens');
-        card.addEventListener('click', (event) => { if (!event.target.closest('button, input, label, audio')) openEditor(entry); });
+      if (!entry.deleted && !moment) card.classList.add('opens');
+      card.addEventListener('click', (event) => {
+        if (event.target.closest('button, input, label, audio')) return;
+        if (selectedIds.size && selectableIds.has(entry.id)) toggleSelected(entry.id);
+        else if (!entry.deleted && !moment) openEditor(entry);
+      });
+      if (selectableIds.has(entry.id)) {
+        card.dataset.id = entry.id;
+        card.append(iconButton('check', 'Select note', () => toggleSelected(entry.id), 'card-select'));
+        markSelected(card, selectedIds.has(entry.id));
       }
       if (parts.reminder) card.append(paragraph(`Reminder: ${parts.reminder}${parts.repeat ? ` (${parts.repeat})` : ''}. Scheduled by Android after sync.`, 'note-meta'));
       const targets =[...parts.body.matchAll(/!\[\[([^\]]+)\]\]|!?\[[^\]]*\]\(([^)]+)\)/g)];
@@ -434,6 +449,73 @@ function allLabels() {
   for (const label of localLabels) labels.set(label.toLowerCase(), label);
   for (const entry of files.values()) if (!entry.deleted && isMarkdown(entry.file.path)) for (const label of noteParts(noteText(entry.file), entry.file.path).labels) labels.set(label.toLowerCase(), label);
   return [...labels.values()].sort((a, b) => a.localeCompare(b));
+}
+
+function markSelected(card, on) {
+  card.classList.toggle('is-selected', on);
+  card.querySelector('.card-select').setAttribute('aria-pressed', String(on));
+}
+
+function toggleSelected(id) {
+  if (!selectedIds.delete(id)) selectedIds.add(id);
+  for (const card of $('items').querySelectorAll('.note-card[data-id]')) if (card.dataset.id === id) markSelected(card, selectedIds.has(id));
+  renderSelectionBar();
+}
+
+// A change made while a sync runs would otherwise wait for the next 30-second round.
+async function syncAgain() {
+  if (syncing) await syncing;
+  await sync();
+}
+
+// One choice for all chosen notes, like the plugin and Android. A note that fails stays chosen and unchanged.
+async function runBulk(action, keepSelection = false) {
+  const ids = [...selectedIds], failed = [];
+  for (const id of ids) {
+    try { await action(files.get(id)); } catch { failed.push(id); }
+  }
+  if (!keepSelection) { selectedIds.clear(); for (const id of failed) selectedIds.add(id); }
+  render();
+  await syncAgain();
+  if (failed.length) message(`${failed.length} of ${ids.length} notes could not be changed. They stay selected; sync and try again.`);
+}
+
+function renderSelectionBar() {
+  const bar = $('selection-bar');
+  $('items').classList.toggle('selecting', selectedIds.size > 0);
+  bar.hidden = !selectedIds.size;
+  if (!selectedIds.size) return bar.replaceChildren();
+  const chosen = [...selectedIds].map((id) => files.get(id));
+  const count = selectedIds.size;
+  const notes = `${count} ${count === 1 ? 'note' : 'notes'}`;
+  const done = button('Done', () => { selectedIds.clear(); render(); });
+  const all = button('Select all', () => { for (const id of selectableIds) selectedIds.add(id); render(); });
+  bar.replaceChildren(done, paragraph(`${count} selected`, 'selection-count'), all);
+  if (view === 'trash') {
+    bar.append(button('Restore', () => confirm(`Restore ${notes}?`)
+      && runBulk((entry) => (entry.deleted ? restoreEntry(entry, entry.revision, false) : moveArchive(entry, false)))));
+    return;
+  }
+  const labelSets = chosen.map((entry) => noteParts(noteText(entry.file), entry.file.path).labels);
+  const everyHas = (label) => labelSets.every((labels) => labels.some((own) => own.toLowerCase() === label.toLowerCase()));
+  // Ticking a label gives it to every chosen note; unticking one they all have takes it off.
+  const setLabel = (label, add) => runBulk((entry) => {
+    const labels = noteParts(noteText(entry.file), entry.file.path).labels.filter((own) => own.toLowerCase() !== label.toLowerCase());
+    if (add) labels.push(label);
+    return changeNote(entry, { jotdrop_labels: labels.length ? labels : null });
+  }, true);
+  const colors = new Set(chosen.map((entry) => noteParts(noteText(entry.file), entry.file.path).color));
+  const color = button('Color', () => showMenu(color, colorNames.map(([value, label]) => ({
+    label, swatch: value, radio: true, checked: colors.size === 1 && colors.has(value), action: () => runBulk((entry) => changeNote(entry, { color: value === 'default' ? null : value }), true),
+  }))));
+  const labels = button('Labels', () => showMenu(labels, [
+    ...allLabels().map((label) => ({ label, checked: everyHas(label), action: () => setLabel(label, !everyHas(label)) })),
+    { label: 'New label…', action: () => { const label = prompt('Label name')?.trim(); if (label) return setLabel(label, true); } },
+  ]));
+  const archive = view === 'archive' ? 'Unarchive' : 'Archive';
+  bar.append(color, labels,
+    button(archive, () => confirm(`${archive} ${notes}? Each original stays until its new cloud copy is confirmed.`) && runBulk((entry) => moveArchive(entry, false))),
+    button('Move to trash', () => confirm(`Move ${notes} to trash?`) && runBulk((entry) => deleteEntry(entry, false)), 'danger'));
 }
 
 // Labels live in the sidebar, like Keep: each opens the notes with that label, with their count.
@@ -542,6 +624,7 @@ async function editLabel(oldName, newName) {
     if (labelFilter === key) labelFilter = newName ? newName.toLowerCase() : '';
     render();
     renderLabelRows();
+    await syncAgain();
     if (failed) throw new Error(`${failed} ${failed === 1 ? 'note' : 'notes'} could not be changed. Sync and try again.`);
   } catch (error) { $('labels-message').textContent = errorText(error); }
 }
@@ -607,12 +690,12 @@ async function deleteEntry(entry, ask = true) {
   void sync();
 }
 
-async function moveArchive(entry) {
+async function moveArchive(entry, ask = true) {
   if (syncing) await syncing;
   if (entry !== files.get(entry.id) || entry.pending || entry.conflict || entry.deleted) throw new Error('Sync and resolve this note before moving it.');
   const path = /^notes\/(Archive|Trash)\//.test(entry.file.path) ? entry.file.path.replace(/^notes\/(Archive|Trash)\//, 'notes/') : entry.file.path.replace(/^notes\//, 'notes/Archive/');
   if (path === entry.file.path) throw new Error('Only notes in the notes folder can be archived.');
-  if (!confirm(`Move this note to ${path}? The original stays until the new cloud copy is confirmed.`)) return;
+  if (ask && !confirm(`Move this note to ${path}? The original stays until the new cloud copy is confirmed.`)) return;
   // Copy first, verify the cloud acknowledgement, then trash the original. Never delete on a failed upload.
   const text = noteText(entry.file).replace(/(!?\[[^\]]*\]\()([^)]*)(\))/g, (all, start, target, end) => {
     const attachment = attachmentPath(target, entry.file.path, [...files.values()].filter((item) => !item.deleted).map((item) => item.file.path));
@@ -1107,9 +1190,9 @@ function closeEditor() {
   editing = undefined;
 }
 
-async function restoreEntry(entry, revision = entry.revision) {
+async function restoreEntry(entry, revision = entry.revision, ask = true) {
     if (entry.pending) throw new Error('Sync this file before restoring an earlier cloud version.');
-  if (!confirm('Restore this version as a new cloud version?')) return;
+  if (ask && !confirm('Restore this version as a new cloud version?')) return;
   await client.restore(entry.id, revision, entry.revision);
   cursor = 0;
   await sync();
@@ -1226,9 +1309,23 @@ async function renderDevices() {
   }
 }
 
+// A remembered browser stays signed in across reloads, like Keep: the connection is sealed with a key
+// this browser keeps but cannot export. Lock workspace forgets it, so the password is needed again.
+async function keepSignedIn(credentials) {
+  const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  await store('put', 'session', { key, iv, data: await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, encoder.encode(JSON.stringify(credentials))) });
+}
+async function signedInCredentials() {
+  const saved = await store('get', 'session');
+  return saved && JSON.parse(decoder.decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: saved.iv }, saved.key, saved.data)));
+}
+
 async function openWorkspace(connected) {
   syncController?.abort();
   if (syncing) await syncing;
+  if (await store('get', 'connection')) await keepSignedIn(connected.credentials);
+  else await store('delete', 'session');
   client = connected;
   syncPaused = false;
   $('sync').textContent = 'Sync now';
@@ -1267,6 +1364,7 @@ window.addEventListener('pagehide', (event) => { if (!event.persisted) releaseDe
 
 function lock() {
   if (voiceJob && !confirm('Discard the current recording and lock?')) return;
+  void store('delete', 'session');
   releaseDevice();
   discardVoice();
   resetPhoto();
@@ -1890,6 +1988,7 @@ async function writeImport({ items, files: sources, failed: unreadable }) {
 for (const navigation of document.querySelectorAll('[data-view]')) navigation.addEventListener('click', () => {
   view = navigation.dataset.view;
   labelFilter = '';
+  selectedIds.clear();
   message();
   render();
   if (view === 'devices') void Promise.all([renderDevices(), renderAccount()]).catch((error) => message(errorText(error)));
@@ -1913,15 +2012,21 @@ $('new-label-form').addEventListener('submit', async (event) => {
     renderLabelRows();
   } catch (error) { $('labels-message').textContent = errorText(error); }
 });
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && selectedIds.size && !openMenu && !document.querySelector('dialog[open]')) { selectedIds.clear(); render(); }
+});
 // The sidebar folds away like Keep's menu; this browser remembers the choice.
 function showSidebar(open) {
   $('sidebar').hidden = !open;
   $('workspace').classList.toggle('sidebar-hidden', !open);
   $('toggle-sidebar').setAttribute('aria-expanded', String(open));
-  $('toggle-sidebar').setAttribute('aria-label', open ? 'Hide menu' : 'Show menu');
-  $('toggle-sidebar').title = open ? 'Hide menu' : 'Show menu';
+  // Words and an arrow into or out of the panel, not only a symbol (Eric found the bare menu icon unclear).
+  $('toggle-sidebar').querySelector('svg').innerHTML = `<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="${open ? 'm16 15-3-3 3-3' : 'm14 9 3 3-3 3'}"/>`;
+  $('toggle-sidebar').querySelector('span').textContent = open ? 'Hide menu' : 'Show menu';
 }
-try { showSidebar(localStorage.getItem('jotdrop-sidebar') !== 'hidden'); } catch { /* Shown by default. */ }
+let sidebarShown = true;
+try { sidebarShown = localStorage.getItem('jotdrop-sidebar') !== 'hidden'; } catch { /* Shown by default. */ }
+showSidebar(sidebarShown);
 $('toggle-sidebar').addEventListener('click', () => {
   const open = $('sidebar').hidden;
   showSidebar(open);
@@ -1971,5 +2076,8 @@ setInterval(() => {
   }, () => {});
 }, 30000);
 try {
-  if (await store('get', 'connection')) showUnlock();
+  const credentials = await signedInCredentials().catch(() => undefined);
+  // A connection that no longer opens is forgotten; the password still unlocks this browser.
+  if (credentials) await openWorkspace(new CloudClient(credentials)).catch(lock);
+  else if (await store('get', 'connection')) showUnlock();
 } catch (error) { $('access-message').textContent = errorText(error); $('connect-form').querySelector('button[type="submit"]').disabled = true; }

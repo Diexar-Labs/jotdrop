@@ -98,14 +98,22 @@ def check_labels(browser, url, token):
         page.locator("#toggle-sidebar").click()
         assert page.locator("#sidebar").is_hidden()
         assert page.locator("#toggle-sidebar").get_attribute("aria-expanded") == "false"
+        assert page.locator("#toggle-sidebar").inner_text() == "Show menu"
+        # A remembered browser stays signed in after F5, like Keep: no password asked.
         page.reload(wait_until="networkidle")
+        page.locator(".note-card").first.wait_for()
+        assert page.locator("#unlock-form").is_hidden()
         assert page.locator("#toggle-sidebar").get_attribute("aria-expanded") == "false"
+        assert page.locator("#sidebar").is_hidden()
+        page.locator("#toggle-sidebar").click()
+        assert page.locator("#sidebar").is_visible() and page.locator("#toggle-sidebar").inner_text() == "Hide menu"
+        # Lock workspace forgets that, so the password is needed again, also after F5.
+        page.locator("#lock").click()
+        page.reload(wait_until="networkidle")
+        page.locator("#unlock-password").wait_for()
         page.locator("#unlock-password").fill(password)
         page.locator('#unlock-form button[type="submit"]').click()
         page.locator(".note-card").first.wait_for()
-        assert page.locator("#sidebar").is_hidden()
-        page.locator("#toggle-sidebar").click()
-        assert page.locator("#sidebar").is_visible()
 
         page.set_viewport_size({"width": 390, "height": 844})
         page.wait_for_function("() => innerWidth === 390")

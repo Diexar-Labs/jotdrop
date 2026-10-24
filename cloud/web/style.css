@@ -43,7 +43,7 @@ h3 { font-size: 1.05rem; }
 .sidebar nav button { display: flex; justify-content: space-between; gap: .5rem; border-color: transparent; text-align: left; background: transparent; }
 .sidebar nav button[aria-current="page"] { background: var(--selected); color: var(--accent); }
 .workspace.sidebar-hidden { grid-template-columns: minmax(0, 1fr); }
-#toggle-sidebar { padding: .6rem; }
+#toggle-sidebar { gap: .45rem; padding: .6rem .8rem; }
 .sidebar-labels { margin: .6rem 0; padding: .6rem 0; border-block: 1px solid var(--line); }
 .sidebar-labels-heading { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: 0 .3rem 0 .9rem; color: var(--muted); font-size: .75rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
 .sidebar-labels-heading button { padding: .3rem .5rem; border-color: transparent; background: transparent; color: var(--accent); font-size: .8rem; letter-spacing: normal; text-transform: none; }
@@ -105,6 +105,16 @@ main { min-width: 0; padding: 0 2rem 3rem; }
 .icon-button { display: inline-flex; align-items: center; justify-content: center; }
 .icon-button svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .note-card { position: relative; }
+/* Choosing notes together, like Keep: a check in the corner, a chosen card has a thick outline and a filled check. */
+.note-card .card-select { position: absolute; top: -.7rem; left: -.7rem; z-index: 1; margin: 0; padding: .15rem; border-radius: 50%; background: var(--surface); opacity: 0; transition: opacity .15s ease; }
+.note-card .card-select svg { width: 22px; height: 22px; }
+.note-card:hover .card-select, .note-card:focus-within .card-select, .selecting .card-select { opacity: 1; }
+.note-card .card-select[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.note-card.is-selected { outline: 3px solid var(--accent); outline-offset: 1px; }
+.selecting .card-actions, .selecting .card-pin { display: none; }
+@media (hover: none) { .note-card .card-select { opacity: 1; } }
+.selection-bar { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; margin-bottom: 1rem; padding: .6rem .8rem; background: var(--surface); border: 2px solid var(--accent); border-radius: 12px; }
+.selection-count { margin: 0 auto 0 0; font-weight: 700; }
 .note-card:has(.card-pin) h3 { padding-right: 2rem; }
 .note-card .card-pin { position: absolute; top: .5rem; right: .5rem; margin: 0; padding: .3rem; border-color: transparent; opacity: 0; transition: opacity .15s ease; }
 .note-card:hover .card-pin, .note-card:focus-within .card-pin, .note-card .card-pin[aria-pressed="true"] { opacity: 1; }

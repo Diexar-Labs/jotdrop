@@ -31,7 +31,7 @@
       <input id="login-email" type="email" autocomplete="username" maxlength="254" required>
       <label for="login-password">Password</label>
       <input id="login-password" type="password" autocomplete="current-password" maxlength="1024" required>
-      <label class="check-label"><input id="login-remember" type="checkbox">Remember this browser</label>
+      <label class="check-label"><input id="login-remember" type="checkbox">Stay signed in on this browser</label>
       <button class="primary" type="submit">Log in</button>
       <div class="access-links"><button data-show="signup-form" type="button">Create an account</button><button data-show="forgot-form" type="button">Forgot password?</button><button id="show-connect" data-show="connect-form" type="button">Other ways to connect</button></div>
     </form>
@@ -42,7 +42,7 @@
       <input id="signup-password" type="password" minlength="12" maxlength="1024" autocomplete="new-password" required>
       <label for="signup-confirm">Confirm password</label>
       <input id="signup-confirm" type="password" minlength="12" maxlength="1024" autocomplete="new-password" required>
-      <label class="check-label"><input id="signup-remember" type="checkbox">Remember this browser</label>
+      <label class="check-label"><input id="signup-remember" type="checkbox">Stay signed in on this browser</label>
       <p>We cannot reset your password for you, because only you hold the key to your notes. You get a recovery code, and a connected phone can approve a new password.</p>
       <button class="primary" type="submit">Create account</button>
       <div class="access-links"><button data-show="login-form" type="button">I already have an account</button></div>
@@ -77,7 +77,7 @@
       <input id="reset-password" type="password" minlength="12" maxlength="1024" autocomplete="new-password" required>
       <label for="reset-confirm">Confirm new password</label>
       <input id="reset-confirm" type="password" minlength="12" maxlength="1024" autocomplete="new-password" required>
-      <label class="check-label"><input id="reset-remember" type="checkbox">Remember this browser</label>
+      <label class="check-label"><input id="reset-remember" type="checkbox">Stay signed in on this browser</label>
       <button class="primary" type="submit">Continue</button>
       <div class="access-links"><button data-show="login-form" type="button">Back</button></div>
     </form>
@@ -132,7 +132,7 @@
     </aside>
     <main>
       <header class="toolbar">
-        <button id="toggle-sidebar" class="icon-button" type="button" aria-controls="sidebar" aria-expanded="true" aria-label="Hide menu" title="Hide menu"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16"/><path d="M4 12h16"/><path d="M4 18h16"/></svg></button>
+        <button id="toggle-sidebar" class="icon-button" type="button" aria-controls="sidebar" aria-expanded="true"><svg viewBox="0 0 24 24" aria-hidden="true"></svg><span>Hide menu</span></button>
         <label class="search-label" for="search">Search your notes and filenames</label>
         <input id="search" type="search" placeholder="Search your notes and files" autocomplete="off">
         <label class="search-label" for="sort">Sort files</label><select id="sort"><option value="modified">Last edited: newest</option><option value="oldest">Last edited: oldest</option><option value="title">Title: A-Z</option><option value="manual">Manual order</option></select>
@@ -154,6 +154,7 @@
       </section>
       <progress id="upload-progress" aria-label="Encrypted upload" hidden></progress>
       <p id="workspace-message" class="message" role="status" aria-live="polite"></p>
+      <div id="selection-bar" class="selection-bar" role="toolbar" aria-label="Selected notes" hidden></div>
       <div id="tag-filter" class="tag-filter" role="group" aria-label="Filter by tag" hidden></div>
       <section id="items" class="note-grid" aria-label="Notes"></section>
       <section id="devices-panel" hidden aria-label="Devices and recovery">

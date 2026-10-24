@@ -117,8 +117,9 @@ interface AttachmentResource {
   fallbacks: { resourcePath: string; vaultPath: string }[];
 }
 
+// Labels for one note, or for every chosen note: a ticked label is one they all have.
 class LabelPickerModal extends Modal {
-  private file: TFile;
+  private files: TFile[];
   private plugin: JotDropPlugin;
   private items: { name: string; isLocal: boolean }[] = [];
   private checked: Set<string> = new Set();
@@ -132,10 +133,10 @@ class LabelPickerModal extends Modal {
   private saving = false;
   private query = "";
 
-  constructor(app: App, plugin: JotDropPlugin, file: TFile) {
+  constructor(app: App, plugin: JotDropPlugin, files: TFile[]) {
     super(app);
     this.plugin = plugin;
-    this.file = file;
+    this.files = files;
   }
 
   async onOpen(): Promise<void> {
@@ -207,8 +208,8 @@ class LabelPickerModal extends Modal {
     }
     this.items = merged.sort((a, b) => a.name.localeCompare(b.name));
 
-    const meta = readMeta(this.app, this.file);
-    this.checked = new Set(meta.labels.map((l) => l.toLowerCase()));
+    const sets = this.files.map((file) => new Set(readMeta(this.app, file).labels.map((l) => l.toLowerCase())));
+    this.checked = new Set([...(sets[0] ?? [])].filter((name) => sets.every((set) => set.has(name))));
     this.originalChecked = new Set(this.checked);
 
     this.renderList();
@@ -306,10 +307,12 @@ class LabelPickerModal extends Modal {
         if (!this.originalChecked.has(name)) {
           const item = this.items.find((i) => i.name.toLowerCase() === name);
           if (item) {
-            try {
-              await assignLabel(this.app, this.file, item.name);
-            } catch (err) {
-              errorMsg = err instanceof Error ? err.message : String(err);
+            for (const file of this.files) {
+              try {
+                await assignLabel(this.app, file, item.name);
+              } catch (err) {
+                errorMsg = err instanceof Error ? err.message : String(err);
+              }
             }
           }
         }
@@ -318,10 +321,12 @@ class LabelPickerModal extends Modal {
         if (!this.checked.has(name)) {
           const item = this.items.find((i) => i.name.toLowerCase() === name);
           if (item) {
-            try {
-              await removeLabel(this.app, this.file, item.name);
-            } catch (err) {
-              errorMsg = err instanceof Error ? err.message : String(err);
+            for (const file of this.files) {
+              try {
+                await removeLabel(this.app, file, item.name);
+              } catch (err) {
+                errorMsg = err instanceof Error ? err.message : String(err);
+              }
             }
           }
         }
@@ -354,6 +359,8 @@ export class JotDropView extends ItemView {
   private selectionToolbarEl!: HTMLElement;
   private selectionCountEl!: HTMLElement;
   private selectAllBtn!: HTMLButtonElement;
+  private selectionColorBtn!: HTMLButtonElement;
+  private selectionLabelsBtn!: HTMLButtonElement;
   private selectionArchiveBtn!: HTMLButtonElement;
   private selectionDeleteBtn!: HTMLButtonElement;
   private labelBtnEl!: HTMLButtonElement;
@@ -527,6 +534,23 @@ export class JotDropView extends ItemView {
     setIcon(this.selectAllBtn, "check-check");
     this.selectAllBtn.addEventListener("click", () => this.selectAllFiltered());
 
+    // Color and labels for every chosen note, like Android's selection bar.
+    this.selectionColorBtn = bar.createEl("button", {
+      cls: "jotdrop-selection-action",
+      attr: { "aria-label": t("action_color") },
+    });
+    setIcon(this.selectionColorBtn, "palette");
+    this.selectionColorBtn.addEventListener("click", (e) => this.showBulkColorMenu(e));
+
+    this.selectionLabelsBtn = bar.createEl("button", {
+      cls: "jotdrop-selection-action",
+      attr: { "aria-label": t("label_picker_open") },
+    });
+    setIcon(this.selectionLabelsBtn, "tag");
+    this.selectionLabelsBtn.addEventListener("click", () => {
+      new LabelPickerModal(this.app, this.plugin, this.selectedFiles()).open();
+    });
+
     // In the trash this button restores, like Android's selection bar.
     this.selectionArchiveBtn = bar.createEl("button", { cls: "jotdrop-selection-action" });
     this.selectionArchiveBtn.addEventListener("click", () => {
@@ -541,6 +565,8 @@ export class JotDropView extends ItemView {
   }
 
   private updateSelectionActions(): void {
+    this.selectionColorBtn.toggleClass("is-hidden", this.showTrash);
+    this.selectionLabelsBtn.toggleClass("is-hidden", this.showTrash);
     this.selectionArchiveBtn.setAttribute("aria-label", t(this.showTrash ? "action_restore" : "action_archive"));
     setIcon(this.selectionArchiveBtn, this.showTrash ? "archive-restore" : "archive");
     this.selectionDeleteBtn.setAttribute("aria-label", t(this.showTrash ? "action_delete_forever" : "action_move_to_trash"));
@@ -838,6 +864,44 @@ export class JotDropView extends ItemView {
 
   private async bulkRestore(): Promise<void> {
     await this.bulkMove(normalizePath(this.plugin.settings.notesFolder), "notice_bulk_restored");
+  }
+
+  private selectedFiles(): TFile[] {
+    return Array.from(this.selectedPaths)
+      .map((path) => this.app.vault.getAbstractFileByPath(path))
+      .filter((file): file is TFile => file instanceof TFile);
+  }
+
+  private showBulkColorMenu(event: MouseEvent): void {
+    const files = this.selectedFiles();
+    const colors = new Set(files.map((file) => readMeta(this.app, file).color));
+    const menu = new Menu();
+    for (const name of COLOR_NAMES) {
+      menu.addItem((i) =>
+        i
+          .setTitle(colorLabel(name))
+          .setIcon(colors.size === 1 && colors.has(name) ? "check" : "circle")
+          .onClick(async () => {
+            let fail = 0;
+            for (const file of files) {
+              try {
+                // In place, like the card's own color menu, so the grid does not re-sort.
+                this.plugin.suppressModifyOnce(file.path);
+                await updateMeta(this.app, file, { color: name });
+              } catch {
+                fail++;
+              }
+            }
+            for (const cardEl of Array.from(this.gridEl.querySelectorAll<HTMLElement>(".jotdrop-card"))) {
+              if (!cardEl.dataset.path || !this.selectedPaths.has(cardEl.dataset.path)) continue;
+              if (name === "default") delete cardEl.dataset.color;
+              else cardEl.dataset.color = name;
+            }
+            if (fail > 0) new Notice(t("notice_bulk_partial", String(files.length - fail), String(fail)));
+          }),
+      );
+    }
+    menu.showAtMouseEvent(event);
   }
 
   private async bulkMove(folder: string, successKey: string): Promise<void> {
@@ -1686,11 +1750,11 @@ export class JotDropView extends ItemView {
   }
 
   private promptAssignLabel(file: TFile): void {
-    new LabelPickerModal(this.app, this.plugin, file).open();
+    new LabelPickerModal(this.app, this.plugin, [file]).open();
   }
 
   private promptRemoveLabel(file: TFile): void {
-    new LabelPickerModal(this.app, this.plugin, file).open();
+    new LabelPickerModal(this.app, this.plugin, [file]).open();
   }
 
   private hasLabelSelected(name: string): boolean {
