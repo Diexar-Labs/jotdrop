@@ -66,6 +66,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Label
+import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Done
@@ -754,6 +755,7 @@ private fun NotesListScreen(
     var labelManagerOpen by remember { mutableStateOf(false) }
     var selectedLabel by rememberSaveable { mutableStateOf<String?>(null) }
     var bulkLabelsOpen by remember { mutableStateOf(false) }
+    var bulkColorOpen by remember { mutableStateOf(false) }
     var helpOpen by remember { mutableStateOf(false) }
 
     // Eenmalige, throttled update-check (max 1x/dag) bij openen van het dashboard.
@@ -928,6 +930,7 @@ private fun NotesListScreen(
                     onExit = exitSelection,
                     onSelectAll = selectAll,
                     onLabels = { bulkLabelsOpen = true },
+                    onColor = { bulkColorOpen = true },
                     restoreMode = folder != NoteFolder.NOTES,
                     onArchive = {
                         if (folder == NoteFolder.NOTES) {
@@ -1318,6 +1321,29 @@ private fun NotesListScreen(
                 onRefresh()
             },
             onDismiss = { labelManagerOpen = false },
+        )
+    }
+    if (bulkColorOpen) {
+        // Like Keep: long-press cards, then pick one color for all of them.
+        val colors = loadedNotes.filter { it.uri in selectedNoteUris }.map { it.meta.color }.distinct()
+        ColorPickerDialog(
+            current = colors.singleOrNull(),
+            dark = dark,
+            onPick = { picked ->
+                bulkColorOpen = false
+                val uris = selectedNoteUris.toList()
+                scope.launch {
+                    val (ok, fail) = bulkPerform(uris) { uri ->
+                        withContext(Dispatchers.IO) {
+                            Storage.noteWriteMutex.withLock { Storage.setNoteColor(context, uri, picked) }
+                        }
+                    }
+                    if (fail > 0) Toast.makeText(context, context.getString(R.string.toast_bulk_partial, ok, fail), Toast.LENGTH_SHORT).show()
+                    exitSelection()
+                    onRefresh()
+                }
+            },
+            onDismiss = { bulkColorOpen = false },
         )
     }
     if (bulkLabelsOpen) {
@@ -1996,6 +2022,7 @@ private fun SelectionTopBar(
     onExit: () -> Unit,
     onSelectAll: () -> Unit,
     onLabels: () -> Unit,
+    onColor: () -> Unit,
     restoreMode: Boolean,
     onArchive: () -> Unit,
     onDelete: () -> Unit,
@@ -2024,6 +2051,9 @@ private fun SelectionTopBar(
                         contentDescription = stringResource(R.string.action_select_all),
                     )
                 }
+            }
+            IconButton(onClick = onColor, enabled = canBulkAct) {
+                Icon(Icons.Filled.Palette, stringResource(R.string.color_picker_title))
             }
             IconButton(onClick = onLabels, enabled = canBulkAct) {
                 Icon(Icons.Filled.Label, stringResource(R.string.nav_assign_label))

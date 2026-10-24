@@ -37,7 +37,7 @@ Stand gemeten op `ee57d58` (feature-branch), bijgewerkt met elke afgeronde funct
 | Functie | Website | Plugin | Android |
 |---|---|---|---|
 | Snel vastzetten vanaf de kaart | ja (24 okt) | ja | ja |
-| Kleur kiezen vanaf de kaart | ja (24 okt) | ja | NEE |
+| Kleur kiezen vanaf de kaart | ja (24 okt) | ja | ja (lang drukken > kleur, 24 okt, nog niet op emulator getest) |
 | Labels geven vanaf de kaart | ja (24 okt) | ja | deels (via meervoudige selectie) |
 | Archiveren vanaf de kaart | ja | ja | deels (via selectie of editor) |
 | Naar prullenbak | ja | NEE (verwijdert direct) | ja |
@@ -61,6 +61,7 @@ Stand gemeten op `ee57d58` (feature-branch), bijgewerkt met elke afgeronde funct
 | Foto groot bekijken (lightbox) | NEE | ja | ja |
 | Herinnering met datum en tijd | ja | ja | ja |
 | Herhalen: keuzescherm (dagelijks, weekdagen, elke N, n-de weekdag, eindigt) | ja (24 okt) | ja | ja |
+| Markdown-spiekbriefje (Eric, 24 okt) | ja (knop Markdown help) | ja (knop in editor, nog niet in echt Obsidian getest) | ja (editor > Meer opties, nog niet op emulator getest) |
 | Versiegeschiedenis van een notitie | ja | NEE | ja |
 
 ## Herinneringen, labels, zoeken

@@ -1585,3 +1585,12 @@
   width: 100%;
   font-family: var(--font-monospace);
 }
+
+/* Markdown help (same list as the web and Android apps) */
+.jotdrop-md-help table { border-collapse: collapse; width: 100%; }
+.jotdrop-md-help th, .jotdrop-md-help td { text-align: left; padding: 4px 12px 4px 0; border-bottom: 1px solid var(--background-modifier-border); vertical-align: top; }
+.jotdrop-md-help code { overflow-wrap: anywhere; }
+.jotdrop-md-help-intro { color: var(--text-muted); font-size: var(--font-ui-small); }
+.jotdrop-md-help-h1 { font-size: 1.2em; }
+.jotdrop-md-help-mark { background: var(--text-highlight-bg); }
+.jotdrop-md-help-quote { border-left: 3px solid var(--background-modifier-border); padding-left: 6px; color: var(--text-muted); }

@@ -169,3 +169,11 @@ dialog::backdrop { background: rgb(15 23 36 / .4); }
 .reminder-row input { width: auto; }
 .editor-hint { color: var(--muted); font-size: .8rem; margin: .5rem 0 0; }
 .weekday { min-width: 3.2rem; }
+.markdown-help { margin-top: .75rem; padding: .75rem 1rem; border: 1px solid var(--line); border-radius: 10px; overflow-x: auto; }
+.markdown-help p { margin: 0 0 .5rem; color: var(--muted); font-size: .85rem; }
+.markdown-help table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+.markdown-help th, .markdown-help td { text-align: left; padding: .3rem .6rem .3rem 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+.markdown-help code { font-family: ui-monospace, Consolas, monospace; overflow-wrap: anywhere; }
+.markdown-help .help-heading { font-size: 1.2rem; }
+.markdown-help .help-quote { border-left: 3px solid var(--line); padding-left: .5rem; color: var(--muted); }
+.editor-tools button[aria-expanded="true"] { background: var(--selected); border-color: var(--accent); }

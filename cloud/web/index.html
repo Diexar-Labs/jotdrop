@@ -216,7 +216,32 @@
         <label for="note-path">Filename</label><input id="note-path" required maxlength="512" spellcheck="false">
         <label for="note-content">Markdown content</label><textarea id="note-content" rows="14" spellcheck="true"></textarea>
       </div>
-      <div class="editor-tools"><button id="note-pinned" type="button" aria-pressed="false">Pin</button><button id="insert-checklist" type="button">Checklist item</button><button id="insert-link" type="button">Insert link</button></div>
+      <div class="editor-tools"><button id="note-pinned" type="button" aria-pressed="false">Pin</button><button id="insert-checklist" type="button">Checklist item</button><button id="insert-link" type="button">Insert link</button><button id="markdown-help-toggle" type="button" aria-expanded="false" aria-controls="markdown-help">Markdown help</button></div>
+      <section id="markdown-help" class="markdown-help" aria-label="Markdown help" hidden>
+        <p>Type the code on the left to format your note. Obsidian and other Markdown apps show the result on the right; JotDrop cards show the text without the codes.</p>
+        <table>
+          <thead><tr><th scope="col">Type this</th><th scope="col">You get</th></tr></thead>
+          <tbody>
+            <tr><td><code># Heading</code></td><td><strong class="help-heading">Heading</strong></td></tr>
+            <tr><td><code>## Smaller heading</code></td><td><strong>Smaller heading</strong></td></tr>
+            <tr><td><code>**bold**</code></td><td><strong>bold</strong></td></tr>
+            <tr><td><code>*italic*</code></td><td><em>italic</em></td></tr>
+            <tr><td><code>~~strikethrough~~</code></td><td><del>strikethrough</del></td></tr>
+            <tr><td><code>==highlight==</code></td><td><mark>highlight</mark></td></tr>
+            <tr><td><code>- item</code></td><td>• item</td></tr>
+            <tr><td><code>1. item</code></td><td>1. item</td></tr>
+            <tr><td><code>- [ ] task</code></td><td>☐ task</td></tr>
+            <tr><td><code>- [x] done</code></td><td>☑ done</td></tr>
+            <tr><td><code>&gt; quote</code></td><td><span class="help-quote">quote</span></td></tr>
+            <tr><td><code>`code`</code></td><td><code>code</code></td></tr>
+            <tr><td><code>[text](https://example.com)</code></td><td><u>text</u> (a web link)</td></tr>
+            <tr><td><code>[[Note name]]</code></td><td><u>Note name</u> (a link to another note)</td></tr>
+            <tr><td><code>#tag</code></td><td>a tag you can filter on</td></tr>
+            <tr><td><code>---</code></td><td>a dividing line</td></tr>
+            <tr><td><code>| A | B |</code><br><code>| --- | --- |</code><br><code>| 1 | 2 |</code></td><td>a table with columns A and B</td></tr>
+          </tbody>
+        </table>
+      </section>
       <div class="editor-colors"><span>Color</span><div id="note-colors" class="swatches" role="radiogroup" aria-label="Color"></div><span id="color-name" aria-hidden="true"></span></div>
       <div class="chip-field"><label for="label-input">Labels</label><div class="chips" id="label-chips"></div><input id="label-input" list="label-options" placeholder="Add label" autocomplete="off" maxlength="80"><datalist id="label-options"></datalist></div>
       <div class="chip-field"><label for="tag-input">Tags</label><div class="chips" id="tag-chips"></div><input id="tag-input" list="tag-options" placeholder="Add tag" autocomplete="off" maxlength="80"><datalist id="tag-options"></datalist></div>

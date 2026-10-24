@@ -76,6 +76,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Label
 import androidx.compose.material.icons.filled.Notifications
@@ -296,6 +297,7 @@ private fun EditorScreen(
     var reminderDone by rememberSaveable { mutableStateOf(0) }
     var saving by remember { mutableStateOf(false) }
     var showArchiveDialog by remember { mutableStateOf(false) }
+    var showMarkdownHelp by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var editorMenuOpen by remember { mutableStateOf(false) }
     var labelsSheetOpen by remember { mutableStateOf(false) }
@@ -915,6 +917,11 @@ private fun EditorScreen(
                                         }
                                     },
                                 )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.md_help_button)) },
+                                    leadingIcon = { Icon(Icons.Filled.Info, null) },
+                                    onClick = { editorMenuOpen = false; showMarkdownHelp = true },
+                                )
                                 if (isExisting) {
                                     DropdownMenuItem(
                                         text = { Text(stringResource(R.string.action_archive)) },
@@ -1192,6 +1199,7 @@ private fun EditorScreen(
         )
     }
 
+    if (showMarkdownHelp) MarkdownHelpDialog(onDismiss = { showMarkdownHelp = false })
     if (showArchiveDialog) {
         ConfirmDialog(
             title = stringResource(R.string.archive_title),
@@ -1634,9 +1642,10 @@ private fun EditorTagChip(tag: String, foreground: Color, onRemove: () -> Unit) 
     }
 }
 
+/** Also used from the note list; [current] is null when the selected notes have different colors. */
 @Composable
-private fun ColorPickerDialog(
-    current: NoteColor,
+internal fun ColorPickerDialog(
+    current: NoteColor?,
     dark: Boolean,
     onPick: (NoteColor) -> Unit,
     onDismiss: () -> Unit,
@@ -1654,11 +1663,13 @@ private fun ColorPickerDialog(
                         }
                     }
                 }
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = stringResource(R.string.color_label, stringResource(current.labelRes)),
-                    style = MaterialTheme.typography.bodySmall,
-                )
+                if (current != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = stringResource(R.string.color_label, stringResource(current.labelRes)),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
         },
         confirmButton = {

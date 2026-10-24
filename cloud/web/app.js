@@ -823,6 +823,13 @@ function renderRepeat(parts) {
   root.append(ends);
 }
 
+// Markdown help: the codes most people forget, next to the text they type in.
+$('markdown-help-toggle').addEventListener('click', () => {
+  const open = $('markdown-help').hidden;
+  $('markdown-help').hidden = !open;
+  $('markdown-help-toggle').setAttribute('aria-expanded', String(open));
+});
+
 // Checklist button, as in the plugin and Android: toggle the line's checkbox or start one.
 $('insert-checklist').addEventListener('click', () => {
   const area = markdownMode ? $('note-content') : $('note-body');

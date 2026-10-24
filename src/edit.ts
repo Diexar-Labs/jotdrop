@@ -4,6 +4,7 @@ import { toggleOrInsertChecklistOnTextArea } from "./capture";
 import { LightboxModal } from "./lightbox";
 import { voidAsync } from "./asyncUtil";
 import { RepeatEditor } from "./repeat";
+import { MarkdownHelpModal } from "./markdownHelp";
 import { t } from "./i18n";
 import { keepModalAboveKeyboard } from "./mobileKeyboard";
 import { enhanceListEditing } from "./listEditor";
@@ -372,6 +373,12 @@ export class EditNoteModal extends Modal {
       toggleOrInsertChecklistOnTextArea(this.bodyEl);
       this.state.body = this.bodyEl.value;
     });
+
+    const helpBtn = pinWrap.createEl("button", {
+      cls: "jotdrop-edit-linkbtn",
+      text: t("md_help_button"),
+    });
+    helpBtn.addEventListener("click", () => new MarkdownHelpModal(this.app).open());
 
     // Reminder
     const reminderRow = parent.createDiv({ cls: "jotdrop-edit-row jotdrop-reminder-row" });

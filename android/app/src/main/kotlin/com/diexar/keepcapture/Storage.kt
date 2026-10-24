@@ -885,6 +885,14 @@ object Storage {
         return updateNote(context, uri, newContent)
     }
 
+    /** Zet alleen de kleur van een bestaande notitie (kleur kiezen vanaf de kaart). */
+    fun setNoteColor(context: Context, uri: Uri, color: NoteColor): Result<Unit> {
+        val current = readNote(context, uri).getOrElse { return Result.failure(it) }
+        val meta = FrontmatterParser.parse(current).meta
+        if (meta.color == color) return Result.success(Unit)
+        return updateNote(context, uri, FrontmatterWriter.apply(current, meta.copy(color = color)))
+    }
+
     /** Zet alleen de handmatige `order`-waarde op een bestaande notitie. */
     fun setNoteOrder(context: Context, uri: Uri, order: Double): Result<Unit> {
         val current = readNote(context, uri).getOrElse { return Result.failure(it) }

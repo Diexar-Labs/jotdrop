@@ -101,6 +101,17 @@ def check_editor(browser, url, token):
         page.locator("#repeat-editor").get_by_label("Unit").select_option("weeks")
         assert 'reminder_repeat: "every:2:weeks"' in raw()
 
+        # Markdown help lists the codes people forget.
+        help_toggle = page.get_by_role("button", name="Markdown help", exact=True)
+        assert page.locator("#markdown-help").is_hidden()
+        help_toggle.click()
+        assert help_toggle.get_attribute("aria-expanded") == "true"
+        help_text = page.locator("#markdown-help").inner_text()
+        for code in ["# Heading", "**bold**", "*italic*", "- [ ] task", "[[Note name]]", "#tag"]:
+            assert code in help_text, code
+        help_toggle.click()
+        assert page.locator("#markdown-help").is_hidden()
+
         # The Markdown view shows the whole file; edits there show up in the simple view.
         page.locator("#markdown-mode").click()
         assert page.locator("#markdown-mode").get_attribute("aria-pressed") == "true" and page.locator("#note-content").is_visible()

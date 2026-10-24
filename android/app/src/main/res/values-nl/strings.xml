@@ -244,4 +244,25 @@
     <string name="label_hint">Labels zijn collecties, los van tags. Spaties blijven behouden.</string>
     <string name="label_search">Label zoeken of aanmaken</string>
     <string name="label_create_first">Maak eerst een label in het navigatiemenu.</string>
+    <!-- Markdown help (same list as the web app and the plugin) -->
+    <string name="md_help_button">Markdown-hulp</string>
+    <string name="md_help_title">Markdown-hulp</string>
+    <string name="md_help_intro">Typ de code links om je notitie op te maken. Obsidian toont het resultaat rechts; JotDrop-kaarten tonen de tekst zonder de codes.</string>
+    <string name="md_help_heading">Kop</string>
+    <string name="md_help_smaller_heading">Kleinere kop</string>
+    <string name="md_help_bold">vet</string>
+    <string name="md_help_italic">cursief</string>
+    <string name="md_help_strikethrough">doorgestreept</string>
+    <string name="md_help_highlight">gemarkeerd</string>
+    <string name="md_help_bullet">• punt</string>
+    <string name="md_help_numbered">1. punt</string>
+    <string name="md_help_task">☐ taak</string>
+    <string name="md_help_done">☑ klaar</string>
+    <string name="md_help_quote">citaat</string>
+    <string name="md_help_code">code</string>
+    <string name="md_help_web_link">tekst (een weblink)</string>
+    <string name="md_help_note_link">Notitienaam (een link naar een andere notitie)</string>
+    <string name="md_help_tag">een tag waarop je kunt filteren</string>
+    <string name="md_help_divider">een scheidingslijn</string>
+    <string name="md_help_table">een tabel met kolommen A en B</string>
 </resources>
