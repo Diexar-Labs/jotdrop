@@ -1336,6 +1336,7 @@ async function openWorkspace(connected) {
   closeMoment();
   $('access').hidden = true;
   $('workspace').hidden = false;
+  $('account-actions').hidden = false;
   $('access-code').value = '';
   $('new-password').value = '';
   $('confirm-password').value = '';
@@ -1362,7 +1363,7 @@ function releaseDevice() {
 // A page kept for the back button can come back, so it keeps its device.
 window.addEventListener('pagehide', (event) => { if (!event.persisted) releaseDevice(); });
 
-function lock() {
+function lock(notice = '') {
   if (voiceJob && !confirm('Discard the current recording and lock?')) return;
   void store('delete', 'session');
   releaseDevice();
@@ -1391,8 +1392,10 @@ function lock() {
   $('totp-enable').hidden = true;
   $('totp-secret').value = '';
   $('workspace').hidden = true;
+  $('account-actions').hidden = true;
   $('access').hidden = false;
-  void store('get', 'connection').then((saved) => (saved ? showUnlock() : showAccess('login-form')), () => showAccess('login-form'));
+  void store('get', 'connection').then((saved) => (saved ? showUnlock() : showAccess('login-form')), () => showAccess('login-form'))
+    .then(() => { if (notice) $('access-message').textContent = notice; });
 }
 
 const DEVICE_NAME = 'Web browser';
@@ -1690,7 +1693,18 @@ $('use-another').addEventListener('click', () => {
   showAccess('login-form');
   $('access-message').textContent = 'Existing encrypted drafts are kept. Connect the original device again to sync them.';
 });
-$('lock').addEventListener('click', lock);
+$('lock').addEventListener('click', () => lock());
+// Log out forgets this browser: its connection, staying signed in and its device slot. The notes stay in the cloud.
+$('log-out').addEventListener('click', async () => {
+  try {
+    if ((await store('entries', pendingPrefix())).length) throw new Error('Some changes are still waiting to upload. Sync them first, then log out.');
+    if (!confirm('Log out of this browser? Your notes stay in the cloud. To come back, log in with your email and password.')) return;
+    await store('delete', 'connection');
+    await store('delete', 'session');
+    forgetOnClose = true;
+    lock();
+  } catch (error) { message(errorText(error)); }
+});
 $('start-trial').addEventListener('click', async () => {
   try {
     await client.call('/account/trial', 'POST', {});
@@ -2077,7 +2091,7 @@ setInterval(() => {
 }, 30000);
 try {
   const credentials = await signedInCredentials().catch(() => undefined);
-  // A connection that no longer opens is forgotten; the password still unlocks this browser.
-  if (credentials) await openWorkspace(new CloudClient(credentials)).catch(lock);
+  // A connection that no longer opens is forgotten and says why; the password still unlocks this browser.
+  if (credentials) await openWorkspace(new CloudClient(credentials)).catch((error) => lock(`This browser could not open your notes by itself: ${errorText(error)} Unlock with your password.`));
   else if (await store('get', 'connection')) showUnlock();
 } catch (error) { $('access-message').textContent = errorText(error); $('connect-form').querySelector('button[type="submit"]').disabled = true; }

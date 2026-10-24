@@ -23,6 +23,9 @@ h3 { font-size: 1.05rem; }
 .local-banner { padding: .5rem 1.2rem; text-align: center; background: light-dark(#fff1c7, #3b3219); color: light-dark(#654d0a, #f1d995); font-size: .8rem; }
 .appearance { display: flex; justify-content: flex-end; align-items: center; gap: .65rem; padding: .6rem 1rem; }
 .appearance label { margin: 0; font-size: .85rem; }
+/* Account actions sit top right, like the account menu in Keep, so they are always in view. */
+.account-actions { display: flex; gap: .5rem; margin-right: 1rem; }
+.account-actions button { padding: .45rem .8rem; font-size: .85rem; }
 .appearance select { width: auto; }
 .wordmark { display: flex; align-items: center; gap: .55rem; font-size: 1.25rem; font-weight: 650; white-space: nowrap; }
 .wordmark > span:last-child { font-size: .8rem; color: var(--muted); font-weight: 500; }
@@ -37,7 +40,8 @@ h3 { font-size: 1.05rem; }
 .access fieldset { border: 1px solid var(--line); border-radius: 8px; margin: 1rem 0; }
 .access .words, #approval-words { color: var(--ink); font-size: 1.5rem; font-weight: 700; letter-spacing: .02em; word-spacing: .4em; }
 .workspace { display: grid; grid-template-columns: 245px minmax(0, 1fr); min-height: calc(100dvh - 36px); }
-.sidebar { padding: 1.7rem 1rem; display: flex; flex-direction: column; border-right: 1px solid var(--line); }
+/* The sidebar stays in view and scrolls by itself, so Lock workspace and Log out are always reachable. */
+.sidebar { position: sticky; top: 0; max-height: 100dvh; overflow-y: auto; padding: 1.7rem 1rem; display: flex; flex-direction: column; border-right: 1px solid var(--line); }
 .sidebar .wordmark { margin: 0 .5rem 2rem; }
 .sidebar nav { display: grid; grid-template-columns: minmax(0, 1fr); gap: .4rem; }
 .sidebar nav button { display: flex; justify-content: space-between; gap: .5rem; border-color: transparent; text-align: left; background: transparent; }
@@ -55,9 +59,9 @@ h3 { font-size: 1.05rem; }
 .label-rows { list-style: none; margin: .5rem 0 0; padding: 0; }
 .label-row { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; margin-top: .75rem; }
 .label-row input { flex: 1 1 12rem; width: auto; }
-.sidebar-bottom { margin-top: auto; padding: 2rem .5rem 0; }
+.sidebar-bottom { margin-top: auto; padding: 1.2rem .5rem 0; }
 .sidebar-bottom p { color: var(--muted); font-size: .82rem; }
-.sidebar-bottom button { display: block; background: transparent; border-color: transparent; font-size: .85rem; padding-left: 0; }
+.sidebar-bottom button { display: block; background: transparent; border-color: transparent; font-size: .85rem; padding: .45rem .9rem .45rem 0; }
 main { min-width: 0; padding: 0 2rem 3rem; }
 .toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: .7rem; padding: 1.3rem 0; border-bottom: 1px solid var(--line); }
 .toolbar input[type="search"] { flex: 1 1 220px; width: auto; margin-right: auto; background: var(--surface); }
@@ -161,7 +165,7 @@ dialog::backdrop { background: rgb(15 23 36 / .4); }
 .check-label input { width: auto; margin-top: .35rem; }
 @media (max-width: 760px) {
   .workspace { grid-template-columns: 1fr; }
-  .sidebar { padding: 1rem; border-right: none; border-bottom: 1px solid var(--line); }
+  .sidebar { position: static; max-height: none; overflow: visible; padding: 1rem; border-right: none; border-bottom: 1px solid var(--line); }
   .sidebar .wordmark { margin: 0 0 .8rem; }
   .sidebar nav { display: flex; flex-wrap: wrap; gap: .25rem; }
   .sidebar-labels { flex-basis: 100%; }

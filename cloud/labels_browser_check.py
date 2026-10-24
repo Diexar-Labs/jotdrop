@@ -111,9 +111,17 @@ def check_labels(browser, url, token):
         page.locator("#lock").click()
         page.reload(wait_until="networkidle")
         page.locator("#unlock-password").wait_for()
+        assert "stays signed in" in page.locator("#unlock-form").inner_text()
         page.locator("#unlock-password").fill(password)
         page.locator('#unlock-form button[type="submit"]').click()
         page.locator(".note-card").first.wait_for()
+        # Log out forgets this browser: the login form with its "Stay signed in" box, also after F5.
+        page.get_by_role("button", name="Log out", exact=True).click()
+        page.locator("#login-form").wait_for()
+        assert page.locator("#login-remember").is_visible() and page.locator("#unlock-form").is_hidden()
+        page.reload(wait_until="networkidle")
+        page.locator("#login-form").wait_for()
+        assert page.locator("#unlock-form").is_hidden() and page.locator("#workspace").is_hidden()
 
         page.set_viewport_size({"width": 390, "height": 844})
         page.wait_for_function("() => innerWidth === 390")
