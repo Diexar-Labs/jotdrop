@@ -1114,6 +1114,9 @@ $('search').addEventListener('input', render);
 $('label-filter').addEventListener('change', render);
 $('sort').addEventListener('change', render);
 $('new-note').addEventListener('click', () => openEditor());
+// Like the Android main screen: start the camera or the recording in a new note right away.
+$('new-photo-text').addEventListener('click', () => { openEditor(); $('photo-tools').open = true; $('start-camera').click(); });
+$('new-voice').addEventListener('click', () => { openEditor(); $('start-voice').click(); });
 function stopCamera() {
   cameraRequest++;
   cameraStream?.getTracks().forEach((track) => track.stop());

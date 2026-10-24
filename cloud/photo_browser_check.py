@@ -63,14 +63,15 @@ def check_photos(browser, url, token):
         with second.expect_download() as download:
             second.locator(".note-card").get_by_role("button", name="Download", exact=True).click()
         assert Path(download.value.path()).read_bytes() == image
-        second.locator("#new-note").click()
-        second.locator("#photo-tools summary").click()
-        second.locator("#start-camera").click()
+        # The toolbar button opens a new note with the camera already running.
+        second.locator("#new-photo-text").click()
         second.locator("#capture-photo:not([disabled])").wait_for()
+        assert second.locator("#photo-tools").evaluate("details => details.open")
         second.locator("#capture-photo").click()
         second.wait_for_function("() => document.getElementById('note-content').value.includes('![Source photo]')")
         assert second.locator('#editor-form button[type="submit"]').is_disabled()
-        worker = second.workers[0]
+        # The OCR worker starts after the source photo is queued; wait for it instead of racing.
+        worker = second.workers[0] if second.workers else second.wait_for_event("worker")
         with worker.expect_event("close"):
             second.locator("#cancel-ocr").click()
         assert second.locator("#camera-preview").evaluate("video => video.srcObject === null")
