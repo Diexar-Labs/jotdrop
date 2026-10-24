@@ -93,7 +93,7 @@ Stand gemeten op `ee57d58` (feature-branch), bijgewerkt met elke afgeronde funct
 | Functie | Website | Plugin | Android |
 |---|---|---|---|
 | Inloggen met e-mail en wachtwoord | ja | ja (instellingen, JotDrop Cloud; ook account maken met herstelcode, apparatengrens) | ja |
-| Inloggen met Google of GitHub | ja (server + website; nog niet op staging, OAuth-apps nog registreren) | NEE | NEE |
+| Inloggen met Google of GitHub | ja (server + website, op staging) | ja (terug via `obsidian://jotdrop-cloud`) | NEE |
 | Wachtwoord wijzigen/vergeten | ja | ja (vergeten: goedkeuren, herstelcode of opnieuw beginnen) | ja |
 | Authenticator-app (TOTP) | ja | NEE | NEE |
 | Apparaten bekijken en intrekken | ja | ja | ja |

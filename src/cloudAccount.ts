@@ -57,7 +57,7 @@ export function renderCloudAccount(app: App, el: HTMLElement, cloud: CloudContro
         }))
         .addButton((button) => button.setButtonText("Approve").setCta().onClick(() => {
           new ConfirmModal(app, { title: "Same four words?", message: `Does the new device show exactly these words?\n\n${words}`, confirmLabel: "Yes, approve" }, async () => {
-            try { await approveDevice(client, approval); new Notice("Approved. The new device can now set a new password."); }
+            try { await approveDevice(client, approval); new Notice("Approved. The new device can now open your notes."); }
             catch (error) { new Notice(errorText(error)); }
             await showApprovals();
           }).open();
@@ -88,11 +88,16 @@ export function renderCloudAccount(app: App, el: HTMLElement, cloud: CloudContro
   };
 
   const showSecurity = async () => {
-    let account: { email: string } | undefined;
+    let account: { email: string; password: boolean } | undefined;
     try { account = await accountInfo(client); } catch (error) { if ((error as { status?: number }).status !== 404) return; }
     if (stopped) return;
     const security = el.createDiv();
     new Setting(security).setName("Password and recovery").setHeading();
+    // An account made with Google or GitHub gets a password through "Forgot password", like on the website.
+    if (account && !account.password) {
+      security.createEl("p", { text: "You sign in with Google or GitHub, so this account has no password. A password is needed to make a new recovery code. To add one: log out, choose \"Forgot password?\" and follow the steps." });
+      return;
+    }
     if (account) new Setting(security).setName("Password").setDesc("Changing it does not encrypt your notes again.")
       .addButton((button) => button.setButtonText("Change password").onClick(() => new PasswordModal(app, cloud).open()));
     new Setting(security).setName("Recovery code").setDesc("Make a new code if the old one is lost. The old code stops working.")
@@ -112,7 +117,7 @@ export class RecoveryCodeModal extends Modal {
   constructor(app: App, private code: string) { super(app); }
   onOpen(): void {
     this.titleEl.setText("Save your recovery code");
-    this.contentEl.createEl("p", { text: "If you forget your password, this code is the only way back into your notes. Store it in a password manager. Nobody, including JotDrop, can recover your notes without it." });
+    this.contentEl.createEl("p", { text: "If you forget your password or lose your devices, this code is the only way back into your notes. Store it in a password manager. Nobody, including JotDrop, can recover your notes without it." });
     const box = this.contentEl.createEl("textarea", { cls: "jotdrop-recovery-code", attr: { readonly: "", rows: "4", "aria-label": "Recovery code" } });
     box.value = this.code;
     // Through the component: Obsidian ignores clicks on a button it still thinks is disabled.

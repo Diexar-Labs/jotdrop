@@ -186,7 +186,7 @@ Eric koos "Google + goedkeuren" en voegde GitHub toe. Google of GitHub bewijst a
 
 **Tests:** `cloud/oauth.test.mjs` (nep-Google/GitHub via de `fetcher` van de server: nieuw account, goedkeuren, GitHub koppelen met herstelcode, account met wachtwoord, zonder wachtwoord plus "Forgot password", onbevestigd adres, gestolen/verlopen tickets, hergebruikte state, geannuleerd) en `npm run check:cloud-oauth` (website in een echte browser).
 
-**Bouwstand:** server, gedeelde client (`cloud/shared/account.mjs`) en website gebouwd. Nog te doen: OAuth-apps registreren bij Google en GitHub, staging, plugin (`obsidian://`-terugsprong), Android.
+**Bouwstand:** server, gedeelde client (`cloud/shared/account.mjs`) en website gebouwd; OAuth-apps geregistreerd en op staging (24 okt). Plugin: knoppen in het inlogvenster, de `verifier` wacht in de IndexedDB van deze vault, de browser springt terug naar `obsidian://jotdrop-cloud?oauth=<ticket>` (handler in `CloudController.register`); daarna nieuw account, goedkeuren of herstelcode zoals op de website. Een terugsprong in een andere vault vindt geen `verifier` en vraagt opnieuw te beginnen. Zonder wachtwoord verbergt de plugin "Change password" en "Make a new recovery code" en legt uit hoe je een wachtwoord toevoegt. Test: `cloud/plugin.test.mjs`. Nog te doen: Android.
 
 ## Wat dit ontwerp bewust NIET beschermt
 

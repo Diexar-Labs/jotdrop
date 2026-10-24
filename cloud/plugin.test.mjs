@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { createCloudServer } from './server.mjs';
 import { CloudClient } from './shared/client.mjs';
-import { confirmSignup, signUp } from './shared/account.mjs';
+import { accountInfo, confirmSignup, providerSignUp, signUp } from './shared/account.mjs';
 import { objectId, randomToken } from './shared/crypto.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -174,6 +174,52 @@ test('the archive must sit inside the notes folder, like on the website and Andr
   v.plugin.settings.archiveFolder = 'Archive';
   const cloud = new CloudController(v.plugin, v.store);
   await assert.rejects(cloud.checkFolders(), /archive folder/);
+});
+
+test('the plugin signs in with Google through obsidian://jotdrop-cloud, and the ticket works only once on this device', async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'jotdrop-plugin-test-'));
+  // Google as the server sees it: the code the browser brings back names the person.
+  const people = { ann: { sub: 'g-ann', email: 'ann@example.com', email_verified: true } };
+  const fetcher = async (address, init = {}) => {
+    const json = (value) => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } });
+    if (address === 'https://oauth2.googleapis.com/token') return json({ access_token: `token-${new URLSearchParams(init.body).get('code')}` });
+    if (address === 'https://openidconnect.googleapis.com/v1/userinfo') return json(people[/token-(\w+)/.exec(init.headers.Authorization)[1]]);
+    throw new Error(`Unexpected request ${address}`);
+  };
+  const app = await createCloudServer({ dataDir, mailer: async () => {}, serverKey: randomToken(), freeDeviceLimit: 100, fetcher, oauth: { google: { clientId: 'google-id', clientSecret: 'google-secret' } } });
+  t.after(async () => { await app.close(); await rm(dataDir, { recursive: true, force: true }); });
+  const url = `http://127.0.0.1:${app.port}`;
+
+  const v = vault(), handlers = {};
+  v.plugin.registerObsidianProtocolHandler = (action, handler) => { handlers[action] = handler; };
+  // Obsidian clears these on unload; here the test does, so the process can end.
+  v.plugin.registerInterval = (id) => { t.after(() => clearInterval(id)); };
+  const cloud = new CloudController(v.plugin, v.store);
+  cloud.register();
+  assert.equal(typeof handlers['jotdrop-cloud'], 'function');
+
+  // The browser: the provider's page, then back to Obsidian; Obsidian hands the handler the decoded query.
+  const browse = async (href, code) => {
+    const authorize = new URL((await fetch(href, { redirect: 'manual' })).headers.get('location'));
+    const callback = new URL(authorize.searchParams.get('redirect_uri'));
+    callback.search = new URLSearchParams({ state: authorize.searchParams.get('state'), ...(code ? { code } : { error: 'access_denied' }) }).toString();
+    const location = (await fetch(callback, { redirect: 'manual' })).headers.get('location');
+    assert.match(location, /^obsidian:\/\/jotdrop-cloud\?/);
+    return { action: 'jotdrop-cloud', ...Object.fromEntries(new URL(location).searchParams) };
+  };
+
+  await assert.rejects(cloud.providerReturn(await browse(await cloud.startProvider(url, 'google'))), /cancelled/);
+  const params = await browse(await cloud.startProvider(url, 'google'), 'ann');
+  const signIn = await cloud.providerReturn(params);
+  assert.deepEqual([signIn.provider, signIn.email, signIn.account], ['google', 'ann@example.com', false]);
+  await assert.rejects(cloud.providerReturn(params), /started in another vault/, 'The verifier is gone after the first use');
+  await assert.rejects(new CloudController(vault().plugin, vault().store).providerReturn(params), /started in another vault/, 'Another vault has no verifier');
+
+  const { client, recoveryCode } = await providerSignUp(signIn, { deviceName: 'Obsidian' });
+  assert.ok(recoveryCode);
+  await cloud.finishSignIn(client, signIn.email);
+  assert.equal(cloud.signedIn, true);
+  assert.equal((await accountInfo(cloud.connection)).password, false, 'A Google account starts without a password');
 });
 
 test('the plugin settles a conflict either way and goes back to a moment with the time machine', async (t) => {

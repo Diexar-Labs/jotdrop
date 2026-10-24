@@ -2,13 +2,14 @@ import { FileSystemAdapter, Modal, Notice, Platform, Setting, TFile, normalizePa
 import type JotDropPlugin from "./main";
 import { ConfirmModal } from "./confirmModal";
 import { CloudClient } from "../cloud/shared/client.mjs";
-import { checkApproval, completeApproval, confirmLogin, confirmSignup, logIn, requestApproval, resetWithRecoveryCode, signUp, startOver, startReset } from "../cloud/shared/account.mjs";
+import { availableProviders, checkApproval, completeApproval, confirmLogin, confirmSignup, logIn, providerApproval, providerRecover, providerSignUp, providerTicket, requestApproval, resetWithRecoveryCode, signUp, startOver, startProviderSignIn, startReset } from "../cloud/shared/account.mjs";
 import { RecoveryCodeModal } from "./cloudAccount";
 import { ConflictReviewModal, TimeMachineModal } from "./cloudReview";
 import { base64ToBytes, decryptEnvelope, MAX_FILE_BYTES, objectId } from "../cloud/shared/crypto.mjs";
 import { cloudTimeline, conflictOriginal, copyName, hash, isPreserved, MAX_SYNC_BYTES, MAX_SYNC_FILES, remoteFiles, restorePlan, syncFolder, syncPath, unavailable } from "../cloud/shared/sync.mjs";
 
 export const DEFAULT_CLOUD_SERVER = "https://api.jotdrop.net";
+const PROVIDER_NAMES: Record<string, string> = { google: "Google", github: "GitHub" };
 const SYNCTHING = [".stfolder", ".stignore", ".stversions"];
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
@@ -21,6 +22,7 @@ type SyncState = {
   upload?: Prepared; lastSynced?: string; message: string; conflicts: number;
 };
 type Session = { credentials: CloudClient["credentials"]; email: string };
+type ProviderSignIn = Awaited<ReturnType<typeof providerTicket>> & { provider: string; email: string; account: boolean };
 type MomentFile = { id: string; revision: number | null; deleted: boolean; locked: boolean; cleared: boolean };
 export type CloudVersion = { revision: number; deleted: boolean; updatedAt: string; locked: boolean };
 export type CloudMoment ={ at: string; then: MomentFile[]; files: Array<{ path: string; bytes: Uint8Array }>; trashed: number; locked: number; cleared: number };
@@ -309,6 +311,8 @@ export class CloudController {
   private readonly editing = new Set<string>();
   private readonly listeners = new Set<() => void>();
   private ready: Promise<void>;
+  /** The open sign-in window, so the way back from Google or GitHub continues in it. */
+  signInWindow?: CloudSignInModal;
 
   constructor(private plugin: JotDropPlugin, store?: KeyValues) {
     const app = plugin.app as unknown as { appId?: string };
@@ -343,6 +347,26 @@ export class CloudController {
     plugin.registerInterval(window.setInterval(() => this.request(0), 60_000));
     plugin.registerDomEvent(window, "focus", () => this.request(0));
     plugin.app.workspace.onLayoutReady(() => { void this.ready.then(() => this.request(0)); });
+    // Google or GitHub sends the browser back here: obsidian://jotdrop-cloud?oauth=<ticket>
+    plugin.registerObsidianProtocolHandler("jotdrop-cloud", (params) => {
+      void this.providerReturn(params).then((signIn) => this.showSignIn(false, signIn), (error) => new Notice(error instanceof Error ? error.message : String(error), 10000));
+    });
+  }
+
+  /** Sign in with Google or GitHub: the verifier waits on this device for the ticket that comes back. Returns the page to open. */
+  async startProvider(url: string, provider: string): Promise<string> {
+    const { verifier, href } = await startProviderSignIn({ url, provider, client: "obsidian" });
+    await this.store.put("provider", { url, verifier });
+    return href;
+  }
+
+  /** Back from the browser: the ticket only works with this device's verifier, and only once. */
+  async providerReturn(params: Record<string, string>): Promise<ProviderSignIn> {
+    const started = await this.store.get<{ url: string; verifier: string }>("provider");
+    await this.store.delete("provider");
+    if (!params.oauth) throw new Error(params["oauth-error"] || "The sign-in did not finish. Try again.");
+    if (!started) throw new Error("This sign-in was started in another vault or app. Start again here.");
+    return await providerTicket({ ...started, ticket: params.oauth, fetcher: cloudFetch }) as ProviderSignIn;
   }
 
   private async restore(): Promise<void> {
@@ -696,7 +720,10 @@ export class CloudController {
     this.abort?.abort();
   }
 
-  showSignIn(signup = false): void { new CloudSignInModal(this.plugin, this, signup).open(); }
+  showSignIn(signup = false, signIn?: ProviderSignIn): void {
+    if (signIn && this.signInWindow) this.signInWindow.provider(signIn);
+    else new CloudSignInModal(this.plugin, this, signup, signIn).open();
+  }
 
   /** `onDone` runs when the question closes either way, so the settings toggle shows the real state. */
   confirmEnable(onDone: () => void): void {
@@ -721,12 +748,19 @@ type LimitError = { code?: string; message?: string; devices?: Array<{ id: strin
 class CloudSignInModal extends Modal {
   private message!: HTMLElement;
 
-  constructor(private plugin: JotDropPlugin, private cloud: CloudController, private signup: boolean) { super(plugin.app); }
+  constructor(private plugin: JotDropPlugin, private cloud: CloudController, private signup: boolean, private signIn?: ProviderSignIn) { super(plugin.app); }
 
   private get url(): string { return this.plugin.settings.cloudServer || DEFAULT_CLOUD_SERVER; }
 
-  onOpen(): void { this.form(); }
-  onClose(): void { this.contentEl.empty(); }
+  onOpen(): void {
+    this.cloud.signInWindow = this;
+    if (this.signIn) this.provider(this.signIn);
+    else this.form();
+  }
+  onClose(): void {
+    if (this.cloud.signInWindow === this) this.cloud.signInWindow = undefined;
+    this.contentEl.empty();
+  }
 
   private start(title: string): HTMLElement {
     this.contentEl.empty();
@@ -767,6 +801,18 @@ class CloudSignInModal extends Modal {
   private form(): void {
     const el = this.start(this.signup ? "Create a JotDrop Cloud account" : "Log in to JotDrop Cloud");
     el.createEl("p", { text: this.signup ? "Your notes are encrypted on this device with a key made from your password. The server never sees your password or your notes." : "Use the same email and password as on the website and in the Android app." });
+    // Google or GitHub only say who you are; the key to the notes still comes from your own devices.
+    const providers = el.createDiv();
+    void availableProviders(this.url, { fetcher: cloudFetch }).then((list: string[]) => {
+      const known = list.filter((name) => PROVIDER_NAMES[name]);
+      if (!known.length || !providers.isConnected) return;
+      const row = new Setting(providers);
+      for (const name of known) row.addButton((button) => button.setButtonText(`Continue with ${PROVIDER_NAMES[name]}`).onClick(() => this.busy(button.buttonEl, async () => {
+        window.open(await this.cloud.startProvider(this.url, name));
+        this.waiting(name);
+      })));
+      providers.createEl("p", { text: "Or with email and password:" });
+    }, () => {});
     let email = "", password = "", confirm = "";
     this.field(el, "Email", "email", "email", (value) => { email = value.trim(); });
     this.field(el, "Password", "password", this.signup ? "new-password" : "current-password", (value) => { password = value; }, this.signup ? "At least 12 characters." : "");
@@ -783,6 +829,43 @@ class CloudSignInModal extends Modal {
           : await logIn({ url: this.url, email, password, deviceName: deviceName(), fetcher: cloudFetch });
         this.code(pending as Pending, email);
       })));
+  }
+
+  private waiting(provider: string): void {
+    const el = this.start(`Continue with ${PROVIDER_NAMES[provider]}`);
+    el.createEl("p", { text: `Sign in with ${PROVIDER_NAMES[provider]} in your browser. Obsidian comes back here when you are done.` });
+    this.message = el.createEl("p", { attr: { role: "status" } });
+    new Setting(el).addButton((button) => button.setButtonText("Back").onClick(() => this.form()));
+  }
+
+  /** Back from Google or GitHub: a new cloud, or the key from a signed-in device or the recovery code. */
+  provider(signIn: ProviderSignIn): void {
+    const el = this.start(signIn.account ? "Open your notes in this vault" : "Create your JotDrop cloud");
+    el.createEl("p", { text: `Signed in with ${PROVIDER_NAMES[signIn.provider] ?? signIn.provider} as ${signIn.email}.` });
+    const options = { deviceName: deviceName() };
+    const choices = createDiv();
+    if (!signIn.account) {
+      el.createEl("p", { text: "Your notes are encrypted on this device before they leave it. You get a recovery code: keep it safe, it opens your notes if you lose your devices." });
+      new Setting(el).addButton((button) => button.setButtonText("Create my JotDrop cloud").setCta().onClick(() => this.busy(button.buttonEl, async () => {
+        const { client, recoveryCode } = await providerSignUp(signIn, options, { fetcher: cloudFetch });
+        await this.cloud.finishSignIn(client, signIn.email);
+        this.done(recoveryCode);
+      })));
+    } else {
+      el.createEl("p", { text: "Only your own devices hold the key to your notes. Get it from a device that is signed in, or with your recovery code." });
+      new Setting(el).addButton((button) => button.setButtonText("Approve on a signed-in device").setCta().onClick(() => this.busy(button.buttonEl, async () => {
+        this.waitForApproval(await providerApproval(signIn, { fetcher: cloudFetch }), options, signIn.email);
+      })));
+      let recoveryCode = "";
+      new Setting(el).setName("Or use your recovery code").addTextArea((input) => input.onChange((value) => { recoveryCode = value.trim(); }));
+      new Setting(el).addButton((button) => button.setButtonText("Use recovery code").onClick(() => this.busy(button.buttonEl, () => this.withDeviceChoice(choices, async (replaceDeviceId) => {
+        await this.cloud.finishSignIn(await providerRecover(signIn, { ...options, recoveryCode, replaceDeviceId }, { fetcher: cloudFetch }), signIn.email);
+        this.done();
+      }))));
+    }
+    this.message = el.createEl("p", { attr: { role: "status" } });
+    el.appendChild(choices);
+    new Setting(el).addButton((button) => button.setButtonText("Back").onClick(() => this.form()));
   }
 
   private code(pending: Pending, email: string): void {
@@ -862,7 +945,8 @@ class CloudSignInModal extends Modal {
     })));
   }
 
-  private waitForApproval(pending: Awaited<ReturnType<typeof requestApproval>>, options: { newPassword: string; deviceName: string }, email: string): void {
+  /** Without `newPassword` (Google or GitHub) the account keeps its password, or stays without one. */
+  private waitForApproval(pending: Awaited<ReturnType<typeof requestApproval>>, options: { newPassword?: string; deviceName: string }, email: string): void {
     const el = this.start("Approve on your other device");
     el.createEl("p", { text: "On a device that is still signed in, open JotDrop Cloud (website: Devices & recovery; Obsidian: JotDrop settings). Approve only if it shows exactly these words:" });
     el.createEl("p", { cls: "jotdrop-approval-words", text: pending.words.join("  ") });
@@ -877,9 +961,9 @@ class CloudSignInModal extends Modal {
         if (!active) return;
         if (!approved) { window.setTimeout(() => void poll(), 3000); return; }
         active = false;
-        this.status("Approved. Setting your new password...");
+        this.status(options.newPassword === undefined ? "Approved. Opening your notes..." : "Approved. Setting your new password...");
         await this.withDeviceChoice(choices, async (replaceDeviceId) => {
-          await this.cloud.finishSignIn(await completeApproval(approved, { ...options, replaceDeviceId }, { fetcher: cloudFetch }), email);
+          await this.cloud.finishSignIn(await completeApproval(approved, { ...options, newPassword: options.newPassword, replaceDeviceId }, { fetcher: cloudFetch }), email);
           this.done();
         });
       } catch (error) {
