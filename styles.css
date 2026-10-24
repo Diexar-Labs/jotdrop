@@ -1626,3 +1626,54 @@
   font-weight: 600;
   text-align: center;
 }
+
+/* JotDrop Cloud: conflict review and time machine */
+.jotdrop-conflict-compare {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+.jotdrop-conflict-compare h4 {
+  margin: 0 0 6px;
+}
+.jotdrop-conflict-text {
+  max-height: 40vh;
+  overflow: auto;
+  margin: 0;
+  padding: 8px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+  font-size: var(--font-ui-small);
+}
+.jotdrop-conflict-missing {
+  font-style: italic;
+  color: var(--text-muted);
+}
+.jotdrop-time-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.jotdrop-time-controls input[type="range"] {
+  flex: 1;
+}
+.jotdrop-time-label {
+  font-weight: 600;
+}
+.jotdrop-time-notes {
+  max-height: 45vh;
+  overflow: auto;
+}
+.jotdrop-time-note {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+}
+.jotdrop-time-note p {
+  margin: 2px 0 0;
+  color: var(--text-muted);
+  font-size: var(--font-ui-small);
+  white-space: pre-wrap;
+}

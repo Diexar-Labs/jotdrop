@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { createCloudServer } from '../server.mjs';
 import { CloudClient } from './client.mjs';
 import { objectId, randomToken } from './crypto.mjs';
-import { copyName, hash, isPreserved, remoteFiles, syncFolder, syncPath } from './sync.mjs';
+import { cloudTimeline, conflictOriginal, copyName, hash, isPreserved, remoteFiles, restorePlan, syncFolder, syncPath, unavailable } from './sync.mjs';
 
 const text = (value) => new TextEncoder().encode(value);
 const decode = (value) => new TextDecoder().decode(value);
@@ -107,4 +107,42 @@ test('paths follow the Android rules', () => {
   assert.throws(() => syncPath('notes/a.cloud-conflict-r2.md'), /preserved/);
   assert.throws(() => syncPath('other/a.md'), /outside/);
   assert.equal(copyName('notes/a.md', '.cloud-conflict-r2'), 'notes/a.cloud-conflict-r2.md');
+});
+
+test('a conflict copy names its original', () => {
+  for (const path of ['notes/a.md', 'notes/Archive/x.y.md', 'attachments/photo.jpg', 'attachments/plain']) {
+    assert.equal(conflictOriginal(copyName(path, '.cloud-conflict-r3')), path);
+    assert.equal(conflictOriginal(copyName(path, `.cloud-conflict-r12-${crypto.randomUUID()}`)), path);
+  }
+  assert.equal(conflictOriginal('notes/a.md'), null);
+  assert.equal(conflictOriginal(copyName('notes/a.md', '.cloud-recovery-abc')), null);
+});
+
+test('the time machine steps per minute and restores a moment as new versions', async () => {
+  const feed = [
+    { id: 'a', revision: 1, deleted: false, updatedAt: '2026-10-24T10:00:05.000Z' },
+    { id: 'b', revision: 1, deleted: false, updatedAt: '2026-10-24T10:00:40.000Z' },
+    { id: 'a', revision: 2, deleted: false, updatedAt: '2026-10-24T10:03:00.000Z' },
+    { id: 'b', revision: 2, deleted: true, updatedAt: '2026-10-24T10:04:00.000Z' },
+    { id: 'c', revision: 1, deleted: false, updatedAt: '2026-10-24T10:05:00.000Z' },
+  ];
+  // Two pages, like a long feed.
+  const client = { listChanges: async (after) => after === 0 ? { changes: feed.slice(0, 3), cursor: 3, hasMore: true } : { changes: feed.slice(3), cursor: 5, hasMore: false } };
+  const { steps, current } = await cloudTimeline(client);
+  assert.deepEqual(steps, ['2026-10-24T10:00:40.000Z', '2026-10-24T10:03:00.000Z', '2026-10-24T10:04:00.000Z', '2026-10-24T10:05:00.000Z']);
+  assert.deepEqual(current, [{ id: 'a', revision: 2, deleted: false }, { id: 'b', revision: 2, deleted: true }, { id: 'c', revision: 1, deleted: false }]);
+  // Back to 10:00: a goes back, b comes out of the trash, c (made later) moves to the trash.
+  const then = [{ id: 'a', revision: 1, deleted: false, locked: false, cleared: false }, { id: 'b', revision: 1, deleted: false, locked: false, cleared: false }];
+  assert.deepEqual(restorePlan(current, then), [
+    { id: 'a', revision: 1, baseRevision: 2 },
+    { id: 'b', revision: 1, baseRevision: 2 },
+    { id: 'c', delete: true, baseRevision: 1 },
+  ]);
+  // Unchanged since then: nothing to do. A deleted file stays deleted.
+  assert.deepEqual(restorePlan(current, [{ id: 'a', revision: 2, deleted: false, locked: true, cleared: false }, { id: 'b', revision: 2, deleted: true, locked: false, cleared: false }, { id: 'c', revision: 1, deleted: false, locked: false, cleared: false }]), []);
+  // A locked older version (free plan, older than 30 days) or a cleared one: the whole moment needs Plus.
+  const locked = [{ id: 'a', revision: 1, deleted: false, locked: true, cleared: false }];
+  assert.deepEqual(unavailable(current, locked), locked);
+  assert.throws(() => restorePlan(current, locked), /Plus/);
+  assert.equal(unavailable(current, [{ id: 'a', revision: null, deleted: false, locked: true, cleared: true }]).length, 1);
 });

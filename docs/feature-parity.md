@@ -99,8 +99,8 @@ Stand gemeten op `ee57d58` (feature-branch), bijgewerkt met elke afgeronde funct
 | Koppelcode maken | ja | ja | ja |
 | Nieuw apparaat goedkeuren (4 woorden) | ja | ja (goedkeuren en zelf laten goedkeuren) | ja |
 | Automatisch synchroniseren | ja | ja (notitiemap met Archive/Trash + bijlagen, zelfde regels als Android; stopt bij Syncthing of gekoppelde Obsidian Sync) | ja |
-| Conflict beoordelen | ja | deels (beide versies blijven, `.cloud-conflict`-kopie als kaart; nog geen vergelijkscherm) | ja |
-| Tijdmachine | ja | NEE | ja |
+| Conflict beoordelen | ja | ja (venster "Review conflicts": deze vault naast de cloudversie, "Keep this vault's version" / "Use the cloud version"; de andere versie en de kopie naar de prullenbak) | ja |
+| Tijdmachine | ja | ja (venster "Time machine": schuif door de minuten met een wijziging, notities van toen, "Restore this moment"; gratis plan: ouder dan 30 dagen = Plus) | ja |
 | Herstelcode opnieuw maken | ja | ja | ja |
 | Plus bekijken | ja | ja (plan en opslag, knop naar de website) | deels (tekst) |
 | Plus kopen | ja | NEE (bewust: alleen website) | NEE (bewust: alleen website) |

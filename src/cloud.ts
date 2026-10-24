@@ -4,8 +4,9 @@ import { ConfirmModal } from "./confirmModal";
 import { CloudClient } from "../cloud/shared/client.mjs";
 import { checkApproval, completeApproval, confirmLogin, confirmSignup, logIn, requestApproval, resetWithRecoveryCode, signUp, startOver, startReset } from "../cloud/shared/account.mjs";
 import { RecoveryCodeModal } from "./cloudAccount";
+import { ConflictReviewModal, TimeMachineModal } from "./cloudReview";
 import { base64ToBytes, decryptEnvelope, MAX_FILE_BYTES, objectId } from "../cloud/shared/crypto.mjs";
-import { copyName, hash, isPreserved, MAX_SYNC_BYTES, MAX_SYNC_FILES, remoteFiles, syncFolder, syncPath } from "../cloud/shared/sync.mjs";
+import { cloudTimeline, conflictOriginal, copyName, hash, isPreserved, MAX_SYNC_BYTES, MAX_SYNC_FILES, remoteFiles, restorePlan, syncFolder, syncPath, unavailable } from "../cloud/shared/sync.mjs";
 
 export const DEFAULT_CLOUD_SERVER = "https://api.jotdrop.net";
 const SYNCTHING = [".stfolder", ".stignore", ".stversions"];
@@ -20,6 +21,8 @@ type SyncState = {
   upload?: Prepared; lastSynced?: string; message: string; conflicts: number;
 };
 type Session = { credentials: CloudClient["credentials"]; email: string };
+type MomentFile = { id: string; revision: number | null; deleted: boolean; locked: boolean; cleared: boolean };
+export type CloudMoment = { at: string; then: MomentFile[]; files: Array<{ path: string; bytes: Uint8Array }>; trashed: number; locked: number; cleared: number };
 type Sealed = { key: CryptoKey; iv: Uint8Array; data: ArrayBuffer };
 
 /** fetch() on top of Obsidian's requestUrl: no CORS, so the same code works on desktop and mobile. */
@@ -211,12 +214,7 @@ class VaultFolder {
       if (this.editing.has(file) || !sameBytes(await this.read(file), expected as Uint8Array)) return false;
     }
     if (!replacement) {
-      // Removed notes go to the trash Obsidian is set to use, so they can always come back.
-      for (const file of files) {
-        const indexed = this.plugin.app.vault.getAbstractFileByPath(file);
-        if (indexed instanceof TFile) await this.plugin.app.fileManager.trashFile(indexed);
-        else await this.adapter.trashLocal(file);
-      }
+      for (const file of files) await this.trash(file);
       return true;
     }
     if (!files.length) {
@@ -226,6 +224,43 @@ class VaultFolder {
     }
     for (const file of files) if (!await this.write(file, replacement, expected)) return false;
     return true;
+  }
+
+  // Removed notes go to the trash Obsidian is set to use, so they can always come back.
+  private async trash(file: string): Promise<void> {
+    const indexed = this.plugin.app.vault.getAbstractFileByPath(file);
+    if (indexed instanceof TFile) await this.plugin.app.fileManager.trashFile(indexed);
+    else await this.adapter.trashLocal(file);
+  }
+
+  /** The file at a cloud path in this vault, or null. */
+  async get(path: string): Promise<Uint8Array | null> {
+    for (const candidate of this.candidates(path)) if (await this.adapter.exists(candidate)) return this.read(candidate);
+    return null;
+  }
+
+  /** The ".cloud-conflict" copies in the JotDrop folders, by the cloud path of their original. */
+  async conflicts(): Promise<Map<string, string[]>> {
+    const result = new Map<string, string[]>();
+    const walk = async (folder: string, prefix: string, depth = 0): Promise<void> => {
+      if (depth > 16) return;
+      const listing = await this.adapter.list(folder);
+      for (const child of listing.folders) {
+        const name = child.split("/").pop() || "";
+        if (!name.startsWith(".")) await walk(child, `${prefix}/${name}`, depth + 1);
+      }
+      for (const file of listing.files) {
+        const original = conflictOriginal(`${prefix}/${file.split("/").pop()}`);
+        if (original) result.set(original, [...(result.get(original) ?? []), file]);
+      }
+    };
+    if (await this.adapter.exists(this.notes)) await walk(this.notes, "notes");
+    for (const folder of new Set([this.assets, this.legacy])) if (await this.adapter.exists(folder)) await walk(folder, "attachments");
+    return result;
+  }
+
+  async trashConflicts(path: string): Promise<void> {
+    for (const copy of (await this.conflicts()).get(path) ?? []) await this.trash(copy);
   }
 
   private async preserve(path: string, bytes: Uint8Array, suffix: string): Promise<void> {
@@ -283,6 +318,8 @@ export class CloudController {
   register(): void {
     const plugin = this.plugin;
     plugin.addCommand({ id: "cloud-sync-now", name: "JotDrop Cloud: sync now", callback: () => { void this.syncNow().catch((error) => new Notice(error instanceof Error ? error.message : String(error))); } });
+    plugin.addCommand({ id: "cloud-review-conflicts", name: "JotDrop Cloud: review conflicts", callback: () => new ConflictReviewModal(plugin.app, this).open() });
+    plugin.addCommand({ id: "cloud-time-machine", name: "JotDrop Cloud: time machine", callback: () => new TimeMachineModal(plugin.app, this).open() });
     const touched = (path: string) => {
       if (!this.enabled) return;
       const folder = (value: string) => value.replace(/\/+$/, "");
@@ -411,16 +448,7 @@ export class CloudController {
       }
       const remote = {
         list: () => remoteFiles(client, state.index, active),
-        write: async (path: string, bytes: Uint8Array, baseRevision: number) => {
-          active();
-          const prepared = state.upload = await client.prepareWrite(path, bytes, baseRevision);
-          await save();
-          const saved = await client.commitWrite(prepared, { resumable: true, signal: abort.signal });
-          state.upload = undefined;
-          const object = { path, revision: saved.revision, deleted: false, hash: await hash(bytes) };
-          state.index.objects[prepared.id] = object;
-          return object;
-        },
+        write: (path: string, bytes: Uint8Array, baseRevision: number) => { active(); return this.upload(client, state, path, bytes, baseRevision, abort.signal); },
         delete: async (path: string, baseRevision: number) => {
           active();
           const id = await objectId(vaultKey, path);
@@ -434,7 +462,7 @@ export class CloudController {
       state.lastSynced = new Date().toISOString();
       state.conflicts = report.conflicts;
       state.message = report.conflicts
-        ? `${report.conflicts} ${report.conflicts === 1 ? "note was" : "notes were"} changed in two places. Both versions are kept: compare the ".cloud-conflict" copy with the original.`
+        ? `${report.conflicts} ${report.conflicts === 1 ? "note was" : "notes were"} changed in two places. Both versions are kept: choose one with "Review conflicts".`
         : `Synced. ${report.uploaded} up, ${report.downloaded} down, ${report.deleted} removed.`;
       await save();
       this.status = state.message;
@@ -453,6 +481,146 @@ export class CloudController {
       this.changed();
       this.plugin.refreshViews();
     }
+  }
+
+  /** An upload that survives a restart: the next sync finishes it, or keeps it as a copy when the cloud moved on. */
+  private async upload(client: CloudClient, state: SyncState, path: string, bytes: Uint8Array, baseRevision: number, signal?: AbortSignal) {
+    const prepared = state.upload = await client.prepareWrite(path, bytes, baseRevision);
+    await this.store.put("state", state);
+    const saved = await client.commitWrite(prepared, { resumable: true, signal });
+    state.upload = undefined;
+    const object = { path, revision: saved.revision, deleted: false, hash: await hash(bytes) };
+    state.index.objects[prepared.id] = object;
+    return object;
+  }
+
+  /** Runs `action` on its own, never during a sync; a sync asked for meanwhile runs afterwards. */
+  private async exclusive<T>(action: () => Promise<T>): Promise<T> {
+    await this.ready;
+    while (this.running) await this.running.catch(() => {});
+    const result = action();
+    this.running = result.then(() => {}, () => {}).finally(() => {
+      this.running = undefined;
+      if (this.again) { this.again = false; this.request(500); }
+    });
+    return result;
+  }
+
+  private syncing(): { client: CloudClient; state: SyncState; folder: VaultFolder } {
+    if (!this.client) throw new Error("Log in to JotDrop Cloud first.");
+    if (!this.state?.enabled) throw new Error("Turn on cloud sync first.");
+    const folder = new VaultFolder(this.plugin, this.editing);
+    if (folder.binding !== this.state.binding) throw new Error("The notes or attachments folder changed. Turn cloud sync off and on again for the new folder.");
+    return { client: this.client, state: this.state, folder };
+  }
+
+  /** The notes changed in two places: each original with its ".cloud-conflict" copies, as vault paths. */
+  async conflicts(): Promise<Array<{ path: string; local: string; copies: string[] }>> {
+    await this.ready;
+    const { folder } = this.syncing();
+    return [...(await folder.conflicts())].sort(([a], [b]) => a.localeCompare(b)).map(([path, copies]) => ({ path, local: folder.local(path), copies }));
+  }
+
+  /** This vault's version and the newest cloud version of a file; null when it is not there or in the cloud trash. */
+  async compare(path: string): Promise<{ local: Uint8Array | null; cloud: Uint8Array | null }> {
+    await this.ready;
+    const { client, folder } = this.syncing();
+    const cloud = await this.newest(client, path);
+    return { local: await folder.get(path), cloud: cloud.deleted ? null : cloud.bytes };
+  }
+
+  private async newest(client: CloudClient, path: string): Promise<{ id: string; revision: number; deleted: boolean; bytes: Uint8Array | null }> {
+    const id = await objectId(client.credentials.vaultKey, path);
+    try {
+      const entry = await client.read(id);
+      return { id, revision: entry.revision, deleted: Boolean(entry.deleted), bytes: base64ToBytes(entry.file.content) };
+    } catch (error) {
+      // Cleared from a full free cloud after 30 days in the trash: the name starts over.
+      if ((error as { status?: number }).status === 404) return { id, revision: 0, deleted: true, bytes: null };
+      throw error;
+    }
+  }
+
+  /**
+   * Settle a conflict like Android: keep this vault's version (it becomes the newest cloud version) or use the
+   * cloud version (this vault's version goes to the trash). Then the ".cloud-conflict" copies go to the trash.
+   */
+  async resolve(path: string, keepLocal: boolean): Promise<void> {
+    await this.exclusive(async () => {
+      const { client, state, folder } = this.syncing();
+      if (state.upload) throw new Error("A change is still waiting to upload. Sync first, then choose again.");
+      const local = await folder.get(path);
+      const cloud = await this.newest(client, path);
+      if (keepLocal) {
+        if (!local) { if (!cloud.deleted) await client.remove(cloud.id, cloud.revision); }
+        else if (cloud.deleted || !cloud.bytes || !sameBytes(local, cloud.bytes)) await this.upload(client, state, path, local, cloud.revision);
+      } else {
+        const replacement = cloud.deleted ? null : cloud.bytes;
+        if (!(local && replacement && sameBytes(local, replacement))) {
+          const busy = "The note changed or is open in the editor. Close it and choose again.";
+          if (local && !await folder.compareAndSet(path, local, null)) throw new Error(busy);
+          if (replacement && !await folder.compareAndSet(path, null, replacement)) throw new Error(busy);
+        }
+      }
+      await folder.trashConflicts(path);
+      await this.store.put("state", state);
+    });
+    this.plugin.refreshViews();
+    this.request(0);
+  }
+
+  /** The moments of the time machine, oldest first; the last one is now. */
+  async timeline(): Promise<string[]> {
+    await this.ready;
+    if (!this.client) throw new Error("Log in to JotDrop Cloud first.");
+    return (await cloudTimeline(this.client)).steps;
+  }
+
+  /** The cloud as it was at `at`, read-only. Files the free plan cannot open are counted, not shown. */
+  async moment(at: string, isCurrent: () => boolean = () => true): Promise<CloudMoment> {
+    await this.ready;
+    const client = this.client;
+    if (!client) throw new Error("Log in to JotDrop Cloud first.");
+    const { current } = await cloudTimeline(client);
+    const { objects: then } = await client.snapshot(at) as { objects: MomentFile[] };
+    const missing = unavailable(current, then) as MomentFile[];
+    const now = new Map(current.map((file: { id: string; revision: number }) => [file.id, file.revision]));
+    const open = then.filter((file) => !file.deleted && !missing.includes(file));
+    const files: CloudMoment["files"] = [];
+    // A few at a time: the server serves a limited number of requests at once.
+    for (let start = 0; start < open.length; start += 8) {
+      if (!isCurrent()) throw new Error("A newer moment was chosen.");
+      // The newest version is always open; older ones by revision.
+      const read = await Promise.all(open.slice(start, start + 8).map((file) => now.get(file.id) === file.revision ? client.read(file.id) : client.read(file.id, file.revision!)));
+      for (const entry of read) files.push({ path: entry.file.path, bytes: base64ToBytes(entry.file.content) });
+    }
+    files.sort((a, b) => a.path.localeCompare(b.path));
+    return { at, then, files, trashed: then.filter((file) => file.deleted).length, locked: missing.filter((file) => !file.cleared).length, cleared: missing.filter((file) => file.cleared).length };
+  }
+
+  /** Back to a moment: files from then come back as new versions, files made later move to the trash. */
+  async restoreMoment(moment: CloudMoment): Promise<number> {
+    await this.ready;
+    const client = this.client;
+    if (!client) throw new Error("Log in to JotDrop Cloud first.");
+    // Send this vault's changes first, then compare against the newest cloud versions.
+    if (this.enabled) await this.syncNow();
+    let done = 0;
+    try {
+      await this.exclusive(async () => {
+        for (const step of restorePlan((await cloudTimeline(client)).current, moment.then) as Array<{ id: string; delete?: boolean; revision?: number; baseRevision: number }>) {
+          if (step.delete) await client.remove(step.id, step.baseRevision);
+          else await client.restore(step.id, step.revision, step.baseRevision);
+          done++;
+        }
+      });
+    } catch (error) {
+      if (!done) throw error;
+      throw new Error(`${done} file(s) were restored, then this stopped: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      this.request(0);
+    }
+    return done;
   }
 
   private async stop(): Promise<void> {

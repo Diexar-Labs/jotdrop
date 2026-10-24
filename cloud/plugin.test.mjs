@@ -14,7 +14,7 @@ import { objectId, randomToken } from './shared/crypto.mjs';
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 // Obsidian's requestUrl answers every status without throwing, like `throw: false`.
 const obsidian = `
-export class Modal {}; export class Notice {}; export class Setting {}; export class FileSystemAdapter {};
+export class Modal {}; export class Notice {}; export class Setting {}; export class ButtonComponent {}; export class FileSystemAdapter {};
 export class TFile { static [Symbol.hasInstance](value) { return value?.isTestFile === true; } };
 export const Platform = { isWin: true };
 export const normalizePath = (p) => p.replace(/\\\\/g, '/').replace(/\\/+/g, '/');
@@ -174,4 +174,75 @@ test('the archive must sit inside the notes folder, like on the website and Andr
   v.plugin.settings.archiveFolder = 'Archive';
   const cloud = new CloudController(v.plugin, v.store);
   await assert.rejects(cloud.checkFolders(), /archive folder/);
+});
+
+test('the plugin settles a conflict either way and goes back to a moment with the time machine', async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'jotdrop-plugin-test-'));
+  const mails = [];
+  let now = Date.parse('2026-10-24T10:00:00Z');
+  const app = await createCloudServer({ dataDir, enrollmentToken: randomToken(), mailer: async (mail) => { mails.push(mail); }, serverKey: randomToken(), freeDeviceLimit: 100, clock: () => now });
+  t.after(async () => { await app.close(); await rm(dataDir, { recursive: true, force: true }); });
+  const url = `http://127.0.0.1:${app.port}`;
+  const minute = () => { now += 60_000; };
+
+  const v = vault();
+  v.put('Mini Notes/A.md', 'A1');
+  v.put('Mini Notes/B.md', 'B1');
+  const cloud = new CloudController(v.plugin, v.store);
+  const pending = await signUp({ url, email: 'eric@example.com', password: 'correct horse battery', deviceName: 'Obsidian on Windows' });
+  const { client } = await confirmSignup(pending, mails.find((mail) => mail.kind === 'verify').code);
+  await cloud.finishSignIn(client, 'eric@example.com');
+  await cloud.setEnabled(true);
+  await cloud.syncNow();
+  const phone = await CloudClient.claim({ pairingCode: (await client.makePairing('Phone')).pairingCode });
+  const inCloud = async (path) => decode(Buffer.from((await phone.read(await objectId(client.credentials.vaultKey, path))).file.content, 'base64url'));
+  minute();
+
+  // Changed on the phone and here: keep this vault's version. It goes up; the cloud copy goes to the trash.
+  await phone.write('notes/A.md', text('A phone'), 1);
+  v.put('Mini Notes/A.md', 'A vault');
+  await cloud.syncNow();
+  assert.deepEqual(await cloud.conflicts(), [{ path: 'notes/A.md', local: 'Mini Notes/A.md', copies: ['Mini Notes/A.cloud-conflict-r2.md'] }]);
+  const versions = await cloud.compare('notes/A.md');
+  assert.deepEqual([decode(versions.local), decode(versions.cloud)], ['A vault', 'A phone']);
+  await cloud.resolve('notes/A.md', true);
+  assert.equal(await inCloud('notes/A.md'), 'A vault');
+  assert.deepEqual(await cloud.conflicts(), []);
+  assert.ok(v.trashed.some(([path]) => path === 'Mini Notes/A.cloud-conflict-r2.md'));
+  await cloud.syncNow();
+  assert.match(cloud.status, /Synced/);
+  minute();
+
+  // Use the cloud version: this vault's version goes to the trash, so it can come back.
+  await phone.write('notes/B.md', text('B phone'), 1);
+  v.put('Mini Notes/B.md', 'B vault');
+  await cloud.syncNow();
+  // A note open in the editor is never replaced.
+  cloud.beginEdit('Mini Notes/B.md');
+  await assert.rejects(cloud.resolve('notes/B.md', false), /open in the editor/);
+  cloud.endEdit('Mini Notes/B.md');
+  await cloud.resolve('notes/B.md', false);
+  assert.equal(decode(v.files.get('Mini Notes/B.md')), 'B phone');
+  assert.ok(v.trashed.some(([path, bytes]) => path === 'Mini Notes/B.md' && decode(bytes) === 'B vault'));
+  assert.deepEqual(await cloud.conflicts(), []);
+  await cloud.syncNow();
+  assert.match(cloud.status, /Synced\. 0 up, 0 down/);
+  minute();
+
+  // The time machine: back to the first minute. Files from then come back, a later file moves to the trash.
+  v.put('Mini Notes/C.md', 'C1');
+  await cloud.syncNow();
+  const steps = await cloud.timeline();
+  assert.equal(steps.length, 4);
+  const moment = await cloud.moment(steps[0]);
+  assert.deepEqual(moment.files.map((file) => [file.path, decode(file.bytes)]), [['notes/A.md', 'A1'], ['notes/B.md', 'B1']]);
+  assert.equal(moment.locked + moment.cleared, 0);
+  minute();
+  assert.equal(await cloud.restoreMoment(moment), 3);
+  await cloud.syncNow();
+  assert.deepEqual([decode(v.files.get('Mini Notes/A.md')), decode(v.files.get('Mini Notes/B.md')), v.files.has('Mini Notes/C.md')], ['A1', 'B1', false]);
+  assert.ok(v.trashed.some(([path]) => path === 'Mini Notes/C.md'));
+  // The time machine can undo that: the moment before the restore still has C.
+  const back = await cloud.moment((await cloud.timeline()).at(-2));
+  assert.ok(back.files.some((file) => file.path === 'notes/C.md'));
 });

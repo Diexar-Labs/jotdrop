@@ -164,3 +164,48 @@ export async function remoteFiles(client, index, checkActive = () => {}) {
   } }));
 }
 
+
+/** The original of a ".cloud-conflict" copy made by copyName, or null for any other path. */
+export function conflictOriginal(path) {
+  const match = /^(.*)\.cloud-conflict-r\d+(?:-[0-9a-f-]{36})?(\.[^./]*)?$/.exec(path);
+  return match ? `${match[1]}${match[2] ?? ''}` : null;
+}
+
+/**
+ * The time machine, the same rules as Android's CloudTimeMachine: one walk over the changes feed gives
+ * the steps (the last change time of each minute with a change, oldest first) and each file as it is now.
+ */
+export async function cloudTimeline(client, checkActive = () => {}) {
+  const minutes = new Map(), current = new Map();
+  for (let cursor = 0, more = true; more;) {
+    checkActive();
+    const page = await client.listChanges(cursor);
+    for (const change of page.changes) {
+      const minute = change.updatedAt.slice(0, 16);
+      if (!(minutes.get(minute) > change.updatedAt)) minutes.set(minute, change.updatedAt);
+      current.set(change.id, { id: change.id, revision: change.revision, deleted: Boolean(change.deleted) });
+    }
+    if (page.hasMore && page.cursor <= cursor) throw new Error('Invalid cloud changes cursor');
+    cursor = page.cursor;
+    more = page.hasMore;
+  }
+  return { steps: [...minutes.values()].sort(), current: [...current.values()] };
+}
+
+/** Files from then that the free plan cannot open or that were cleared; a moment comes back whole or not at all. */
+export function unavailable(current, then) {
+  const revisions = new Map(current.map((file) => [file.id, file.revision]));
+  return then.filter((file) => (file.locked || file.cleared) && revisions.get(file.id) !== file.revision);
+}
+
+/** Files from then come back as new versions, files made later move to the trash; nothing is erased. */
+export function restorePlan(current, then) {
+  if (unavailable(current, then).length) throw new Error('JotDrop Plus restores this moment.');
+  const old = new Map(then.map((file) => [file.id, file]));
+  return current.flatMap((file) => {
+    const version = old.get(file.id);
+    if (version?.revision === file.revision) return [];
+    if (!version || version.deleted) return file.deleted ? [] : [{ id: file.id, delete: true, baseRevision: file.revision }];
+    return [{ id: file.id, revision: version.revision, baseRevision: file.revision }];
+  });
+}
