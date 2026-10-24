@@ -1258,7 +1258,19 @@ object Storage {
      * Verifies target output exists and matches source content BEFORE deleting
      * the source. If verification fails, source is retained and failure returned.
      */
-    private fun moveNoteToFolder(context: Context, uri: Uri, folder: NoteFolder): Result<Unit> {
+    private fun moveNoteToFolder(context: Context, uri: Uri, folder: NoteFolder): Result<Unit> =
+        moveNoteToPath(context, uri, folderPath(context, folder), keepSource = false, unique = true)
+
+    /**
+     * Verplaats of kopieer een notitie naar een gewone map in de vault, zoals
+     * "Move to folder"/"Copy to folder" in de plugin. Bestaat er daar al een
+     * bestand met dezelfde naam, dan gebeurt er niets (pariteit met de plugin).
+     * Bijlagen blijven waar ze zijn; de links werken in dezelfde vault.
+     */
+    fun moveNoteToVaultFolder(context: Context, uri: Uri, folderPath: String, copy: Boolean): Result<Unit> =
+        moveNoteToPath(context, uri, folderPath, keepSource = copy, unique = false)
+
+    private fun moveNoteToPath(context: Context, uri: Uri, folderPath: String, keepSource: Boolean, unique: Boolean): Result<Unit> {
         synchronized(cloudFileLock) {
         val content = readNote(context, uri).getOrElse { return Result.failure(it) }
 
@@ -1267,7 +1279,6 @@ object Storage {
         val tree = DocumentFile.fromTreeUri(context, vaultUri)
             ?: return Result.failure(IllegalStateException("Vault-map kan niet worden geopend."))
 
-        val folderPath = folderPath(context, folder)
         val targetFolder = findOrCreateSubfolder(context, tree, folderPath)
             ?: return Result.failure(IllegalStateException("Doelmap kon niet worden aangemaakt."))
 
@@ -1275,7 +1286,10 @@ object Storage {
             ?: return Result.failure(IllegalStateException("Bronbestand niet gevonden."))
         val filename = sourceDoc.name ?: "${System.currentTimeMillis()}.md"
 
-        val targetName = uniqueFilename(targetFolder, filename)
+        if (!unique && targetFolder.findFile(filename) != null) {
+            return Result.failure(IllegalStateException(context.getString(R.string.error_target_exists)))
+        }
+        val targetName = if (unique) uniqueFilename(targetFolder, filename) else filename
         val newFile = targetFolder.createFile("text/markdown", targetName)
             ?: return Result.failure(IllegalStateException("Bestand kon niet worden aangemaakt in doelmap."))
 
@@ -1294,9 +1308,11 @@ object Storage {
                 return Result.failure(IllegalStateException("Doelbestand verificatie mislukt."))
             }
 
-            if (!sourceDoc.delete()) {
-                newFile.delete()
-                return Result.failure(IllegalStateException("Origineel bestand kon niet worden verwijderd."))
+            if (!keepSource) {
+                if (!sourceDoc.delete()) {
+                    newFile.delete()
+                    return Result.failure(IllegalStateException("Origineel bestand kon niet worden verwijderd."))
+                }
             }
             CloudSyncManager.request(context)
             Result.success(Unit)
@@ -1449,6 +1465,53 @@ object Storage {
         }
         null
         } catch (_: Exception) { null }
+    }
+
+    /**
+     * Alle mappen in de vault als paden vanaf de vaultroot ("" = de vault zelf),
+     * zonder verborgen mappen (.obsidian, .attachments, .trash). Voor de mapkeuze
+     * van "Move to folder"/"Copy to folder", zoals de plugin.
+     */
+    fun listVaultFolders(context: Context): List<String> {
+        val vaultUri = getVaultUri(context) ?: return emptyList()
+        val tree = DocumentFile.fromTreeUri(context, vaultUri) ?: return emptyList()
+        val out = mutableListOf("")
+        val queue = ArrayDeque(listOf("" to tree.uri))
+        while (queue.isNotEmpty() && out.size < MAX_VAULT_FOLDERS) {
+            val (path, uri) = queue.removeFirst()
+            for ((name, child) in queryDirectories(context, vaultUri, uri)) {
+                if (name.startsWith(".")) continue
+                val childPath = if (path.isEmpty()) name else "$path/$name"
+                out.add(childPath)
+                queue.add(childPath to child)
+            }
+        }
+        return out.sorted()
+    }
+
+    private const val MAX_VAULT_FOLDERS = 2000
+
+    private fun queryDirectories(context: Context, treeUri: Uri, parentUri: Uri): List<Pair<String, Uri>> {
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, DocumentsContract.getDocumentId(parentUri))
+        val projection = arrayOf(
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE,
+        )
+        val out = mutableListOf<Pair<String, Uri>>()
+        try {
+            context.contentResolver.query(childrenUri, projection, null, null, null)?.use { cursor ->
+                while (cursor.moveToNext()) {
+                    if (cursor.getString(2) != DocumentsContract.Document.MIME_TYPE_DIR) continue
+                    val id = cursor.getString(0) ?: continue
+                    val name = cursor.getString(1) ?: continue
+                    out.add(name to DocumentsContract.buildDocumentUriUsingTree(treeUri, id))
+                }
+            }
+        } catch (_: Exception) {
+            // Een onleesbare map slaan we over; de rest van de lijst blijft bruikbaar.
+        }
+        return out
     }
 
     private fun findOrCreateSubfolder(context: Context, parent: DocumentFile, name: String): DocumentFile? {

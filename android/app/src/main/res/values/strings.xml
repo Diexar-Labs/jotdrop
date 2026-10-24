@@ -255,6 +255,17 @@
     <string name="label_create_first">Create a label in the navigation menu first.</string>
     <!-- Markdown help (same list as the web app and the plugin) -->
     <string name="md_help_button">Markdown help</string>
+    <string name="action_move_to_folder">Move to folder…</string>
+    <string name="action_copy_to_folder">Copy to folder…</string>
+    <string name="folder_picker_move_title">Move note to folder</string>
+    <string name="folder_picker_copy_title">Copy note to folder</string>
+    <string name="folder_picker_search">Search folders</string>
+    <string name="folder_picker_move_hint">The note leaves JotDrop and becomes a normal Obsidian note in that folder.</string>
+    <string name="folder_picker_empty">No folders found.</string>
+    <string name="folder_root_label">(vault root)</string>
+    <string name="toast_moved_to">Moved to: %1$s</string>
+    <string name="toast_copied_to">Copied to: %1$s</string>
+    <string name="error_target_exists">A note with that name already exists in the target folder.</string>
     <string name="md_help_title">Markdown help</string>
     <string name="md_help_intro">Type the code on the left to format your note. Obsidian shows the result on the right; JotDrop cards show the text without the codes.</string>
     <string name="md_help_heading">Heading</string>

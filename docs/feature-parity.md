@@ -41,7 +41,7 @@ Stand gemeten op `ee57d58` (feature-branch), bijgewerkt met elke afgeronde funct
 | Labels geven vanaf de kaart | ja (24 okt) | ja | deels (via meervoudige selectie) |
 | Archiveren vanaf de kaart | ja | ja | deels (via selectie of editor) |
 | Naar prullenbak | ja | ja (24 okt; map `Trash` zoals Android, bijlagen blijven) | ja |
-| Verplaatsen/kopiëren naar map | NEE | ja | NEE |
+| Verplaatsen/kopiëren naar map (notitie gaat naar een gewone Obsidian-map) | n.v.t. (website ziet alleen JotDrop-notities, niet de rest van de vault; Erics besluit 24 okt) | ja | ja (24 okt; editor > Meer opties) |
 | Meerdere kaarten selecteren | NEE | ja (archiveren, verwijderen) | ja (archiveren, verwijderen, labels, terugzetten) |
 | Slepen om te ordenen | NEE (getal invullen) | ja | ja |
 | Sorteeropties | 4 | 6 | 2 |

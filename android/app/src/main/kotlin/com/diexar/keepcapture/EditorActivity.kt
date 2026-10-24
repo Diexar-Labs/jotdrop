@@ -72,7 +72,9 @@ import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DriveFileMove
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Mic
@@ -297,6 +299,9 @@ private fun EditorScreen(
     var reminderDone by rememberSaveable { mutableStateOf(0) }
     var saving by remember { mutableStateOf(false) }
     var showArchiveDialog by remember { mutableStateOf(false) }
+    // Move/copy to a vault folder like the plugin: null = closed, true = copy, false = move.
+    var folderCopy by remember { mutableStateOf<Boolean?>(null) }
+    var vaultFolders by remember { mutableStateOf<List<String>?>(null) }
     var showMarkdownHelp by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var editorMenuOpen by remember { mutableStateOf(false) }
@@ -928,6 +933,22 @@ private fun EditorScreen(
                                         leadingIcon = { Icon(Icons.Filled.Archive, null) },
                                         onClick = { editorMenuOpen = false; showArchiveDialog = true },
                                     )
+                                    // Works on the saved file, so unsaved edits must be saved first.
+                                    for (copy in listOf(false, true)) {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(if (copy) R.string.action_copy_to_folder else R.string.action_move_to_folder)) },
+                                            leadingIcon = { Icon(if (copy) Icons.Filled.ContentCopy else Icons.Filled.DriveFileMove, null) },
+                                            enabled = loaded && loadError == null && !saving && !isDirty,
+                                            onClick = {
+                                                editorMenuOpen = false
+                                                folderCopy = copy
+                                                vaultFolders = null
+                                                scope.launch {
+                                                    vaultFolders = withContext(Dispatchers.IO) { Storage.listVaultFolders(context) }
+                                                }
+                                            },
+                                        )
+                                    }
                                     DropdownMenuItem(
                                         text = { Text(stringResource(R.string.action_delete)) },
                                         leadingIcon = { Icon(Icons.Filled.Delete, null) },
@@ -1200,6 +1221,35 @@ private fun EditorScreen(
     }
 
     if (showMarkdownHelp) MarkdownHelpDialog(onDismiss = { showMarkdownHelp = false })
+    folderCopy?.let { copy ->
+        FolderPickerDialog(
+            title = stringResource(if (copy) R.string.folder_picker_copy_title else R.string.folder_picker_move_title),
+            hint = if (copy) null else stringResource(R.string.folder_picker_move_hint),
+            folders = vaultFolders,
+            onPick = { folder ->
+                folderCopy = null
+                val uri = currentUri ?: return@FolderPickerDialog
+                scope.launch {
+                    val parsedUri = Uri.parse(uri)
+                    val res = withContext(Dispatchers.IO) {
+                        Storage.noteWriteMutex.withLock { Storage.moveNoteToVaultFolder(context, parsedUri, folder, copy) }
+                    }
+                    val shownFolder = folder.ifEmpty { context.getString(R.string.folder_root_label) }
+                    res.onSuccess {
+                        Toast.makeText(context, context.getString(if (copy) R.string.toast_copied_to else R.string.toast_moved_to, shownFolder), Toast.LENGTH_SHORT).show()
+                        if (!copy) {
+                            // The note left JotDrop, so its reminder goes with it.
+                            ReminderScheduler.cancel(context, parsedUri)
+                            onClose()
+                        }
+                    }.onFailure { err ->
+                        Toast.makeText(context, context.getString(R.string.toast_error, err.message ?: ""), Toast.LENGTH_LONG).show()
+                    }
+                }
+            },
+            onDismiss = { folderCopy = null },
+        )
+    }
     if (showArchiveDialog) {
         ConfirmDialog(
             title = stringResource(R.string.archive_title),

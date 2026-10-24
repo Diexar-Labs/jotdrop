@@ -246,6 +246,17 @@
     <string name="label_create_first">Maak eerst een label in het navigatiemenu.</string>
     <!-- Markdown help (same list as the web app and the plugin) -->
     <string name="md_help_button">Markdown-hulp</string>
+    <string name="action_move_to_folder">Verplaats naar map…</string>
+    <string name="action_copy_to_folder">Kopieer naar map…</string>
+    <string name="folder_picker_move_title">Notitie naar map verplaatsen</string>
+    <string name="folder_picker_copy_title">Notitie naar map kopiëren</string>
+    <string name="folder_picker_search">Mappen zoeken</string>
+    <string name="folder_picker_move_hint">De notitie gaat uit JotDrop en wordt een gewone Obsidian-notitie in die map.</string>
+    <string name="folder_picker_empty">Geen mappen gevonden.</string>
+    <string name="folder_root_label">(vault-hoofdmap)</string>
+    <string name="toast_moved_to">Verplaatst naar: %1$s</string>
+    <string name="toast_copied_to">Gekopieerd naar: %1$s</string>
+    <string name="error_target_exists">Er bestaat al een notitie met die naam in de doelmap.</string>
     <string name="md_help_title">Markdown-hulp</string>
     <string name="md_help_intro">Typ de code links om je notitie op te maken. Obsidian toont het resultaat rechts; JotDrop-kaarten tonen de tekst zonder de codes.</string>
     <string name="md_help_heading">Kop</string>
