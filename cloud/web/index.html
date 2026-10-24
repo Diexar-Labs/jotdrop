@@ -27,6 +27,28 @@
       <p class="unlock-hint">After you unlock, this browser stays signed in until you choose Lock workspace or Log out.</p>
       <button id="use-another" type="button">Log in with email and password</button>
     </form>
+    <div id="provider-buttons" class="provider-buttons" hidden>
+      <button type="button" data-provider="google" hidden>Continue with Google</button>
+      <button type="button" data-provider="github" hidden>Continue with GitHub</button>
+      <p class="provider-or">or with email and password</p>
+    </div>
+    <section id="provider-step" data-access hidden aria-labelledby="provider-title">
+      <h2 id="provider-title">Almost there</h2>
+      <p id="provider-text"></p>
+      <div id="provider-new" hidden>
+        <p>Your notes are encrypted on this device before they leave it. You get a recovery code: keep it safe, it opens your notes if you lose your devices.</p>
+        <button id="provider-create" class="primary" type="button">Create my JotDrop cloud</button>
+      </div>
+      <div id="provider-existing" hidden>
+        <p>Only your own devices hold the key to your notes. Get it from a device that is signed in, or with your recovery code.</p>
+        <button id="provider-approve" class="primary" type="button">Approve on a signed-in device</button>
+        <label for="provider-recovery">Or use your recovery code</label>
+        <textarea id="provider-recovery" rows="3" autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
+        <button id="provider-recover" type="button">Use recovery code</button>
+      </div>
+      <label class="check-label"><input id="provider-remember" type="checkbox" checked>Stay signed in on this browser</label>
+      <div class="access-links"><button data-show="login-form" type="button">Back</button></div>
+    </section>
     <form id="login-form" data-access>
       <label for="login-email">Email</label>
       <input id="login-email" type="email" autocomplete="username" maxlength="254" required>
@@ -178,6 +200,7 @@
           <label for="attach-code">Enter the 6-digit code we emailed to you</label><input id="attach-code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required>
           <button type="submit">Confirm email</button>
         </form>
+        <p id="no-password-note" hidden>You sign in with Google or GitHub, so this account has no password. A password is needed to change the recovery code or to use an authenticator app. To add one: log out, choose "Forgot password?" and follow the steps.</p>
         <form id="password-form" hidden>
           <h3>Change password</h3>
           <label for="password-current">Current password</label><input id="password-current" type="password" maxlength="1024" autocomplete="current-password" required>

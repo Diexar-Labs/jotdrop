@@ -97,7 +97,7 @@ test('sign up, confirm by email, log in on a new device and read the same encryp
   assert.equal(laptop.credentials.vaultKey, phone.credentials.vaultKey);
   assert.equal((await laptop.read(saved.id)).file.path, 'notes/secret.md');
   assert.equal((await laptop.devices()).devices.length, 2);
-  assert.deepEqual((await app.api('/account', undefined, deviceHeaders(laptop))).body, { email: 'eric@example.com', totp: false });
+  assert.deepEqual((await app.api('/account', undefined, deviceHeaders(laptop))).body, { email: 'eric@example.com', totp: false, password: true, providers: [] });
   const raw = await readFile(app.dbPath);
   for (const secret of [PASSWORD, phone.credentials.vaultKey, 'Account secret body']) assert.ok(!raw.includes(Buffer.from(secret)));
 });

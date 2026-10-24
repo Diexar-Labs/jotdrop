@@ -1,5 +1,5 @@
 import { argon2id } from 'hash-wasm';
-import { CloudClient, request } from './client.mjs';
+import { CloudClient, request, validateUrl } from './client.mjs';
 import { base64ToBytes, bytesToBase64, decodeRecovery, decryptEnvelope, encodeRecovery, encryptEnvelope, generateVaultKey, hashToken, randomToken } from './crypto.mjs';
 import { WORDS } from './words.mjs';
 
@@ -140,11 +140,52 @@ async function approvalKey(privateKey, publicKey, approvalId) {
   return hkdf(new Uint8Array(await crypto.subtle.deriveBits({ name: 'ECDH', public: peer }, privateKey, 256)), approvalAad(approvalId));
 }
 
-/** New device: asks a connected device for the vault key. Show `words` and keep polling checkApproval. */
-export async function requestApproval(reset, code, { fetcher } = {}) {
+async function askApproval(url, path, fields, fetcher) {
   const keys = await crypto.subtle.generateKey(ecdh, false, ['deriveBits']), publicKey = await exportPublic(keys), claimToken = randomToken();
-  const { approvalId, expiresAt } = await post(reset.url, '/auth/reset/approval', { resetId: reset.resetId, code, publicKey, claimTokenHash: await hashToken(claimToken) }, fetcher);
-  return { url: reset.url, approvalId, expiresAt, claimToken, privateKey: keys.privateKey, words: await verificationWords(publicKey) };
+  const { approvalId, expiresAt } = await post(url, path, { ...fields, publicKey, claimTokenHash: await hashToken(claimToken) }, fetcher);
+  return { url, approvalId, expiresAt, claimToken, privateKey: keys.privateKey, words: await verificationWords(publicKey) };
+}
+
+/** New device: asks a connected device for the vault key. Show `words` and keep polling checkApproval. */
+export function requestApproval(reset, code, { fetcher } = {}) {
+  return askApproval(reset.url, '/auth/reset/approval', { resetId: reset.resetId, code }, fetcher);
+}
+
+/**
+ * Sign in with Google or GitHub, step 1: keep `verifier` on this device and open `href`.
+ * The provider sends the browser back with a ticket that only works together with the verifier.
+ * `client` is where it comes back: 'web' (this page) or 'obsidian'.
+ */
+export async function startProviderSignIn({ url, provider, client }) {
+  const verifier = randomToken();
+  return { verifier, href: `${validateUrl(url)}/api/v1/auth/oauth/${provider}/start?${new URLSearchParams({ client, challenge: await hashToken(verifier) })}` };
+}
+
+export const availableProviders = async (url, { fetcher } = {}) => (await request(url, '/auth/providers', { fetcher })).providers;
+
+/** Step 2: who signed in, and whether that address has an account (`account`) with a password (`password`). */
+export async function providerTicket({ url, ticket, verifier, fetcher }) {
+  return { url, ticket, verifier, ...await post(url, '/auth/oauth/ticket', { ticket, verifier }, fetcher) };
+}
+
+/** No account yet: a new cloud for this address, without a password. Show the recovery code. */
+export async function providerSignUp(signIn, { deviceName }, { fetcher } = {}) {
+  const vaultKey = generateVaultKey(), recoveryToken = randomToken(), device = await newDevice(deviceName);
+  const result = await post(signIn.url, '/auth/oauth/signup', { ticket: signIn.ticket, verifier: signIn.verifier, recoveryTokenHash: await hashToken(recoveryToken), ...device.fields }, fetcher);
+  return { client: connect(signIn.url, result, device.deviceToken, vaultKey, fetcher), recoveryCode: encodeRecovery({ vaultId: result.vaultId, vaultKey, recoveryToken }) };
+}
+
+/** An account already exists: ask a signed-in device for the key (then checkApproval and completeApproval without a password). */
+export function providerApproval(signIn, { fetcher } = {}) {
+  return askApproval(signIn.url, '/auth/oauth/approval', { ticket: signIn.ticket, verifier: signIn.verifier }, fetcher);
+}
+
+/** An account already exists: the recovery code brings the key. */
+export async function providerRecover(signIn, { recoveryCode, deviceName, replaceDeviceId }, { fetcher } = {}) {
+  const recovery = decodeRecovery(recoveryCode), device = await newDevice(deviceName);
+  const result = await post(signIn.url, '/auth/oauth/recover', { ticket: signIn.ticket, verifier: signIn.verifier, recoveryToken: recovery.recoveryToken, ...device.fields, replaceDeviceId }, fetcher);
+  if (result.vaultId !== recovery.vaultId) throw new Error('The recovery code belongs to another cloud.');
+  return connect(signIn.url, result, device.deviceToken, recovery.vaultKey, fetcher);
 }
 
 /** Returns null while waiting, or the pending request with the vault key once approved. */
@@ -156,10 +197,12 @@ export async function checkApproval(pending, { fetcher } = {}) {
   return { ...pending, vaultId, vaultKey };
 }
 
+/** Without `newPassword` (sign-in with Google or GitHub) the account keeps its password, or stays without one. */
 export async function completeApproval(approved, { newPassword, deviceName, replaceDeviceId }, { fetcher } = {}) {
   if (!approved?.vaultKey) throw new Error('Wait until your other device approves this request.');
   const device = await newDevice(deviceName);
-  const result = await post(approved.url, `/auth/reset/approval/${approved.approvalId}/complete`, { claimToken: approved.claimToken, ...await newCredentials(newPassword, approved.vaultKey), ...device.fields, replaceDeviceId }, fetcher);
+  const credentials = newPassword === undefined ? {} : await newCredentials(newPassword, approved.vaultKey);
+  const result = await post(approved.url, `/auth/reset/approval/${approved.approvalId}/complete`, { claimToken: approved.claimToken, ...credentials, ...device.fields, replaceDeviceId }, fetcher);
   if (result.vaultId !== approved.vaultId) throw new Error('The server linked the account to another cloud.');
   return connect(approved.url, result, device.deviceToken, approved.vaultKey, fetcher);
 }

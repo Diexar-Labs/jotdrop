@@ -1,5 +1,5 @@
 import { CloudClient } from '/shared/client.mjs';
-import { accountInfo, approveDevice, attachAccount, changePassword, checkApproval, completeApproval, confirmLogin, confirmSignup, disableTotp, enableTotp, listApprovals, logIn, newRecoveryCode, rejectDevice, requestApproval, resetWithRecoveryCode, setupTotp, signUp, startOver, startReset } from '/shared/account.mjs';
+import { accountInfo, approveDevice, attachAccount, availableProviders, changePassword, checkApproval, completeApproval, confirmLogin, confirmSignup, disableTotp, enableTotp, listApprovals, logIn, newRecoveryCode, providerApproval, providerRecover, providerSignUp, providerTicket, rejectDevice, requestApproval, resetWithRecoveryCode, setupTotp, signUp, startOver, startProviderSignIn, startReset } from '/shared/account.mjs';
 import { base64ToBytes, bytesToBase64, decodeRecovery, decryptEnvelope, sealLocal, unsealLocal } from '/shared/crypto.mjs';
 import { exportZip } from '/export.mjs';
 import { noteSummary, updateMetadata, toggleTask, attachmentPath, plainPreviewText, splitNote, joinNote, noteFilename } from '/note.mjs';
@@ -1324,8 +1324,11 @@ async function signedInCredentials() {
 async function openWorkspace(connected) {
   syncController?.abort();
   if (syncing) await syncing;
-  if (await store('get', 'connection')) await keepSignedIn(connected.credentials);
+  const remembered = await store('get', 'connection');
+  if (remembered) await keepSignedIn(connected.credentials);
   else await store('delete', 'session');
+  // Signed in with Google or GitHub and no password: nothing could unlock a locked browser, so only Log out.
+  $('lock').hidden = Boolean(remembered?.provider);
   client = connected;
   syncPaused = false;
   $('sync').textContent = 'Sync now';
@@ -1394,13 +1397,17 @@ function lock(notice = '') {
   $('workspace').hidden = true;
   $('account-actions').hidden = true;
   $('access').hidden = false;
-  void store('get', 'connection').then((saved) => (saved ? showUnlock() : showAccess('login-form')), () => showAccess('login-form'))
+  void store('get', 'connection').then((saved) => (unlockable(saved) ? showUnlock() : showAccess('login-form')), () => showAccess('login-form'))
     .then(() => { if (notice) $('access-message').textContent = notice; });
 }
 
 const DEVICE_NAME = 'Web browser';
 let codeStep;
 let reset;
+// Sign-in with Google or GitHub that this server offers, and the one in progress.
+let providerList = [];
+let providerSignIn;
+const PROVIDER_NAMES = { google: 'Google', github: 'GitHub' };
 let attaching;
 let totpOn = false;
 let approvalRun = 0;
@@ -1411,14 +1418,19 @@ const accountError = (error) => (error?.message && error.message !== 'Device acc
 function showAccess(id) {
   approvalRun++;
   for (const element of document.querySelectorAll('[data-access]')) element.hidden = element.id !== id;
+  $('provider-buttons').hidden = !providerList.length || !['login-form', 'signup-form'].includes(id);
   $('unlock-form').hidden = true;
   $('device-limit').hidden = true;
   $('access-message').textContent = '';
   $(id).querySelector('input:not([type="checkbox"]):not([type="radio"]), select, textarea')?.focus();
 }
 
+// A remembered connection sealed with a password; one from Google or GitHub only marks "stay signed in".
+const unlockable = (saved) => Boolean(saved) && !saved.provider;
+
 function showUnlock() {
   for (const element of document.querySelectorAll('[data-access]')) element.hidden = true;
+  $('provider-buttons').hidden = true;
   $('unlock-form').hidden = false;
   $('unlock-password').focus();
 }
@@ -1429,8 +1441,9 @@ document.addEventListener('click', (event) => {
 });
 
 // A remembered browser keeps the connection sealed with the account password, like a device unlock passphrase.
+// Without a password (Google or GitHub) it only stays signed in.
 async function finishAccess(connected, { password, remember, recoveryCode }) {
-  if (remember) await store('put', 'connection', await sealLocal(connected.credentials, password));
+  if (remember) await store('put', 'connection', password === undefined ? { provider: true } : await sealLocal(connected.credentials, password));
   else await store('delete', 'connection');
   forgetOnClose = !remember;
   codeStep = undefined;
@@ -1529,24 +1542,91 @@ accessForm('reset-form', async () => {
     await finishAccess(connected, { password: newPassword, remember, recoveryCode });
   } else {
     const pending = await requestApproval(reset, code);
-    showAccess('approval-wait');
-    const run = approvalRun;
-    $('approval-words').textContent = pending.words.join('  ');
-    $('approval-status').textContent = 'Waiting for approval...';
-    const poll = async () => {
-      if (run !== approvalRun) return;
-      try {
-        const approved = await checkApproval(pending);
-        if (run !== approvalRun) return;
-        if (!approved) { setTimeout(poll, 3000); return; }
-        $('approval-status').textContent = 'Approved. Setting your new password...';
-        await withDeviceChoice(async (replaceDeviceId) => finishAccess(await completeApproval(approved, { ...options, replaceDeviceId }), { password: newPassword, remember }));
-      } catch (error) { $('approval-status').textContent = error?.status === 401 ? 'The request was rejected or has expired. Go back and start again.' : accessError(error); }
-    };
-    setTimeout(poll, 3000);
+    waitForApproval(pending, (approved, replaceDeviceId) => completeApproval(approved, { ...options, replaceDeviceId }), { password: newPassword, remember }, 'Approved. Setting your new password...');
   }
 });
 $('cancel-approval').addEventListener('click', () => showAccess('login-form'));
+
+// Shows the four words and waits until a signed-in device approves; `complete` connects this browser.
+function waitForApproval(pending, complete, access, approvedText) {
+  showAccess('approval-wait');
+  const run = approvalRun;
+  $('approval-words').textContent = pending.words.join('  ');
+  $('approval-status').textContent = 'Waiting for approval...';
+  const poll = async () => {
+    if (run !== approvalRun) return;
+    try {
+      const approved = await checkApproval(pending);
+      if (run !== approvalRun) return;
+      if (!approved) { setTimeout(poll, 3000); return; }
+      $('approval-status').textContent = approvedText;
+      await withDeviceChoice(async (replaceDeviceId) => finishAccess(await complete(approved, replaceDeviceId), access));
+    } catch (error) { $('approval-status').textContent = error?.status === 401 ? 'The request was rejected or has expired. Go back and start again.' : accessError(error); }
+  };
+  setTimeout(poll, 3000);
+}
+
+// Sign in with Google or GitHub: the provider says who you are; the key to your notes comes from your own devices.
+const providerReady = availableProviders(location.origin).then((list) => {
+  providerList = list;
+  for (const choice of document.querySelectorAll('[data-provider]')) choice.hidden = !list.includes(choice.dataset.provider);
+  $('provider-buttons').hidden = !list.length || ($('login-form').hidden && $('signup-form').hidden);
+}, () => {});
+for (const choice of document.querySelectorAll('[data-provider]')) choice.addEventListener('click', async () => {
+  try {
+    const { verifier, href } = await startProviderSignIn({ url: location.origin, provider: choice.dataset.provider, client: 'web' });
+    // Only this tab can use the ticket that comes back.
+    sessionStorage.setItem('jotdrop-provider-verifier', verifier);
+    location.assign(href);
+  } catch (error) { $('access-message').textContent = accessError(error); }
+});
+
+// Back from Google or GitHub: the ticket is in the address; it works only with this tab's verifier.
+async function providerReturn() {
+  const params = new URLSearchParams(location.hash.slice(1));
+  if (!params.has('oauth') && !params.has('oauth-error')) return false;
+  history.replaceState(null, '', '/');
+  let verifier = null;
+  try { verifier = sessionStorage.getItem('jotdrop-provider-verifier'); sessionStorage.removeItem('jotdrop-provider-verifier'); } catch { verifier = null; }
+  await providerReady;
+  showAccess('login-form');
+  if (params.has('oauth-error')) { $('access-message').textContent = params.get('oauth-error'); return true; }
+  if (!verifier) { $('access-message').textContent = 'This sign-in was started in another tab or browser. Start again here.'; return true; }
+  providerSignIn = await providerTicket({ url: location.origin, ticket: params.get('oauth'), verifier });
+  showAccess('provider-step');
+  $('provider-title').textContent = providerSignIn.account ? 'Open your notes on this browser' : 'Create your JotDrop cloud';
+  $('provider-text').textContent = `Signed in with ${PROVIDER_NAMES[providerSignIn.provider]} as ${providerSignIn.email}.`;
+  $('provider-new').hidden = providerSignIn.account;
+  $('provider-existing').hidden = !providerSignIn.account;
+  return true;
+}
+
+function providerAction(id, action) {
+  $(id).addEventListener('click', async () => {
+    $(id).disabled = true;
+    $('access-message').textContent = 'Working securely on this device...';
+    try {
+      if (!providerSignIn) throw new Error('Start again with the Google or GitHub button.');
+      await action();
+    } catch (error) { $('access-message').textContent = accessError(error); }
+    finally { $(id).disabled = false; }
+  });
+}
+const providerAccess = () => ({ remember: $('provider-remember').checked });
+providerAction('provider-create', async () => {
+  const { client: connected, recoveryCode } = await providerSignUp(providerSignIn, { deviceName: DEVICE_NAME });
+  providerSignIn = undefined;
+  await finishAccess(connected, { ...providerAccess(), recoveryCode });
+});
+providerAction('provider-recover', async () => {
+  const recoveryCode = $('provider-recovery').value.trim();
+  await withDeviceChoice(async (replaceDeviceId) => finishAccess(await providerRecover(providerSignIn, { recoveryCode, deviceName: DEVICE_NAME, replaceDeviceId }), providerAccess()));
+});
+providerAction('provider-approve', async () => {
+  const pending = await providerApproval(providerSignIn);
+  providerSignIn = undefined;
+  waitForApproval(pending, (approved, replaceDeviceId) => completeApproval(approved, { deviceName: DEVICE_NAME, replaceDeviceId }), providerAccess(), 'Approved. Opening your notes...');
+});
 
 async function renderApprovals() {
   let approvals = [];
@@ -1559,7 +1639,7 @@ async function renderApprovals() {
     row.append(button('Approve', async () => {
       if (!confirm(`Does the new device show exactly these words?\n\n${words}`)) return;
       await approveDevice(client, approval);
-      message('Approved. The new device can now set a new password.');
+      message('Approved. The new device can now open your notes.');
       await renderApprovals();
     }, 'primary'));
     row.append(button('Reject', async () => { await rejectDevice(client, approval.id); await renderApprovals(); }, 'danger'));
@@ -1571,11 +1651,16 @@ async function renderApprovals() {
 async function renderAccount() {
   let account;
   try { account = await accountInfo(client); } catch (error) { if (error.status !== 404) throw error; }
-  $('account-status').textContent = account ? `Logged in as ${account.email}.` : 'This cloud has no account yet. New devices connect with a pairing code or your recovery code.';
+  const linked = (account?.providers ?? []).map((name) => PROVIDER_NAMES[name] ?? name);
+  $('account-status').textContent = account ? `Logged in as ${account.email}.${linked.length ? ` You can also sign in with ${linked.join(' and ')}.` : ''}` : 'This cloud has no account yet. New devices connect with a pairing code or your recovery code.';
+  // An account made with Google or GitHub gets a password through "Forgot password".
+  const noPassword = Boolean(account && !account.password);
+  $('no-password-note').hidden = !noPassword;
+  $('new-recovery-form').hidden = noPassword;
   $('attach-form').hidden = Boolean(account || attaching);
   $('attach-code-form').hidden = Boolean(account || !attaching);
-  $('password-form').hidden = !account;
-  $('totp-form').hidden = !account;
+  $('password-form').hidden = !account || noPassword;
+  $('totp-form').hidden = !account || noPassword;
   $('new-recovery-password-row').hidden = !account;
   $('new-recovery-password').required = Boolean(account);
   if (account) {
@@ -1698,7 +1783,7 @@ $('lock').addEventListener('click', () => lock());
 $('log-out').addEventListener('click', async () => {
   try {
     if ((await store('entries', pendingPrefix())).length) throw new Error('Some changes are still waiting to upload. Sync them first, then log out.');
-    if (!confirm('Log out of this browser? Your notes stay in the cloud. To come back, log in with your email and password.')) return;
+    if (!confirm('Log out of this browser? Your notes stay in the cloud. To come back, log in again.')) return;
     await store('delete', 'connection');
     await store('delete', 'session');
     forgetOnClose = true;
@@ -2090,8 +2175,8 @@ setInterval(() => {
   }, () => {});
 }, 30000);
 try {
-  const credentials = await signedInCredentials().catch(() => undefined);
+  const credentials = (await providerReturn().catch((error) => { $('access-message').textContent = accessError(error); return true; })) ? undefined : await signedInCredentials().catch(() => undefined);
   // A connection that no longer opens is forgotten and says why; the password still unlocks this browser.
   if (credentials) await openWorkspace(new CloudClient(credentials)).catch((error) => lock(`This browser could not open your notes by itself: ${errorText(error)} Unlock with your password.`));
-  else if (await store('get', 'connection')) showUnlock();
+  else if ($('provider-step').hidden && unlockable(await store('get', 'connection'))) showUnlock();
 } catch (error) { $('access-message').textContent = errorText(error); $('connect-form').querySelector('button[type="submit"]').disabled = true; }

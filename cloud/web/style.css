@@ -211,3 +211,7 @@ dialog::backdrop { background: rgb(15 23 36 / .4); }
 .markdown-help .help-heading { font-size: 1.2rem; }
 .markdown-help .help-quote { border-left: 3px solid var(--line); padding-left: .5rem; color: var(--muted); }
 .editor-tools button[aria-expanded="true"] { background: var(--selected); border-color: var(--accent); }
+.provider-buttons { display: grid; gap: .5rem; margin: 1rem 0 .25rem; }
+.provider-buttons button { width: 100%; }
+.provider-or { margin: .5rem 0 0; text-align: center; color: var(--muted); font-size: .9rem; }
+#provider-step textarea { width: 100%; }

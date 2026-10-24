@@ -93,6 +93,7 @@ Stand gemeten op `ee57d58` (feature-branch), bijgewerkt met elke afgeronde funct
 | Functie | Website | Plugin | Android |
 |---|---|---|---|
 | Inloggen met e-mail en wachtwoord | ja | ja (instellingen, JotDrop Cloud; ook account maken met herstelcode, apparatengrens) | ja |
+| Inloggen met Google of GitHub | ja (server + website; nog niet op staging, OAuth-apps nog registreren) | NEE | NEE |
 | Wachtwoord wijzigen/vergeten | ja | ja (vergeten: goedkeuren, herstelcode of opnieuw beginnen) | ja |
 | Authenticator-app (TOTP) | ja | NEE | NEE |
 | Apparaten bekijken en intrekken | ja | ja | ja |
@@ -123,4 +124,4 @@ Stand gemeten op `ee57d58` (feature-branch), bijgewerkt met elke afgeronde funct
 3. **OCR in de plugin.** Kan met dezelfde lokale Tesseract als de website (nl/en, eenmalige download van de modellen).
 4. **Meldingen op de website.** Alleen zolang het tabblad open is, tenzij we pushmeldingen via de server bouwen.
 5. **Importeren in Android.** Keep/Evernote-bestanden staan meestal op de computer; is importeren via de website of plugin genoeg?
-6. **Inloggen met Google (Eric, 24 okt).** Op alle drie de platforms. Google bewijst wie je bent en geeft een bevestigd e-mailadres, maar geeft geen geheim waarmee we je notities kunnen versleutelen. Voorstel: Google-login voor het account; de sleutel komt bij het eerste apparaat uit een herstelcode en op elk volgend apparaat via goedkeuring op een gekoppeld apparaat (de bestaande vier-woordenstap) of de herstelcode. Wachtwoord blijft als alternatief bestaan.
+6. **Inloggen met Google en GitHub (Eric, 24 okt; GitHub erbij op 24 okt, zie `docs/cloud-accounts-design.md`, deel C).** Op alle drie de platforms. Google bewijst wie je bent en geeft een bevestigd e-mailadres, maar geeft geen geheim waarmee we je notities kunnen versleutelen. Voorstel: Google-login voor het account; de sleutel komt bij het eerste apparaat uit een herstelcode en op elk volgend apparaat via goedkeuring op een gekoppeld apparaat (de bestaande vier-woordenstap) of de herstelcode. Wachtwoord blijft als alternatief bestaan.

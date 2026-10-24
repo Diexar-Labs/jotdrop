@@ -27,6 +27,14 @@ const STRIPE_VERSION = '2025-03-31.basil';
 const PAID = ['active', 'trialing'], RUNNING = ['active', 'trialing', 'past_due'], FINAL = ['canceled', 'incomplete_expired'];
 // Clients derive their login and unlock keys with Argon2id; the server only stores these settings.
 const DEFAULT_KDF = { memory: 65536, passes: 3, parallelism: 1 };
+// Sign in with Google or GitHub: the provider only proves who someone is; the vault key never goes there.
+const OAUTH_PROVIDERS = {
+  google: { name: 'Google', authorize: 'https://accounts.google.com/o/oauth2/v2/auth', token: 'https://oauth2.googleapis.com/token', api: 'https://openidconnect.googleapis.com/v1/userinfo', scope: 'openid email', extra: { prompt: 'select_account' } },
+  github: { name: 'GitHub', authorize: 'https://github.com/login/oauth/authorize', token: 'https://github.com/login/oauth/access_token', api: 'https://api.github.com', scope: 'user:email', extra: {} },
+};
+// Where the browser goes back to after the provider; the ticket only works with the secret the app made before.
+const OAUTH_RETURN = { web: (origin, query) => `${origin}/#${query}`, obsidian: (origin, query) => `obsidian://jotdrop-cloud?${query}` };
+const OAUTH_LIFETIME = 10 * 60 * 1000;
 // Second hash of the client's login key, so a copied database cannot be replayed as a login.
 const SERVER_KDF = { memory: 7168, passes: 5, parallelism: 1, tagLength: 32 };
 const argon2Async = promisify(argon2);
@@ -123,12 +131,17 @@ async function body(req, maximum = MAX_BODY) {
 }
 
 /** Loopback-only server behind a trusted HTTPS proxy. Accounts need a mailer; no billing or provider credentials. `quotaBytes` and `freeDeviceLimit` are the free plan's limits. */
-export async function createCloudServer({ dataDir, enrollmentToken, mailer, serverKey, stripe, fetcher = globalThis.fetch, quotaBytes = 250 * 1024 * 1024, plusQuotaBytes = 10 * 1024 * 1024 * 1024, freeDeviceLimit = 2, maxHistoryEntries = 100000, maxDeviceEntries = 1000, maxPairingEntries = 128, maxConcurrentRequests = 16, webRoot = join(directory, 'web'), corsOrigins = [], publicOrigin, port = 0, enrollmentLimit = 1, clock = Date.now }) {
+export async function createCloudServer({ dataDir, enrollmentToken, mailer, serverKey, stripe, oauth = {}, fetcher = globalThis.fetch, quotaBytes = 250 * 1024 * 1024, plusQuotaBytes = 10 * 1024 * 1024 * 1024, freeDeviceLimit = 2, maxHistoryEntries = 100000, maxDeviceEntries = 1000, maxPairingEntries = 128, maxConcurrentRequests = 16, webRoot = join(directory, 'web'), corsOrigins = [], publicOrigin, port = 0, enrollmentLimit = 1, clock = Date.now }) {
   if (!dataDir || (enrollmentToken !== undefined && !validToken(enrollmentToken)) || [quotaBytes, plusQuotaBytes, freeDeviceLimit].some((value) => !Number.isSafeInteger(value) || value < 1)) throw new Error('Provide a data directory, random 32-byte enrollment token and positive quota.');
   if (mailer !== undefined && typeof mailer !== 'function') throw new Error('Provide the mailer as a function.');
   if (serverKey !== undefined && !validToken(serverKey)) throw new Error('Provide the server key as 32 random bytes.');
   // JotDrop Plus is sold through Stripe Managed Payments (Stripe is the seller and handles VAT); without settings there is no checkout.
   if (stripe !== undefined && !['secretKey', 'webhookSecret', 'monthPrice', 'yearPrice'].every((name) => typeof stripe[name] === 'string' && stripe[name].length > 0)) throw new Error('Provide the Stripe secret key, webhook secret and both prices.');
+  // `oauth.google` / `oauth.github`: { clientId, clientSecret }, plus endpoint overrides for tests.
+  const providers = Object.fromEntries(Object.entries(oauth).filter(([, settings]) => settings).map(([name, settings]) => {
+    if (!OAUTH_PROVIDERS[name] || typeof settings.clientId !== 'string' || !settings.clientId || typeof settings.clientSecret !== 'string' || !settings.clientSecret) throw new Error('Provide the client ID and secret for each sign-in provider (google, github).');
+    return [name, { ...OAUTH_PROVIDERS[name], ...settings }];
+  }));
   // Kept outside the database: a copied database alone cannot verify codes or produce authenticator codes.
   const serverSubkey = (purpose) => Buffer.from(hkdfSync('sha256', Buffer.from(serverKey, 'base64url'), Buffer.alloc(0), `jotdrop:server:${purpose}:v1`, 32));
   const codeKey = serverKey && serverSubkey('code'), totpKey = serverKey && serverSubkey('totp');
@@ -180,7 +193,10 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
         CREATE TABLE IF NOT EXISTS plans(vaultId TEXT PRIMARY KEY, plusUntil INTEGER NOT NULL DEFAULT 0, trialUsed INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS subscriptions(subscriptionId TEXT PRIMARY KEY, vaultId TEXT NOT NULL, status TEXT NOT NULL, paidUntil INTEGER NOT NULL);
         CREATE INDEX IF NOT EXISTS subscriptions_by_vault ON subscriptions(vaultId);
-        CREATE INDEX IF NOT EXISTS envelopes_size ON envelopes(vaultId,size);`);
+        CREATE INDEX IF NOT EXISTS envelopes_size ON envelopes(vaultId,size);
+        CREATE TABLE IF NOT EXISTS identities(provider TEXT NOT NULL, subject TEXT NOT NULL, accountId TEXT NOT NULL REFERENCES accounts(id), createdAt TEXT NOT NULL, PRIMARY KEY(provider,subject));
+        CREATE TABLE IF NOT EXISTS oauth_states(id TEXT PRIMARY KEY, provider TEXT NOT NULL, client TEXT NOT NULL, challenge TEXT NOT NULL, expiresAt INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS oauth_tickets(id TEXT PRIMARY KEY, provider TEXT NOT NULL, subject TEXT NOT NULL, email TEXT NOT NULL, challenge TEXT NOT NULL, expiresAt INTEGER NOT NULL);`);
       run("INSERT INTO secrets VALUES('fake-salt',?) ON CONFLICT(name) DO NOTHING", randomBytes(32).toString('base64url'));
       const legacy = all('PRAGMA table_info(revisions)').some((column) => column.name === 'envelope');
       db.exec(`CREATE TABLE IF NOT EXISTS ${legacy ? 'revisions_migrated' : 'revisions'}(vaultId TEXT NOT NULL REFERENCES vaults(id), id TEXT NOT NULL, revision INTEGER NOT NULL, envelopeHash TEXT NOT NULL, deleted INTEGER NOT NULL, size INTEGER NOT NULL, updatedAt TEXT NOT NULL, deviceId TEXT NOT NULL, PRIMARY KEY(vaultId,id,revision), FOREIGN KEY(vaultId,id,envelopeHash) REFERENCES envelopes(vaultId,id,envelopeHash));`);
@@ -304,6 +320,47 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
     return result;
   }
   const accountFor = (vaultId) => one('SELECT * FROM accounts WHERE vaultId=?', vaultId) ?? fail(404, 'No account for this cloud');
+  // An account made with Google or GitHub has no password until "Forgot password" adds one.
+  async function requirePassword(account, authKey) {
+    if (!account.authHash) fail(409, 'This account signs in with Google or GitHub and has no password yet. Add one with "Forgot password" first.', { code: 'no-password' });
+    requireValue(validToken(authKey), 'Invalid login key');
+    if (!await checkAuthKey(authKey, account.authHash)) fail(401, 'Current password is incorrect');
+  }
+  const requireProvider = (name) => (Object.hasOwn(providers, name) ? providers[name] : fail(404, 'This sign-in method is not available on this server'));
+  // Who the provider says signed in: a stable ID and an email address the provider has verified.
+  async function providerIdentity(provider, code, redirectUri) {
+    const call = async (url, init = {}) => {
+      const response = await fetcher(url, { ...init, headers: { Accept: 'application/json', 'User-Agent': 'JotDrop Cloud', ...init.headers }, signal: AbortSignal.timeout(10000) });
+      const result = await response.json().catch(() => undefined);
+      if (!response.ok || !result) throw new Error(`${provider.name} did not answer`);
+      return result;
+    };
+    const form = new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: redirectUri, client_id: provider.clientId, client_secret: provider.clientSecret });
+    const { access_token: accessToken } = await call(provider.token, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form.toString() });
+    if (typeof accessToken !== 'string' || !accessToken) throw new Error(`${provider.name} did not sign you in`);
+    const auth = { headers: { Authorization: `Bearer ${accessToken}` } };
+    if (provider === providers.google) {
+      const user = await call(provider.api, auth);
+      if (user.email_verified !== true) return { subject: String(user.sub), email: null };
+      return { subject: String(user.sub), email: user.email };
+    }
+    const user = await call(`${provider.api}/user`, auth), emails = await call(`${provider.api}/user/emails`, auth);
+    const primary = Array.isArray(emails) ? emails.find((entry) => entry.primary && entry.verified) : undefined;
+    return { subject: String(user.id), email: primary?.email ?? null };
+  }
+  function oauthTicket(value) {
+    requireValue(validToken(value.ticket) && validToken(value.verifier), 'Invalid sign-in');
+    const ticket = one('SELECT * FROM oauth_tickets WHERE id=?', hash(value.ticket));
+    if (!ticket || ticket.expiresAt <= clock() || !equal(hash(value.verifier), ticket.challenge)) fail(401, 'This sign-in has expired. Start again.');
+    return ticket;
+  }
+  // The account a provider sign-in belongs to: the linked one, or the account with the same verified address.
+  const oauthAccount = (ticket) => one('SELECT a.* FROM identities i JOIN accounts a ON a.id=i.accountId WHERE i.provider=? AND i.subject=?', ticket.provider, ticket.subject) ?? one('SELECT * FROM accounts WHERE email=?', ticket.email);
+  function linkIdentity(ticket, account) {
+    if (one('SELECT 1 FROM identities WHERE provider=? AND subject=?', ticket.provider, ticket.subject)) return;
+    run('INSERT INTO identities VALUES(?,?,?,?)', ticket.provider, ticket.subject, account.id, new Date(clock()).toISOString());
+    sendMailLater({ to: account.email, kind: 'provider-linked', provider: providers[ticket.provider].name });
+  }
   const totpAad = (accountId) => Buffer.from(`jotdrop:totp:v1:${accountId}`);
   function sealTotp(secret, accountId) {
     const iv = randomBytes(12), cipher = createCipheriv('aes-256-gcm', totpKey, iv).setAAD(totpAad(accountId));
@@ -557,7 +614,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
         requireAccounts();
         limit(`prelogin:${ip}`, 30);
         const email = emailValue((await body(req, MAX_METADATA_BODY)).email);
-        const account = one('SELECT kdf FROM accounts WHERE email=?', email);
+        const account = one("SELECT kdf FROM accounts WHERE email=? AND kdf<>''", email);
         reply(200, { kdf: account ? JSON.parse(account.kdf) : { salt: createHmac('sha256', fakeSaltKey).update(email).digest().subarray(0, 16).toString('base64url'), ...DEFAULT_KDF } }); return;
       }
       if (method === 'POST' && route === '/auth/login') {
@@ -569,7 +626,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
         deviceName(value.deviceName);
         requireValue(validHash(value.deviceTokenHash), 'Invalid token hash');
         limit(`login-email:${email}`, 10);
-        const account = one('SELECT * FROM accounts WHERE email=?', email);
+        const account = one("SELECT * FROM accounts WHERE email=? AND authHash<>''", email);
         if (account && account.lockedUntil > clock()) fail(429, 'Too many attempts. Try again later.');
         if (!await checkAuthKey(value.authKey, account?.authHash)) {
           if (account) transaction(() => {
@@ -654,11 +711,13 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
         if (!validToken(value.claimToken) || !request || !equal(hash(value.claimToken), request.claimTokenHash) || request.expiresAt <= clock()) fail(401, 'Invalid or expired approval');
         if (!approval[2]) { reply(200, { envelope: request.envelope }); return; }
         if (!request.envelope) fail(409, 'Not approved yet');
-        const next = await newDeviceCredentials(value);
+        // Without new password fields (sign-in with Google or GitHub) the password stays as it is.
+        const next = value.authKey === undefined ? null : await newDeviceCredentials(value);
+        if (!next) { deviceName(value.deviceName); requireValue(validHash(value.deviceTokenHash), 'Invalid token hash'); }
         reply(201, transaction(() => {
           if (run('DELETE FROM device_approvals WHERE id=? AND envelope IS NOT NULL', request.id).changes !== 1) fail(401, 'Invalid or expired approval');
           const account = one('SELECT id,vaultId FROM accounts WHERE id=?', request.accountId);
-          setCredentials(account.id, next);
+          if (next) setCredentials(account.id, next);
           return addDevice(account.vaultId, value.deviceName, value.deviceTokenHash, value.replaceDeviceId);
         })); return;
       }
@@ -683,6 +742,102 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
           return addDevice(vaultId, value.deviceName, value.deviceTokenHash);
         })); return;
       }
+      if (method === 'GET' && route === '/auth/providers') { reply(200, { providers: Object.keys(providers) }); return; }
+      const oauthRoute = /^\/auth\/oauth\/([a-z]{1,20})\/(start|callback)$/.exec(route);
+      if (method === 'GET' && oauthRoute) {
+        requireAccounts();
+        const provider = requireProvider(oauthRoute[1]), origin = publicOrigin ?? `http://${req.headers.host}`;
+        const redirectUri = `${origin}/api/v1/auth/oauth/${oauthRoute[1]}/callback`;
+        const go = (location) => { res.writeHead(302, { Location: location }); res.end(); };
+        if (oauthRoute[2] === 'start') {
+          limit(`oauth:${ip}`, 20);
+          const client = url.searchParams.get('client'), challenge = url.searchParams.get('challenge');
+          requireValue(Object.hasOwn(OAUTH_RETURN, client) && validHash(challenge), 'Invalid sign-in request');
+          const state = randomBytes(32).toString('base64url');
+          transaction(() => {
+            run('DELETE FROM oauth_states WHERE expiresAt<=?', clock());
+            run('INSERT INTO oauth_states VALUES(?,?,?,?,?)', hash(state), oauthRoute[1], client, challenge, clock() + OAUTH_LIFETIME);
+          });
+          go(`${provider.authorize}?${new URLSearchParams({ client_id: provider.clientId, redirect_uri: redirectUri, response_type: 'code', scope: provider.scope, state, ...provider.extra })}`); return;
+        }
+        const stateValue = url.searchParams.get('state');
+        const state = validToken(stateValue) && transaction(() => {
+          const row = one('SELECT * FROM oauth_states WHERE id=? AND provider=?', hash(stateValue), oauthRoute[1]);
+          if (row) run('DELETE FROM oauth_states WHERE id=?', row.id);
+          return row && row.expiresAt > clock() ? row : undefined;
+        });
+        if (!state) fail(400, 'This sign-in has expired. Start again.');
+        const back = (query) => go(OAUTH_RETURN[state.client](origin, query.toString()));
+        const code = url.searchParams.get('code');
+        if (!code) { back(new URLSearchParams({ 'oauth-error': `${provider.name} sign-in was cancelled.` })); return; }
+        let identity;
+        try { identity = await providerIdentity(provider, code, redirectUri); }
+        catch { back(new URLSearchParams({ 'oauth-error': `Could not sign in with ${provider.name}. Try again.` })); return; }
+        let email = null;
+        try { email = identity.email && emailValue(identity.email); } catch { email = null; }
+        if (!email || !identity.subject || identity.subject.length > 200) { back(new URLSearchParams({ 'oauth-error': `Your ${provider.name} account has no verified email address. Add one there, or use email and password.` })); return; }
+        const ticket = randomBytes(32).toString('base64url');
+        transaction(() => {
+          run('DELETE FROM oauth_tickets WHERE expiresAt<=?', clock());
+          run('INSERT INTO oauth_tickets VALUES(?,?,?,?,?,?)', hash(ticket), oauthRoute[1], identity.subject, email, state.challenge, clock() + OAUTH_LIFETIME);
+        });
+        back(new URLSearchParams({ oauth: ticket })); return;
+      }
+      if (method === 'POST' && route === '/auth/oauth/ticket') {
+        requireAccounts();
+        limit(`oauth:${ip}`, 20);
+        const ticket = oauthTicket(await body(req, MAX_METADATA_BODY)), account = oauthAccount(ticket);
+        reply(200, { provider: ticket.provider, email: ticket.email, account: Boolean(account), password: Boolean(account?.authHash) }); return;
+      }
+      if (method === 'POST' && route === '/auth/oauth/signup') {
+        requireAccounts();
+        limit(`signup:${ip}`, 10);
+        const value = await body(req, MAX_METADATA_BODY);
+        deviceName(value.deviceName);
+        requireValue(validHash(value.deviceTokenHash) && validHash(value.recoveryTokenHash), 'Invalid token hash');
+        reply(201, transaction(() => {
+          const ticket = oauthTicket(value);
+          if (oauthAccount(ticket)) fail(409, 'This email address already has an account. Sign in to it instead.', { code: 'account-exists' });
+          run('DELETE FROM oauth_tickets WHERE id=?', ticket.id);
+          const vaultId = randomUUID(), accountId = randomUUID(), now = new Date(clock()).toISOString();
+          run('INSERT INTO vaults VALUES(?,?,?)', vaultId, value.recoveryTokenHash, 'account');
+          // No password: '' never matches a login key, and "Forgot password" can add one later.
+          run("INSERT INTO accounts(id,email,vaultId,kdf,authHash,wrappedVaultKey,createdAt,passwordChangedAt) VALUES(?,?,?,'','','',?,?)", accountId, ticket.email, vaultId, now, now);
+          run('INSERT INTO identities VALUES(?,?,?,?)', ticket.provider, ticket.subject, accountId, now);
+          return addDevice(vaultId, value.deviceName, value.deviceTokenHash);
+        })); return;
+      }
+      if (method === 'POST' && route === '/auth/oauth/approval') {
+        requireAccounts();
+        limit(`oauth:${ip}`, 20);
+        const value = await body(req, MAX_METADATA_BODY);
+        requireValue(validHash(value.claimTokenHash) && typeof value.publicKey === 'string' && /^[A-Za-z0-9_-]{1,200}$/.test(value.publicKey), 'Invalid approval request');
+        reply(201, transaction(() => {
+          const ticket = oauthTicket(value), account = oauthAccount(ticket) ?? fail(404, 'No account for this sign-in. Create one first.');
+          run('DELETE FROM oauth_tickets WHERE id=?', ticket.id);
+          linkIdentity(ticket, account);
+          const approvalId = randomUUID(), expiresAt = clock() + APPROVAL_LIFETIME;
+          run('DELETE FROM device_approvals WHERE expiresAt<=?', clock());
+          run('INSERT INTO device_approvals VALUES(?,?,?,?,NULL,?)', approvalId, account.id, value.publicKey, value.claimTokenHash, expiresAt);
+          return { approvalId, expiresAt: new Date(expiresAt).toISOString() };
+        })); return;
+      }
+      if (method === 'POST' && route === '/auth/oauth/recover') {
+        requireAccounts();
+        limit(`recover:${ip}`, 5);
+        const value = await body(req, MAX_METADATA_BODY);
+        deviceName(value.deviceName);
+        requireValue(validHash(value.deviceTokenHash), 'Invalid token hash');
+        reply(201, transaction(() => {
+          const ticket = oauthTicket(value), account = oauthAccount(ticket) ?? fail(404, 'No account for this sign-in. Create one first.');
+          const vault = one('SELECT recoveryHash FROM vaults WHERE id=?', account.vaultId);
+          if (!validToken(value.recoveryToken) || !equal(hash(value.recoveryToken), vault.recoveryHash)) fail(401, 'Invalid recovery code');
+          const created = addDevice(account.vaultId, value.deviceName, value.deviceTokenHash, value.replaceDeviceId);
+          run('DELETE FROM oauth_tickets WHERE id=?', ticket.id);
+          linkIdentity(ticket, account);
+          return created;
+        })); return;
+      }
       if (method === 'POST' && route === '/stripe/webhook') {
         if (!stripe) fail(503, 'Payments are not available on this server.');
         // Unknown clouds and other event types are acknowledged too, so Stripe does not retry them.
@@ -701,7 +856,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
       }
       if (route === '/account' && method === 'GET') {
         const account = accountFor(vaultId);
-        reply(200, { email: account.email, totp: Boolean(account.totpSecret) }); return;
+        reply(200, { email: account.email, totp: Boolean(account.totpSecret), password: Boolean(account.authHash), providers: all('SELECT provider FROM identities WHERE accountId=? ORDER BY provider', account.id).map((row) => row.provider) }); return;
       }
       if (route === '/account/totp' && method === 'POST') {
         requireAccounts();
@@ -713,10 +868,9 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
         requireAccounts();
         limit(`totp:${vaultId}`, 10);
         const value = await body(req, MAX_METADATA_BODY);
-        requireValue(validToken(value.currentAuthKey), 'Invalid login key');
         // The password is required, so a stolen device token cannot swap in another authenticator.
         const account = accountFor(vaultId);
-        if (!await checkAuthKey(value.currentAuthKey, account.authHash)) fail(401, 'Current password is incorrect');
+        await requirePassword(account, value.currentAuthKey);
         const step = totpStep(account, account.totpPending, value.code);
         if (!step) fail(401, 'Invalid code');
         run('UPDATE accounts SET totpSecret=totpPending,totpPending=NULL,totpLastStep=? WHERE id=?', step, account.id);
@@ -725,9 +879,8 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
       if (route === '/account/totp/disable' && method === 'POST') {
         limit(`totp:${vaultId}`, 10);
         const value = await body(req, MAX_METADATA_BODY);
-        requireValue(validToken(value.currentAuthKey), 'Invalid login key');
         const account = accountFor(vaultId);
-        if (!await checkAuthKey(value.currentAuthKey, account.authHash)) fail(401, 'Current password is incorrect');
+        await requirePassword(account, value.currentAuthKey);
         run('UPDATE accounts SET totpSecret=NULL,totpPending=NULL WHERE id=?', account.id);
         reply(200, { ok: true }); return;
       }
@@ -762,11 +915,10 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
       if (route === '/account/password' && method === 'POST') {
         limit(`password:${vaultId}`, 10);
         const value = await body(req, MAX_METADATA_BODY);
-        requireValue(validToken(value.currentAuthKey), 'Invalid login key');
         const account = one('SELECT * FROM accounts WHERE vaultId=?', vaultId);
         if (!account) fail(404, 'No account for this cloud');
         const next = await credentialValue(value);
-        if (!await checkAuthKey(value.currentAuthKey, account.authHash)) fail(401, 'Current password is incorrect');
+        await requirePassword(account, value.currentAuthKey);
         transaction(() => {
           requireActiveDevice(vaultId, deviceId);
           if (run('UPDATE accounts SET kdf=?,authHash=?,wrappedVaultKey=?,passwordChangedAt=? WHERE id=? AND authHash=?', next.kdf, next.authHash, next.wrappedVaultKey, new Date(clock()).toISOString(), account.id, account.authHash).changes !== 1) fail(409, 'The password was changed elsewhere. Try again.');
@@ -784,10 +936,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
         requireValue(validHash(value.recoveryTokenHash), 'Invalid token hash');
         // With an account the password is required, so a stolen device token cannot replace the owner's recovery code.
         const account = one('SELECT * FROM accounts WHERE vaultId=?', vaultId);
-        if (account) {
-          requireValue(validToken(value.currentAuthKey), 'Invalid login key');
-          if (!await checkAuthKey(value.currentAuthKey, account.authHash)) fail(401, 'Current password is incorrect');
-        }
+        if (account) await requirePassword(account, value.currentAuthKey);
         transaction(() => {
           requireActiveDevice(vaultId, deviceId);
           run('UPDATE vaults SET recoveryHash=? WHERE id=?', value.recoveryTokenHash, vaultId);
@@ -1043,7 +1192,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   const serverKey = process.env.JOTDROP_CLOUD_SERVER_KEY || randomBytes(32).toString('base64url');
   const env = (name) => process.env[`JOTDROP_CLOUD_STRIPE_${name}`];
   const stripe = env('SECRET_KEY') ? { secretKey: env('SECRET_KEY'), webhookSecret: env('WEBHOOK_SECRET'), monthPrice: env('PRICE_MONTH'), yearPrice: env('PRICE_YEAR'), founderYearPrice: env('PRICE_FOUNDER_YEAR') || undefined } : undefined;
-  const app = await createCloudServer({ dataDir: process.env.JOTDROP_CLOUD_DATA_DIR, enrollmentToken, mailer, serverKey, stripe, maxHistoryEntries: Number(process.env.JOTDROP_CLOUD_MAX_HISTORY_ENTRIES ?? 100000), maxDeviceEntries: Number(process.env.JOTDROP_CLOUD_MAX_DEVICE_ENTRIES ?? 1000), maxPairingEntries: Number(process.env.JOTDROP_CLOUD_MAX_PAIRING_ENTRIES ?? 128), maxConcurrentRequests: Number(process.env.JOTDROP_CLOUD_MAX_CONCURRENT_REQUESTS ?? 16), publicOrigin: process.env.JOTDROP_CLOUD_PUBLIC_ORIGIN, port: Number(process.env.JOTDROP_CLOUD_PORT || 8787), corsOrigins: (process.env.JOTDROP_CLOUD_CORS_ORIGINS || '').split(',').map((entry) => entry.trim()).filter(Boolean) });
+  const provider = (name) => process.env[`JOTDROP_CLOUD_${name}_CLIENT_ID`] ? { clientId: process.env[`JOTDROP_CLOUD_${name}_CLIENT_ID`], clientSecret: process.env[`JOTDROP_CLOUD_${name}_CLIENT_SECRET`] } : undefined;
+  const app = await createCloudServer({ dataDir: process.env.JOTDROP_CLOUD_DATA_DIR, enrollmentToken, mailer, serverKey, stripe, oauth: { google: provider('GOOGLE'), github: provider('GITHUB') }, maxHistoryEntries: Number(process.env.JOTDROP_CLOUD_MAX_HISTORY_ENTRIES ?? 100000), maxDeviceEntries: Number(process.env.JOTDROP_CLOUD_MAX_DEVICE_ENTRIES ?? 1000), maxPairingEntries: Number(process.env.JOTDROP_CLOUD_MAX_PAIRING_ENTRIES ?? 128), maxConcurrentRequests: Number(process.env.JOTDROP_CLOUD_MAX_CONCURRENT_REQUESTS ?? 16), publicOrigin: process.env.JOTDROP_CLOUD_PUBLIC_ORIGIN, port: Number(process.env.JOTDROP_CLOUD_PORT || 8787), corsOrigins: (process.env.JOTDROP_CLOUD_CORS_ORIGINS || '').split(',').map((entry) => entry.trim()).filter(Boolean) });
   console.log(`Local cloud preview: http://127.0.0.1:${app.port}. Test data only, not production.`);
   if (!process.env.JOTDROP_CLOUD_ENROLLMENT_TOKEN) console.log(`Single-use local enrollment token: ${enrollmentToken}`);
   for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { void app.close().then(() => process.exit(0)); });

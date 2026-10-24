@@ -154,6 +154,40 @@ Codes: 6 cijfers, 15 minuten geldig, maximaal 5 pogingen per code, eenmalig, en 
 - **Nog niet gebouwd (volgende stappen):** authenticator instellen op Android (inloggen met een authenticator-code werkt wel), een QR-code voor de authenticator (nu alleen de sleutel om over te typen), een echte e-maildienst, en het echte IP achter de proxy.
 - **Omgeving:** `JOTDROP_CLOUD_SERVER_KEY` (32 willekeurige bytes, base64url) is nodig voor accounts: codes en authenticatorgeheimen hangen ervan af. Buiten de database bewaren en niet wisselen. Zonder deze sleutel start de CLI met een tijdelijke sleutel (alleen voor ontwikkelen). Zonder enrollment-token is `/vaults` dicht.
 
+## Deel C: inloggen met Google en GitHub (24 okt 2026)
+
+Eric koos "Google + goedkeuren" en voegde GitHub toe. Google of GitHub bewijst alleen **wie** je bent. De vaultsleutel komt nooit bij hen of bij de server: een nieuw apparaat krijgt hem via de vier woorden op een gekoppeld apparaat, of via de herstelcode. Een wachtwoord is optioneel.
+
+**Stroom**
+
+1. Het apparaat maakt een geheim `verifier` en houdt dat bij zich. Het opent `GET /api/v1/auth/oauth/<google|github>/start?client=<web|obsidian>&challenge=<sha256(verifier)>`.
+2. De server bewaart een eenmalige `state` (10 minuten) en stuurt de browser naar Google of GitHub. De client-geheimen van die apps staan alleen op de server.
+3. Terug op `/callback` wisselt de server de code in, en vraagt het **bevestigde** e-mailadres op (Google: `email_verified`; GitHub: het primaire, bevestigde adres uit `/user/emails`). Zonder bevestigd adres: geen ticket, wel een duidelijke melding.
+4. De server maakt een eenmalig **ticket** (10 minuten; alleen de hash staat in de database) en stuurt de browser terug: web naar `/#oauth=<ticket>`, Obsidian naar `obsidian://jotdrop-cloud?oauth=<ticket>`. Het ticket werkt alleen samen met de `verifier` van stap 1. Een onderschepte terugsprong-link is daarom niets waard.
+5. `POST /auth/oauth/ticket` met ticket en verifier zegt wie er inlogde en of dat adres al een account heeft (`account`, `password`).
+6. Daarna één van drie:
+   - **Nieuw adres:** `POST /auth/oauth/signup`: nieuwe vault, account zonder wachtwoord (`kdf`, `authHash` en `wrappedVaultKey` leeg), gekoppelde identiteit, eerste apparaat; het apparaat toont de herstelcode.
+   - **Bestaand account, sleutel via goedkeuren:** `POST /auth/oauth/approval` maakt een goedkeuringsverzoek zoals bij "wachtwoord vergeten" (route a). Het pollen gaat via de bestaande routes; `.../complete` mag nu zonder nieuwe wachtwoordvelden (dan blijft het wachtwoord zoals het is).
+   - **Bestaand account, sleutel via herstelcode:** `POST /auth/oauth/recover`.
+
+**Koppelen**
+
+- Tabel `identities(provider, subject, accountId)`: de vaste id bij Google of GitHub, niet het e-mailadres.
+- Een inlog bij een nieuwe aanbieder met hetzelfde bevestigde adres als een bestaand account koppelt aan dat account. Dat gebeurt pas bij goedkeuren of de herstelcode, en de eigenaar krijgt een mail `provider-linked`. Dat geeft niet meer macht dan een e-mailcode bij "wachtwoord vergeten" nu al geeft: de sleutel komt alleen van een eigen apparaat of de herstelcode.
+- Een account met een wachtwoord blijft met het wachtwoord inloggen. Een account zonder wachtwoord kan er een krijgen via "Forgot password" (e-mailcode, dan goedkeuren of de herstelcode).
+
+**Zonder wachtwoord**
+
+- Wachtwoord-inloggen komt nooit bij een account zonder wachtwoord uit (`prelogin` geeft een nep-salt, `login` weigert).
+- Wachtwoord wijzigen, de authenticator-app en een nieuwe herstelcode vragen het huidige wachtwoord. Zonder wachtwoord antwoordt de server `409` met `code: "no-password"`, en de website legt uit hoe je er een toevoegt.
+- Web: "Stay signed in" staat standaard aan. "Lock workspace" is er alleen met een wachtwoord, want zonder wachtwoord kan niets een vergrendelde browser weer openen; "Log out" blijft.
+
+**Server-instellingen:** `JOTDROP_CLOUD_GOOGLE_CLIENT_ID`/`_SECRET` en `JOTDROP_CLOUD_GITHUB_CLIENT_ID`/`_SECRET`. Zonder instellingen biedt de server de knoppen niet aan (`GET /auth/providers`). De callback-URL bij Google en GitHub is `<publieke origin>/api/v1/auth/oauth/<google|github>/callback`.
+
+**Tests:** `cloud/oauth.test.mjs` (nep-Google/GitHub via de `fetcher` van de server: nieuw account, goedkeuren, GitHub koppelen met herstelcode, account met wachtwoord, zonder wachtwoord plus "Forgot password", onbevestigd adres, gestolen/verlopen tickets, hergebruikte state, geannuleerd) en `npm run check:cloud-oauth` (website in een echte browser).
+
+**Bouwstand:** server, gedeelde client (`cloud/shared/account.mjs`) en website gebouwd. Nog te doen: OAuth-apps registreren bij Google en GitHub, staging, plugin (`obsidian://`-terugsprong), Android.
+
 ## Wat dit ontwerp bewust NIET beschermt
 
 - **Een zwak wachtwoord.** Wie de database steelt, kan wachtwoorden proberen te raden (traag door Argon2id). Daarom minimaal 12 tekens en een waarschuwing bij veelgebruikte wachtwoorden.

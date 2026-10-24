@@ -76,7 +76,7 @@ test('sign up, log in elsewhere, change the password and read the same notes', a
   const saved = await phone.write('notes/a.md', text('Body'), 0);
   const laptop = await login(app, 'eric@example.com');
   assert.equal((await laptop.read(saved.id)).file.path, 'notes/a.md');
-  assert.deepEqual(await accountInfo(laptop), { email: 'eric@example.com', totp: false });
+  assert.deepEqual(await accountInfo(laptop), { email: 'eric@example.com', totp: false, password: true, providers: [] });
   await assert.rejects(changePassword(phone, { currentPassword: 'not my password!', newPassword: 'a whole new password' }), (error) => error.status === 401);
   await changePassword(phone, { currentPassword: PASSWORD, newPassword: 'a whole new password', signOutOtherDevices: true });
   await assert.rejects(laptop.status(), (error) => error.status === 401);
