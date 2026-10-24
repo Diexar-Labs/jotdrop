@@ -2,6 +2,7 @@ import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import type JotDropPlugin from "./main";
 import { legacyAssetsPath, normalizeAssetsFolder } from "./attachments";
 import { t } from "./i18n";
+import { ConfirmModal } from "./confirmModal";
 
 function generateToken(): string {
   const bytes = new Uint8Array(24);
@@ -31,8 +32,8 @@ export interface JotDropSettings {
   clipServerPort: number;
   /** Bearer token the extension must send. Generated automatically. */
   clipServerToken: string;
-  /** Passphrase-wrapped preview credentials and revision journal, never plaintext keys. */
-  cloudConnection: string;
+  /** JotDrop Cloud server; keys and sync state live per device outside data.json. */
+  cloudServer: string;
   /**
    * One-time guard: older installs defaulted to "modified-desc", which made
    * cards jump on every edit. On first load we switch that old default to the
@@ -59,7 +60,7 @@ export const DEFAULT_SETTINGS: JotDropSettings = {
   clipServerEnabled: false,
   clipServerPort: 27124,
   clipServerToken: "",
-  cloudConnection: "",
+  cloudServer: "https://api.jotdrop.net",
   sortMigratedToCreated: false,
   localLabels: [],
 };
@@ -67,6 +68,7 @@ export const DEFAULT_SETTINGS: JotDropSettings = {
 export class JotDropSettingTab extends PluginSettingTab {
   plugin: JotDropPlugin;
   private lastInvalidNotice = 0;
+  private cloudListener?: () => void;
 
   constructor(app: App, plugin: JotDropPlugin) {
     super(app, plugin);
@@ -307,13 +309,7 @@ export class JotDropSettingTab extends PluginSettingTab {
         }),
     );
 
-    new Setting(containerEl).setName("Cloud development preview").setHeading();
-    containerEl.createEl("p", { text: "Optional manual sync of an isolated test folder only. Not a hosted service. All software features stay free; existing notes and sync settings are unchanged." });
-    new Setting(containerEl).setName("Cloud connection").setDesc(this.plugin.cloud?.status || "Locked. No background cloud sync.")
-      .addButton((button) => button.setButtonText("Pair preview").onClick(() => this.plugin.cloud?.showPair()))
-      .addButton((button) => button.setButtonText("Unlock").onClick(() => this.plugin.cloud?.showUnlock()))
-      .addButton((button) => button.setButtonText("Manual test sync").onClick(() => this.plugin.cloud?.confirmSync()))
-      .addButton((button) => button.setButtonText("Lock").onClick(() => { this.plugin.cloud?.lock(); this.display(); }));
+    this.displayCloud(containerEl.createDiv({ cls: "jotdrop-cloud-settings" }));
 
     // "About JotDrop" — unobtrusive, dismisses itself if the user has no
     // interest. No popups, no "premium" features. Open source +
@@ -328,5 +324,51 @@ export class JotDropSettingTab extends PluginSettingTab {
     });
     kofiLink.setText(t("support_kofi"));
     // GitHub Sponsors will be added once the application is approved.
+  }
+
+  /** JotDrop Cloud: the same account as the website and the Android app. */
+  private displayCloud(el: HTMLElement): void {
+    const cloud = this.plugin.cloud;
+    const refresh = () => { el.empty(); this.displayCloud(el); };
+    this.cloudListener?.();
+    this.cloudListener = cloud.onChange(() => { if (el.isConnected) refresh(); });
+    new Setting(el).setName("JotDrop Cloud").setHeading();
+    el.createEl("p", { text: "Optional. Sync your JotDrop notes with the website and the Android app, end-to-end encrypted: notes are locked on this device before they leave it. Without the cloud, everything keeps working offline." });
+    if (!cloud.signedIn) {
+      new Setting(el).setName("Account").setDesc(cloud.status)
+        .addButton((button) => button.setButtonText("Create account").onClick(() => cloud.showSignIn(true)))
+        .addButton((button) => button.setButtonText("Log in").setCta().onClick(() => cloud.showSignIn(false)));
+      new Setting(el).setName("Server").setDesc("Leave this as it is unless you run your own JotDrop Cloud server.")
+        .addText((text) => text.setPlaceholder("https://api.jotdrop.net").setValue(this.plugin.settings.cloudServer).onChange(async (value) => {
+          this.plugin.settings.cloudServer = value.trim() || "https://api.jotdrop.net";
+          await this.plugin.saveSettings();
+        }));
+      return;
+    }
+    new Setting(el).setName("Account").setDesc(`Logged in as ${cloud.email}.`)
+      .addButton((button) => button.setButtonText("Log out").onClick(() => {
+        new ConfirmModal(this.app, {
+          title: "Log out of JotDrop Cloud?",
+          message: "Sync stops on this device. Your notes stay in this vault and in the cloud. To come back, log in with your email and password.",
+          confirmLabel: "Log out",
+        }, () => { void cloud.logOut().then(refresh, (error) => new Notice(error instanceof Error ? error.message : String(error), 10000)); }).open();
+      }));
+    new Setting(el).setName("Sync this vault").setDesc(cloud.enabled ? "On: notes and attachments sync automatically." : "Off: nothing in this vault is sent to the cloud.")
+      .addToggle((toggle) => toggle.setValue(cloud.enabled).onChange((on) => {
+        if (on) cloud.confirmEnable(refresh);
+        else void cloud.setEnabled(false).then(refresh);
+      }));
+    const last = cloud.lastSynced ? ` Last sync: ${new Date(cloud.lastSynced).toLocaleString()}.` : "";
+    new Setting(el).setName("Status").setDesc(`${cloud.status}${last}`)
+      .addButton((button) => button.setButtonText("Sync now").setDisabled(!cloud.enabled).onClick(async () => {
+        button.setDisabled(true);
+        try { await cloud.syncNow(); } catch (error) { new Notice(error instanceof Error ? error.message : String(error), 10000); }
+        finally { button.setDisabled(false); }
+      }));
+  }
+
+  hide(): void {
+    this.cloudListener?.();
+    this.cloudListener = undefined;
   }
 }

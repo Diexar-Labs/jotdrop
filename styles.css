@@ -1613,3 +1613,10 @@
 /* Trash view banner (deleted notes wait in <notes folder>/Trash) */
 .jotdrop-trash-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; padding: 6px 0; color: var(--text-muted); }
 .jotdrop-trash-bar.is-hidden { display: none; }
+
+/* JotDrop Cloud: the recovery code is shown once, readable in full. */
+.jotdrop-recovery-code {
+  width: 100%;
+  font-family: var(--font-monospace);
+  word-break: break-all;
+}

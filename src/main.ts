@@ -217,6 +217,8 @@ export default class JotDropPlugin extends Plugin {
       DEFAULT_SETTINGS,
       (await this.loadData()) as Partial<JotDropSettings>,
     );
+    // The isolated cloud preview is replaced by JotDrop Cloud; its wrapped test credentials are not used anymore.
+    delete (this.settings as unknown as Record<string, unknown>).cloudConnection;
     // One-time migration: the previous default "modified-desc" reordered cards
     // on every edit. Move it to the stable "created-desc" once, then leave the
     // setting alone so a deliberate later choice sticks.

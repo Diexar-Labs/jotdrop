@@ -92,14 +92,14 @@ Stand gemeten op `ee57d58` (feature-branch), bijgewerkt met elke afgeronde funct
 
 | Functie | Website | Plugin | Android |
 |---|---|---|---|
-| Inloggen met e-mail en wachtwoord | ja | NEE (alleen koppelcode) | ja |
+| Inloggen met e-mail en wachtwoord | ja | ja (instellingen, JotDrop Cloud; ook account maken met herstelcode, apparatengrens) | ja |
 | Wachtwoord wijzigen/vergeten | ja | NEE | ja |
 | Authenticator-app (TOTP) | ja | NEE | NEE |
 | Apparaten bekijken en intrekken | ja | NEE | ja |
 | Koppelcode maken | ja | NEE | ja |
 | Nieuw apparaat goedkeuren (4 woorden) | ja | NEE | ja |
-| Automatisch synchroniseren | ja | NEE (alleen handmatige test) | ja |
-| Conflict beoordelen | ja | NEE | ja |
+| Automatisch synchroniseren | ja | ja (notitiemap met Archive/Trash + bijlagen, zelfde regels als Android; stopt bij Syncthing of gekoppelde Obsidian Sync) | ja |
+| Conflict beoordelen | ja | deels (beide versies blijven, `.cloud-conflict`-kopie als kaart; nog geen vergelijkscherm) | ja |
 | Tijdmachine | ja | NEE | ja |
 | Herstelcode opnieuw maken | ja | NEE | ja |
 | Plus bekijken | ja | NEE | deels (tekst) |
