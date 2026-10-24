@@ -22,7 +22,8 @@ type SyncState = {
 };
 type Session = { credentials: CloudClient["credentials"]; email: string };
 type MomentFile = { id: string; revision: number | null; deleted: boolean; locked: boolean; cleared: boolean };
-export type CloudMoment = { at: string; then: MomentFile[]; files: Array<{ path: string; bytes: Uint8Array }>; trashed: number; locked: number; cleared: number };
+export type CloudVersion = { revision: number; deleted: boolean; updatedAt: string; locked: boolean };
+export type CloudMoment ={ at: string; then: MomentFile[]; files: Array<{ path: string; bytes: Uint8Array }>; trashed: number; locked: number; cleared: number };
 type Sealed = { key: CryptoKey; iv: Uint8Array; data: ArrayBuffer };
 
 /** fetch() on top of Obsidian's requestUrl: no CORS, so the same code works on desktop and mobile. */
@@ -231,6 +232,15 @@ class VaultFolder {
     const indexed = this.plugin.app.vault.getAbstractFileByPath(file);
     if (indexed instanceof TFile) await this.plugin.app.fileManager.trashFile(indexed);
     else await this.adapter.trashLocal(file);
+  }
+
+  /** The cloud path of a file in the JotDrop folders, or null for any other file. */
+  cloudPath(path: string): string | null {
+    const under = (root: string) => path.startsWith(`${root}/`) ? path.slice(root.length + 1) : null;
+    const attachment = under(this.legacy) ?? under(this.assets);
+    const note = under(this.notes);
+    try { return attachment !== null ? syncPath(`attachments/${attachment}`) : note !== null ? syncPath(`notes/${note}`) : null; }
+    catch { return null; }
   }
 
   /** The file at a cloud path in this vault, or null. */
@@ -567,6 +577,38 @@ export class CloudController {
     });
     this.plugin.refreshViews();
     this.request(0);
+  }
+
+  /** The saved versions of a note in this vault, newest first, like "History" on the website and Android. */
+  async history(vaultPath: string): Promise<{ path: string; id: string; versions: CloudVersion[] }> {
+    await this.ready;
+    const { client, folder } = this.syncing();
+    const path = folder.cloudPath(vaultPath);
+    if (!path) throw new Error("Only notes and attachments in the JotDrop folders have a cloud history.");
+    const id = await objectId(client.credentials.vaultKey, path);
+    try { return { path, id, versions: (await client.history(id) as { versions: CloudVersion[] }).versions }; }
+    catch (error) {
+      if ((error as { status?: number }).status === 404) throw new Error("This note is not in the cloud yet. Sync first.");
+      throw error;
+    }
+  }
+
+  async readVersion(id: string, revision: number): Promise<Uint8Array> {
+    await this.ready;
+    const { client } = this.syncing();
+    return base64ToBytes((await client.read(id, revision)).file.content);
+  }
+
+  /** An older version becomes the newest one; history keeps every version, so this can be undone. */
+  async restoreVersion(path: string, revision: number): Promise<void> {
+    // Send this vault's changes first, so they become a version too.
+    await this.syncNow();
+    await this.exclusive(async () => {
+      const { client } = this.syncing();
+      const current = await this.newest(client, path);
+      await client.restore(current.id, revision, current.revision);
+    });
+    await this.syncNow();
   }
 
   /** The moments of the time machine, oldest first; the last one is now. */

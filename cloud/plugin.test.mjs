@@ -245,4 +245,15 @@ test('the plugin settles a conflict either way and goes back to a moment with th
   // The time machine can undo that: the moment before the restore still has C.
   const back = await cloud.moment((await cloud.timeline()).at(-2));
   assert.ok(back.files.some((file) => file.path === 'notes/C.md'));
+
+  // History of one note: B was B1, B phone, then B1 again. Version 2 comes back as the newest version.
+  const history = await cloud.history('Mini Notes/B.md');
+  assert.equal(history.path, 'notes/B.md');
+  assert.deepEqual(history.versions.map((version) => version.revision), [3, 2, 1]);
+  assert.equal(decode(await cloud.readVersion(history.id, 2)), 'B phone');
+  await cloud.restoreVersion(history.path, 2);
+  assert.equal(decode(v.files.get('Mini Notes/B.md')), 'B phone');
+  assert.equal((await cloud.history('Mini Notes/B.md')).versions[0].revision, 4);
+  await assert.rejects(cloud.history('Other/Private.md'), /JotDrop folders/);
+  await assert.rejects(cloud.history('Mini Notes/B.cloud-conflict-r2.md'), /JotDrop folders/);
 });

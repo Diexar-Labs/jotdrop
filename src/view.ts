@@ -26,6 +26,7 @@ import {
 } from "./metadata";
 import { discoverLabels, assignLabel, removeLabel, createLabel as managerCreateLabel, renameLabel as managerRenameLabel, deleteLabel as managerDeleteLabel, LabelInfo } from "./labelManager";
 import { voidAsync } from "./asyncUtil";
+import { ConflictReviewModal, NoteHistoryModal } from "./cloudReview";
 import { betweenRank, rankForManualOrder, respaceRanks } from "./manualOrder";
 import { t } from "./i18n";
 
@@ -1972,6 +1973,18 @@ export class JotDropView extends ItemView {
       }
     }
 
+    // A cloud conflict copy says what it is and opens the comparison right here.
+    if (file.name.includes(".cloud-conflict-") && this.plugin.cloud?.enabled) {
+      const conflict = body.createDiv({ cls: "jotdrop-card-conflict" });
+      conflict.createEl("p", { text: "Changed in two places: this is the other version." });
+      const review = conflict.createEl("button", { cls: "mod-cta", text: "Review conflict" });
+      review.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (this.selectionMode) { this.toggleSelect(file.path); return; }
+        new ConflictReviewModal(this.app, this.plugin.cloud, file.path).open();
+      });
+    }
+
     if (previewText) {
       const preview = body.createDiv({ cls: "jotdrop-card-preview" });
       renderInlinePreview(preview, previewText);
@@ -2140,6 +2153,14 @@ export class JotDropView extends ItemView {
             ).open();
           })
       );
+      if (this.plugin.cloud?.enabled && !file.name.includes(".cloud-conflict-")) {
+        menu.addItem((i) =>
+          i
+            .setTitle("Version history")
+            .setIcon("history")
+            .onClick(() => new NoteHistoryModal(this.app, this.plugin.cloud, file.path).open())
+        );
+      }
       // Attachments stay: the note in Trash still shows them and can come back.
       menu.addItem((i) =>
         i

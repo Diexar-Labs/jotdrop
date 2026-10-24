@@ -1677,3 +1677,20 @@
   font-size: var(--font-ui-small);
   white-space: pre-wrap;
 }
+.jotdrop-card-conflict {
+  margin: 6px 0;
+  padding: 8px;
+  border: 1px dashed var(--text-muted);
+  border-radius: var(--radius-s);
+}
+.jotdrop-card-conflict p {
+  margin: 0 0 6px;
+  font-size: var(--font-ui-small);
+  font-weight: 600;
+}
+.jotdrop-history-list {
+  margin-top: 12px;
+}
+.jotdrop-history-list .setting-item {
+  padding: 6px 0;
+}

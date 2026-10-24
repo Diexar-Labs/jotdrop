@@ -15,7 +15,8 @@ function preview(el: HTMLElement, path: string, bytes: Uint8Array | null, missin
 
 /** One conflict at a time: this vault's version next to the cloud version, then a choice, like Android. */
 export class ConflictReviewModal extends Modal {
-  constructor(app: App, private cloud: CloudController) { super(app); }
+  /** `copy`: the conflict copy whose card was clicked; that conflict comes first. */
+  constructor(app: App, private cloud: CloudController, private copy?: string) { super(app); }
 
   onOpen(): void { this.titleEl.setText("Review conflicts"); void this.next(); }
   onClose(): void { this.contentEl.empty(); }
@@ -32,7 +33,8 @@ export class ConflictReviewModal extends Modal {
         new Setting(el).addButton((button) => button.setButtonText("Close").setCta().onClick(() => this.close()));
         return;
       }
-      const { path, local } = conflicts[0];
+      const { path, local } = conflicts.find((conflict) => this.copy && conflict.copies.includes(this.copy)) ?? conflicts[0];
+      this.copy = undefined;
       const versions = await this.cloud.compare(path);
       el.empty();
       el.createEl("p", { text: `${conflicts.length === 1 ? "1 note was" : `${conflicts.length} notes were`} changed in two places. This one: ${local}` });
@@ -60,6 +62,55 @@ export class ConflictReviewModal extends Modal {
       el.empty();
       el.createEl("p", { text: errorText(error) });
     }
+  }
+}
+
+/** The versions of one note, newest first: look at one, or make it the newest version again. */
+export class NoteHistoryModal extends Modal {
+  constructor(app: App, private cloud: CloudController, private file: string) { super(app); }
+
+  onOpen(): void { this.titleEl.setText(`Version history: ${(this.file.split("/").pop() || "").replace(/\.md$/i, "")}`); void this.load(); }
+  onClose(): void { this.contentEl.empty(); }
+
+  private async load(): Promise<void> {
+    const el = this.contentEl;
+    el.empty();
+    el.createEl("p", { text: "Loading versions..." });
+    let history: Awaited<ReturnType<CloudController["history"]>>;
+    try { history = await this.cloud.history(this.file); }
+    catch (error) { el.empty(); el.createEl("p", { text: errorText(error) }); return; }
+    el.empty();
+    el.createEl("p", { text: "Every saved change is a version. Restoring one makes it the newest version; the versions after it stay in the history." });
+    const shown = el.createDiv();
+    const list = el.createDiv({ cls: "jotdrop-history-list" });
+    history.versions.forEach((version, index) => {
+      const row = new Setting(list).setName(`Version ${version.revision}${index === 0 ? " (now)" : ""}${version.deleted ? " (moved to the trash)" : ""}`).setDesc(when(version.updatedAt));
+      if (version.locked) { row.setDesc(`${when(version.updatedAt)}. Replaced more than 30 days ago. JotDrop Plus shows and restores it.`); return; }
+      if (version.deleted) return;
+      row.addButton((button) => button.setButtonText("Show").onClick(async () => {
+        shown.empty();
+        try {
+          const bytes = await this.cloud.readVersion(history.id, version.revision);
+          shown.createEl("h4", { text: `Version ${version.revision}, ${when(version.updatedAt)}` });
+          preview(shown, history.path, bytes, "");
+        } catch (error) { shown.createEl("p", { text: errorText(error) }); }
+        shown.scrollIntoView({ block: "nearest" });
+      }));
+      if (index > 0) row.addButton((button) => button.setButtonText("Restore this version").onClick(() => {
+        new ConfirmModal(this.app, {
+          title: `Restore version ${version.revision}?`,
+          message: "This version becomes the newest one, here and on your other devices. The current version stays in the history, so you can go back.",
+          confirmLabel: "Restore",
+        }, () => {
+          el.empty();
+          el.createEl("p", { text: "Restoring..." });
+          void this.cloud.restoreVersion(history.path, version.revision).then(
+            () => { new Notice(`Restored version ${version.revision}.`); void this.load(); },
+            (error) => { new Notice(errorText(error), 10000); void this.load(); },
+          );
+        }).open();
+      }));
+    });
   }
 }
 
