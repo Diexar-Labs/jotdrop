@@ -71,8 +71,8 @@ Stand gemeten op `ee57d58` (feature-branch), bijgewerkt met elke afgeronde funct
 |---|---|---|---|
 | Melding op het moment zelf | NEE | deels (alleen als Obsidian open is) | ja (alarm, ook na herstart) |
 | Overzicht Herinneringen | NEE | NEE | ja |
-| Labels maken, hernoemen, verwijderen | NEE | ja | ja |
-| Filteren op label | ja | ja | ja |
+| Labels maken, hernoemen, verwijderen | ja (24 okt; linker balk > Edit labels, zoals plugin: nieuw label lokaal tot een notitie het heeft) | ja | ja |
+| Filteren op label | ja (24 okt; labels in de linker balk met aantal, zoals Keep) | ja | ja |
 | Filteren op tag | ja (24 okt; filterbalk: top 8 + "+N more", ✓ bij gekozen, elke gekozen tag telt) | ja | ja |
 | Zoeken | ja | ja | ja |
 | Archief bekijken | ja | ja (instelling) | ja |

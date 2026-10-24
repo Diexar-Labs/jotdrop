@@ -38,6 +38,7 @@
     "check:cloud-grid": "python cloud/grid_browser_check.py",
     "check:cloud-cards": "python cloud/card_actions_browser_check.py",
     "check:cloud-tags": "python cloud/tags_browser_check.py",
+    "check:cloud-labels": "python cloud/labels_browser_check.py",
     "check:cloud-editor": "python cloud/editor_browser_check.py",
     "check:cloud-import": "python cloud/import_browser_check.py",
     "check:cloud-plans": "python cloud/plans_browser_check.py",

@@ -49,14 +49,14 @@ def check_parity(browser, url, token):
         assert card.locator("img").count() == 1
         card.locator(".task-row input").check()
         page.locator('.note-card[data-revision="2"]').filter(has_text="Parity note").wait_for()
-        page.locator("#label-filter").select_option("work: notes")
+        page.locator("#label-list").get_by_role("button", name="Work: notes").click()
         page.locator("#search").fill("Real task")
         assert page.locator(".note-card").count() == 1
         page.locator("#sort").select_option("manual")
         page.locator("#search").fill("does-not-exist")
         assert page.locator(".note-card").count() == 0
         page.locator("#search").fill("")
-        page.locator("#label-filter").select_option("")
+        page.locator('[data-view="notes"]').click()
         card.get_by_role("button", name="Archive", exact=True).click()
         page.locator(".note-card").filter(has_text="Parity note").wait_for(state="detached")
         page.locator('[data-view="archive"]').click()

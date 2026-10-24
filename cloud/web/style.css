@@ -39,9 +39,22 @@ h3 { font-size: 1.05rem; }
 .workspace { display: grid; grid-template-columns: 245px minmax(0, 1fr); min-height: calc(100dvh - 36px); }
 .sidebar { padding: 1.7rem 1rem; display: flex; flex-direction: column; border-right: 1px solid var(--line); }
 .sidebar .wordmark { margin: 0 .5rem 2rem; }
-.sidebar nav { display: grid; gap: .4rem; }
-.sidebar nav button { display: flex; justify-content: space-between; border-color: transparent; text-align: left; background: transparent; }
+.sidebar nav { display: grid; grid-template-columns: minmax(0, 1fr); gap: .4rem; }
+.sidebar nav button { display: flex; justify-content: space-between; gap: .5rem; border-color: transparent; text-align: left; background: transparent; }
 .sidebar nav button[aria-current="page"] { background: var(--selected); color: var(--accent); }
+.workspace.sidebar-hidden { grid-template-columns: minmax(0, 1fr); }
+#toggle-sidebar { padding: .6rem; }
+.sidebar-labels { margin: .6rem 0; padding: .6rem 0; border-block: 1px solid var(--line); }
+.sidebar-labels-heading { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: 0 .3rem 0 .9rem; color: var(--muted); font-size: .75rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+.sidebar-labels-heading button { padding: .3rem .5rem; border-color: transparent; background: transparent; color: var(--accent); font-size: .8rem; letter-spacing: normal; text-transform: none; }
+#label-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: .2rem; margin-top: .3rem; }
+.sidebar nav .label-nav { display: flex; align-items: center; gap: .6rem; padding: .5rem .9rem; font-weight: 500; }
+.label-nav svg { flex: none; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.label-nav .label-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar nav .label-nav[aria-current="page"] { background: var(--selected); color: var(--accent); font-weight: 700; }
+.label-rows { list-style: none; margin: .5rem 0 0; padding: 0; }
+.label-row { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; margin-top: .75rem; }
+.label-row input { flex: 1 1 12rem; width: auto; }
 .sidebar-bottom { margin-top: auto; padding: 2rem .5rem 0; }
 .sidebar-bottom p { color: var(--muted); font-size: .82rem; }
 .sidebar-bottom button { display: block; background: transparent; border-color: transparent; font-size: .85rem; padding-left: 0; }
@@ -132,7 +145,7 @@ dialog::backdrop { background: rgb(15 23 36 / .4); }
 #photo-tools { margin-top: 1rem; }
 #photo-tools summary { cursor: pointer; font-weight: 600; padding: .6rem 0; }
 #photo-tools p { color: var(--muted); overflow-wrap: anywhere; }
-.photo-actions { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; }
+.photo-actions { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin-top: 1rem; }
 #camera-preview { display: block; width: 100%; max-height: 320px; margin: 1rem 0; object-fit: contain; }
 .check-label { display: flex; align-items: start; gap: .7rem; margin: 1.2rem 0; }
 .check-label input { width: auto; margin-top: .35rem; }
@@ -141,6 +154,7 @@ dialog::backdrop { background: rgb(15 23 36 / .4); }
   .sidebar { padding: 1rem; border-right: none; border-bottom: 1px solid var(--line); }
   .sidebar .wordmark { margin: 0 0 .8rem; }
   .sidebar nav { display: flex; flex-wrap: wrap; gap: .25rem; }
+  .sidebar-labels { flex-basis: 100%; }
   .sidebar nav button { padding: .5rem .6rem; font-size: .85rem; }
   .sidebar-bottom { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; padding: .7rem 0 0; }
   .sidebar-bottom p { margin: 0 auto 0 0; }
@@ -157,7 +171,7 @@ dialog::backdrop { background: rgb(15 23 36 / .4); }
 .dialog-heading { flex-wrap: wrap; }
 .editor-heading-actions { display: flex; flex-wrap: wrap; gap: .4rem; }
 #note-title { font-size: 1.15rem; font-weight: 600; }
-.editor-tools, .editor-colors, .chip-field, .reminder-row, .repeat-row { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin-top: .75rem; }
+.editor-tools, .editor-colors, .chip-field, .reminder-row, .repeat-row { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; margin-top: 1rem; }
 .editor-tools button[aria-pressed="true"]::before, .repeat-row button[aria-pressed="true"]::before { content: "✓ "; }
 .editor-tools button[aria-pressed="true"], .repeat-row button[aria-pressed="true"] { background: var(--selected); border-color: var(--accent); }
 .swatches { display: flex; flex-wrap: wrap; gap: .4rem; }

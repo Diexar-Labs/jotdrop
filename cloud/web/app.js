@@ -20,6 +20,8 @@ const files = new Map();
 const mediaUrls = new Set();
 let client;
 let view = 'notes';
+let labelFilter = '';
+let localLabels = [];
 const selectedTags = new Set();
 let editing;
 let editingRevision;
@@ -253,8 +255,9 @@ function render() {
   $('items').hidden = view === 'devices';
   $('devices-panel').hidden = view !== 'devices';
   $('tag-filter').hidden = true;
+  const labelName = renderLabelList();
   const descriptions = {
-    notes: ['Notes', 'Plain Markdown. Your files, your workspace.'],
+    notes: labelFilter ? [labelName, 'Notes with this label.'] : ['Notes', 'Plain Markdown. Your files, your workspace.'],
     archive: ['Archive', 'Kept notes, out of your everyday list.'],
     files: ['Files', 'Images, recordings, and the files you choose to keep.'],
     trash: ['Trash', 'Deleted files stay recoverable. Restoring adds a new cloud version.'],
@@ -265,11 +268,6 @@ function render() {
   $('note-count').textContent = String([...files.values()].filter((entry) => !entry.deleted && isMarkdown(entry.file.path) && !/^notes\/(Archive|Trash)\//.test(entry.file.path)).length);
   if (view === 'devices') return;
   const source = moment ? moment.files : files;
-  const selectedLabel = $('label-filter').value;
-  const labels = new Map();
-  for (const entry of source.values()) if (!entry.deleted && isMarkdown(entry.file.path)) for (const label of noteParts(noteText(entry.file), entry.file.path).labels) labels.set(label.toLowerCase(), label);
-  $('label-filter').replaceChildren(new Option('All labels', ''), ...[...labels].sort((a, b) => a[1].localeCompare(b[1])).map(([key, label]) => new Option(label, key)));
-  $('label-filter').value = labels.has(selectedLabel) ? selectedLabel : '';
   const query = $('search').value.toLowerCase().trim();
   const inView = (entry) => {
     if (view === 'trash' ? !entry.deleted && !entry.file.path.startsWith('notes/Trash/') : entry.deleted) return false;
@@ -289,7 +287,7 @@ function render() {
   const matching = [...source.values()].filter((entry) => {
     if (!inView(entry)) return false;
     if (selectedTags.size && !(isMarkdown(entry.file.path) && noteTags(entry).some((tag) => selectedTags.has(tag.toLowerCase())))) return false;
-    if ($('label-filter').value && (!isMarkdown(entry.file.path) || !noteParts(noteText(entry.file), entry.file.path).labels.some((label) => label.toLowerCase() === $('label-filter').value))) return false;
+    if (labelFilter && (!isMarkdown(entry.file.path) || !noteParts(noteText(entry.file), entry.file.path).labels.some((label) => label.toLowerCase() === labelFilter))) return false;
     return !query || entry.file.path.toLowerCase().includes(query) || (isMarkdown(entry.file.path) && noteText(entry.file).toLowerCase().includes(query));
   }).sort((a, b) => {
     const left = isMarkdown(a.file.path) ? noteParts(noteText(a.file), a.file.path) : {};
@@ -305,8 +303,8 @@ function render() {
     const empty = document.createElement('div');
     empty.className = 'empty-state';
     const heading = document.createElement('h2');
-    heading.textContent = query ? 'No matching files' : view === 'trash' ? 'Nothing in the trash' : view === 'files' ? 'A place for your attachments' : 'Room for your next thought';
-    empty.append(heading, paragraph(query ? 'Try a different word or filename.' : view === 'notes' ? 'Create a note or upload a Markdown file. Existing notes on your computer are never imported automatically.' : view === 'files' ? 'Upload an image, recording, or document. This local preview accepts files up to 4 MiB each.' : 'Files you move to trash will appear here.'));
+    heading.textContent = query ? 'No matching files' : labelFilter ? 'No notes with this label yet' : view === 'trash' ? 'Nothing in the trash' : view === 'files' ? 'A place for your attachments' : 'Room for your next thought';
+    empty.append(heading, paragraph(query ? 'Try a different word or filename.' : labelFilter ? 'Give a note this label with the label button on its card or in the editor.' : view === 'notes' ? 'Create a note or upload a Markdown file. Existing notes on your computer are never imported automatically.' : view === 'files' ? 'Upload an image, recording, or document. This local preview accepts files up to 4 MiB each.' : 'Files you move to trash will appear here.'));
     $('items').append(empty);
   }
   navOrder = matching.filter((entry) => !entry.deleted && isMarkdown(entry.file.path)).map((entry) => entry.id);
@@ -382,7 +380,7 @@ function render() {
     } else appendMedia(card, entry);
     if (entry.pending) card.append(paragraph('Encrypted draft on this browser. Waiting for cloud.', 'note-meta'));
     if (entry.conflict) card.append(paragraph('Another device saved a different version. Review both before choosing.', 'message'));
-    if (markdown) for (const label of parts.labels) card.append(button(label, () => { $('label-filter').value = label.toLowerCase(); render(); }, 'label-chip'));
+    if (markdown) for (const label of parts.labels) card.append(button(label, () => showLabel(label.toLowerCase()), 'label-chip'));
     if (markdown) for (const tag of [...parts.tags, ...parts.inlineTags]) card.append(button(`#${tag}`, () => { selectedTags.add(tag.toLowerCase()); render(); }, 'label-chip'));
     if (entry.conflict) card.append(button('Review cloud version', () => reviewConflict(entry)));
     // Like Keep and the plugin: actions and file details show on hover or focus (always on touch).
@@ -433,8 +431,119 @@ async function changeNote(entry, changes) {
 
 function allLabels() {
   const labels = new Map();
+  for (const label of localLabels) labels.set(label.toLowerCase(), label);
   for (const entry of files.values()) if (!entry.deleted && isMarkdown(entry.file.path)) for (const label of noteParts(noteText(entry.file), entry.file.path).labels) labels.set(label.toLowerCase(), label);
   return [...labels.values()].sort((a, b) => a.localeCompare(b));
+}
+
+// Labels live in the sidebar, like Keep: each opens the notes with that label, with their count.
+// Returns the name of the label shown, if any.
+function renderLabelList() {
+  const counts = new Map();
+  for (const label of localLabels) counts.set(label.toLowerCase(), { label, count: 0 });
+  for (const entry of files.values()) {
+    if (entry.deleted || !isMarkdown(entry.file.path) || entry.file.path.startsWith('notes/Trash/')) continue;
+    for (const label of noteParts(noteText(entry.file), entry.file.path).labels) {
+      const known = counts.get(label.toLowerCase());
+      counts.set(label.toLowerCase(), { label: known?.label || label, count: (known?.count || 0) + Number(!entry.file.path.startsWith('notes/Archive/')) });
+    }
+  }
+  if (!counts.has(labelFilter)) labelFilter = '';
+  $('label-list').replaceChildren(...[...counts].sort((a, b) => a[1].label.localeCompare(b[1].label)).map(([key, { label, count }]) => {
+    const item = button('', () => showLabel(key), 'label-nav');
+    item.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${icons.tag}</svg>`;
+    const name = document.createElement('span');
+    name.className = 'label-name';
+    name.textContent = label;
+    item.title = label;
+    item.append(name, String(count));
+    if (view === 'notes' && labelFilter === key) item.setAttribute('aria-current', 'page');
+    return item;
+  }));
+  for (const item of document.querySelectorAll('[data-view]')) {
+    if (item.dataset.view === view && !labelFilter) item.setAttribute('aria-current', 'page');
+    else item.removeAttribute('aria-current');
+  }
+  return counts.get(labelFilter)?.label;
+}
+
+function showLabel(key) {
+  view = 'notes';
+  labelFilter = key;
+  message();
+  render();
+}
+
+// A label made in the sidebar stays on this device, encrypted like the cache, until a note has it (as in the plugin).
+const labelsKey = () => `labels:${client.credentials.vaultId}`;
+async function loadLocalLabels() {
+  const prepared = await store('get', labelsKey());
+  const file = prepared && await decryptEnvelope(client.credentials.vaultKey, JSON.parse(prepared.envelope), aad(prepared.id));
+  localLabels = file ? JSON.parse(decoder.decode(base64ToBytes(file.content))) : [];
+}
+async function saveLocalLabels(next) {
+  await store('put', labelsKey(), await client.prepareWrite('local/labels.json', encoder.encode(JSON.stringify(next)), 0));
+  localLabels = next;
+}
+
+function renderLabelRows() {
+  $('label-rows').replaceChildren(...allLabels().map((label) => {
+    const row = document.createElement('li');
+    const form = document.createElement('form');
+    form.className = 'label-row';
+    const input = document.createElement('input');
+    input.value = label;
+    input.maxLength = 100;
+    input.setAttribute('aria-label', `New name for ${label}`);
+    const rename = document.createElement('button');
+    rename.type = 'submit';
+    rename.textContent = 'Rename';
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'danger';
+    remove.textContent = 'Delete';
+    remove.setAttribute('aria-label', `Delete ${label}`);
+    form.addEventListener('submit', (event) => { event.preventDefault(); void editLabel(label, input.value); });
+    remove.addEventListener('click', () => editLabel(label, null));
+    form.append(input, rename, remove);
+    row.append(form);
+    return row;
+  }));
+}
+
+// Like the plugin: rename or delete a label on every note in Notes and Archive; notes always stay.
+async function editLabel(oldName, newName) {
+  $('labels-message').textContent = '';
+  try {
+    if (moment) throw new Error('Go back to now before changing labels.');
+    const key = oldName.toLowerCase();
+    if (newName !== null) {
+      newName = newName.trim();
+      if (!newName || /[\x00-\x1f]/.test(newName)) throw new Error('Type a label name.');
+      if (newName === oldName) return;
+    }
+    if (syncing) await syncing;
+    const targets = [...files.values()].filter((entry) => !entry.deleted && isMarkdown(entry.file.path) && entry.file.path.startsWith('notes/') && !entry.file.path.startsWith('notes/Trash/')
+      && noteParts(noteText(entry.file), entry.file.path).labels.some((label) => label.toLowerCase() === key));
+    if (newName === null && !confirm(`Delete the label "${oldName}"? It is removed from ${targets.length} ${targets.length === 1 ? 'note' : 'notes'}. The notes stay.`)) return;
+    let failed = 0;
+    for (const entry of targets) {
+      const next = new Map();
+      for (const label of noteParts(noteText(entry.file), entry.file.path).labels) {
+        const name = label.toLowerCase() === key ? newName : label;
+        if (name && !next.has(name.toLowerCase())) next.set(name.toLowerCase(), name);
+      }
+      try { await changeNote(entry, { jotdrop_labels: next.size ? [...next.values()] : null }); } catch { failed++; }
+    }
+    if (localLabels.some((label) => label.toLowerCase() === key)) {
+      const kept = localLabels.filter((label) => label.toLowerCase() !== key && label.toLowerCase() !== newName?.toLowerCase());
+      await saveLocalLabels(newName ? [...kept, newName] : kept);
+    }
+    if (labelFilter === key) labelFilter = newName ? newName.toLowerCase() : '';
+    render();
+    renderLabelRows();
+    if (failed) throw new Error(`${failed} ${failed === 1 ? 'note' : 'notes'} could not be changed. Sync and try again.`);
+  } catch (error) { $('labels-message').textContent = errorText(error); }
 }
 
 function toggleLabel(entry, current, label) {
@@ -1135,6 +1244,7 @@ async function openWorkspace(connected) {
   $('confirm-password').value = '';
   $('unlock-password').value = '';
   await loadLocal();
+  await loadLocalLabels();
   render();
   // Back from the Stripe payment page.
   if (new URLSearchParams(location.search).get('plus') === 'welcome') {
@@ -1166,6 +1276,9 @@ function lock() {
   files.clear();
   moments.clear();
   closeMoment();
+  localLabels = [];
+  labelFilter = '';
+  $('labels-dialog').close();
   editing = undefined;
   for (const url of mediaUrls) URL.revokeObjectURL(url);
   mediaUrls.clear();
@@ -1495,7 +1608,6 @@ for (const [id, interval] of [['buy-month', 'month'], ['buy-year', 'year']]) $(i
 $('sync').addEventListener('click', () => { syncPaused = false; $('sync').textContent = 'Sync now'; message(); void sync(); });
 $('pause-sync').addEventListener('click', () => { syncPaused = true; syncController?.abort(); });
 $('search').addEventListener('input', render);
-$('label-filter').addEventListener('change', render);
 $('sort').addEventListener('change', render);
 $('new-note').addEventListener('click', () => openEditor());
 // Like the Android main screen: start the camera or the recording in a new note right away.
@@ -1777,11 +1889,43 @@ async function writeImport({ items, files: sources, failed: unreadable }) {
 }
 for (const navigation of document.querySelectorAll('[data-view]')) navigation.addEventListener('click', () => {
   view = navigation.dataset.view;
-  for (const item of document.querySelectorAll('[data-view]')) item.removeAttribute('aria-current');
-  navigation.setAttribute('aria-current', 'page');
+  labelFilter = '';
   message();
   render();
   if (view === 'devices') void Promise.all([renderDevices(), renderAccount()]).catch((error) => message(errorText(error)));
+});
+$('edit-labels').addEventListener('click', () => {
+  $('labels-message').textContent = '';
+  renderLabelRows();
+  $('labels-dialog').showModal();
+});
+$('close-labels').addEventListener('click', () => $('labels-dialog').close());
+$('new-label-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  $('labels-message').textContent = '';
+  try {
+    const name = $('new-label').value.trim();
+    if (!name || /[\x00-\x1f]/.test(name)) throw new Error('Type a label name.');
+    if (allLabels().some((label) => label.toLowerCase() === name.toLowerCase())) throw new Error('That label already exists.');
+    await saveLocalLabels([...localLabels, name]);
+    $('new-label').value = '';
+    render();
+    renderLabelRows();
+  } catch (error) { $('labels-message').textContent = errorText(error); }
+});
+// The sidebar folds away like Keep's menu; this browser remembers the choice.
+function showSidebar(open) {
+  $('sidebar').hidden = !open;
+  $('workspace').classList.toggle('sidebar-hidden', !open);
+  $('toggle-sidebar').setAttribute('aria-expanded', String(open));
+  $('toggle-sidebar').setAttribute('aria-label', open ? 'Hide menu' : 'Show menu');
+  $('toggle-sidebar').title = open ? 'Hide menu' : 'Show menu';
+}
+try { showSidebar(localStorage.getItem('jotdrop-sidebar') !== 'hidden'); } catch { /* Shown by default. */ }
+$('toggle-sidebar').addEventListener('click', () => {
+  const open = $('sidebar').hidden;
+  showSidebar(open);
+  try { localStorage.setItem('jotdrop-sidebar', open ? 'shown' : 'hidden'); } catch { /* Keep the choice for this page. */ }
 });
 $('pair-form').addEventListener('submit', async (event) => {
   event.preventDefault();
