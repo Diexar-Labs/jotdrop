@@ -20,6 +20,7 @@ const files = new Map();
 const mediaUrls = new Set();
 let client;
 let view = 'notes';
+const selectedTags = new Set();
 let editing;
 let editingRevision;
 let syncing;
@@ -184,6 +185,32 @@ function isMarkdown(path) { return /\.md$/i.test(path); }
 function noteParts(text, path) {
   return noteSummary(text, path);
 }
+function noteTags(entry) {
+  const parts = noteParts(noteText(entry.file), entry.file.path);
+  return [...parts.tags, ...parts.inlineTags];
+}
+
+// Like the plugin and Android: the most used #tags as filter chips, the rest under "+N more";
+// a note shows when it has any chosen tag. A chosen chip carries a ✓, not only a colour.
+function renderTagFilter(tagCounts) {
+  const bar = $('tag-filter');
+  const toggle = (key) => { if (!selectedTags.delete(key)) selectedTags.add(key); render(); };
+  const top = [...tagCounts].sort((a, b) => b[1].count - a[1].count || a[1].tag.localeCompare(b[1].tag)).slice(0, 8).map(([key]) => key);
+  const shown = [...top, ...[...selectedTags].filter((key) => !top.includes(key)).sort()];
+  bar.replaceChildren(...shown.map((key) => {
+    const chip = button(`#${tagCounts.get(key).tag}`, () => toggle(key), 'filter-chip');
+    chip.setAttribute('aria-pressed', String(selectedTags.has(key)));
+    if (selectedTags.has(key)) { const mark = document.createElement('span'); mark.textContent = '✓ '; mark.setAttribute('aria-hidden', 'true'); chip.prepend(mark); }
+    return chip;
+  }));
+  if (tagCounts.size > shown.length) {
+    const more = button(`+${tagCounts.size - shown.length} more`, () => showMenu(more, [...tagCounts].sort((a, b) => a[1].tag.localeCompare(b[1].tag))
+      .map(([key, { tag, count }]) => ({ label: `#${tag} (${count})`, checked: selectedTags.has(key), action: () => toggle(key) }))), 'filter-chip');
+    bar.append(more);
+  }
+  if (selectedTags.size) bar.append(button('Clear filter', () => { selectedTags.clear(); render(); }, 'filter-clear'));
+  bar.hidden = !tagCounts.size;
+}
 
 function download(bytes, filename, type = 'application/octet-stream') {
   const url = URL.createObjectURL(new Blob([bytes], { type }));
@@ -225,6 +252,7 @@ function render() {
   $('items').replaceChildren();
   $('items').hidden = view === 'devices';
   $('devices-panel').hidden = view !== 'devices';
+  $('tag-filter').hidden = true;
   const descriptions = {
     notes: ['Notes', 'Plain Markdown. Your files, your workspace.'],
     archive: ['Archive', 'Kept notes, out of your everyday list.'],
@@ -243,12 +271,24 @@ function render() {
   $('label-filter').replaceChildren(new Option('All labels', ''), ...[...labels].sort((a, b) => a[1].localeCompare(b[1])).map(([key, label]) => new Option(label, key)));
   $('label-filter').value = labels.has(selectedLabel) ? selectedLabel : '';
   const query = $('search').value.toLowerCase().trim();
-  const matching = [...source.values()].filter((entry) => {
+  const inView = (entry) => {
     if (view === 'trash' ? !entry.deleted && !entry.file.path.startsWith('notes/Trash/') : entry.deleted) return false;
     if (view === 'notes' && !isMarkdown(entry.file.path)) return false;
     if (view === 'archive' && (!isMarkdown(entry.file.path) || !entry.file.path.startsWith('notes/Archive/'))) return false;
     if (view === 'notes' && /^notes\/(Archive|Trash)\//.test(entry.file.path)) return false;
-    if (view === 'files' && isMarkdown(entry.file.path)) return false;
+    return !(view === 'files' && isMarkdown(entry.file.path));
+  };
+  // Tags of the notes in this view; a chosen tag that no longer occurs stops filtering.
+  const tagCounts = new Map();
+  for (const entry of source.values()) if (inView(entry) && isMarkdown(entry.file.path)) for (const tag of noteTags(entry)) {
+    const known = tagCounts.get(tag.toLowerCase());
+    tagCounts.set(tag.toLowerCase(), { tag: known?.tag || tag, count: (known?.count || 0) + 1 });
+  }
+  for (const key of selectedTags) if (!tagCounts.has(key)) selectedTags.delete(key);
+  renderTagFilter(tagCounts);
+  const matching = [...source.values()].filter((entry) => {
+    if (!inView(entry)) return false;
+    if (selectedTags.size && !(isMarkdown(entry.file.path) && noteTags(entry).some((tag) => selectedTags.has(tag.toLowerCase())))) return false;
     if ($('label-filter').value && (!isMarkdown(entry.file.path) || !noteParts(noteText(entry.file), entry.file.path).labels.some((label) => label.toLowerCase() === $('label-filter').value))) return false;
     return !query || entry.file.path.toLowerCase().includes(query) || (isMarkdown(entry.file.path) && noteText(entry.file).toLowerCase().includes(query));
   }).sort((a, b) => {
@@ -343,6 +383,7 @@ function render() {
     if (entry.pending) card.append(paragraph('Encrypted draft on this browser. Waiting for cloud.', 'note-meta'));
     if (entry.conflict) card.append(paragraph('Another device saved a different version. Review both before choosing.', 'message'));
     if (markdown) for (const label of parts.labels) card.append(button(label, () => { $('label-filter').value = label.toLowerCase(); render(); }, 'label-chip'));
+    if (markdown) for (const tag of [...parts.tags, ...parts.inlineTags]) card.append(button(`#${tag}`, () => { selectedTags.add(tag.toLowerCase()); render(); }, 'label-chip'));
     if (entry.conflict) card.append(button('Review cloud version', () => reviewConflict(entry)));
     // Like Keep and the plugin: actions and file details show on hover or focus (always on touch).
     // An earlier moment is read-only; the time machine restores it as a whole.

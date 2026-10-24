@@ -14,6 +14,14 @@ test('browser reads canonical plugin/Android labels without treating tags or bod
   assert.deepEqual(noteSummary('---\njotdrop_labels: {unexpected: object}\ncolor: evil\n---\nBody', 'notes/file.md').labels, []);
 });
 
+test('browser reads inline hashtags like Android, apart from frontmatter tags', () => {
+  const markdown = '---\ntags: [Home]\n---\n# Heading #intitle\n\nBuy milk #errands #home #2024 \\#shared\n#Errands at start\n`#code` [[Note#anchor]] https://x.nl/#frag\n```\n#fenced\n```\n#émigré #a/b-c';
+  const note = noteSummary(markdown, 'notes/test.md');
+  assert.deepEqual(note.tags, ['Home']);
+  assert.deepEqual(note.inlineTags, ['intitle', 'errands', 'émigré', 'a/b-c']);
+  assert.deepEqual(noteSummary('No tags here', 'notes/plain.md').inlineTags, []);
+});
+
 test('browser property edits preserve unknown nested YAML, tags, recurrence limits and exact body', () => {
   const body = '# Test\r\n\r\n---\r\nText\r\n---\r\n- [ ] Do it\r\n';
   const text = '---\r\ncustom:\r\n  color: untouched\r\ntags: [keep]\r\njotdrop_labels:\r\n  - Old\r\nreminder_until: "2028-12-31"\r\n---\r\n' + body;

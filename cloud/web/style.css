@@ -102,6 +102,10 @@ main { min-width: 0; padding: 0 2rem 3rem; }
 .card-menu .swatch { width: 1.1rem; height: 1.1rem; border-radius: 50%; border: 1px solid var(--line); background: var(--note); flex: none; }
 .card-menu .menu-check { margin-left: auto; font-weight: 700; }
 .note-card button.label-chip { display: inline-block; border-radius: 20px; font-size: .75rem; font-weight: 500; }
+.tag-filter { display: flex; flex-wrap: wrap; gap: .4rem; padding-bottom: 1rem; }
+.tag-filter button { padding: .3rem .75rem; border-radius: 20px; font-size: .85rem; font-weight: 500; }
+.tag-filter button[aria-pressed="true"] { background: var(--selected); border: 2px solid var(--accent); padding: calc(.3rem - 1px) calc(.75rem - 1px); font-weight: 700; }
+.tag-filter .filter-clear { border-color: transparent; background: transparent; text-decoration: underline; }
 .empty-state { grid-column: 1 / -1; padding: 3rem 0; max-width: 480px; }
 .empty-state h2 { margin-top: 0; }
 .empty-state p { color: var(--muted); }

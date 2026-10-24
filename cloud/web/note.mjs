@@ -42,9 +42,13 @@ export function noteSummary(text, path) {
   const labels = listField(header, 'jotdrop_labels');
   // Frontmatter tags only, like the plugin editor; inline #hashtags stay in the text.
   const tags = [...new Set(listField(header, 'tags', true).map((tag) => tag.replace(/^#/, '')).filter(Boolean))];
+  // Inline #hashtags count as tags too, as Android's InlineTags.find: outside code, not `\#shared`, never digits only.
+  const seen = new Set(tags.map((tag) => tag.toLowerCase()));
+  const inlineTags = [...body.replace(/```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]+`/g, ' ').matchAll(/(?:^|(?<=\s))#([\p{L}\p{N}_/-]+)/gmu)]
+    .map((match) => match[1]).filter((tag) => /\D/.test(tag) && !seen.has(tag.toLowerCase()) && seen.add(tag.toLowerCase()));
   const color = scalar(header, 'color');
   const order = scalar(header, 'order');
-  return { title, body, preview: body.replace(/^\s*#\s+.+(?:\r?\n|$)/, '').trim(), labels, tags, color: colors.has(color) ? color : 'default', pinned: /^(true|yes|on|1)$/i.test(scalar(header, 'pinned')), reminder: scalar(header, 'reminder'), repeat: scalar(header, 'reminder_repeat'), until: scalar(header, 'reminder_until'), limit: scalar(header, 'reminder_limit'), order: order && Number.isFinite(Number(order)) ? Number(order) : undefined };
+  return { title, body, preview: body.replace(/^\s*#\s+.+(?:\r?\n|$)/, '').trim(), labels, tags, inlineTags, color: colors.has(color) ? color : 'default', pinned: /^(true|yes|on|1)$/i.test(scalar(header, 'pinned')), reminder: scalar(header, 'reminder'), repeat: scalar(header, 'reminder_repeat'), until: scalar(header, 'reminder_until'), limit: scalar(header, 'reminder_limit'), order: order && Number.isFinite(Number(order)) ? Number(order) : undefined };
 }
 
 export function updateMetadata(text, changes) {

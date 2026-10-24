@@ -26,7 +26,7 @@ Stand gemeten op `ee57d58` (feature-branch), bijgewerkt met elke afgeronde funct
 | 11 kleuren | ja | ja | ja |
 | Vinklijst afvinken op de kaart | ja | ja | ja |
 | Labels op de kaart | ja | ja (24 okt; stond eerder ten onrechte op ja, toonde alleen #tags; nu chip met labelpictogram) | ja (24 okt; chip met labelpictogram, vóór de #tags) |
-| Tags (#hashtags) als chips | NEE | ja | ja |
+| Tags (#hashtags) als chips | ja (24 okt; frontmatter + getypte #tags zoals Android, klik = filter) | ja | ja |
 | Foto op de kaart | ja | ja | ja |
 | Spraakmemo afspelen op de kaart | ja | ja | NEE (alleen in editor) |
 | Linkchips (domeinnaam) | NEE | ja | ja |
@@ -73,7 +73,7 @@ Stand gemeten op `ee57d58` (feature-branch), bijgewerkt met elke afgeronde funct
 | Overzicht Herinneringen | NEE | NEE | ja |
 | Labels maken, hernoemen, verwijderen | NEE | ja | ja |
 | Filteren op label | ja | ja | ja |
-| Filteren op tag | NEE | ja | ja |
+| Filteren op tag | ja (24 okt; filterbalk: top 8 + "+N more", ✓ bij gekozen, elke gekozen tag telt) | ja | ja |
 | Zoeken | ja | ja | ja |
 | Archief bekijken | ja | ja (instelling) | ja |
 | Prullenbak bekijken en terugzetten | ja | ja (24 okt; mapmenu > Trash, terugzetten of voorgoed verwijderen) | ja |
