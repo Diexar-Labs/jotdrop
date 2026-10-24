@@ -1594,3 +1594,7 @@
 .jotdrop-md-help-h1 { font-size: 1.2em; }
 .jotdrop-md-help-mark { background: var(--text-highlight-bg); }
 .jotdrop-md-help-quote { border-left: 3px solid var(--background-modifier-border); padding-left: 6px; color: var(--text-muted); }
+
+/* Trash view banner (deleted notes wait in <notes folder>/Trash) */
+.jotdrop-trash-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; padding: 6px 0; color: var(--text-muted); }
+.jotdrop-trash-bar.is-hidden { display: none; }

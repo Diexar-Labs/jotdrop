@@ -42,6 +42,9 @@ export class ReminderScheduler {
     // the alarm on archive. Covers load, modify AND rename-into-archive.
     const archive = normalizePath(this.plugin.settings.archiveFolder);
     if (archive && (file.path === archive || file.path.startsWith(`${archive}/`))) return;
+    // Notes in Trash never fire either.
+    const trash = normalizePath(`${this.plugin.settings.notesFolder}/Trash`);
+    if (file.path.startsWith(`${trash}/`)) return;
     const meta = readMeta(this.plugin.app, file);
     const ms = parseReminderMs(meta.reminder);
     if (!Number.isFinite(ms) || !meta.reminder) return;

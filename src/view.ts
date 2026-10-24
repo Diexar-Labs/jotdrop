@@ -354,7 +354,13 @@ export class JotDropView extends ItemView {
   private selectionToolbarEl!: HTMLElement;
   private selectionCountEl!: HTMLElement;
   private selectAllBtn!: HTMLButtonElement;
+  private selectionArchiveBtn!: HTMLButtonElement;
+  private selectionDeleteBtn!: HTMLButtonElement;
   private labelBtnEl!: HTMLButtonElement;
+  private trashBarEl!: HTMLElement;
+  // Like the Android app: deleted notes go to <notes folder>/Trash and this
+  // view can show that folder instead of the notes.
+  private showTrash = false;
   private query = "";
   private selectedTags = new Set<string>();
   private selectedLabels = new Set<string>();
@@ -463,6 +469,10 @@ export class JotDropView extends ItemView {
     this.buildSelectionToolbar();
 
     this.filterBarEl = root.createDiv({ cls: "jotdrop-filter-bar" });
+    this.trashBarEl = root.createDiv({ cls: "jotdrop-trash-bar is-hidden" });
+    this.trashBarEl.createSpan({ text: t("trash_banner") });
+    const backBtn = this.trashBarEl.createEl("button", { text: t("trash_back") });
+    backBtn.addEventListener("click", () => this.setShowTrash(false));
     this.gridEl = root.createDiv({ cls: "jotdrop-grid" });
     this.applyCardWidth();
 
@@ -517,19 +527,36 @@ export class JotDropView extends ItemView {
     setIcon(this.selectAllBtn, "check-check");
     this.selectAllBtn.addEventListener("click", () => this.selectAllFiltered());
 
-    const archiveBtn = bar.createEl("button", {
-      cls: "jotdrop-selection-action",
-      attr: { "aria-label": t("action_archive") },
+    // In the trash this button restores, like Android's selection bar.
+    this.selectionArchiveBtn = bar.createEl("button", { cls: "jotdrop-selection-action" });
+    this.selectionArchiveBtn.addEventListener("click", () => {
+      if (this.showTrash) void this.bulkRestore();
+      else this.confirmBulkArchive();
     });
-    setIcon(archiveBtn, "archive");
-    archiveBtn.addEventListener("click", () => this.confirmBulkArchive());
 
-    const deleteBtn = bar.createEl("button", {
-      cls: "jotdrop-selection-action is-destructive",
-      attr: { "aria-label": t("action_delete") },
-    });
-    setIcon(deleteBtn, "trash-2");
-    deleteBtn.addEventListener("click", () => this.confirmBulkDelete());
+    this.selectionDeleteBtn = bar.createEl("button", { cls: "jotdrop-selection-action is-destructive" });
+    setIcon(this.selectionDeleteBtn, "trash-2");
+    this.selectionDeleteBtn.addEventListener("click", () => this.confirmBulkDelete());
+    this.updateSelectionActions();
+  }
+
+  private updateSelectionActions(): void {
+    this.selectionArchiveBtn.setAttribute("aria-label", t(this.showTrash ? "action_restore" : "action_archive"));
+    setIcon(this.selectionArchiveBtn, this.showTrash ? "archive-restore" : "archive");
+    this.selectionDeleteBtn.setAttribute("aria-label", t(this.showTrash ? "action_delete_forever" : "action_move_to_trash"));
+  }
+
+  private setShowTrash(show: boolean): void {
+    if (this.selectionMode) this.exitSelection();
+    this.showTrash = show;
+    this.trashBarEl.toggleClass("is-hidden", !show);
+    this.updateSelectionActions();
+    this.renderLimit = RENDER_CHUNK;
+    void this.render();
+  }
+
+  private trashFolder(): string {
+    return normalizePath(`${this.plugin.settings.notesFolder}/Trash`);
   }
 
   private updateSelectionToolbar(): void {
@@ -796,23 +823,27 @@ export class JotDropView extends ItemView {
   private confirmBulkDelete(): void {
     const count = this.selectedPaths.size;
     if (count === 0) return;
+    const forever = this.showTrash;
     new ConfirmModal(
       this.app,
       {
-        title: t("bulk_delete_title", String(count)),
-        message: t("bulk_delete_message"),
-        confirmLabel: t("action_delete"),
-        destructive: true,
+        title: t(forever ? "bulk_delete_title" : "bulk_trash_title", String(count)),
+        message: t(forever ? "bulk_delete_message" : "bulk_trash_message"),
+        confirmLabel: t(forever ? "action_delete_forever" : "action_move_to_trash"),
+        destructive: forever,
       },
-      () => void this.bulkDelete(),
+      () => void (forever ? this.bulkDelete() : this.bulkMove(this.trashFolder(), "notice_bulk_trashed")),
     ).open();
   }
 
-  private async bulkArchive(): Promise<void> {
+  private async bulkRestore(): Promise<void> {
+    await this.bulkMove(normalizePath(this.plugin.settings.notesFolder), "notice_bulk_restored");
+  }
+
+  private async bulkMove(folder: string, successKey: string): Promise<void> {
     // Snapshot of paths — selection may change during the operation
     // (unlikely) and we want to work sequentially.
     const paths = Array.from(this.selectedPaths);
-    const archiveFolder = normalizePath(this.plugin.settings.archiveFolder);
     let ok = 0;
     let fail = 0;
     for (const path of paths) {
@@ -822,14 +853,18 @@ export class JotDropView extends ItemView {
         continue;
       }
       try {
-        await this.moveArchivedFile(file, archiveFolder);
+        await this.moveArchivedFile(file, folder);
         ok++;
       } catch {
         fail++;
       }
     }
-    this.reportBulkResult("notice_bulk_archived", ok, fail);
+    this.reportBulkResult(successKey, ok, fail);
     this.exitSelection();
+  }
+
+  private async bulkArchive(): Promise<void> {
+    await this.bulkMove(normalizePath(this.plugin.settings.archiveFolder), "notice_bulk_archived");
   }
 
   private async bulkDelete(): Promise<void> {
@@ -1182,7 +1217,9 @@ export class JotDropView extends ItemView {
 
     if (filtered.length === 0) {
       const empty = this.gridEl.createDiv({ cls: "jotdrop-empty" });
-      if (cards.length === 0) {
+      if (cards.length === 0 && this.showTrash) {
+        empty.createEl("h3", { text: t("trash_empty") });
+      } else if (cards.length === 0) {
         empty.createEl("h3", { text: t("empty_no_notes_title") });
         empty.createEl("p", { text: t("empty_no_notes_desc") });
         const appHint = empty.createEl("p", { cls: "jotdrop-empty-app-hint" });
@@ -1508,6 +1545,13 @@ export class JotDropView extends ItemView {
             void this.promptCreateLabel();
           }),
       );
+      menu.addSeparator();
+      menu.addItem((i) =>
+        i
+          .setTitle(t("nav_trash"))
+          .setIcon(this.showTrash ? "check" : "trash-2")
+          .onClick(() => this.setShowTrash(!this.showTrash)),
+      );
       menu.showAtMouseEvent(event);
     });
   }
@@ -1674,12 +1718,13 @@ export class JotDropView extends ItemView {
     const archive = normalizePath(this.plugin.settings.archiveFolder);
     const showArchived = this.plugin.settings.showArchived;
 
+    const trashPath = this.trashFolder();
     const all = this.app.vault.getMarkdownFiles().filter((f) => {
+      if (this.showTrash) return isUnder(f.path, trashPath);
       const inArchive = isUnder(f.path, archive);
       const inFolder = isUnder(f.path, folder);
       if (!inFolder) return false;
       if (inArchive && !showArchived) return false;
-      const trashPath = normalizePath(`${folder}/Trash`);
       if (isUnder(f.path, trashPath)) return false;
       return true;
     });
@@ -1748,7 +1793,7 @@ export class JotDropView extends ItemView {
     // Cards are draggable only in manual sort mode. This is the "clearly
     // require manual" path: drag/reorder is unavailable until the user selects
     // "Manual" in settings, so card clicks/checklist/selection stay untouched.
-    if (this.plugin.settings.sortMode === "manual" && !this.selectionMode) {
+    if (this.plugin.settings.sortMode === "manual" && !this.selectionMode && !this.showTrash) {
       cardEl.draggable = true;
       this.attachDragHandlers(cardEl, card);
     }
@@ -1764,20 +1809,22 @@ export class JotDropView extends ItemView {
     // Pinning is a primary card action: keep it directly available instead of
     // hiding it in the hover-only action row. The icon changes shape as well as
     // state, so the distinction does not rely on colour.
-    const quickPinBtn = cardEl.createEl("button", {
-      cls: `jotdrop-card-quick-pin${meta.pinned ? " is-active" : ""}`,
-      attr: {
-        "aria-label": meta.pinned ? t("action_unpin") : t("action_pin"),
-        "aria-pressed": String(meta.pinned),
-      },
-    });
-    setIcon(quickPinBtn, meta.pinned ? "pin-off" : "pin");
-    quickPinBtn.addEventListener("click", voidAsync(async (e) => {
-      e.stopPropagation();
-      await updateMeta(this.app, file, { pinned: !meta.pinned });
-      this.plugin.refreshViews();
-    }));
-    quickPinBtn.addEventListener("pointerdown", (e) => e.stopPropagation());
+    if (!this.showTrash) {
+      const quickPinBtn = cardEl.createEl("button", {
+        cls: `jotdrop-card-quick-pin${meta.pinned ? " is-active" : ""}`,
+        attr: {
+          "aria-label": meta.pinned ? t("action_unpin") : t("action_pin"),
+          "aria-pressed": String(meta.pinned),
+        },
+      });
+      setIcon(quickPinBtn, meta.pinned ? "pin-off" : "pin");
+      quickPinBtn.addEventListener("click", voidAsync(async (e) => {
+        e.stopPropagation();
+        await updateMeta(this.app, file, { pinned: !meta.pinned });
+        this.plugin.refreshViews();
+      }));
+      quickPinBtn.addEventListener("pointerdown", (e) => e.stopPropagation());
+    }
 
     const titleText = extractTitle(content, file.basename);
     const previewText = extractPreview(content);
@@ -1922,6 +1969,37 @@ export class JotDropView extends ItemView {
 
     const actions = cardEl.createDiv({ cls: "jotdrop-card-actions" });
 
+    if (this.showTrash) {
+      const restoreBtn = actions.createEl("button", {
+        cls: "jotdrop-card-action",
+        attr: { "aria-label": t("action_restore") },
+      });
+      setIcon(restoreBtn, "archive-restore");
+      restoreBtn.addEventListener("click", voidAsync(async (e) => {
+        e.stopPropagation();
+        await this.moveToFolder(file, normalizePath(this.plugin.settings.notesFolder), "notice_restored");
+      }));
+      const foreverBtn = actions.createEl("button", {
+        cls: "jotdrop-card-action is-destructive",
+        attr: { "aria-label": t("action_delete_forever") },
+      });
+      setIcon(foreverBtn, "trash-2");
+      foreverBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        new ConfirmModal(
+          this.app,
+          {
+            title: t("delete_forever_title", file.basename),
+            message: t("bulk_delete_message"),
+            confirmLabel: t("action_delete_forever"),
+            destructive: true,
+          },
+          () => void this.deleteForever(file),
+        ).open();
+      });
+      return;
+    }
+
     const colorBtn = actions.createEl("button", {
       cls: "jotdrop-card-action",
       attr: { "aria-label": t("action_color") },
@@ -1992,17 +2070,13 @@ export class JotDropView extends ItemView {
             ).open();
           })
       );
+      // Attachments stay: the note in Trash still shows them and can come back.
       menu.addItem((i) =>
         i
-          .setTitle(t("action_delete"))
+          .setTitle(t("action_move_to_trash"))
           .setIcon("trash-2")
           .onClick(async () => {
-            const stillReferenced = await this.collectReferencedAttachmentBasenames(
-              new Set([file.path]),
-            );
-            await this.trashNoteWithOrphanedAttachments(file, stillReferenced);
-            new Notice(t("notice_deleted", file.basename));
-            this.plugin.refreshViews();
+            await this.moveToFolder(file, this.trashFolder(), "notice_trashed");
           })
       );
       menu.addSeparator();
@@ -2224,9 +2298,22 @@ export class JotDropView extends ItemView {
   private async toggleArchive(file: TFile, currentlyArchived: boolean): Promise<void> {
     const archiveFolder = normalizePath(this.plugin.settings.archiveFolder);
     const notesFolder = normalizePath(this.plugin.settings.notesFolder);
+    await this.moveToFolder(file, currentlyArchived ? notesFolder : archiveFolder,
+      currentlyArchived ? "notice_unarchived" : "notice_archived");
+  }
+
+  private async deleteForever(file: TFile): Promise<void> {
+    const stillReferenced = await this.collectReferencedAttachmentBasenames(new Set([file.path]));
+    await this.trashNoteWithOrphanedAttachments(file, stillReferenced);
+    new Notice(t("notice_deleted", file.basename));
+    this.plugin.refreshViews();
+  }
+
+  private async moveToFolder(file: TFile, folder: string, noticeKey: string): Promise<void> {
+    const name = file.basename;
     try {
-      await this.moveArchivedFile(file, currentlyArchived ? notesFolder : archiveFolder);
-      new Notice(t(currentlyArchived ? "notice_unarchived" : "notice_archived", file.basename));
+      await this.moveArchivedFile(file, folder);
+      new Notice(t(noticeKey, name));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       new Notice(t("notice_error", message));
