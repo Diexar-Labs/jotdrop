@@ -3,7 +3,9 @@ const decoder = new TextDecoder('utf-8', { fatal: true });
 const iterations = 600000;
 export const MAX_FILE_BYTES = 4 * 1024 * 1024;
 
+// Native base64 when available: the fallbacks take most of a second per 4 MiB file and freeze the page.
 export function bytesToBase64(bytes) {
+  if (bytes.toBase64) return bytes.toBase64({ alphabet: 'base64url', omitPadding: true });
   let binary = '';
   for (let offset = 0; offset < bytes.length; offset += 8192) binary += String.fromCharCode(...bytes.subarray(offset, offset + 8192));
   return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -11,7 +13,13 @@ export function bytesToBase64(bytes) {
 
 export function base64ToBytes(value) {
   if (typeof value !== 'string' || value.length > 16 * 1024 * 1024 || !/^[A-Za-z0-9_-]*$/.test(value) || value.length % 4 === 1) throw new Error('Invalid encoded data.');
-  const result = Uint8Array.from(atob(value.replace(/-/g, '+').replace(/_/g, '/')), (character) => character.charCodeAt(0));
+  let result;
+  if (Uint8Array.fromBase64) result = Uint8Array.fromBase64(value, { alphabet: 'base64url' });
+  else {
+    const binary = atob(value.replace(/-/g, '+').replace(/_/g, '/'));
+    result = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index++) result[index] = binary.charCodeAt(index);
+  }
   if (bytesToBase64(result) !== value) throw new Error('Invalid encoded data.');
   return result;
 }

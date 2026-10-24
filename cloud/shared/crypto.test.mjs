@@ -17,6 +17,23 @@ test('AES-GCM authenticates content, key and object context; paths use keyed ide
   for (const value of ['=', 'a', 'a+', 'ab']) assert.throws(() => base64ToBytes(value));
 });
 
+test('native and fallback base64 agree and reject the same non-canonical input', () => {
+  const bytes = Uint8Array.from({ length: 70000 }, (_, index) => (index * 7919) & 255);
+  const native = { from: Uint8Array.fromBase64, to: Uint8Array.prototype.toBase64 };
+  const check = () => {
+    for (const length of [0, 1, 2, 3, 4, 70000]) assert.deepEqual(base64ToBytes(bytesToBase64(bytes.subarray(0, length))), bytes.subarray(0, length));
+    assert.equal(bytesToBase64(Uint8Array.of(251, 255)), '-_8');
+    for (const value of ['=', 'a', 'a+', 'ab', 'AB', 'AAB', 'QQ==', 'Q Q']) assert.throws(() => base64ToBytes(value));
+  };
+  check();
+  delete Uint8Array.fromBase64;
+  delete Uint8Array.prototype.toBase64;
+  try { check(); } finally {
+    Uint8Array.fromBase64 = native.from;
+    Uint8Array.prototype.toBase64 = native.to;
+  }
+});
+
 test('device keys stay wrapped and recovery validates identifiers and secrets', async () => {
   const secret = { token: randomToken(), vaultKey: generateVaultKey() };
   const sealed = await sealLocal(secret, 'a long test passphrase');
