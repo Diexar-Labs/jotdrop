@@ -115,6 +115,8 @@ main { min-width: 0; padding: 0 2rem 3rem; }
 .timeline-actions { display: flex; flex-wrap: wrap; gap: .5rem; }
 #device-limit { display: grid; gap: .5rem; margin-top: 1rem; }
 #devices-panel { max-width: 760px; }
+#plus-manage { margin-top: 2.5rem; font-size: .85rem; color: var(--muted); }
+#plus-manage summary { cursor: pointer; }
 #pair-form { margin-top: 2rem; }
 #pair-form button { margin-top: 1rem; }
 dialog { background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 14px; padding: 1.5rem; width: min(760px, calc(100% - 2rem)); max-height: calc(100dvh - 2rem); overflow: auto; }

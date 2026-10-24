@@ -25,7 +25,7 @@ Stand gemeten op `ee57d58` (feature-branch), bijgewerkt met elke afgeronde funct
 | Kaartenraster met Vastgezet/Overige | ja | ja | ja |
 | 11 kleuren | ja | ja | ja |
 | Vinklijst afvinken op de kaart | ja | ja | ja |
-| Labels op de kaart | ja | ja | NEE |
+| Labels op de kaart | ja | ja (24 okt; stond eerder ten onrechte op ja, toonde alleen #tags; nu chip met labelpictogram) | ja (24 okt; chip met labelpictogram, vóór de #tags) |
 | Tags (#hashtags) als chips | NEE | ja | ja |
 | Foto op de kaart | ja | ja | ja |
 | Spraakmemo afspelen op de kaart | ja | ja | NEE (alleen in editor) |
@@ -38,7 +38,7 @@ Stand gemeten op `ee57d58` (feature-branch), bijgewerkt met elke afgeronde funct
 |---|---|---|---|
 | Snel vastzetten vanaf de kaart | ja (24 okt) | ja | ja |
 | Kleur kiezen vanaf de kaart | ja (24 okt) | ja | ja (lang drukken > kleur, 24 okt) |
-| Labels geven vanaf de kaart | ja (24 okt) | ja | deels (via meervoudige selectie) |
+| Labels geven vanaf de kaart | ja (24 okt) | ja | ja (lang drukken > Labels, zoals Keep op Android; Erics besluit 24 okt) |
 | Archiveren vanaf de kaart | ja | ja | deels (via selectie of editor) |
 | Naar prullenbak | ja | ja (24 okt; map `Trash` zoals Android, bijlagen blijven) | ja |
 | Verplaatsen/kopiëren naar map (notitie gaat naar een gewone Obsidian-map) | n.v.t. (website ziet alleen JotDrop-notities, niet de rest van de vault; Erics besluit 24 okt) | ja | ja (24 okt; editor > Meer opties) |
@@ -103,6 +103,7 @@ Stand gemeten op `ee57d58` (feature-branch), bijgewerkt met elke afgeronde funct
 | Herstelcode opnieuw maken | ja | NEE | ja |
 | Plus bekijken | ja | NEE | deels (tekst) |
 | Plus kopen | ja | NEE (bewust: alleen website) | NEE (bewust: alleen website) |
+| "Manage or cancel your subscription at link.com." (Eric 24 okt: vindbaar maar verstopt, ingeklapt kopje "Subscription" onderaan de instellingen) | ja (onderaan Devices & recovery, alleen met abonnement) | NEE (komt mee met stap 4, cloud in plugin, op dezelfde verstopte manier) | ja (onderaan cloudscherm, altijd: app kent de abonnementsstatus niet) |
 
 ## Instellingen
 

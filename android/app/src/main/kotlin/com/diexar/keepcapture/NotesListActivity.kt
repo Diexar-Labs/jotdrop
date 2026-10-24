@@ -2248,9 +2248,9 @@ private fun NoteCard(
                             onChipClick = if (selectionMode) ({ onClick() }) else onUrlClick,
                         )
                     }
-                    if (note.meta.allTags.isNotEmpty()) {
+                    if (note.meta.labels.isNotEmpty() || note.meta.allTags.isNotEmpty()) {
                         Spacer(Modifier.height(8.dp))
-                        TagChips(note.meta.allTags, foreground = fg)
+                        TagChips(note.meta.labels, note.meta.allTags, foreground = fg)
                     }
                     Spacer(Modifier.height(8.dp))
                     Row(
@@ -2341,11 +2341,14 @@ private fun VoiceMemoBanner(foreground: Color) {
 
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun TagChips(tags: List<String>, foreground: Color) {
+private fun TagChips(labels: List<String>, tags: List<String>, foreground: Color) {
     androidx.compose.foundation.layout.FlowRow(
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
+        for (label in labels) {
+            LabelChip(label, foreground)
+        }
         for (tag in tags) {
             TagChip(tag, foreground)
         }
@@ -2427,6 +2430,30 @@ private fun TagChip(tag: String, foreground: Color) {
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+    }
+}
+
+// Labelpictogram ervoor: zo verschilt een label van een #tag door vorm, niet door kleur.
+@Composable
+private fun LabelChip(label: String, foreground: Color) {
+    Surface(
+        color = foreground.copy(alpha = 0.10f),
+        contentColor = foreground,
+        shape = RoundedCornerShape(10.dp),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Filled.Label, contentDescription = null, modifier = Modifier.size(12.dp))
+            Spacer(Modifier.size(3.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 

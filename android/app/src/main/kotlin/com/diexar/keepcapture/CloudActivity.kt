@@ -259,6 +259,14 @@ private fun CloudScreen(onBack: () -> Unit, onSettings: () -> Unit) {
                         modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
                     ) { Text("Disconnect this device") }
                 }
+                // Folded away at the bottom on purpose (Eric): findable, not prominent.
+                item {
+                    var showSubscription by remember { mutableStateOf(false) }
+                    TextButton(onClick = { showSubscription = !showSubscription }, modifier = Modifier.padding(top = 24.dp)) {
+                        Text("Subscription", style = MaterialTheme.typography.bodySmall)
+                    }
+                    if (showSubscription) Text("Manage or cancel your subscription at link.com.", style = MaterialTheme.typography.bodySmall)
+                }
             }
         }
     }

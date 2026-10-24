@@ -989,6 +989,21 @@
   color: var(--text-accent);
 }
 
+.jotdrop-card-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.jotdrop-card-label-icon {
+  display: inline-flex;
+}
+
+.jotdrop-card-label-icon svg {
+  width: 1em;
+  height: 1em;
+}
+
 .jotdrop-card-actions {
   display: flex;
   gap: 4px;

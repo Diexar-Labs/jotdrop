@@ -1960,8 +1960,14 @@ export class JotDropView extends ItemView {
       }
     }
 
-    if (cardTags(meta).length > 0) {
+    if (meta.labels.length > 0 || cardTags(meta).length > 0) {
       const tagWrap = body.createDiv({ cls: "jotdrop-card-tags" });
+      // Label icon in front: a label differs from a #tag by shape, not by color.
+      for (const label of meta.labels) {
+        const chip = tagWrap.createSpan({ cls: "jotdrop-card-tag jotdrop-card-label" });
+        setIcon(chip.createSpan({ cls: "jotdrop-card-label-icon" }), "tag");
+        chip.createSpan({ text: label });
+      }
       for (const tag of cardTags(meta)) {
         tagWrap.createSpan({ cls: "jotdrop-card-tag", text: `#${tag}` });
       }

@@ -115,6 +115,20 @@ def check_plans(browser, url, codes, database):
     assert rows.nth(2).get_by_role("button", name="Restore version").count() == 1
     tablet.keyboard.press("Escape")
 
+    # A subscriber finds how to cancel folded away at the bottom of Devices & recovery (Eric).
+    with closing(sqlite3.connect(database)) as db, db:
+        vault = db.execute("SELECT vaultId FROM devices LIMIT 1").fetchone()[0]
+        db.execute("INSERT INTO subscriptions VALUES ('sub_check', ?, 'active', 0)", (vault,))
+    tablet.locator("#sync").click()
+    manage = tablet.locator("#plus-manage")
+    tablet.locator("#plus-manage:not([hidden])").wait_for(state="attached")
+    assert tablet.locator(".sidebar-bottom #plus-manage").count() == 0
+    tablet.locator('[data-view="devices"]').click()
+    assert manage.is_visible() and manage.get_attribute("open") is None
+    assert not manage.get_by_text("link.com").is_visible()
+    manage.locator("summary").click()
+    assert manage.get_by_text("Manage or cancel your subscription at link.com.").is_visible()
+
     # This browser was not remembered: locking gives its device slot back.
     tablet.locator("#lock").click()
     tablet.locator("#login-form").wait_for()
