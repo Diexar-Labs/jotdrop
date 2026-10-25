@@ -34,7 +34,7 @@ export function mailText({ kind, code, provider }) {
   return { subject, body: body + footer };
 }
 
-/** Adds someone who ticked "Email me news about JotDrop Cloud" to a Brevo contact list; Brevo handles unsubscribing. */
+/** Adds someone who ticked "Email me news about JotDrop" to a Brevo contact list; Brevo handles unsubscribing. */
 export function createBrevoList({ apiKey, listId, fetcher = globalThis.fetch }) {
   if (typeof apiKey !== 'string' || !apiKey || !Number.isSafeInteger(listId) || listId < 1) throw new Error('Provide the Brevo API key and list ID.');
   return async (email) => {

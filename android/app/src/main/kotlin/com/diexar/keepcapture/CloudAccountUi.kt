@@ -126,7 +126,7 @@ private fun CodeField(value: String, onChange: (String) -> Unit, enabled: Boolea
 
 /** The whole row toggles, not only the small box. */
 // Off unless the person ticks it, like on the website and in Obsidian.
-private const val NEWSLETTER_LABEL = "Email me news about JotDrop Cloud. A few emails, sent with Brevo; unsubscribe in any of them."
+private const val NEWSLETTER_LABEL = "Email me news about JotDrop."
 
 @Composable
 private fun CheckRow(checked: Boolean, onChange: (Boolean) -> Unit, label: String, enabled: Boolean = true) {

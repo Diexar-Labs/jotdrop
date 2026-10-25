@@ -784,7 +784,7 @@ class CloudSignInModal extends Modal {
 
   /** Off unless the person turns it on, like on the website. */
   private newsletter(el: HTMLElement, set: (value: boolean) => void): void {
-    new Setting(el).setName("Email me news about JotDrop Cloud").setDesc("A few emails, sent with Brevo; unsubscribe in any of them.").addToggle((toggle) => toggle.setValue(false).onChange(set));
+    new Setting(el).setName("Email me news about JotDrop").addToggle((toggle) => toggle.setValue(false).onChange(set));
   }
 
   /** At the free device limit this device takes the place of one the person no longer uses; `connect` repeats the step. */

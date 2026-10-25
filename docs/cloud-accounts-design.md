@@ -190,7 +190,7 @@ Eric koos "Google + goedkeuren" en voegde GitHub toe. Google of GitHub bewijst a
 
 ## Nieuws per e-mail (Brevo, 24 okt 2026)
 
-Erics besluit: een vinkje "Email me news about JotDrop Cloud", standaard uit, bij elke aanmelding (e-mail, Google/GitHub, account voor een bestaande cloud; website, plugin en Android). Alleen wie het aanvinkt, komt op de lijst; dat past bij de AVG en de Spaanse LSSI (toestemming vooraf, afmelden in elke mail via Brevo).
+Erics besluit: een vinkje "Email me news about JotDrop." (25 okt op Erics verzoek ingekort; was "...JotDrop Cloud. A few emails, sent with Brevo; ..."), standaard uit, bij elke aanmelding (e-mail, Google/GitHub, account voor een bestaande cloud; website, plugin en Android). Alleen wie het aanvinkt, komt op de lijst; dat past bij de AVG en de Spaanse LSSI (toestemming vooraf, afmelden in elke mail via Brevo).
 
 - Het vinkje reist mee met de aanmelding (`newsletter: true`). Bij e-mail wacht het in `signups` tot het adres bevestigd is.
 - Zodra het account bestaat, schrijft de server `newsletter(accountId, consentedAt, addedAt)` als bewijs van toestemming en zet daarna het adres via de Brevo-API (`POST /v3/contacts`, `listIds`, `updateEnabled`) op de lijst. Lukt dat niet, dan gaat de aanmelding gewoon door; `addedAt` blijft leeg en de log noemt het adres niet.
