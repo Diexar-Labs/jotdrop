@@ -192,6 +192,13 @@ private fun CloudScreen(onBack: () -> Unit, onSettings: () -> Unit) {
                     Text("Notes: ${Storage.getSubfolder(context)}  |  Attachments: ${Storage.resolveAssetsFolder(context)}", style = MaterialTheme.typography.bodySmall)
                     Text("Local vault: ${status!!.localVault ?: "No folder selected"}", style = MaterialTheme.typography.bodySmall)
                     TextButton(onClick = onSettings, enabled = !busy) { Text("Choose local vault in Settings") }
+                    if (status!!.oldUpload) {
+                        Text("An unfinished upload from a previously chosen local vault is waiting. It blocks sync and disconnecting until it is kept as a local copy.",
+                            color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+                        OutlinedButton(onClick = { run { CloudSyncManager.recoverOldUploads(context) } }, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) {
+                            Text("Keep old upload as a local copy")
+                        }
+                    }
                     // Google Play allows naming the website, without a link or button, when the app sells nothing itself.
                     Text("JotDrop Plus adds more storage, devices and history. Upgrade on our website.", style = MaterialTheme.typography.bodySmall)
                 }

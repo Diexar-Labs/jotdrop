@@ -14,6 +14,8 @@ class CloudVaultAdapter(
     private val context: Context,
     private val beforeMutation: (String, String?, String?) -> Unit = { _, _, _ -> },
     private val afterMutation: () -> Unit = {},
+    // Only for saving recovery copies: one local file, like a captured note, never two sync systems.
+    private val allowOtherSync: Boolean = false,
 ) : CloudSyncLocal {
     private val treeUri = requireNotNull(Storage.getVaultUri(context)) { "Choose a local vault in Settings first" }
     private val notes = CloudCrypto.safePath(Storage.getSubfolder(context))
@@ -21,6 +23,13 @@ class CloudVaultAdapter(
     private val legacyAssets = "$notes/.attachments"
     private val tree = requireNotNull(DocumentFile.fromTreeUri(context, treeUri)) { "Local vault is unavailable" }
     val binding = listOf(treeUri.toString(), notes, assets).joinToString("\n")
+
+    companion object {
+        /** The same binding as an adapter would have, without opening the folder. */
+        fun binding(context: Context): String? = Storage.getVaultUri(context)?.let {
+            listOf(it.toString(), CloudCrypto.safePath(Storage.getSubfolder(context)), CloudCrypto.safePath(Storage.resolveAssetsFolder(context))).joinToString("\n")
+        }
+    }
 
     init {
         require(assets != notes && !notes.startsWith("$assets/") && assets != "$notes/Archive" && assets != "$notes/Trash") { "Note and attachment folders overlap" }
@@ -56,7 +65,7 @@ class CloudVaultAdapter(
             var current = tree
             for (segment in listOf("") + folder.split('/')) {
                 val entries = children(current)
-                check(entries.none { it.name?.lowercase() in setOf(".stfolder", ".stignore", ".stversions") }) { "Syncthing markers found. Never run two sync systems on the same vault" }
+                check(allowOtherSync || entries.none { it.name?.lowercase() in setOf(".stfolder", ".stignore", ".stversions") }) { "Syncthing markers found. Never run two sync systems on the same vault" }
                 if (segment.isEmpty()) continue
                 val next = entries.firstOrNull { it.name == segment } ?: break
                 check(next.isDirectory) { "Local folder path is occupied by a file" }
@@ -69,7 +78,7 @@ class CloudVaultAdapter(
         var current = tree
         for (segment in path.split('/')) {
             val entries = children(current)
-            check(entries.none { it.name?.lowercase() in setOf(".stfolder", ".stignore", ".stversions") }) { "Syncthing markers found. Cloud sync stopped" }
+            check(allowOtherSync || entries.none { it.name?.lowercase() in setOf(".stfolder", ".stignore", ".stversions") }) { "Syncthing markers found. Cloud sync stopped" }
             val found = entries.firstOrNull { it.name == segment }
             current = if (found != null) found.also { check(it.isDirectory) { "Local folder path is occupied" } }
                 else if (create) {

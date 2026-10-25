@@ -28,7 +28,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 data class CloudSyncStatus(val connected: Boolean, val enabled: Boolean, val server: String, val vaultId: String,
-    val localVault: String?, val lastSynced: String?, val message: String, val conflicts: Int)
+    val localVault: String?, val lastSynced: String?, val message: String, val conflicts: Int, val oldUpload: Boolean = false)
 class CloudSyncException(message: String) : Exception(message)
 
 object CloudSyncManager {
@@ -40,6 +40,7 @@ object CloudSyncManager {
     private val network = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
     private const val PERIODIC = "jotdrop-cloud-periodic"
     private const val IMMEDIATE = "jotdrop-cloud-now"
+    private const val OLD_UPLOAD = "An unfinished encrypted upload from a previously chosen local vault is waiting. Tap \"Keep old upload as a local copy\" first; nothing is lost."
 
     private fun document(uri: Uri): String = DocumentsContract.getDocumentId(uri)
     fun openEditor(uri: Uri) = synchronized(editors) { val id = document(uri); editors[id] = (editors[id] ?: 0) + 1 }
@@ -54,7 +55,35 @@ object CloudSyncManager {
         val settings = store.settings()
         return CloudSyncStatus(credentials != null, settings.optBoolean("enabled") && credentials != null,
             credentials?.url.orEmpty(), credentials?.vaultId.orEmpty(), Storage.getVaultUri(context)?.toString(),
-            settings.optString("lastSynced").takeIf { it.isNotBlank() }, settings.optString("message", "Cloud sync is off. Local notes remain available."), settings.optInt("conflicts"))
+            settings.optString("lastSynced").takeIf { it.isNotBlank() }, settings.optString("message", "Cloud sync is off. Local notes remain available."), settings.optInt("conflicts"),
+            credentials != null && runCatching { oldUploadScopes(store, CloudClient(credentials), CloudVaultAdapter.binding(context)).isNotEmpty() }.getOrDefault(false))
+    }
+
+    /** Uploads this device started for a previously chosen local vault; they block enabling and disconnecting. */
+    private fun oldUploadScopes(store: CloudPreviewStore, client: CloudClient, binding: String?): Set<String> =
+        store.uploadScopes(client.credentials.deviceId) - setOfNotNull(binding?.let { scope(client, it) })
+
+    /** Keeps those uploads as local recovery copies in the current vault, so nothing is lost and sync can continue. */
+    suspend fun recoverOldUploads(context: Context) = serialized {
+        val store = CloudPreviewStore(context)
+        val client = client(context) ?: throw CloudSyncException("Pair this device first")
+        val adapter = try { CloudVaultAdapter(context, allowOtherSync = true) } catch (error: IllegalArgumentException) {
+            throw CloudSyncException(error.message ?: "Choose a local vault in Settings first")
+        } catch (error: IllegalStateException) {
+            throw CloudSyncException(error.message ?: "Choose a local vault in Settings first")
+        }
+        for (scope in oldUploadScopes(store, client, adapter.binding)) {
+            val prepared = store.upload(scope, client.credentials.deviceId) ?: continue
+            val file = try { client.preparedFile(prepared) } catch (_: Exception) {
+                throw CloudSyncException("An old encrypted upload cannot be opened with this device's keys. It was kept.")
+            }
+            adapter.recoverUpload(file.path, file.bytes)
+            // The server may have dropped the unfinished upload already; the local copy is what matters.
+            try { client.discardWrite(prepared) } catch (_: Exception) {}
+            store.clearUpload(scope, client.credentials.deviceId)
+        }
+        store.saveSettings(store.settings().put("message", "The old upload was saved as a .cloud-recovery copy in this vault. You can enable sync or disconnect now."))
+        changed.value++
     }
 
     private suspend fun <T> serialized(block: suspend () -> T): T = withContext(Dispatchers.IO) { mutex.withLock { block() } }
@@ -93,8 +122,8 @@ object CloudSyncManager {
             } catch (error: IllegalArgumentException) {
                 throw CloudSyncException(error.message ?: "Choose safe, non-overlapping local note and attachment folders.")
             }
-            check(!store.hasUploads(client.credentials.deviceId) || store.upload(scope(client, adapter.binding), client.credentials.deviceId) != null) {
-                "An encrypted upload belongs to the previous local vault. Select that vault and resume or disconnect safely before changing sync folders."
+            if (store.hasUploads(client.credentials.deviceId) && store.upload(scope(client, adapter.binding), client.credentials.deviceId) == null) {
+                throw CloudSyncException(OLD_UPLOAD)
             }
             settings.put("binding", adapter.binding)
         }
@@ -132,12 +161,11 @@ object CloudSyncManager {
         if (client != null && store.hasUploads(client.credentials.deviceId)) {
             val adapter = CloudVaultAdapter(context)
             val scope = scope(client, adapter.binding)
-            val prepared = store.upload(scope, client.credentials.deviceId)
-                ?: error("Select the previous local vault to recover its encrypted upload before disconnecting")
+            val prepared = store.upload(scope, client.credentials.deviceId) ?: throw CloudSyncException(OLD_UPLOAD)
             val file = client.preparedFile(prepared)
             adapter.recoverUpload(file.path, file.bytes)
             store.clearUpload(scope, client.credentials.deviceId)
-            check(!store.hasUploads(client.credentials.deviceId)) { "Another local vault still has an encrypted upload. Its credentials were kept." }
+            if (store.hasUploads(client.credentials.deviceId)) throw CloudSyncException(OLD_UPLOAD)
         }
         val settings = store.settings().put("enabled", false).put("message", message)
         store.saveSettings(settings)
@@ -231,9 +259,7 @@ object CloudSyncManager {
             val scope = scope(client, initial.binding)
             val state = store.syncState(scope) ?: JSONObject()
             val uploadActive = { checkActive(); initial.validateBinding() }
-            check(!store.hasUploads(client.credentials.deviceId) || store.upload(scope, client.credentials.deviceId) != null) {
-                "An encrypted upload belongs to another local vault. Select its original sync folders to resume or recover it."
-            }
+            check(!store.hasUploads(client.credentials.deviceId) || store.upload(scope, client.credentials.deviceId) != null) { OLD_UPLOAD }
             val pending = state.optJSONObject("pending")
             if (pending != null) {
                 phase = CloudDiagnostics.Phase.RECOVERY

@@ -396,6 +396,13 @@ class CloudPreviewStore(context: Context) {
         val files = checkNotNull(folder.listFiles()) { "Encrypted upload storage is unavailable" }
         files.any { it.name.startsWith("upload-") && it.name.removeSuffix(".bak").endsWith("-$deviceId") }
     }
+    /** One scope per local vault binding that still holds an encrypted upload for this device. */
+    fun uploadScopes(deviceId: String): Set<String> = synchronized(lock) {
+        UUID.fromString(deviceId)
+        val files = checkNotNull(folder.listFiles()) { "Encrypted upload storage is unavailable" }
+        files.map { it.name.removeSuffix(".bak") }.filter { it.startsWith("upload-") && it.endsWith("-$deviceId") }
+            .map { it.removePrefix("upload-").removeSuffix("-$deviceId") }.toSet()
+    }
     fun saveUpload(scope: String, deviceId: String, value: CloudPreparedUpload) = synchronized(lock) {
         check(!hasUploads(deviceId)) { "Resume or recover the previous encrypted upload before changing files or vaults" }
         save(uploadName(scope, deviceId), JSONObject().put("id", value.id).put("baseRevision", value.baseRevision).put("envelope", value.canonicalEnvelope()))
