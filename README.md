@@ -257,6 +257,11 @@ This is a hobby project I share publicly. PRs welcome for:
 
 For larger ideas, open an issue first to chat about it. No CLA, no commit-message gatekeeping; just keep it tidy.
 
+## Contact
+
+- Bugs and ideas: [open an issue](https://github.com/Diexar-Labs/jotdrop/issues/new/choose). Issues are public, so never paste passwords, recovery codes or private notes.
+- Questions about your JotDrop Cloud account, your data or JotDrop Plus: [hello@jotdrop.net](mailto:hello@jotdrop.net).
+
 ## Support
 
 Open source, MIT-licensed, no premium tiers. If JotDrop saves you time and you feel like saying thanks:

@@ -1,0 +1,21 @@
+name: Idea or feature request
+description: Suggest something that would make JotDrop better.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like?
+      description: Describe the idea and the problem it solves for you.
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where?
+      multiple: true
+      options:
+        - Obsidian plugin
+        - Android app
+        - JotDrop Cloud website
+        - Web clipper (browser extension)

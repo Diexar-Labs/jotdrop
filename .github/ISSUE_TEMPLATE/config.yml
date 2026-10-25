@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Account, privacy or payment question
+    url: https://github.com/Diexar-Labs/jotdrop#contact
+    about: Issues are public. For anything about your account, your data or JotDrop Plus, email us instead.
