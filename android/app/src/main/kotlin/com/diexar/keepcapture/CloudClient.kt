@@ -409,6 +409,10 @@ class CloudPreviewStore(context: Context) {
     fun recoveryCode(): String? = load("recovery-code")?.getString("code")
     fun saveRecoveryCode(code: String) = save("recovery-code", JSONObject().put("code", code))
     fun clearRecoveryCode() = synchronized(lock) { AtomicFile(File(folder, "recovery-code")).delete() }
+    /** A Google or GitHub sign-in waits here for the browser to come back; the process may die meanwhile. */
+    fun providerStart(): JSONObject? = load("provider-start")
+    fun saveProviderStart(value: JSONObject) = save("provider-start", value)
+    fun clearProviderStart() = synchronized(lock) { AtomicFile(File(folder, "provider-start")).delete() }
     fun settings(): JSONObject = load("sync-settings") ?: JSONObject()
     fun saveSettings(value: JSONObject) = save("sync-settings", value)
 }

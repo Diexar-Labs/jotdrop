@@ -55,6 +55,16 @@ test('real clients pair, sync, reject stale edits, preserve immutable versions, 
   assert.ok(!raw.includes(Buffer.from(client.credentials.vaultKey)));
 });
 
+test('the website links to a privacy policy that names every processor', async (t) => {
+  const app = await fixture(t);
+  assert.match(await (await fetch(`${app.url}/`)).text(), /href="\/privacy"/);
+  const page = await fetch(`${app.url}/privacy`);
+  assert.equal(page.status, 200);
+  assert.match(page.headers.get('content-type'), /^text\/html/);
+  const body = await page.text();
+  for (const name of ['Amazon SES', 'Brevo', 'Stripe', 'Google', 'GitHub', 'Cloudflare', 'hello@jotdrop.net']) assert.ok(body.includes(name), name);
+});
+
 test('authorization, tenant isolation, origin and host checks fail closed', async (t) => {
   const extension = 'chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
   const app = await fixture(t, { enrollmentLimit: 2, corsOrigins: [extension] });

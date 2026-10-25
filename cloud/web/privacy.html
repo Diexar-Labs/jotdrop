@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>JotDrop Cloud privacy policy</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main class="policy">
+    <div class="wordmark"><span class="brand-mark" aria-hidden="true">J</span> JotDrop <span>Cloud</span></div>
+    <h1>Privacy policy</h1>
+    <p>Last updated: October 25, 2026</p>
+    <p>JotDrop Cloud keeps your JotDrop notes in sync between your devices. This policy covers JotDrop Cloud: this website and the cloud features in the JotDrop plugin for Obsidian and the JotDrop Android app. Using JotDrop without the cloud never needs an account; the <a href="https://github.com/Diexar-Labs/jotdrop/blob/main/docs/android-privacy-policy.md">Android app policy</a> covers the app itself.</p>
+    <p>JotDrop is made by Diexar Labs, which is responsible for your data. Questions or requests: <a href="mailto:hello@jotdrop.net">hello@jotdrop.net</a>.</p>
+
+    <h2>What we cannot see</h2>
+    <p>Your notes and attachments are encrypted on your device (AES-256-GCM) before they leave it, and file names are replaced by random-looking IDs. Your password never leaves your device. The key that opens your notes stays on your devices and in your recovery code, so neither our server nor we, nor any service named below, can read your notes.</p>
+
+    <h2>What we store</h2>
+    <ul>
+      <li>Your email address.</li>
+      <li>What we need to check your sign-in, none of which reveals your password: a salt and key settings, a hash of a login key that your device derives from your password, your note key locked with your password, and, if you turn it on, your authenticator secret encrypted with a server key.</li>
+      <li>If you continue with Google or GitHub: the fixed account ID they give us and your verified email address. Not your name, photo, contacts or repositories.</li>
+      <li>Your devices: the name you give each one, when it was added and when it last connected.</li>
+      <li>Your encrypted notes and their earlier versions, with their size, the time they were saved and which of your devices saved them.</li>
+      <li>Your plan: free or JotDrop Plus, whether you used the trial, and for a subscription the Stripe subscription ID, its status and the date it is paid until.</li>
+      <li>If you tick "Email me news about JotDrop.": when you ticked it and when we added you to our mailing list.</li>
+      <li>Short-lived codes, only as keyed hashes. Email codes expire after 15 minutes and Google or GitHub sign-in links after 10 minutes. We count wrong codes per account or email address to stop guessing.</li>
+    </ul>
+
+    <h2>What we do not collect</h2>
+    <p>Your IP address is used only in memory to limit repeated attempts; it is not written to our database or to logs. JotDrop Cloud has no ads, no analytics and no tracking cookies, and this website loads nothing from other sites. The website keeps you signed in only if you choose "Stay signed in on this browser", and then stores that in your browser.</p>
+
+    <h2>Services that process data for us</h2>
+    <ul>
+      <li><strong>Our hosting provider</strong> runs our server in the European Union. It stores the data above, encrypted notes included.</li>
+      <li><strong>Amazon Web Services</strong> (Amazon SES, Frankfurt) sends our emails: sign-in and confirmation codes and security notices. It receives your email address and the message.</li>
+      <li><strong>Brevo</strong> (France) sends JotDrop news and welcome emails, only if you ticked "Email me news about JotDrop.". It receives your email address. Every email has an unsubscribe link.</li>
+      <li><strong>Stripe</strong> handles JotDrop Plus. When you buy Plus we send Stripe your email address and an internal ID of your cloud. Stripe, through Link, sells the subscription to you as the merchant of record and handles your payment details and taxes under <a href="https://stripe.com/privacy">its own privacy policy</a>. We never see your card details; we only receive the subscription status.</li>
+      <li><strong>Google</strong> and <strong>GitHub</strong>, only if you choose "Continue with Google" or "Continue with GitHub". They confirm who you are and learn that you signed in to JotDrop Cloud, under their own privacy policies.</li>
+      <li><strong>Cloudflare</strong> forwards email you send to hello@jotdrop.net to our mailbox.</li>
+    </ul>
+    <p>We do not sell your data or share it with anyone else, unless the law requires it.</p>
+
+    <h2>Why we may use it</h2>
+    <ul>
+      <li>To provide JotDrop Cloud to you (your account, sync, codes and JotDrop Plus): this is needed for our agreement with you.</li>
+      <li>To send news: your consent, which you can withdraw at any time with the unsubscribe link or by emailing us.</li>
+      <li>To keep the service safe, for example limiting repeated attempts: our legitimate interest in preventing abuse.</li>
+      <li>To keep payment records: legal obligations, handled by Stripe as the seller.</li>
+    </ul>
+
+    <h2>Transfers outside the EU</h2>
+    <p>Our server and Amazon SES run in the EU, and Brevo is based in France. Stripe, Google, GitHub and Cloudflare may process data outside the EU, such as in the United States, under the EU Standard Contractual Clauses or the EU-US Data Privacy Framework.</p>
+
+    <h2>How long we keep it</h2>
+    <ul>
+      <li>Your account, devices and encrypted notes: until you delete your cloud or ask us to delete your account. Earlier versions and deleted notes stay in your cloud, encrypted. When a free cloud is full, the oldest versions and deleted notes that only JotDrop Plus can open are removed first; the current version of a note always stays.</li>
+      <li>A sign-up that is not confirmed is removed after 15 minutes.</li>
+      <li>Your place on the mailing list: until you unsubscribe.</li>
+      <li>When you ask us to delete your account, we delete it within 30 days. Any backup copies hold the same encrypted data and are replaced over time.</li>
+    </ul>
+
+    <h2>Your rights</h2>
+    <p>You can ask us for a copy of your data, to correct it, to delete it, to limit or object to its use, or to receive it in a portable form. Your notes are already yours as Markdown files on your own devices. Email <a href="mailto:hello@jotdrop.net">hello@jotdrop.net</a> from the address of your account. You can also complain to a data protection authority, such as the Spanish <a href="https://www.aepd.es">AEPD</a> or the one where you live.</p>
+
+    <h2>Children</h2>
+    <p>JotDrop Cloud is not intended for children under 14.</p>
+
+    <h2>Changes</h2>
+    <p>We update this policy when JotDrop Cloud changes and change the date at the top. For important changes we tell you by email.</p>
+    <p><a href="/">Back to JotDrop Cloud</a></p>
+  </main>
+</body>
+</html>

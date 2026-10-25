@@ -33,7 +33,8 @@ const OAUTH_PROVIDERS = {
   github: { name: 'GitHub', authorize: 'https://github.com/login/oauth/authorize', token: 'https://github.com/login/oauth/access_token', api: 'https://api.github.com', scope: 'user:email', extra: {} },
 };
 // Where the browser goes back to after the provider; the ticket only works with the secret the app made before.
-const OAUTH_RETURN = { web: (origin, query) => `${origin}/#${query}`, obsidian: (origin, query) => `obsidian://jotdrop-cloud?${query}` };
+const OAUTH_RETURN = { web: (origin, query) => `${origin}/#${query}`, obsidian: (origin, query) => `obsidian://jotdrop-cloud?${query}`,
+  android: (origin, query) => `jotdrop-cloud://oauth?${query}` };
 const OAUTH_LIFETIME = 10 * 60 * 1000;
 // Second hash of the client's login key, so a copied database cannot be replayed as a login.
 const SERVER_KDF = { memory: 7168, passes: 5, parallelism: 1, tagLength: 32 };
@@ -505,6 +506,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   }
   const assets = new Map([['/', [join(webRoot, 'index.html'), 'text/html']], ['/app.js', [join(webRoot, 'app.js'), 'text/javascript']], ['/style.css', [join(webRoot, 'style.css'), 'text/css']], ['/export.mjs', [join(webRoot, 'export.mjs'), 'text/javascript']], ['/note.mjs', [join(webRoot, 'note.mjs'), 'text/javascript']], ['/shared/crypto.mjs', [join(directory, 'shared/crypto.mjs'), 'text/javascript']], ['/shared/client.mjs', [join(directory, 'shared/client.mjs'), 'text/javascript']]]);
   assets.set('/ocr-worker.js', [join(webRoot, 'ocr-worker.js'), 'text/javascript']);
+  assets.set('/privacy', [join(webRoot, 'privacy.html'), 'text/html']);
   assets.set('/import.mjs', [join(webRoot, 'import.mjs'), 'text/javascript']);
   for (const name of ['account.mjs', 'words.mjs']) assets.set(`/shared/${name}`, [join(directory, 'shared', name), 'text/javascript']);
   assets.set('/vendor/hash-wasm.mjs', [join(directory, '../node_modules/hash-wasm/dist/index.esm.min.js'), 'text/javascript']);

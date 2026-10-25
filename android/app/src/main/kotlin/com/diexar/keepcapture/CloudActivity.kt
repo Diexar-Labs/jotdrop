@@ -41,7 +41,19 @@ class CloudActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+        if (savedInstanceState == null) takeProviderReturn(intent)
         setContent { JotDropTheme { CloudScreen(onBack = { finish() }, onSettings = { startActivity(Intent(this, MainActivity::class.java)) }) } }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        takeProviderReturn(intent)
+    }
+
+    /** Google or GitHub sends the browser back to jotdrop-cloud://oauth?oauth=<ticket>. */
+    private fun takeProviderReturn(intent: Intent?) {
+        val data = intent?.data ?: return
+        if (data.scheme == "jotdrop-cloud" && data.host == "oauth") CloudAccountFlow.providerReturn = data
     }
 }
 

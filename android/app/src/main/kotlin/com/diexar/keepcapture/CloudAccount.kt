@@ -9,14 +9,21 @@ class CloudSignup internal constructor(val url: String, val signupId: String, va
 class CloudLoginChallenge internal constructor(val url: String, val challengeId: String, val secondFactor: String,
     internal val unlockKey: String, internal val deviceToken: String)
 class CloudReset internal constructor(val url: String, val resetId: String)
+/** `keepsPassword`: asked after Google or GitHub, so the account keeps its password (or stays without one) instead of getting a new one. */
 class CloudApprovalRequest internal constructor(val url: String, val approvalId: String, val expiresAt: String, val words: List<String>,
-    internal val claimToken: String, internal val privateKey: PrivateKey) {
+    internal val claimToken: String, internal val privateKey: PrivateKey, val keepsPassword: Boolean = false) {
     @Volatile internal var vaultId: String? = null
     @Volatile internal var vaultKey: String? = null
     val approved: Boolean get() = vaultKey != null
 }
 class CloudApproval(val id: String, val publicKey: String, val expiresAt: String, val words: List<String>)
 class CloudSignedUp(val client: CloudClient, val recoveryCode: String)
+class CloudAccountInfo(val email: String, val password: Boolean)
+/** Open `href` in the browser and keep `verifier` on this device until the ticket comes back. */
+class CloudProviderStart(val url: String, val verifier: String, val href: String)
+/** Who signed in with Google or GitHub, and whether that address already has an account. The ticket only works with this device's verifier. */
+class CloudProviderSignIn internal constructor(val url: String, val provider: String, val email: String, val account: Boolean,
+    internal val ticket: String, internal val verifier: String)
 
 /** Email and password accounts, matching cloud/shared/account.mjs. The password and the unlock key never leave this device. */
 object CloudAccount {
@@ -108,9 +115,11 @@ object CloudAccount {
         return connect(pending.url, result, pending.deviceToken, vaultKey)
     }
 
-    /** The account email of the connected cloud, or null when it has no account yet. */
-    fun accountEmail(client: CloudClient): String? = try { client.call("/account").getString("email") }
+    /** The account of the connected cloud, or null when it has no account yet. Accounts made with Google or GitHub may have no password. */
+    fun accountInfo(client: CloudClient): CloudAccountInfo? = try { client.call("/account").let { CloudAccountInfo(it.getString("email"), it.optBoolean("password", true)) } }
         catch (error: CloudRequestException) { if (error.status == 404) null else throw error }
+
+    fun accountEmail(client: CloudClient): String? = accountInfo(client)?.email
 
     private fun currentAuthKey(client: CloudClient, password: String): String {
         val email = requireNotNull(accountEmail(client)) { "This cloud has no account yet." }
@@ -148,16 +157,18 @@ object CloudAccount {
         return connect(reset.url, result, deviceToken, recovery.getString("vaultKey"))
     }
 
-    /** New device: asks a connected device for the vault key. Show `words` and keep polling checkApproval. */
-    fun requestApproval(reset: CloudReset, code: String): CloudApprovalRequest {
+    private fun askApproval(url: String, path: String, fields: JSONObject, keepsPassword: Boolean): CloudApprovalRequest {
         val keys = CloudAccountCrypto.newApprovalKeys()
         val publicKey = CloudAccountCrypto.exportPublic(keys)
         val claimToken = CloudCrypto.token()
-        val result = post(reset.url, "/auth/reset/approval", JSONObject().put("resetId", reset.resetId).put("code", code.trim())
-            .put("publicKey", publicKey).put("claimTokenHash", CloudCrypto.hashToken(claimToken)))
-        return CloudApprovalRequest(reset.url, id(result.getString("approvalId")), result.getString("expiresAt"),
-            CloudAccountCrypto.verificationWords(publicKey), claimToken, keys.private)
+        val result = post(url, path, fields.put("publicKey", publicKey).put("claimTokenHash", CloudCrypto.hashToken(claimToken)))
+        return CloudApprovalRequest(url, id(result.getString("approvalId")), result.getString("expiresAt"),
+            CloudAccountCrypto.verificationWords(publicKey), claimToken, keys.private, keepsPassword)
     }
+
+    /** New device: asks a connected device for the vault key. Show `words` and keep polling checkApproval. */
+    fun requestApproval(reset: CloudReset, code: String): CloudApprovalRequest =
+        askApproval(reset.url, "/auth/reset/approval", JSONObject().put("resetId", reset.resetId).put("code", code.trim()), false)
 
     /** False while waiting; true once the other device approved and the vault key is unpacked. */
     fun checkApproval(pending: CloudApprovalRequest): Boolean {
@@ -172,11 +183,13 @@ object CloudAccount {
         return true
     }
 
-    fun completeApproval(pending: CloudApprovalRequest, newPassword: String, deviceName: String, replaceDeviceId: String? = null): CloudClient {
+    /** Without `newPassword` (sign-in with Google or GitHub) the account keeps its password, or stays without one. */
+    fun completeApproval(pending: CloudApprovalRequest, newPassword: String?, deviceName: String, replaceDeviceId: String? = null): CloudClient {
         val vaultKey = checkNotNull(pending.vaultKey) { "Wait until your other device approves this request." }
         val (deviceToken, fields) = device(deviceName)
-        val result = post(pending.url, "/auth/reset/approval/${pending.approvalId}/complete", JSONObject().put("claimToken", pending.claimToken)
-            .with(credentials(newPassword, vaultKey)).with(fields).put("replaceDeviceId", replaceDeviceId))
+        val body = JSONObject().put("claimToken", pending.claimToken)
+        if (newPassword != null) body.with(credentials(newPassword, vaultKey))
+        val result = post(pending.url, "/auth/reset/approval/${pending.approvalId}/complete", body.with(fields).put("replaceDeviceId", replaceDeviceId))
         check(result.getString("vaultId") == pending.vaultId) { "The server linked the account to another cloud." }
         return connect(pending.url, result, deviceToken, vaultKey)
     }
@@ -202,6 +215,51 @@ object CloudAccount {
 
     fun rejectDevice(client: CloudClient, approvalId: String) {
         client.call("/account/approvals/${id(approvalId)}", "DELETE", JSONObject())
+    }
+
+    /** The sign-in buttons the server offers; empty when it has no Google or GitHub app. */
+    fun providers(url: String): List<String> {
+        val array = CloudClient.request(origin(url), "/auth/providers", "GET", null, null).getJSONArray("providers")
+        return List(array.length()) { array.getString(it) }
+    }
+
+    /** Sign in with Google or GitHub, step 1. The browser comes back to jotdrop-cloud://oauth with a ticket that only works with the verifier. */
+    fun startProviderSignIn(url: String, provider: String): CloudProviderStart {
+        require(provider == "google" || provider == "github") { "Unknown sign-in provider." }
+        val origin = origin(url)
+        val verifier = CloudCrypto.token()
+        return CloudProviderStart(origin, verifier, "$origin/api/v1/auth/oauth/$provider/start?client=android&challenge=${CloudCrypto.hashToken(verifier)}")
+    }
+
+    /** Step 2: who signed in, and whether that address already has an account. */
+    fun providerTicket(url: String, ticket: String, verifier: String): CloudProviderSignIn {
+        val origin = origin(url)
+        val result = post(origin, "/auth/oauth/ticket", JSONObject().put("ticket", ticket).put("verifier", verifier))
+        return CloudProviderSignIn(origin, result.getString("provider"), result.getString("email"), result.getBoolean("account"), ticket, verifier)
+    }
+
+    private fun ticket(signIn: CloudProviderSignIn): JSONObject = JSONObject().put("ticket", signIn.ticket).put("verifier", signIn.verifier)
+
+    /** No account yet: a new cloud for this address, without a password. Show the recovery code. */
+    fun providerSignUp(signIn: CloudProviderSignIn, deviceName: String, newsletter: Boolean = false): CloudSignedUp {
+        val vaultKey = CloudCrypto.token()
+        val recoveryToken = CloudCrypto.token()
+        val (deviceToken, fields) = device(deviceName)
+        val result = post(signIn.url, "/auth/oauth/signup", ticket(signIn).put("recoveryTokenHash", CloudCrypto.hashToken(recoveryToken)).with(fields).put("newsletter", newsletter))
+        val client = connect(signIn.url, result, deviceToken, vaultKey)
+        return CloudSignedUp(client, encodeRecovery(client.credentials.vaultId, vaultKey, recoveryToken))
+    }
+
+    /** An account already exists: ask a signed-in device for the key, then checkApproval and completeApproval without a password. */
+    fun providerApproval(signIn: CloudProviderSignIn): CloudApprovalRequest = askApproval(signIn.url, "/auth/oauth/approval", ticket(signIn), true)
+
+    /** An account already exists: the recovery code brings the key. */
+    fun providerRecover(signIn: CloudProviderSignIn, recoveryCode: String, deviceName: String, replaceDeviceId: String? = null): CloudClient {
+        val recovery = decodeRecovery(recoveryCode)
+        val (deviceToken, fields) = device(deviceName)
+        val result = post(signIn.url, "/auth/oauth/recover", ticket(signIn).put("recoveryToken", recovery.getString("recoveryToken")).with(fields).put("replaceDeviceId", replaceDeviceId))
+        check(result.getString("vaultId") == recovery.getString("vaultId")) { "The recovery code belongs to another cloud." }
+        return connect(signIn.url, result, deviceToken, recovery.getString("vaultKey"))
     }
 
     /** Last resort: deletes the unreadable cloud and starts an empty one; notes on devices are not touched. */

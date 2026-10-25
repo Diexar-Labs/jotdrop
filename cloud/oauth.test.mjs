@@ -52,7 +52,7 @@ async function fixture(t) {
     const back = await fetch(callback, { redirect: 'manual' });
     assert.equal(back.status, 302);
     const location = back.headers.get('location');
-    const params = new URLSearchParams(location.startsWith('obsidian:') ? new URL(location).search : new URL(location).hash.slice(1));
+    const params = new URLSearchParams(/^(obsidian|jotdrop-cloud):/.test(location) ? new URL(location).search : new URL(location).hash.slice(1));
     return { verifier, location, ticket: params.get('oauth'), error: params.get('oauth-error'), callback };
   };
   return { url, mails, signIn, advance: (ms) => { now += ms; } };
@@ -141,6 +141,11 @@ test('provider sign-in refuses unverified addresses, stolen tickets, old tickets
   assert.match(obsidian.location, /^obsidian:\/\/jotdrop-cloud\?oauth=/);
   await assert.rejects(providerTicket({ url: cloud.url, ticket: obsidian.ticket, verifier: randomToken() }), (error) => error.status === 401);
   assert.equal((await providerTicket({ url: cloud.url, ticket: obsidian.ticket, verifier: obsidian.verifier })).email, 'ann@example.com');
+  // Coming back to the Android app works the same way, through its own jotdrop-cloud:// link.
+  const android = await cloud.signIn('github', 'ann', 'android');
+  assert.match(android.location, /^jotdrop-cloud:\/\/oauth\?oauth=/);
+  await assert.rejects(providerTicket({ url: cloud.url, ticket: android.ticket, verifier: randomToken() }), (error) => error.status === 401);
+  assert.equal((await providerTicket({ url: cloud.url, ticket: android.ticket, verifier: android.verifier })).email, 'ann@example.com');
   // A state works once.
   const replay = await fetch(obsidian.callback, { redirect: 'manual' });
   assert.equal(replay.status, 400);

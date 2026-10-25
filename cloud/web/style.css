@@ -35,6 +35,9 @@ h3 { font-size: 1.05rem; }
 .access p { color: var(--muted); }
 .access form button { margin-top: 1.2rem; }
 .access-footnote { border-top: 1px solid var(--line); padding-top: 1.2rem; font-size: .85rem; }
+.policy { max-width: 72ch; margin: 4vh auto; padding: 1.5rem; }
+.policy h1 { margin-top: 2.2rem; }
+.policy a, .access-footnote a { color: var(--accent); }
 .access-links { display: flex; flex-wrap: wrap; gap: .5rem; }
 .access .access-links button { margin-top: .8rem; font-weight: 500; }
 .access fieldset { border: 1px solid var(--line); border-radius: 8px; margin: 1rem 0; }

@@ -1,6 +1,8 @@
 package com.diexar.keepcapture
 
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -24,12 +26,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 
 private const val DEFAULT_SERVER = "https://api.jotdrop.net"
+private val PROVIDER_NAMES = mapOf("google" to "Google", "github" to "GitHub")
 
 /** Pending sign-in steps survive rotation for the life of the process. Passwords are never kept here. */
 internal object CloudAccountFlow {
@@ -40,7 +44,11 @@ internal object CloudAccountFlow {
     var attach by mutableStateOf<CloudSignup?>(null)
     var recoveryCode by mutableStateOf<String?>(null)
     var deviceChoice by mutableStateOf<CloudDeviceChoice?>(null)
-    fun clear() { signup = null; login = null; reset = null; approval = null; deviceChoice = null }
+    /** Google or GitHub is open in the browser; `providerReturn` is the jotdrop-cloud://oauth link it comes back with. */
+    var waitingFor by mutableStateOf<String?>(null)
+    var providerReturn by mutableStateOf<Uri?>(null)
+    var provider by mutableStateOf<CloudProviderSignIn?>(null)
+    fun clear() { signup = null; login = null; reset = null; approval = null; deviceChoice = null; waitingFor = null; provider = null }
 }
 
 /** The free plan's device limit was reached: the person picks the device this phone replaces, and `retry` repeats the same sign-in. */
@@ -137,6 +145,22 @@ private fun CheckRow(checked: Boolean, onChange: (Boolean) -> Unit, label: Strin
     }
 }
 
+/** Google or GitHub only say who you are; the key to the notes still comes from your own devices. */
+@Composable
+private fun ProviderButtons(providers: List<String>, server: String, busy: Boolean, run: (suspend () -> Unit) -> Unit) {
+    if (providers.isEmpty()) return
+    val context = LocalContext.current
+    providers.forEach { name ->
+        OutlinedButton(onClick = { run {
+            val start = io { CloudAccount.startProviderSignIn(server, name) }
+            io { CloudPreviewStore(context).saveProviderStart(JSONObject().put("url", start.url).put("verifier", start.verifier)) }
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(start.href)))
+            CloudAccountFlow.waitingFor = name
+        } }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Continue with ${PROVIDER_NAMES.getValue(name)}") }
+    }
+    Text("Or with email and password:", style = MaterialTheme.typography.bodySmall)
+}
+
 @Composable
 private fun Problem(text: String?) {
     text?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
@@ -157,7 +181,25 @@ internal fun CloudSignIn(busy: Boolean, run: (suspend () -> Unit) -> Unit, showE
     var route by rememberSaveable { mutableStateOf("approve") }
     var understood by remember { mutableStateOf(false) }
     var newsletter by rememberSaveable { mutableStateOf(false) }
+    var providers by remember { mutableStateOf<List<String>>(emptyList()) }
     fun startAgain() { flow.clear(); password = ""; confirm = ""; code = ""; recovery = ""; understood = false }
+    LaunchedEffect(server) {
+        delay(500)
+        providers = runCatching { io { CloudAccount.providers(server) } }.getOrDefault(emptyList()).filter { it in PROVIDER_NAMES }
+    }
+    // Back from the browser: the ticket only works with the verifier this phone kept, and only once.
+    LaunchedEffect(flow.providerReturn) {
+        val back = flow.providerReturn ?: return@LaunchedEffect
+        flow.providerReturn = null
+        run {
+            val store = CloudPreviewStore(context)
+            val started = io { store.providerStart().also { store.clearProviderStart() } }
+            flow.waitingFor = null
+            val ticket = back.getQueryParameter("oauth") ?: throw IllegalStateException(back.getQueryParameter("oauth-error") ?: "The sign-in did not finish. Try again.")
+            checkNotNull(started) { "This sign-in was started elsewhere or has expired. Start again here." }
+            flow.provider = io { CloudAccount.providerTicket(started.getString("url"), ticket, started.getString("verifier")) }
+        }
+    }
     val serverField: @Composable () -> Unit = {
         OutlinedTextField(server, { if (it.length <= 200) server = it.trim() }, label = { Text("Server") }, singleLine = true, enabled = !busy,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrect = false), modifier = Modifier.fillMaxWidth())
@@ -169,6 +211,8 @@ internal fun CloudSignIn(busy: Boolean, run: (suspend () -> Unit) -> Unit, showE
         val signup = flow.signup
         val approval = flow.approval
         val reset = flow.reset
+        val provider = flow.provider
+        val waiting = flow.waitingFor
         when {
             login != null -> {
                 Text("Enter your code", style = MaterialTheme.typography.titleLarge)
@@ -195,6 +239,38 @@ internal fun CloudSignIn(busy: Boolean, run: (suspend () -> Unit) -> Unit, showE
                 TextButton(onClick = ::startAgain, enabled = !busy) { Text("Start again") }
             }
             approval != null -> ApprovalWait(approval, busy, run, showError, onDone = ::startAgain)
+            provider != null -> {
+                val name = PROVIDER_NAMES[provider.provider] ?: provider.provider
+                Text(if (provider.account) "Open your notes on this phone" else "Create your JotDrop cloud", style = MaterialTheme.typography.titleLarge)
+                Text("Signed in with $name as ${provider.email}.")
+                if (!provider.account) {
+                    Text("Your notes are encrypted on this phone before they leave it. You get a recovery code: keep it safe, it opens your notes if you lose your devices.")
+                    CheckRow(newsletter, { newsletter = it }, NEWSLETTER_LABEL, !busy)
+                    Button(onClick = { run { committed {
+                        val result = io { CloudAccount.providerSignUp(provider, cloudDeviceName(), newsletter) }
+                        keepRecoveryCode(context, result.recoveryCode)
+                        CloudSyncManager.connectAccount(context, result.client)
+                        startAgain()
+                    } } }, enabled = !busy) { Text("Create my JotDrop cloud") }
+                } else {
+                    Text("Only your own devices hold the key to your notes. Get it from a device that is signed in, or with your recovery code.")
+                    Button(onClick = { run { flow.approval = io { CloudAccount.providerApproval(provider) }; flow.provider = null } }, enabled = !busy) { Text("Approve on a signed-in device") }
+                    OutlinedTextField(recovery, { if (it.length <= 2048) recovery = it.trim() }, label = { Text("Or use your recovery code") },
+                        visualTransformation = PasswordVisualTransformation(), maxLines = 3, enabled = !busy, modifier = Modifier.fillMaxWidth(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrect = false))
+                    OutlinedButton(onClick = { run { committed { withDeviceChoice { replace ->
+                        val client = io { CloudAccount.providerRecover(provider, recovery, cloudDeviceName(), replace) }
+                        CloudSyncManager.connectAccount(context, client)
+                        startAgain()
+                    } } } }, enabled = !busy && recovery.isNotBlank()) { Text("Use recovery code") }
+                }
+                TextButton(onClick = ::startAgain, enabled = !busy) { Text("Start again") }
+            }
+            waiting != null -> {
+                Text("Continue with ${PROVIDER_NAMES[waiting] ?: waiting}", style = MaterialTheme.typography.titleLarge)
+                Text("Sign in with ${PROVIDER_NAMES[waiting] ?: waiting} in your browser. JotDrop comes back here when you are done.")
+                TextButton(onClick = { flow.waitingFor = null }, enabled = !busy) { Text("Back") }
+            }
             reset != null -> {
                 Text("Choose how to get back in", style = MaterialTheme.typography.titleLarge)
                 Text("If $email has an account, we sent it a 6-digit code. Your notes on this device are not affected by any of these choices.")
@@ -248,6 +324,7 @@ internal fun CloudSignIn(busy: Boolean, run: (suspend () -> Unit) -> Unit, showE
             mode == "signup" -> {
                 Text("Create a JotDrop Cloud account", style = MaterialTheme.typography.titleLarge)
                 Text("Your password never leaves this device. It locks your notes before they are uploaded, so the server cannot read them.")
+                ProviderButtons(providers, server, busy, run)
                 EmailField(email, { email = it }, !busy)
                 PasswordField(password, { password = it }, "Password (at least 12 characters)", !busy)
                 PasswordField(confirm, { confirm = it }, "Repeat password", !busy)
@@ -272,6 +349,7 @@ internal fun CloudSignIn(busy: Boolean, run: (suspend () -> Unit) -> Unit, showE
             }
             else -> {
                 Text("Sign in to JotDrop Cloud", style = MaterialTheme.typography.titleLarge)
+                ProviderButtons(providers, server, busy, run)
                 EmailField(email, { email = it }, !busy)
                 PasswordField(password, { password = it }, "Password", !busy)
                 serverField()
@@ -311,6 +389,16 @@ private fun ApprovalWait(pending: CloudApprovalRequest, busy: Boolean, run: (sus
             Text("Waiting for approval. The request expires at ${localTime(pending.expiresAt)}.", style = MaterialTheme.typography.bodySmall)
         }
         TextButton(onClick = onDone, enabled = !busy) { Text("Cancel") }
+    } else if (pending.keepsPassword) {
+        Text("Approved. Open your notes", style = MaterialTheme.typography.titleLarge)
+        Text("Finish within 10 minutes of asking for approval; after that, start again.", style = MaterialTheme.typography.bodySmall)
+        Button(onClick = { run { committed { withDeviceChoice { replace ->
+            val client = try { io { CloudAccount.completeApproval(pending, null, cloudDeviceName(), replace) } }
+                catch (failure: CloudRequestException) { if (failure.status == 401) onDone(); throw failure }
+            CloudSyncManager.connectAccount(context, client)
+            onDone()
+        } } } }, enabled = !busy) { Text("Open my notes") }
+        TextButton(onClick = onDone, enabled = !busy) { Text("Start again") }
     } else {
         Text("Approved. Choose a new password", style = MaterialTheme.typography.titleLarge)
         PasswordField(password, { password = it }, "New password (at least 12 characters)", !busy)
@@ -332,6 +420,7 @@ private fun ApprovalWait(pending: CloudApprovalRequest, busy: Boolean, run: (sus
 internal fun CloudAccountSection(busy: Boolean, run: (suspend () -> Unit) -> Unit, cloud: suspend () -> CloudClient) {
     val flow = CloudAccountFlow
     var email by remember { mutableStateOf<String?>(null) }
+    var hasPassword by remember { mutableStateOf(true) }
     var loaded by remember { mutableStateOf(false) }
     var loadFailed by remember { mutableStateOf(false) }
     var reload by remember { mutableStateOf(0) }
@@ -351,7 +440,7 @@ internal fun CloudAccountSection(busy: Boolean, run: (suspend () -> Unit) -> Uni
     var approve by remember { mutableStateOf<CloudApproval?>(null) }
     LaunchedEffect(reload) {
         loadFailed = false
-        try { val client = cloud(); email = io { CloudAccount.accountEmail(client) }; loaded = true }
+        try { val client = cloud(); val info = io { CloudAccount.accountInfo(client) }; email = info?.email; hasPassword = info?.password ?: true; loaded = true }
         catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { loadFailed = true }
     }
@@ -384,7 +473,7 @@ internal fun CloudAccountSection(busy: Boolean, run: (suspend () -> Unit) -> Uni
                     enabled = !busy && newEmail.contains('@') && newPasswordProblem(password, confirm) == null) { Text("Add email sign-in") }
             }
             else -> {
-                Text("Email sign-in: $email", style = MaterialTheme.typography.bodyMedium)
+                Text(if (hasPassword) "Email sign-in: $email" else "Account: $email", style = MaterialTheme.typography.bodyMedium)
                 OutlinedButton(onClick = { run { val client = cloud(); approvals = io { CloudAccount.listApprovals(client) } } }, enabled = !busy) { Text("Check requests from new devices") }
                 approvals?.let { list ->
                     if (list.isEmpty()) Text("No devices are waiting for approval.", style = MaterialTheme.typography.bodySmall)
@@ -400,7 +489,10 @@ internal fun CloudAccountSection(busy: Boolean, run: (suspend () -> Unit) -> Uni
                         }
                     }
                 }
-                if (!changing) TextButton(onClick = { changing = true }, enabled = !busy) { Text("Change password") }
+                // An account made with Google or GitHub gets a password through "Forgot password?", like on the website.
+                if (!hasPassword) Text("You sign in with Google or GitHub, so this account has no password. A password is needed to make a new recovery code. " +
+                    "To add one: disconnect this device, choose \"Forgot password?\" and follow the steps.", style = MaterialTheme.typography.bodySmall)
+                else if (!changing) TextButton(onClick = { changing = true }, enabled = !busy) { Text("Change password") }
                 else {
                     PasswordField(current, { current = it }, "Current password", !busy)
                     PasswordField(password, { password = it }, "New password (at least 12 characters)", !busy)
@@ -418,7 +510,7 @@ internal fun CloudAccountSection(busy: Boolean, run: (suspend () -> Unit) -> Uni
                 }
             }
         }
-        if (loaded && !loadFailed && attach == null) {
+        if (loaded && !loadFailed && attach == null && hasPassword) {
             if (!renewing) TextButton(onClick = { renewing = true }, enabled = !busy) { Text("Make a new recovery code") }
             else {
                 Text("Recovery code", style = MaterialTheme.typography.titleMedium)
@@ -441,7 +533,7 @@ internal fun CloudAccountSection(busy: Boolean, run: (suspend () -> Unit) -> Uni
             val client = cloud()
             io { CloudAccount.approveDevice(client, request) }
             approvals = approvals?.minus(request)
-            notice = "Approved. The new device can now choose a new password."
+            notice = "Approved. The new device can now open your notes."
         } }, enabled = !busy) { Text("Words match, approve") } },
         dismissButton = { TextButton(onClick = { approve = null }) { Text("Cancel") } }) }
 }
