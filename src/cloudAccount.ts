@@ -1,7 +1,7 @@
 import { App, ButtonComponent, Modal, Notice, Setting } from "obsidian";
 import type { CloudController } from "./cloud";
 import { ConfirmModal } from "./confirmModal";
-import { accountInfo, approveDevice, changePassword, listApprovals, newRecoveryCode, rejectDevice } from "../cloud/shared/account.mjs";
+import { accountInfo, approveDevice, changePassword, deleteAccount, listApprovals, newRecoveryCode, rejectDevice } from "../cloud/shared/account.mjs";
 
 type Device = { id: string; name: string; revoked?: boolean; lastSeenAt?: string };
 type Approval = { id: string; words: string[] };
@@ -93,15 +93,18 @@ export function renderCloudAccount(app: App, el: HTMLElement, cloud: CloudContro
     if (stopped) return;
     const security = el.createDiv();
     new Setting(security).setName("Password and recovery").setHeading();
+    const hasPassword = !!account?.password;
     // An account made with Google or GitHub gets a password through "Forgot password", like on the website.
-    if (account && !account.password) {
+    if (account && !hasPassword) {
       security.createEl("p", { text: "You sign in with Google or GitHub, so this account has no password. A password is needed to make a new recovery code. To add one: log out, choose \"Forgot password?\" and follow the steps." });
-      return;
+    } else {
+      if (account) new Setting(security).setName("Password").setDesc("Changing it does not encrypt your notes again.")
+        .addButton((button) => button.setButtonText("Change password").onClick(() => new PasswordModal(app, cloud).open()));
+      new Setting(security).setName("Recovery code").setDesc("Make a new code if the old one is lost. The old code stops working.")
+        .addButton((button) => button.setButtonText("Make a new recovery code").onClick(() => new NewRecoveryModal(app, cloud, !!account).open()));
     }
-    if (account) new Setting(security).setName("Password").setDesc("Changing it does not encrypt your notes again.")
-      .addButton((button) => button.setButtonText("Change password").onClick(() => new PasswordModal(app, cloud).open()));
-    new Setting(security).setName("Recovery code").setDesc("Make a new code if the old one is lost. The old code stops working.")
-      .addButton((button) => button.setButtonText("Make a new recovery code").onClick(() => new NewRecoveryModal(app, cloud, !!account).open()));
+    new Setting(security).setName("Delete account").setDesc("Deletes your JotDrop Cloud and account. The notes in this vault stay.")
+      .addButton((button) => button.setButtonText("Delete account").setWarning().onClick(() => new DeleteAccountModal(app, cloud, hasPassword).open()));
   };
 
   void showPlan();
@@ -181,6 +184,32 @@ class NewRecoveryModal extends FormModal {
       this.close();
       new RecoveryCodeModal(this.app, code).open();
     });
+  }
+}
+
+class DeleteAccountModal extends FormModal {
+  constructor(app: App, cloud: CloudController, private hasPassword: boolean) { super(app, cloud); }
+  onOpen(): void {
+    this.titleEl.setText("Delete account");
+    this.contentEl.createEl("p", { text: "This deletes your JotDrop Cloud: every note and version stored there, your account and the devices signed in to it. A running JotDrop Plus subscription is cancelled. The notes in this vault stay. This cannot be undone." });
+    let current = "", typed = "";
+    if (this.hasPassword) this.password("Password", "current-password", (value) => { current = value; });
+    new Setting(this.contentEl).setName("Type DELETE to confirm").addText((input) => input.onChange((value) => { typed = value.trim(); }));
+    this.message = this.contentEl.createEl("p", { attr: { role: "status" } });
+    new Setting(this.contentEl).addButton((button) => button.setButtonText("Delete my account and cloud").setWarning().onClick(async () => {
+      if (typed !== "DELETE") { this.message.setText("Type DELETE to confirm."); return; }
+      const client = this.cloud.connection;
+      if (!client) { this.message.setText("Log in first."); return; }
+      button.setDisabled(true);
+      this.message.setText("Deleting...");
+      try {
+        await deleteAccount(client, this.hasPassword ? { password: current } : {});
+        await this.cloud.forgetDeletedCloud();
+        this.close();
+        new Notice("Your account and cloud were deleted. Your notes stay in this vault.");
+      } catch (error) { this.message.setText(errorText(error)); }
+      finally { button.setDisabled(false); }
+    }));
   }
 }
 

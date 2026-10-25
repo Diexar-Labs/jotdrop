@@ -397,3 +397,39 @@ test('codes in a copied database are keyed hashes that need the server key', asy
     for (const guess of [`jotdrop:code:v1:reset:${resetId}:${code}`, `reset:${resetId}:${code}`, code]) assert.notEqual(createHash('sha256').update(guess).digest('hex'), stored);
   } finally { db.close(); }
 });
+
+test('deleting the account removes the cloud, the account and every trace of it, and needs the password', async (t) => {
+  const removed = [];
+  const newsletter = async () => {};
+  newsletter.remove = async (email) => { removed.push(email); };
+  const app = await fixture(t, { newsletter });
+  const phone = await signUp(app, 'gone@example.com');
+  await phone.write('notes/secret.md', text('Soon deleted'), 0);
+  const laptop = await logIn(app, 'gone@example.com');
+  const remove = (client, body) => app.api('/account/delete', body, deviceHeaders(client));
+  const { kdf } = (await app.api('/auth/prelogin', { email: 'gone@example.com' })).body;
+  const currentAuthKey = derive(PASSWORD, kdf).authKey;
+  assert.equal((await remove(phone, { currentAuthKey })).status, 400, 'The confirmation is required');
+  assert.equal((await remove(phone, { confirm: 'DELETE MY CLOUD', currentAuthKey: derive('wrong password here', kdf).authKey })).status, 401);
+  assert.equal((await remove(phone, { confirm: 'DELETE MY CLOUD', currentAuthKey })).status, 200);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(app.mails.filter((mail) => mail.kind === 'account-deleted').map((mail) => mail.to), ['gone@example.com']);
+  assert.deepEqual(removed, ['gone@example.com']);
+  await assert.rejects(laptop.status(), (error) => error.status === 401, 'Every device is signed out');
+  assert.equal((await logIn(app, 'gone@example.com')).status, 401, 'The password no longer opens anything');
+  const db = new DatabaseSync(app.dbPath, { readOnly: true });
+  try {
+    for (const table of ['vaults', 'accounts', 'devices', 'envelopes', 'revisions', 'changes', 'identities', 'newsletter', 'login_challenges', 'device_approvals']) assert.equal(db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count, 0, table);
+  } finally { db.close(); }
+  // The address is free again for a new account.
+  await signUp(app, 'gone@example.com');
+});
+
+test('a cloud without a password or without an account is deleted with the confirmation alone', async (t) => {
+  const app = await fixture(t);
+  const phone = await signUp(app, 'nopass@example.com');
+  const db = new DatabaseSync(app.dbPath);
+  try { db.prepare("UPDATE accounts SET kdf='',authHash='',wrappedVaultKey=''").run(); } finally { db.close(); }
+  assert.equal((await app.api('/account/delete', { confirm: 'DELETE MY CLOUD' }, deviceHeaders(phone))).status, 200);
+  await assert.rejects(phone.status(), (error) => error.status === 401);
+});

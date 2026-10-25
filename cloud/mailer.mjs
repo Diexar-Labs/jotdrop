@@ -27,6 +27,7 @@ export function mailText({ kind, code, provider }) {
     reset: [`Your JotDrop reset code: ${code}`, `Enter this code to choose a new JotDrop password:\n\n${code}\n\nThe code works for 15 minutes. If you did not ask for this, ignore this email; your password stays the same.`],
     'signup-exists': ['You already have a JotDrop account', 'Someone tried to create a JotDrop account with this email address, but you already have one.\n\nTo sign in, use your password, or the Google or GitHub button you used before. If you forgot your password, choose "Forgot password". If this was not you, you can ignore this email.'],
     'provider-linked': [`You can now sign in to JotDrop with ${provider}`, `Your JotDrop account can now be opened by signing in with ${provider}. A new device still needs your approval on a signed-in device, or your recovery code, before it can read your notes.\n\nIf this was not you, change your ${provider} password and check the devices in your JotDrop account.`],
+    'account-deleted': ['Your JotDrop account was deleted', 'Your JotDrop account and everything in your JotDrop Cloud were deleted, and every device was signed out. Your notes on your own devices were not touched.\n\nIf this was not you, write to hello@jotdrop.net.'],
     'recovery-changed': ['Your JotDrop recovery code was changed', 'A new recovery code was made for your JotDrop cloud. The old code no longer works.\n\nIf this was you, keep the new code in a safe place. If this was not you, change your password and make a new recovery code.'],
   };
   if (!texts[kind]) throw new Error(`Unknown mail kind: ${kind}`);
@@ -34,16 +35,23 @@ export function mailText({ kind, code, provider }) {
   return { subject, body: body + footer };
 }
 
-/** Adds someone who ticked "Email me news about JotDrop" to a Brevo contact list; Brevo handles unsubscribing. */
+/** Adds someone who ticked "Email me news about JotDrop" to a Brevo contact list; Brevo handles unsubscribing. `remove` forgets a deleted account. */
 export function createBrevoList({ apiKey, listId, fetcher = globalThis.fetch }) {
   if (typeof apiKey !== 'string' || !apiKey || !Number.isSafeInteger(listId) || listId < 1) throw new Error('Provide the Brevo API key and list ID.');
-  return async (email) => {
+  const add = async (email) => {
     const body = JSON.stringify({ email, listIds: [listId], updateEnabled: true });
     const response = await fetcher('https://api.brevo.com/v3/contacts', { method: 'POST', headers: { 'api-key': apiKey, 'content-type': 'application/json', accept: 'application/json' }, body, signal: AbortSignal.timeout(10000) });
     await response.body?.cancel();
     // The reason stays out of the error: it can repeat the address.
     if (!response.ok) throw new Error(`Brevo refused the contact (${response.status}).`);
   };
+  add.remove = async (email) => {
+    const response = await fetcher(`https://api.brevo.com/v3/contacts/${encodeURIComponent(email)}`, { method: 'DELETE', headers: { 'api-key': apiKey, accept: 'application/json' }, signal: AbortSignal.timeout(10000) });
+    await response.body?.cancel();
+    // 404: Brevo never had the address.
+    if (!response.ok && response.status !== 404) throw new Error(`Brevo refused to delete the contact (${response.status}).`);
+  };
+  return add;
 }
 
 /** Sends the server's mail through the Amazon SES v2 API. `from` is a verified sender, for example "JotDrop <noreply@jotdrop.net>". */

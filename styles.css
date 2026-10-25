@@ -1694,3 +1694,15 @@
 .jotdrop-history-list .setting-item {
   padding: 6px 0;
 }
+
+/* Continue with Google / GitHub: each provider's own colours and mark, with its name.
+   As specific as Obsidian's own button rule, so these colours win. */
+button.jotdrop-provider-google:not(.clickable-icon), button.jotdrop-provider-github:not(.clickable-icon) { display: inline-flex; align-items: center; gap: 0.6em; }
+button.jotdrop-provider-google:not(.clickable-icon) { background: #fff; color: #1f1f1f; border: 1px solid #747775; }
+button.jotdrop-provider-google:not(.clickable-icon):hover { background: #f2f2f2; }
+.theme-dark button.jotdrop-provider-google:not(.clickable-icon) { background: #131314; color: #e3e3e3; border-color: #8e918f; }
+.theme-dark button.jotdrop-provider-google:not(.clickable-icon):hover { background: #2a2a2c; }
+button.jotdrop-provider-github:not(.clickable-icon) { background: #24292f; color: #fff; border: 1px solid #24292f; }
+button.jotdrop-provider-github:not(.clickable-icon):hover { background: #32383f; }
+.theme-dark button.jotdrop-provider-github:not(.clickable-icon) { border-color: #6e7681; }
+.jotdrop-provider-logo { width: 1.1em; height: 1.1em; flex: none; }

@@ -123,7 +123,7 @@ object CloudSyncManager {
         WorkManager.getInstance(context).cancelUniqueWork(IMMEDIATE)
     }
 
-    suspend fun disconnect(context: Context) {
+    suspend fun disconnect(context: Context, message: String = "Disconnected. Local notes, conflicts and recovery copies were kept.") {
         pauseRequested.set(true)
         cancel(context)
         serialized {
@@ -139,7 +139,7 @@ object CloudSyncManager {
             store.clearUpload(scope, client.credentials.deviceId)
             check(!store.hasUploads(client.credentials.deviceId)) { "Another local vault still has an encrypted upload. Its credentials were kept." }
         }
-        val settings = store.settings().put("enabled", false).put("message", "Disconnected. Local notes, conflicts and recovery copies were kept.")
+        val settings = store.settings().put("enabled", false).put("message", message)
         store.saveSettings(settings)
         store.disconnect()
         cancel(context)

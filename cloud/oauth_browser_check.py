@@ -62,6 +62,7 @@ def check(browser, url, provider):
     laptop = open_page()
     laptop.get_by_role("button", name="Continue with Google").wait_for()
     assert laptop.get_by_role("button", name="Continue with GitHub").is_visible()
+    assert laptop.locator('[data-provider="google"] svg.provider-logo').is_visible() and laptop.locator('[data-provider="github"] svg.provider-logo').is_visible(), "Each button shows its logo"
     as_person("ann")
     laptop.get_by_role("button", name="Continue with Google").click()
     laptop.locator("#provider-title").filter(has_text="Create your JotDrop cloud").wait_for()
@@ -108,8 +109,17 @@ def check(browser, url, provider):
     # The laptop stays signed in after a reload.
     laptop.reload(wait_until="networkidle")
     laptop.locator("#items").filter(has_text="Shopping from the laptop").wait_for()
+
+    # Deleting the account: without a password the typed confirmation is enough; every browser is signed out.
+    laptop.get_by_role("button", name="Devices & recovery").click()
+    assert not laptop.locator("#delete-password-row").is_visible()
+    laptop.locator("#delete-confirm").fill("DELETE")
+    laptop.get_by_role("button", name="Delete my account and cloud").click()
+    laptop.locator("#access-message").filter(has_text="were deleted").wait_for()
+    phone.reload(wait_until="networkidle")
+    phone.locator("#workspace-message").filter(has_text="no longer has access").wait_for()
     assert not errors, errors
-    return "PASS: Google and GitHub sign-in, approval with four words, unverified address refused, stays signed in"
+    return "PASS: Google and GitHub sign-in with logos, approval with four words, unverified address refused, stays signed in, account deleted"
 
 
 def main():

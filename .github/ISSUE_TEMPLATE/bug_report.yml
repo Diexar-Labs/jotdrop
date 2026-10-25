@@ -1,0 +1,45 @@
+name: Bug report
+description: Something in JotDrop does not work as it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for reporting! Issues are public, so never paste passwords, recovery codes, private notes or email addresses here.
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where does it happen?
+      multiple: true
+      options:
+        - Obsidian plugin
+        - Android app
+        - JotDrop Cloud website
+        - Web clipper (browser extension)
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Plugin version (Obsidian settings, Community plugins) or app version (Android settings, About).
+      placeholder: "0.21.1 / 0.28.24"
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open ...
+        2. Tap ...
+        3. See ...
+  - type: input
+    id: device
+    attributes:
+      label: Device and system
+      placeholder: "Pixel 8, Android 15 / Windows 11, Obsidian 1.9"

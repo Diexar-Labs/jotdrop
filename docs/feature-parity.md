@@ -93,7 +93,7 @@ Stand gemeten op `ee57d58` (feature-branch), bijgewerkt met elke afgeronde funct
 | Functie | Website | Plugin | Android |
 |---|---|---|---|
 | Inloggen met e-mail en wachtwoord | ja | ja (instellingen, JotDrop Cloud; ook account maken met herstelcode, apparatengrens) | ja |
-| Inloggen met Google of GitHub | ja (server + website, op staging) | ja (terug via `obsidian://jotdrop-cloud`) | ja (terug via `jotdrop-cloud://oauth`) |
+| Inloggen met Google of GitHub (knoppen met eigen logo) | ja (server + website, op staging) | ja (terug via `obsidian://jotdrop-cloud`) | ja (terug via `jotdrop-cloud://oauth`) |
 | Wachtwoord wijzigen/vergeten | ja | ja (vergeten: goedkeuren, herstelcode of opnieuw beginnen) | ja |
 | Authenticator-app (TOTP) | ja | NEE | NEE |
 | Apparaten bekijken en intrekken | ja | ja | ja |
@@ -103,6 +103,8 @@ Stand gemeten op `ee57d58` (feature-branch), bijgewerkt met elke afgeronde funct
 | Conflict beoordelen | ja | ja (venster "Review conflicts", ook via knop "Review conflict" op de conflictkaart: deze vault naast de cloudversie, "Keep this vault's version" / "Use the cloud version"; de andere versie en de kopie naar de prullenbak) | ja |
 | Tijdmachine | ja | ja (venster "Time machine": schuif door de minuten met een wijziging, notities van toen, "Restore this moment"; gratis plan: ouder dan 30 dagen = Plus) | ja |
 | Herstelcode opnieuw maken | ja | ja | ja |
+| Account verwijderen (cloud, account, Plus opzeggen, nieuwsbrief) | ja | ja | ja |
+| Link naar privacybeleid (`/privacy`) | ja | ja | ja |
 | Plus bekijken | ja | ja (plan en opslag, knop naar de website) | deels (tekst) |
 | Plus kopen | ja | NEE (bewust: alleen website) | NEE (bewust: alleen website) |
 | "Manage or cancel your subscription at link.com." (Eric 24 okt: vindbaar maar verstopt, ingeklapt kopje "Subscription" onderaan de instellingen) | ja (onderaan Devices & recovery, alleen met abonnement) | ja (ingeklapt "Subscription" onder Plan, alleen met abonnement) | ja (onderaan cloudscherm, altijd: app kent de abonnementsstatus niet) |

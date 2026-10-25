@@ -107,6 +107,12 @@ export async function newRecoveryCode(client, { password: value } = {}) {
   return encodeRecovery({ vaultId, vaultKey, recoveryToken });
 }
 
+/** Deletes the cloud and its account; notes on the person's devices stay. The password is only asked when the account has one. */
+export async function deleteAccount(client, { password: value } = {}) {
+  const currentKey = value === undefined ? {} : { currentAuthKey: await currentAuthKey(client, value) };
+  return client.call('/account/delete', 'POST', { confirm: 'DELETE MY CLOUD', ...currentKey });
+}
+
 export const setupTotp = (client) => client.call('/account/totp', 'POST', {});
 export async function enableTotp(client, { password: value, code }) { return client.call('/account/totp/enable', 'POST', { code, currentAuthKey: await currentAuthKey(client, value) }); }
 export async function disableTotp(client, { password: value }) { return client.call('/account/totp/disable', 'POST', { currentAuthKey: await currentAuthKey(client, value) }); }

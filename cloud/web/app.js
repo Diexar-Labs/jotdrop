@@ -1,5 +1,5 @@
 import { CloudClient } from '/shared/client.mjs';
-import { accountInfo, approveDevice, attachAccount, availableProviders, changePassword, checkApproval, completeApproval, confirmLogin, confirmSignup, disableTotp, enableTotp, listApprovals, logIn, newRecoveryCode, providerApproval, providerRecover, providerSignUp, providerTicket, rejectDevice, requestApproval, resetWithRecoveryCode, setupTotp, signUp, startOver, startProviderSignIn, startReset } from '/shared/account.mjs';
+import { accountInfo, approveDevice, attachAccount, availableProviders, changePassword, checkApproval, completeApproval, confirmLogin, confirmSignup, deleteAccount, disableTotp, enableTotp, listApprovals, logIn, newRecoveryCode, providerApproval, providerRecover, providerSignUp, providerTicket, rejectDevice, requestApproval, resetWithRecoveryCode, setupTotp, signUp, startOver, startProviderSignIn, startReset } from '/shared/account.mjs';
 import { base64ToBytes, bytesToBase64, decodeRecovery, decryptEnvelope, sealLocal, unsealLocal } from '/shared/crypto.mjs';
 import { exportZip } from '/export.mjs';
 import { noteSummary, updateMetadata, toggleTask, attachmentPath, plainPreviewText, splitNote, joinNote, noteFilename } from '/note.mjs';
@@ -1663,6 +1663,8 @@ async function renderAccount() {
   $('totp-form').hidden = !account || noPassword;
   $('new-recovery-password-row').hidden = !account;
   $('new-recovery-password').required = Boolean(account);
+  $('delete-password-row').hidden = !account || noPassword;
+  $('delete-password').required = Boolean(account) && !noPassword;
   if (account) {
     totpOn = account.totp;
     $('totp-status').textContent = account.totp ? 'On: a new device asks for a code from your app.' : 'Off: a new device asks for a code by email.';
@@ -1715,6 +1717,17 @@ workspaceForm('new-recovery-form', async () => {
   field.value = '';
   message('New recovery code made. The old code no longer works.');
   showRecoveryCode(code, 'Done');
+});
+workspaceForm('delete-account-form', async () => {
+  if ($('delete-confirm').value.trim() !== 'DELETE') throw new Error('Type DELETE to confirm.');
+  if (!confirm('Delete your account and everything in your JotDrop Cloud? This cannot be undone.')) return;
+  const field = $('delete-password');
+  await deleteAccount(client, field.required ? { password: field.value } : {});
+  // The cloud is gone: forget this browser's connection and its encrypted copies of it.
+  for (const prefix of [cachePrefix(), pendingPrefix()]) for (const [key] of await store('entries', prefix)) await store('delete', key);
+  await store('delete', 'connection');
+  field.value = $('delete-confirm').value = '';
+  lock('Your account and cloud were deleted. The notes on your own devices were not touched.');
 });
 $('totp-setup').addEventListener('click', () => setupTotp(client).then(({ secret }) => {
   $('totp-secret').value = secret;

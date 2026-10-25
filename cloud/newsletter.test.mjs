@@ -99,3 +99,13 @@ test('Brevo gets the address for the list, and a refusal is an error without the
   await assert.rejects(add('ann@example.com'), (error) => /400/.test(error.message) && !error.message.includes('ann@'));
   assert.throws(() => createBrevoList({ apiKey: 'brevo-key', listId: Number(undefined) }), /list ID/);
 });
+
+test('Brevo forgets a deleted account; an address it never knew is fine', async () => {
+  const calls = [];
+  const list = createBrevoList({ apiKey: 'brevo-key', listId: 7, fetcher: async (url, init) => { calls.push({ url, init }); return new Response(null, { status: [204, 404, 500][calls.length - 1] }); } });
+  await list.remove('ann+x@example.com');
+  assert.equal(calls[0].url, 'https://api.brevo.com/v3/contacts/ann%2Bx%40example.com');
+  assert.equal(calls[0].init.method, 'DELETE');
+  await list.remove('never@example.com');
+  await assert.rejects(list.remove('ann@example.com'), (error) => /500/.test(error.message) && !error.message.includes('ann@'));
+});

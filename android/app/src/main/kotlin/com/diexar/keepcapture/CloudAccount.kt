@@ -141,6 +141,13 @@ object CloudAccount {
         return encodeRecovery(client.credentials.vaultId, client.credentials.vaultKey, recoveryToken)
     }
 
+    /** Deletes the cloud and its account; notes on this phone stay. The password is only needed when the account has one. */
+    fun deleteAccount(client: CloudClient, password: String?) {
+        val body = JSONObject().put("confirm", "DELETE MY CLOUD")
+        if (password != null) body.put("currentAuthKey", currentAuthKey(client, password))
+        client.call("/account/delete", "POST", body)
+    }
+
     /** Forgot password: the server mails a code that one of the three routes below needs. */
     fun startReset(url: String, email: String): CloudReset {
         val origin = origin(url)

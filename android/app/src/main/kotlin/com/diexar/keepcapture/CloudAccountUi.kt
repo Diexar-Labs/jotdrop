@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
@@ -16,6 +18,9 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
@@ -25,6 +30,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.time.Instant
@@ -150,15 +156,36 @@ private fun CheckRow(checked: Boolean, onChange: (Boolean) -> Unit, label: Strin
 private fun ProviderButtons(providers: List<String>, server: String, busy: Boolean, run: (suspend () -> Unit) -> Unit) {
     if (providers.isEmpty()) return
     val context = LocalContext.current
+    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     providers.forEach { name ->
+        // Each provider's own colours and mark, with its name: Google light or dark neutral, GitHub near black.
+        val google = name == "google"
+        val container = if (google) (if (dark) Color(0xFF131314) else Color.White) else Color(0xFF24292F)
+        val content = if (google && !dark) Color(0xFF1F1F1F) else if (google) Color(0xFFE3E3E3) else Color.White
+        val edge = if (google) (if (dark) Color(0xFF8E918F) else Color(0xFF747775)) else if (dark) Color(0xFF6E7681) else Color(0xFF24292F)
         OutlinedButton(onClick = { run {
             val start = io { CloudAccount.startProviderSignIn(server, name) }
             io { CloudPreviewStore(context).saveProviderStart(JSONObject().put("url", start.url).put("verifier", start.verifier)) }
             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(start.href)))
             CloudAccountFlow.waitingFor = name
-        } }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Continue with ${PROVIDER_NAMES.getValue(name)}") }
+        } }, enabled = !busy, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), border = BorderStroke(1.dp, edge),
+            colors = ButtonDefaults.outlinedButtonColors(containerColor = container, contentColor = content)) {
+            Image(painterResource(if (google) R.drawable.ic_provider_google else R.drawable.ic_provider_github), contentDescription = null, modifier = Modifier.size(20.dp))
+            Text("Continue with ${PROVIDER_NAMES.getValue(name)}", modifier = Modifier.padding(start = 12.dp))
+        }
     }
     Text("Or with email and password:", style = MaterialTheme.typography.bodySmall)
+}
+
+/** The privacy policy lives on the cloud server itself. */
+@Composable
+private fun PrivacyLink(server: suspend () -> String, enabled: Boolean) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    TextButton(onClick = { scope.launch {
+        val url = runCatching { server() }.getOrNull() ?: return@launch
+        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("${url.trimEnd('/')}/privacy"))) }
+    } }, enabled = enabled) { Text("Privacy policy") }
 }
 
 @Composable
@@ -358,6 +385,7 @@ internal fun CloudSignIn(busy: Boolean, run: (suspend () -> Unit) -> Unit, showE
                 TextButton(onClick = { mode = "forgot" }, enabled = !busy) { Text("Forgot password?") }
                 TextButton(onClick = { mode = "signup" }, enabled = !busy) { Text("Create an account") }
                 TextButton(onClick = { mode = "pair" }, enabled = !busy) { Text("Use a one-time pairing code") }
+                PrivacyLink({ CloudClient.secureOrigin(server) }, !busy)
             }
         }
     }
@@ -435,6 +463,9 @@ internal fun CloudAccountSection(busy: Boolean, run: (suspend () -> Unit) -> Uni
     var signOutOthers by rememberSaveable { mutableStateOf(false) }
     var renewing by rememberSaveable { mutableStateOf(false) }
     var recoveryPassword by remember { mutableStateOf("") }
+    var deleting by rememberSaveable { mutableStateOf(false) }
+    var deletePassword by remember { mutableStateOf("") }
+    var deleteTyped by remember { mutableStateOf("") }
     val context = LocalContext.current
     var approvals by remember { mutableStateOf<List<CloudApproval>?>(null) }
     var approve by remember { mutableStateOf<CloudApproval?>(null) }
@@ -526,6 +557,29 @@ internal fun CloudAccountSection(busy: Boolean, run: (suspend () -> Unit) -> Uni
                 }
             }
         }
+        if (loaded && !loadFailed && attach == null) {
+            val needsPassword = email != null && hasPassword
+            if (!deleting) TextButton(onClick = { deleting = true }, enabled = !busy) { Text("Delete account", color = MaterialTheme.colorScheme.error) }
+            else {
+                Text("Delete account", style = MaterialTheme.typography.titleMedium)
+                Text("This deletes your JotDrop Cloud: every note and version stored there, your account and the devices signed in to it. " +
+                    "A running JotDrop Plus subscription is cancelled. The notes on this phone stay. This cannot be undone.", color = MaterialTheme.colorScheme.error)
+                if (needsPassword) PasswordField(deletePassword, { deletePassword = it }, "Password", !busy)
+                OutlinedTextField(deleteTyped, { if (it.length <= 20) deleteTyped = it }, label = { Text("Type DELETE to confirm") }, singleLine = true, enabled = !busy,
+                    keyboardOptions = KeyboardOptions(autoCorrect = false), modifier = Modifier.fillMaxWidth())
+                Row {
+                    Button(onClick = { run { committed {
+                        val client = cloud()
+                        io { CloudAccount.deleteAccount(client, if (needsPassword) deletePassword else null) }
+                        deletePassword = ""; deleteTyped = ""; deleting = false
+                        CloudSyncManager.disconnect(context, "Your account and cloud were deleted. The notes on this phone were kept.")
+                    } } }, enabled = !busy && deleteTyped.trim() == "DELETE" && (!needsPassword || deletePassword.isNotEmpty()),
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) { Text("Delete my account and cloud") }
+                    TextButton(onClick = { deleting = false; deletePassword = ""; deleteTyped = "" }, enabled = !busy) { Text("Cancel") }
+                }
+            }
+        }
+        PrivacyLink({ cloud().credentials.url }, !busy)
     }
     approve?.let { request -> AlertDialog(onDismissRequest = { approve = null }, title = { Text("Approve this device?") },
         text = { Text("Only approve if the new device shows exactly these words:\n\n${request.words.joinToString("   ")}\n\nThe device gets full access to your notes.") },

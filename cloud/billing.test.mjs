@@ -16,11 +16,12 @@ const STRIPE = { secretKey: 'sk_test_x', webhookSecret: WEBHOOK_SECRET, monthPri
 // A fake Stripe: Checkout Sessions, and the current state of each subscription, which the server fetches on every event.
 async function fixture(t, { stripe = STRIPE } = {}) {
   const dataDir = await mkdtemp(join(tmpdir(), 'jotdrop-billing-test-'));
-  const enrollmentToken = randomToken(), sessions = [], subscriptions = new Map();
+  const enrollmentToken = randomToken(), sessions = [], subscriptions = new Map(), cancelled = [];
   let now = Date.parse('2026-10-23T08:00:00Z'), stripeDown = false;
   const fetcher = async (url, options) => {
     if (stripeDown) throw new TypeError('fetch failed');
     const subscription = /^https:\/\/api\.stripe\.com\/v1\/subscriptions\/(sub_\w+)$/.exec(url);
+    if (subscription && options?.method === 'DELETE') cancelled.push(subscription[1]);
     if (subscription) return new Response(JSON.stringify(subscriptions.get(subscription[1])), { status: subscriptions.has(subscription[1]) ? 200 : 404 });
     sessions.push({ url, options, form: new URLSearchParams(options.body) });
     return new Response(JSON.stringify({ id: `cs_${sessions.length}`, url: `https://checkout.stripe.com/c/pay/cs_${sessions.length}` }), { status: 200 });
@@ -40,7 +41,7 @@ async function fixture(t, { stripe = STRIPE } = {}) {
     subscriptions.set(id, { id, object: 'subscription', status, ended_at: endedAt, metadata: { vaultId, ...metadata }, items: { data: [{ current_period_end: periodEnd }] } });
     return webhook({ id: `evt_${randomUUID()}`, type: 'customer.subscription.updated', created: seconds(), data: { object: { id, object: 'subscription' } } });
   };
-  return { create: async () => (await CloudClient.create({ url, enrollmentToken, deviceName: 'Phone' })).client, webhook, stripeHas, sessions, url, dbPath: app.dbPath, seconds,
+  return { create: async () => (await CloudClient.create({ url, enrollmentToken, deviceName: 'Phone' })).client, webhook, stripeHas, sessions, cancelled, url, dbPath: app.dbPath, seconds,
     advance: (ms) => { now += ms; }, now: () => now, stripeDown: (down) => { stripeDown = down; } };
 }
 
@@ -183,4 +184,21 @@ test('without Stripe settings the server offers no checkout', async (t) => {
   assert.equal((await plan(client)).checkout, false);
   await assert.rejects(checkout(client, 'month'), (error) => error.status === 503);
   assert.equal((await fetch(`${cloud.url}/api/v1/stripe/webhook`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 503);
+});
+
+test('deleting a cloud cancels its running subscription first, and stops when Stripe cannot cancel it', async (t) => {
+  const cloud = await fixture(t);
+  const client = await cloud.create();
+  const vaultId = client.credentials.vaultId;
+  assert.equal(await cloud.stripeHas('sub_running', vaultId, { periodEnd: cloud.seconds() + 30 * 86400 }), 200);
+  assert.equal(await cloud.stripeHas('sub_old', vaultId, { status: 'canceled', periodEnd: cloud.seconds() - 86400 }), 200);
+  cloud.stripeDown(true);
+  await assert.rejects(client.call('/account/delete', 'POST', { confirm: 'DELETE MY CLOUD' }), (error) => error.status === 502);
+  assert.equal((await plan(client)).subscribed, true, 'Nothing was deleted');
+  cloud.stripeDown(false);
+  await client.call('/account/delete', 'POST', { confirm: 'DELETE MY CLOUD' });
+  assert.deepEqual(cloud.cancelled, ['sub_running']);
+  await assert.rejects(client.status(), (error) => error.status === 401);
+  const db = new DatabaseSync(cloud.dbPath, { readOnly: true });
+  try { assert.equal(db.prepare('SELECT COUNT(*) AS count FROM subscriptions').get().count, 0); } finally { db.close(); }
 });

@@ -198,6 +198,16 @@ Erics besluit: een vinkje "Email me news about JotDrop." (25 okt op Erics verzoe
 - Afmelden en de campagne zelf regelt Brevo. Privacybeleid voor de cloud (25 okt): `/privacy` op de cloudwebsite (`cloud/web/privacy.html`), gelinkt onder het inlogscherm; noemt Brevo, Amazon SES, Stripe, Google, GitHub en Cloudflare.
 - Tests: `cloud/newsletter.test.mjs`.
 
+## Account verwijderen (25 okt 2026)
+
+Erics besluit: een knop "Delete account" op website (Devices & recovery), plugin (instellingen) en Android (accountdeel).
+
+- `POST /api/v1/account/delete` (apparaat) met `confirm: "DELETE MY CLOUD"`; heeft het account een wachtwoord, dan ook `currentAuthKey` (een gestolen apparaattoken kan dan niet wissen). De clients vragen de gebruiker "DELETE" te typen.
+- Een lopend Stripe-abonnement wordt eerst opgezegd (`DELETE /v1/subscriptions/:id`); lukt dat niet, dan wordt niets gewist (`502`).
+- Daarna in één transactie weg: vault, bestanden, versies, apparaten, koppelcodes, plan, abonnementen, account, Google/GitHub-identiteiten, nieuwsbrieftoestemming, open codes en goedkeuringen. Het adres is daarna vrij voor een nieuw account.
+- Mail `account-deleted` naar het adres, en Brevo vergeet het contact (`DELETE /v3/contacts/<e-mail>`, 404 is goed). De notities op de eigen apparaten blijven; de website wist zijn eigen versleutelde kopie, plugin en Android koppelen los.
+- Tests: `cloud/accounts.test.mjs`, `cloud/billing.test.mjs`, `cloud/newsletter.test.mjs`, `npm run check:cloud-oauth` (website zonder wachtwoord).
+
 ## Wat dit ontwerp bewust NIET beschermt
 
 - **Een zwak wachtwoord.** Wie de database steelt, kan wachtwoorden proberen te raden (traag door Argon2id). Daarom minimaal 12 tekens en een waarschuwing bij veelgebruikte wachtwoorden.

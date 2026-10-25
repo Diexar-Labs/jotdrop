@@ -955,6 +955,41 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         });
         reply(200, { ok: true }); return;
       }
+      // Deletes the whole cloud and its account; the notes on the person's own devices stay. A running subscription is
+      // cancelled first, so nobody keeps paying for a deleted cloud; if Stripe cannot cancel it, nothing is deleted.
+      if (route === '/account/delete' && method === 'POST') {
+        limit(`delete:${vaultId}`, 5);
+        const value = await body(req, MAX_METADATA_BODY);
+        requireValue(value.confirm === 'DELETE MY CLOUD', 'Confirm deleting the cloud');
+        const account = one('SELECT * FROM accounts WHERE vaultId=?', vaultId);
+        // With a password, a stolen device token cannot delete the owner's cloud.
+        if (account?.authHash) await requirePassword(account, value.currentAuthKey);
+        for (const { subscriptionId } of all(`SELECT subscriptionId FROM subscriptions WHERE vaultId=? AND status IN (${RUNNING.map(() => '?').join(',')})`, vaultId, ...RUNNING)) {
+          let cancelled = false;
+          try {
+            const response = await stripeCall(`/subscriptions/${subscriptionId}`, { method: 'DELETE' });
+            cancelled = response.ok || response.status === 404;
+            await response.body?.cancel();
+          } catch { cancelled = false; }
+          if (!cancelled) fail(502, 'Could not cancel JotDrop Plus. Try again later, or cancel it at link.com first.');
+        }
+        transaction(() => {
+          requireActiveDevice(vaultId, deviceId);
+          if (account) {
+            for (const table of ['identities', 'newsletter', 'login_challenges', 'resets', 'device_approvals']) run(`DELETE FROM ${table} WHERE accountId=?`, account.id);
+            run('DELETE FROM code_failures WHERE scope IN (?,?,?)', `login:${account.id}`, `reset:${account.id}`, `signup:${account.email}`);
+            run('DELETE FROM accounts WHERE id=?', account.id);
+          }
+          for (const table of ['uploads', 'pairings', 'revisions', 'envelopes', 'changes', 'signups', 'devices', 'plans', 'subscriptions']) run(`DELETE FROM ${table} WHERE vaultId=?`, vaultId);
+          run('DELETE FROM vaults WHERE id=?', vaultId);
+        });
+        if (account) {
+          sendMailLater({ to: account.email, kind: 'account-deleted' });
+          if (newsletter?.remove) void Promise.resolve().then(() => newsletter.remove(account.email))
+            .catch((error) => console.warn(`Could not remove a deleted account from the mailing list: ${error.message}`));
+        }
+        reply(200, { deleted: true }); return;
+      }
       if (route === '/recovery' && method === 'POST') {
         limit(`recovery:${vaultId}`, 5);
         const value = await body(req, MAX_METADATA_BODY);

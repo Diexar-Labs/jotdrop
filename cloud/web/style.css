@@ -215,6 +215,12 @@ dialog::backdrop { background: rgb(15 23 36 / .4); }
 .markdown-help .help-quote { border-left: 3px solid var(--line); padding-left: .5rem; color: var(--muted); }
 .editor-tools button[aria-expanded="true"] { background: var(--selected); border-color: var(--accent); }
 .provider-buttons { display: grid; gap: .5rem; margin: 1rem 0 .25rem; }
-.provider-buttons button { width: 100%; }
+.provider-buttons button { width: 100%; display: flex; align-items: center; justify-content: center; gap: .65rem; }
+/* The providers' own button colours (Google: light or dark neutral; GitHub: near black), each with its logo and name. */
+.provider-buttons [data-provider="google"] { background: light-dark(#fff, #131314); color: light-dark(#1f1f1f, #e3e3e3); border-color: light-dark(#747775, #8e918f); }
+.provider-buttons [data-provider="google"]:hover { background: light-dark(#f2f2f2, #2a2a2c); }
+.provider-buttons [data-provider="github"] { background: #24292f; color: #fff; border-color: light-dark(#24292f, #6e7681); }
+.provider-buttons [data-provider="github"]:hover { background: #32383f; }
+.provider-logo { width: 1.15rem; height: 1.15rem; flex: none; }
 .provider-or { margin: .5rem 0 0; text-align: center; color: var(--muted); font-size: .9rem; }
 #provider-step textarea { width: 100%; }
