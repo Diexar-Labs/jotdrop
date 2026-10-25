@@ -125,6 +125,9 @@ private fun CodeField(value: String, onChange: (String) -> Unit, enabled: Boolea
 }
 
 /** The whole row toggles, not only the small box. */
+// Off unless the person ticks it, like on the website and in Obsidian.
+private const val NEWSLETTER_LABEL = "Email me news about JotDrop Cloud. A few emails, sent with Brevo; unsubscribe in any of them."
+
 @Composable
 private fun CheckRow(checked: Boolean, onChange: (Boolean) -> Unit, label: String, enabled: Boolean = true) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
@@ -153,6 +156,7 @@ internal fun CloudSignIn(busy: Boolean, run: (suspend () -> Unit) -> Unit, showE
     var recovery by remember { mutableStateOf("") }
     var route by rememberSaveable { mutableStateOf("approve") }
     var understood by remember { mutableStateOf(false) }
+    var newsletter by rememberSaveable { mutableStateOf(false) }
     fun startAgain() { flow.clear(); password = ""; confirm = ""; code = ""; recovery = ""; understood = false }
     val serverField: @Composable () -> Unit = {
         OutlinedTextField(server, { if (it.length <= 200) server = it.trim() }, label = { Text("Server") }, singleLine = true, enabled = !busy,
@@ -248,8 +252,9 @@ internal fun CloudSignIn(busy: Boolean, run: (suspend () -> Unit) -> Unit, showE
                 PasswordField(password, { password = it }, "Password (at least 12 characters)", !busy)
                 PasswordField(confirm, { confirm = it }, "Repeat password", !busy)
                 if (password.isNotEmpty()) Problem(newPasswordProblem(password, confirm))
+                CheckRow(newsletter, { newsletter = it }, NEWSLETTER_LABEL, !busy)
                 serverField()
-                Button(onClick = { run { flow.signup = io { CloudAccount.signUp(server, email, password, cloudDeviceName()) }; password = ""; confirm = "" } },
+                Button(onClick = { run { flow.signup = io { CloudAccount.signUp(server, email, password, cloudDeviceName(), newsletter) }; password = ""; confirm = "" } },
                     enabled = !busy && email.contains('@') && newPasswordProblem(password, confirm) == null) { Text("Create account") }
                 TextButton(onClick = { mode = "signin" }, enabled = !busy) { Text("I already have an account") }
             }
@@ -335,6 +340,7 @@ internal fun CloudAccountSection(busy: Boolean, run: (suspend () -> Unit) -> Uni
     var password by remember { mutableStateOf("") }
     var current by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf("") }
+    var newsletter by rememberSaveable { mutableStateOf(false) }
     var code by remember { mutableStateOf("") }
     var changing by rememberSaveable { mutableStateOf(false) }
     var signOutOthers by rememberSaveable { mutableStateOf(false) }
@@ -373,7 +379,8 @@ internal fun CloudAccountSection(busy: Boolean, run: (suspend () -> Unit) -> Uni
                 PasswordField(password, { password = it }, "Password (at least 12 characters)", !busy)
                 PasswordField(confirm, { confirm = it }, "Repeat password", !busy)
                 if (password.isNotEmpty()) Problem(newPasswordProblem(password, confirm))
-                Button(onClick = { run { val client = cloud(); flow.attach = io { CloudAccount.attachAccount(client, newEmail, password) }; password = ""; confirm = "" } },
+                CheckRow(newsletter, { newsletter = it }, NEWSLETTER_LABEL, !busy)
+                Button(onClick = { run { val client = cloud(); flow.attach = io { CloudAccount.attachAccount(client, newEmail, password, newsletter) }; password = ""; confirm = "" } },
                     enabled = !busy && newEmail.contains('@') && newPasswordProblem(password, confirm) == null) { Text("Add email sign-in") }
             }
             else -> {

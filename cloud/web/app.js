@@ -1508,7 +1508,7 @@ accessForm('login-form', async () => {
 accessForm('signup-form', async () => {
   const password = $('signup-password').value;
   if (password !== $('signup-confirm').value) throw new Error('The passwords do not match.');
-  askCode('signup', await signUp({ url: location.origin, email: $('signup-email').value.trim(), password, deviceName: DEVICE_NAME }), password, $('signup-remember').checked);
+  askCode('signup', await signUp({ url: location.origin, email: $('signup-email').value.trim(), password, deviceName: DEVICE_NAME, newsletter: $('signup-newsletter').checked }), password, $('signup-remember').checked);
 });
 accessForm('code-form', async () => {
   const step = codeStep, code = $('code-input').value.trim();
@@ -1614,7 +1614,7 @@ function providerAction(id, action) {
 }
 const providerAccess = () => ({ remember: $('provider-remember').checked });
 providerAction('provider-create', async () => {
-  const { client: connected, recoveryCode } = await providerSignUp(providerSignIn, { deviceName: DEVICE_NAME });
+  const { client: connected, recoveryCode } = await providerSignUp(providerSignIn, { deviceName: DEVICE_NAME, newsletter: $('provider-newsletter').checked });
   providerSignIn = undefined;
   await finishAccess(connected, { ...providerAccess(), recoveryCode });
 });
@@ -1687,7 +1687,7 @@ function workspaceForm(id, action) {
 workspaceForm('attach-form', async () => {
   const password = $('attach-password').value;
   if (password !== $('attach-confirm').value) throw new Error('The passwords do not match.');
-  attaching = await attachAccount(client, { email: $('attach-email').value.trim(), password });
+  attaching = await attachAccount(client, { email: $('attach-email').value.trim(), password, newsletter: $('attach-newsletter').checked });
   $('attach-password').value = $('attach-confirm').value = '';
   message('We emailed you a code to confirm the address.');
   await renderAccount();

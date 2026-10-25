@@ -5,7 +5,7 @@ import { mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
-import { createSesMailer } from './mailer.mjs';
+import { createBrevoList, createSesMailer } from './mailer.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const MAX_BODY = 12 * 1024 * 1024;
@@ -131,9 +131,11 @@ async function body(req, maximum = MAX_BODY) {
 }
 
 /** Loopback-only server behind a trusted HTTPS proxy. Accounts need a mailer; no billing or provider credentials. `quotaBytes` and `freeDeviceLimit` are the free plan's limits. */
-export async function createCloudServer({ dataDir, enrollmentToken, mailer, serverKey, stripe, oauth = {}, fetcher = globalThis.fetch, quotaBytes = 250 * 1024 * 1024, plusQuotaBytes = 10 * 1024 * 1024 * 1024, freeDeviceLimit = 2, maxHistoryEntries = 100000, maxDeviceEntries = 1000, maxPairingEntries = 128, maxConcurrentRequests = 16, webRoot = join(directory, 'web'), corsOrigins = [], publicOrigin, port = 0, enrollmentLimit = 1, clock = Date.now }) {
+export async function createCloudServer({ dataDir, enrollmentToken, mailer, newsletter, serverKey, stripe, oauth = {}, fetcher = globalThis.fetch, quotaBytes = 250 * 1024 * 1024, plusQuotaBytes = 10 * 1024 * 1024 * 1024, freeDeviceLimit = 2, maxHistoryEntries = 100000, maxDeviceEntries = 1000, maxPairingEntries = 128, maxConcurrentRequests = 16, webRoot = join(directory, 'web'), corsOrigins = [], publicOrigin, port = 0, enrollmentLimit = 1, clock = Date.now }) {
   if (!dataDir || (enrollmentToken !== undefined && !validToken(enrollmentToken)) || [quotaBytes, plusQuotaBytes, freeDeviceLimit].some((value) => !Number.isSafeInteger(value) || value < 1)) throw new Error('Provide a data directory, random 32-byte enrollment token and positive quota.');
   if (mailer !== undefined && typeof mailer !== 'function') throw new Error('Provide the mailer as a function.');
+  // `newsletter(email)` adds someone who ticked "Email me news about JotDrop Cloud" to the mailing list (Brevo).
+  if (newsletter !== undefined && typeof newsletter !== 'function') throw new Error('Provide the newsletter as a function.');
   if (serverKey !== undefined && !validToken(serverKey)) throw new Error('Provide the server key as 32 random bytes.');
   // JotDrop Plus is sold through Stripe Managed Payments (Stripe is the seller and handles VAT); without settings there is no checkout.
   if (stripe !== undefined && !['secretKey', 'webhookSecret', 'monthPrice', 'yearPrice'].every((name) => typeof stripe[name] === 'string' && stripe[name].length > 0)) throw new Error('Provide the Stripe secret key, webhook secret and both prices.');
@@ -196,7 +198,10 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
         CREATE INDEX IF NOT EXISTS envelopes_size ON envelopes(vaultId,size);
         CREATE TABLE IF NOT EXISTS identities(provider TEXT NOT NULL, subject TEXT NOT NULL, accountId TEXT NOT NULL REFERENCES accounts(id), createdAt TEXT NOT NULL, PRIMARY KEY(provider,subject));
         CREATE TABLE IF NOT EXISTS oauth_states(id TEXT PRIMARY KEY, provider TEXT NOT NULL, client TEXT NOT NULL, challenge TEXT NOT NULL, expiresAt INTEGER NOT NULL);
-        CREATE TABLE IF NOT EXISTS oauth_tickets(id TEXT PRIMARY KEY, provider TEXT NOT NULL, subject TEXT NOT NULL, email TEXT NOT NULL, challenge TEXT NOT NULL, expiresAt INTEGER NOT NULL);`);
+        CREATE TABLE IF NOT EXISTS oauth_tickets(id TEXT PRIMARY KEY, provider TEXT NOT NULL, subject TEXT NOT NULL, email TEXT NOT NULL, challenge TEXT NOT NULL, expiresAt INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS newsletter(accountId TEXT PRIMARY KEY REFERENCES accounts(id), consentedAt TEXT NOT NULL, addedAt TEXT);`);
+      // The newsletter tick waits with the signup until the email address is confirmed.
+      if (!all('PRAGMA table_info(signups)').some((column) => column.name === 'newsletter')) db.exec('ALTER TABLE signups ADD COLUMN newsletter INTEGER NOT NULL DEFAULT 0;');
       run("INSERT INTO secrets VALUES('fake-salt',?) ON CONFLICT(name) DO NOTHING", randomBytes(32).toString('base64url'));
       const legacy = all('PRAGMA table_info(revisions)').some((column) => column.name === 'envelope');
       db.exec(`CREATE TABLE IF NOT EXISTS ${legacy ? 'revisions_migrated' : 'revisions'}(vaultId TEXT NOT NULL REFERENCES vaults(id), id TEXT NOT NULL, revision INTEGER NOT NULL, envelopeHash TEXT NOT NULL, deleted INTEGER NOT NULL, size INTEGER NOT NULL, updatedAt TEXT NOT NULL, deviceId TEXT NOT NULL, PRIMARY KEY(vaultId,id,revision), FOREIGN KEY(vaultId,id,envelopeHash) REFERENCES envelopes(vaultId,id,envelopeHash));`);
@@ -388,13 +393,25 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
   }
   // A taken address gets a warning mail instead of a code; the caller sees the same answer either way.
   // Each signup has its own ID, so a later signup for the same address cannot replace a pending one.
+  // The tick and its time stay here as the record of consent; the address goes to the list only after the account exists.
+  function joinNewsletter(accountId, email, now) {
+    run('INSERT INTO newsletter VALUES(?,?,NULL)', accountId, now);
+    return { accountId, email };
+  }
+  // A mailing-list failure never blocks signing up; `addedAt` stays empty, so it can be sent again later.
+  function subscribe(joined) {
+    if (!joined || !newsletter) return;
+    void Promise.resolve().then(() => newsletter(joined.email))
+      .then(() => { run('UPDATE newsletter SET addedAt=? WHERE accountId=?', new Date(clock()).toISOString(), joined.accountId); })
+      .catch((error) => console.warn(`Could not add a new account to the mailing list: ${error.message}`));
+  }
   async function startSignup(email, signup) {
     const code = newCode(), now = clock(), signupId = randomUUID();
     const taken = transaction(() => {
       run('DELETE FROM signups WHERE expiresAt<=?', now);
       if (signup.vaultId && one('SELECT id FROM accounts WHERE vaultId=?', signup.vaultId)) fail(409, 'This cloud already has an account');
       if (one('SELECT id FROM accounts WHERE email=?', email)) return true;
-      run('INSERT INTO signups VALUES(?,?,?,?,?,?,?,?,?,?,0,?)', signupId, email, signup.vaultId, signup.kdf, signup.authHash, signup.wrappedVaultKey, signup.recoveryHash, signup.deviceName, signup.deviceTokenHash, codeHash(`signup:${signupId}`, code), now + CODE_LIFETIME);
+      run('INSERT INTO signups VALUES(?,?,?,?,?,?,?,?,?,?,0,?,?)', signupId, email, signup.vaultId, signup.kdf, signup.authHash, signup.wrappedVaultKey, signup.recoveryHash, signup.deviceName, signup.deviceTokenHash, codeHash(`signup:${signupId}`, code), now + CODE_LIFETIME, signup.newsletter ? 1 : 0);
       return false;
     });
     await sendMail(taken ? { to: email, kind: 'signup-exists' } : { to: email, kind: 'verify', code });
@@ -586,7 +603,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
         requireValue(validHash(value.deviceTokenHash) && validHash(value.recoveryTokenHash), 'Invalid token hash');
         const credentials = await credentialValue(value);
         limit(`signup-email:${email}`, 3);
-        const signupId = await startSignup(email, { ...credentials, vaultId: null, recoveryHash: value.recoveryTokenHash, deviceName: value.deviceName.trim(), deviceTokenHash: value.deviceTokenHash });
+        const signupId = await startSignup(email, { ...credentials, vaultId: null, recoveryHash: value.recoveryTokenHash, deviceName: value.deviceName.trim(), deviceTokenHash: value.deviceTokenHash, newsletter: value.newsletter === true });
         reply(202, { status: 'verify-email', signupId }); return;
       }
       if (method === 'POST' && route === '/accounts/verify') {
@@ -594,6 +611,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
         limit(`code:${ip}`, 20);
         const value = await body(req, MAX_METADATA_BODY);
         requireValue(validId(value.signupId), 'Invalid signup request');
+        let joined;
         reply(201, redeem('signups', 'id', value.signupId, (signup) => `signup:${signup.email}`, emailCode(`signup:${value.signupId}`, value.code), (signup) => {
           const email = signup.email;
           if (one('SELECT id FROM accounts WHERE email=?', email)) fail(409, 'This email address already has an account');
@@ -605,10 +623,12 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
             run('INSERT INTO vaults VALUES(?,?,?)', vaultId, signup.recoveryHash, 'account');
             deviceId = addDevice(vaultId, signup.deviceName, signup.deviceTokenHash).deviceId;
           }
-          const now = new Date(clock()).toISOString();
-          run('INSERT INTO accounts(id,email,vaultId,kdf,authHash,wrappedVaultKey,createdAt,passwordChangedAt) VALUES(?,?,?,?,?,?,?,?)', randomUUID(), email, vaultId, signup.kdf, signup.authHash, signup.wrappedVaultKey, now, now);
+          const now = new Date(clock()).toISOString(), accountId = randomUUID();
+          run('INSERT INTO accounts(id,email,vaultId,kdf,authHash,wrappedVaultKey,createdAt,passwordChangedAt) VALUES(?,?,?,?,?,?,?,?)', accountId, email, vaultId, signup.kdf, signup.authHash, signup.wrappedVaultKey, now, now);
+          if (signup.newsletter) joined = joinNewsletter(accountId, email, now);
           return deviceId ? { vaultId, deviceId } : { vaultId };
-        })); return;
+        }));
+        subscribe(joined); return;
       }
       if (method === 'POST' && route === '/auth/prelogin') {
         requireAccounts();
@@ -795,6 +815,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
         const value = await body(req, MAX_METADATA_BODY);
         deviceName(value.deviceName);
         requireValue(validHash(value.deviceTokenHash) && validHash(value.recoveryTokenHash), 'Invalid token hash');
+        let joined;
         reply(201, transaction(() => {
           const ticket = oauthTicket(value);
           if (oauthAccount(ticket)) fail(409, 'This email address already has an account. Sign in to it instead.', { code: 'account-exists' });
@@ -804,8 +825,10 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
           // No password: '' never matches a login key, and "Forgot password" can add one later.
           run("INSERT INTO accounts(id,email,vaultId,kdf,authHash,wrappedVaultKey,createdAt,passwordChangedAt) VALUES(?,?,?,'','','',?,?)", accountId, ticket.email, vaultId, now, now);
           run('INSERT INTO identities VALUES(?,?,?,?)', ticket.provider, ticket.subject, accountId, now);
+          if (value.newsletter === true) joined = joinNewsletter(accountId, ticket.email, now);
           return addDevice(vaultId, value.deviceName, value.deviceTokenHash);
-        })); return;
+        }));
+        subscribe(joined); return;
       }
       if (method === 'POST' && route === '/auth/oauth/approval') {
         requireAccounts();
@@ -909,7 +932,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, serv
         const email = emailValue(value.email);
         const credentials = await credentialValue(value);
         limit(`signup-email:${email}`, 3);
-        const signupId = await startSignup(email, { ...credentials, vaultId, recoveryHash: null, deviceName: null, deviceTokenHash: null });
+        const signupId = await startSignup(email, { ...credentials, vaultId, recoveryHash: null, deviceName: null, deviceTokenHash: null, newsletter: value.newsletter === true });
         reply(202, { status: 'verify-email', signupId }); return;
       }
       if (route === '/account/password' && method === 'POST') {
@@ -1193,7 +1216,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   const env = (name) => process.env[`JOTDROP_CLOUD_STRIPE_${name}`];
   const stripe = env('SECRET_KEY') ? { secretKey: env('SECRET_KEY'), webhookSecret: env('WEBHOOK_SECRET'), monthPrice: env('PRICE_MONTH'), yearPrice: env('PRICE_YEAR'), founderYearPrice: env('PRICE_FOUNDER_YEAR') || undefined } : undefined;
   const provider = (name) => process.env[`JOTDROP_CLOUD_${name}_CLIENT_ID`] ? { clientId: process.env[`JOTDROP_CLOUD_${name}_CLIENT_ID`], clientSecret: process.env[`JOTDROP_CLOUD_${name}_CLIENT_SECRET`] } : undefined;
-  const app = await createCloudServer({ dataDir: process.env.JOTDROP_CLOUD_DATA_DIR, enrollmentToken, mailer, serverKey, stripe, oauth: { google: provider('GOOGLE'), github: provider('GITHUB') }, maxHistoryEntries: Number(process.env.JOTDROP_CLOUD_MAX_HISTORY_ENTRIES ?? 100000), maxDeviceEntries: Number(process.env.JOTDROP_CLOUD_MAX_DEVICE_ENTRIES ?? 1000), maxPairingEntries: Number(process.env.JOTDROP_CLOUD_MAX_PAIRING_ENTRIES ?? 128), maxConcurrentRequests: Number(process.env.JOTDROP_CLOUD_MAX_CONCURRENT_REQUESTS ?? 16), publicOrigin: process.env.JOTDROP_CLOUD_PUBLIC_ORIGIN, port: Number(process.env.JOTDROP_CLOUD_PORT || 8787), corsOrigins: (process.env.JOTDROP_CLOUD_CORS_ORIGINS || '').split(',').map((entry) => entry.trim()).filter(Boolean) });
+  // Without Brevo settings the tick is still recorded, and nobody is added to a list.
+  const newsletter = process.env.JOTDROP_CLOUD_BREVO_API_KEY ? createBrevoList({ apiKey: process.env.JOTDROP_CLOUD_BREVO_API_KEY, listId: Number(process.env.JOTDROP_CLOUD_BREVO_LIST_ID) }) : undefined;
+  const app = await createCloudServer({ dataDir: process.env.JOTDROP_CLOUD_DATA_DIR, enrollmentToken, mailer, newsletter, serverKey, stripe, oauth: { google: provider('GOOGLE'), github: provider('GITHUB') }, maxHistoryEntries: Number(process.env.JOTDROP_CLOUD_MAX_HISTORY_ENTRIES ?? 100000), maxDeviceEntries: Number(process.env.JOTDROP_CLOUD_MAX_DEVICE_ENTRIES ?? 1000), maxPairingEntries: Number(process.env.JOTDROP_CLOUD_MAX_PAIRING_ENTRIES ?? 128), maxConcurrentRequests: Number(process.env.JOTDROP_CLOUD_MAX_CONCURRENT_REQUESTS ?? 16), publicOrigin: process.env.JOTDROP_CLOUD_PUBLIC_ORIGIN, port: Number(process.env.JOTDROP_CLOUD_PORT || 8787), corsOrigins: (process.env.JOTDROP_CLOUD_CORS_ORIGINS || '').split(',').map((entry) => entry.trim()).filter(Boolean) });
   console.log(`Local cloud preview: http://127.0.0.1:${app.port}. Test data only, not production.`);
   if (!process.env.JOTDROP_CLOUD_ENROLLMENT_TOKEN) console.log(`Single-use local enrollment token: ${enrollmentToken}`);
   for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { void app.close().then(() => process.exit(0)); });

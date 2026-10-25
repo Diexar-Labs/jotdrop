@@ -782,6 +782,11 @@ class CloudSignInModal extends Modal {
     new Setting(el).setName(name).setDesc(desc).addText((input) => { input.inputEl.type = type; input.inputEl.autocomplete = autocomplete; input.onChange(set); });
   }
 
+  /** Off unless the person turns it on, like on the website. */
+  private newsletter(el: HTMLElement, set: (value: boolean) => void): void {
+    new Setting(el).setName("Email me news about JotDrop Cloud").setDesc("A few emails, sent with Brevo; unsubscribe in any of them.").addToggle((toggle) => toggle.setValue(false).onChange(set));
+  }
+
   /** At the free device limit this device takes the place of one the person no longer uses; `connect` repeats the step. */
   private async withDeviceChoice(choices: HTMLElement, connect: (replaceDeviceId?: string) => Promise<void>): Promise<void> {
     try { await connect(); }
@@ -813,10 +818,11 @@ class CloudSignInModal extends Modal {
       })));
       providers.createEl("p", { text: "Or with email and password:" });
     }, () => {});
-    let email = "", password = "", confirm = "";
+    let email = "", password = "", confirm = "", newsletter = false;
     this.field(el, "Email", "email", "email", (value) => { email = value.trim(); });
     this.field(el, "Password", "password", this.signup ? "new-password" : "current-password", (value) => { password = value; }, this.signup ? "At least 12 characters." : "");
     if (this.signup) this.field(el, "Repeat password", "password", "new-password", (value) => { confirm = value; });
+    if (this.signup) this.newsletter(el, (value) => { newsletter = value; });
     this.message = el.createEl("p", { attr: { role: "status" } });
     const actions = new Setting(el);
     if (!this.signup) actions.addButton((button) => button.setButtonText("Forgot password?").onClick(() => this.forgot(email)));
@@ -825,7 +831,7 @@ class CloudSignInModal extends Modal {
       .addButton((button) => button.setButtonText(this.signup ? "Create account" : "Log in").setCta().onClick(() => this.busy(button.buttonEl, async () => {
         if (this.signup && password !== confirm) throw new Error("The passwords do not match.");
         const pending = this.signup
-          ? await signUp({ url: this.url, email, password, deviceName: deviceName(), fetcher: cloudFetch })
+          ? await signUp({ url: this.url, email, password, deviceName: deviceName(), newsletter, fetcher: cloudFetch })
           : await logIn({ url: this.url, email, password, deviceName: deviceName(), fetcher: cloudFetch });
         this.code(pending as Pending, email);
       })));
@@ -846,8 +852,10 @@ class CloudSignInModal extends Modal {
     const choices = createDiv();
     if (!signIn.account) {
       el.createEl("p", { text: "Your notes are encrypted on this device before they leave it. You get a recovery code: keep it safe, it opens your notes if you lose your devices." });
+      let newsletter = false;
+      this.newsletter(el, (value) => { newsletter = value; });
       new Setting(el).addButton((button) => button.setButtonText("Create my JotDrop cloud").setCta().onClick(() => this.busy(button.buttonEl, async () => {
-        const { client, recoveryCode } = await providerSignUp(signIn, options, { fetcher: cloudFetch });
+        const { client, recoveryCode } = await providerSignUp(signIn, { ...options, newsletter }, { fetcher: cloudFetch });
         await this.cloud.finishSignIn(client, signIn.email);
         this.done(recoveryCode);
       })));

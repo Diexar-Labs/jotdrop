@@ -188,6 +188,16 @@ Eric koos "Google + goedkeuren" en voegde GitHub toe. Google of GitHub bewijst a
 
 **Bouwstand:** server, gedeelde client (`cloud/shared/account.mjs`) en website gebouwd; OAuth-apps geregistreerd en op staging (24 okt). Plugin: knoppen in het inlogvenster, de `verifier` wacht in de IndexedDB van deze vault, de browser springt terug naar `obsidian://jotdrop-cloud?oauth=<ticket>` (handler in `CloudController.register`); daarna nieuw account, goedkeuren of herstelcode zoals op de website. Een terugsprong in een andere vault vindt geen `verifier` en vraagt opnieuw te beginnen. Zonder wachtwoord verbergt de plugin "Change password" en "Make a new recovery code" en legt uit hoe je een wachtwoord toevoegt. Test: `cloud/plugin.test.mjs`. Nog te doen: Android.
 
+## Nieuws per e-mail (Brevo, 24 okt 2026)
+
+Erics besluit: een vinkje "Email me news about JotDrop Cloud", standaard uit, bij elke aanmelding (e-mail, Google/GitHub, account voor een bestaande cloud; website, plugin en Android). Alleen wie het aanvinkt, komt op de lijst; dat past bij de AVG en de Spaanse LSSI (toestemming vooraf, afmelden in elke mail via Brevo).
+
+- Het vinkje reist mee met de aanmelding (`newsletter: true`). Bij e-mail wacht het in `signups` tot het adres bevestigd is.
+- Zodra het account bestaat, schrijft de server `newsletter(accountId, consentedAt, addedAt)` als bewijs van toestemming en zet daarna het adres via de Brevo-API (`POST /v3/contacts`, `listIds`, `updateEnabled`) op de lijst. Lukt dat niet, dan gaat de aanmelding gewoon door; `addedAt` blijft leeg en de log noemt het adres niet.
+- Server-instellingen: `JOTDROP_CLOUD_BREVO_API_KEY` en `JOTDROP_CLOUD_BREVO_LIST_ID`. Zonder sleutel wordt het vinkje wel bewaard, maar niemand doorgestuurd.
+- Afmelden en de campagne zelf regelt Brevo. Nog nodig voor livegang: een privacybeleid voor de cloud waarin Brevo als verwerker staat.
+- Tests: `cloud/newsletter.test.mjs`.
+
 ## Wat dit ontwerp bewust NIET beschermt
 
 - **Een zwak wachtwoord.** Wie de database steelt, kan wachtwoorden proberen te raden (traag door Argon2id). Daarom minimaal 12 tekens en een waarschuwing bij veelgebruikte wachtwoorden.

@@ -63,18 +63,18 @@ object CloudAccount {
     }
 
     /** Starts a new account and cloud; the server mails a code to confirm the address. */
-    fun signUp(url: String, email: String, password: String, deviceName: String): CloudSignup {
+    fun signUp(url: String, email: String, password: String, deviceName: String, newsletter: Boolean = false): CloudSignup {
         val vaultKey = CloudCrypto.token()
         val recoveryToken = CloudCrypto.token()
         val (deviceToken, fields) = device(deviceName)
-        val body = JSONObject().put("email", email.trim()).with(credentials(password, vaultKey)).put("recoveryTokenHash", CloudCrypto.hashToken(recoveryToken)).with(fields)
+        val body = JSONObject().put("email", email.trim()).with(credentials(password, vaultKey)).put("recoveryTokenHash", CloudCrypto.hashToken(recoveryToken)).with(fields).put("newsletter", newsletter)
         val result = post(origin(url), "/accounts", body)
         return CloudSignup(origin(url), id(result.getString("signupId")), null, vaultKey, recoveryToken, deviceToken)
     }
 
     /** Gives the cloud this device is already connected to an account. Confirm with confirmSignup. */
-    fun attachAccount(client: CloudClient, email: String, password: String): CloudSignup {
-        val result = client.call("/account", "POST", JSONObject().put("email", email.trim()).with(credentials(password, client.credentials.vaultKey)))
+    fun attachAccount(client: CloudClient, email: String, password: String, newsletter: Boolean = false): CloudSignup {
+        val result = client.call("/account", "POST", JSONObject().put("email", email.trim()).with(credentials(password, client.credentials.vaultKey)).put("newsletter", newsletter))
         return CloudSignup(client.credentials.url, id(result.getString("signupId")), client.credentials.vaultId, null, null, null)
     }
 

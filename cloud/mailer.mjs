@@ -34,6 +34,18 @@ export function mailText({ kind, code, provider }) {
   return { subject, body: body + footer };
 }
 
+/** Adds someone who ticked "Email me news about JotDrop Cloud" to a Brevo contact list; Brevo handles unsubscribing. */
+export function createBrevoList({ apiKey, listId, fetcher = globalThis.fetch }) {
+  if (typeof apiKey !== 'string' || !apiKey || !Number.isSafeInteger(listId) || listId < 1) throw new Error('Provide the Brevo API key and list ID.');
+  return async (email) => {
+    const body = JSON.stringify({ email, listIds: [listId], updateEnabled: true });
+    const response = await fetcher('https://api.brevo.com/v3/contacts', { method: 'POST', headers: { 'api-key': apiKey, 'content-type': 'application/json', accept: 'application/json' }, body, signal: AbortSignal.timeout(10000) });
+    await response.body?.cancel();
+    // The reason stays out of the error: it can repeat the address.
+    if (!response.ok) throw new Error(`Brevo refused the contact (${response.status}).`);
+  };
+}
+
 /** Sends the server's mail through the Amazon SES v2 API. `from` is a verified sender, for example "JotDrop <noreply@jotdrop.net>". */
 export function createSesMailer({ region, accessKeyId, secretAccessKey, from, fetcher = globalThis.fetch, clock = Date.now }) {
   if (![region, accessKeyId, secretAccessKey, from].every((value) => typeof value === 'string' && value.length > 0) || !/^[a-z]{2}-[a-z]+-\d$/.test(region)) throw new Error('Provide the SES region, access key, secret key and sender address.');

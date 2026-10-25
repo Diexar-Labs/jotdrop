@@ -49,16 +49,16 @@ async function newDevice(deviceName) {
 
 const connect = (url, result, deviceToken, vaultKey, fetcher) => new CloudClient({ url, vaultId: result.vaultId, deviceId: result.deviceId, token: deviceToken, vaultKey, fetcher });
 
-/** Starts a new account and cloud; the server mails a code to confirm the address. */
-export async function signUp({ url, email, password: value, deviceName, fetcher }) {
+/** Starts a new account and cloud; the server mails a code to confirm the address. `newsletter`: the person ticked "Email me news". */
+export async function signUp({ url, email, password: value, deviceName, newsletter = false, fetcher }) {
   const vaultKey = generateVaultKey(), recoveryToken = randomToken(), device = await newDevice(deviceName);
-  const { signupId } = await post(url, '/accounts', { email, ...await newCredentials(value, vaultKey), recoveryTokenHash: await hashToken(recoveryToken), ...device.fields }, fetcher);
+  const { signupId } = await post(url, '/accounts', { email, ...await newCredentials(value, vaultKey), recoveryTokenHash: await hashToken(recoveryToken), ...device.fields, newsletter }, fetcher);
   return { url, signupId, vaultKey, recoveryToken, deviceToken: device.deviceToken };
 }
 
 /** Gives the cloud this device is already connected to an account. Confirm with confirmSignup. */
-export async function attachAccount(client, { email, password: value }) {
-  const { signupId } = await client.call('/account', 'POST', { email, ...await newCredentials(value, client.credentials.vaultKey) });
+export async function attachAccount(client, { email, password: value, newsletter = false }) {
+  const { signupId } = await client.call('/account', 'POST', { email, ...await newCredentials(value, client.credentials.vaultKey), newsletter });
   return { url: client.credentials.url, signupId, vaultId: client.credentials.vaultId };
 }
 
@@ -169,9 +169,9 @@ export async function providerTicket({ url, ticket, verifier, fetcher }) {
 }
 
 /** No account yet: a new cloud for this address, without a password. Show the recovery code. */
-export async function providerSignUp(signIn, { deviceName }, { fetcher } = {}) {
+export async function providerSignUp(signIn, { deviceName, newsletter = false }, { fetcher } = {}) {
   const vaultKey = generateVaultKey(), recoveryToken = randomToken(), device = await newDevice(deviceName);
-  const result = await post(signIn.url, '/auth/oauth/signup', { ticket: signIn.ticket, verifier: signIn.verifier, recoveryTokenHash: await hashToken(recoveryToken), ...device.fields }, fetcher);
+  const result = await post(signIn.url, '/auth/oauth/signup', { ticket: signIn.ticket, verifier: signIn.verifier, recoveryTokenHash: await hashToken(recoveryToken), ...device.fields, newsletter }, fetcher);
   return { client: connect(signIn.url, result, device.deviceToken, vaultKey, fetcher), recoveryCode: encodeRecovery({ vaultId: result.vaultId, vaultKey, recoveryToken }) };
 }
 
