@@ -1,6 +1,11 @@
 plugins {
     id("com.android.application") version "8.5.2" apply false
+    id("com.android.test") version "8.5.2" apply false
     id("org.jetbrains.kotlin.android") version "1.9.24" apply false
+    // Baseline Profile generator (see baselineprofile/build.gradle.kts). Only
+    // :app:generateBaselineProfile runs it; normal release builds just read the
+    // checked-in profile under app/src/main/generated/baselineProfiles.
+    id("androidx.baselineprofile") version "1.3.4" apply false
 }
 
 val cloudCryptoClasses = layout.buildDirectory.dir("cloud-crypto-check")

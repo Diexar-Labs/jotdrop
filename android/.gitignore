@@ -1,6 +1,7 @@
 # Gradle / build
 /build/
 /app/build/
+/baselineprofile/build/
 /.gradle/
 /captures/
 local.properties

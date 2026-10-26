@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "JotDrop"
 include(":app")
+include(":baselineprofile")
