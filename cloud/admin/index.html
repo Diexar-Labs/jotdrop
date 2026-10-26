@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex, nofollow">
+  <title>JotDrop Admin</title>
+  <link rel="stylesheet" href="/admin.css">
+  <script type="module" src="/admin.js"></script>
+</head>
+<body>
+  <!-- Read-only owner dashboard: counts and account metadata, never note content or keys.
+       Every value is written as text, so nothing depends on telling colors apart. -->
+  <header class="top">
+    <div class="wordmark"><span class="brand-mark" aria-hidden="true">J</span> JotDrop <span>Admin</span></div>
+    <button id="log-out" type="button" hidden>Log out</button>
+  </header>
+  <section id="login" class="access" aria-labelledby="login-title" hidden>
+    <h1 id="login-title">Owner sign-in</h1>
+    <p>Read-only overview of JotDrop Cloud. Sign in with the admin password and the 6-digit code from your authenticator app.</p>
+    <form id="login-form">
+      <label for="password">Admin password</label>
+      <input id="password" type="password" autocomplete="current-password" required>
+      <label for="code">6-digit code</label>
+      <input id="code" type="text" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required>
+      <button class="primary" type="submit">Sign in</button>
+    </form>
+    <p id="login-message" class="message" role="alert"></p>
+  </section>
+  <main id="dashboard" hidden>
+    <div class="heading">
+      <h1>Overview</h1>
+      <p id="generated" class="muted"></p>
+    </div>
+    <dl id="tiles" class="tiles"></dl>
+    <h2>Accounts</h2>
+    <form id="search-form" class="toolbar" role="search">
+      <label class="hidden-label" for="search">Search by email</label>
+      <input id="search" type="search" placeholder="Search by email" autocomplete="off" maxlength="254">
+      <span class="sort"><label class="inline-label" for="sort">Sort by</label>
+      <select id="sort">
+        <option value="created:desc">Newest first</option>
+        <option value="created:asc">Oldest first</option>
+        <option value="email:asc">Email A to Z</option>
+        <option value="storage:desc">Most storage</option>
+        <option value="active:desc">Last active</option>
+      </select></span>
+      <button type="submit">Search</button>
+    </form>
+    <p id="list-status" class="muted" role="status"></p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th scope="col">Email</th><th scope="col">Created</th><th scope="col">Sign-in</th><th scope="col">Plan</th><th scope="col">Storage</th><th scope="col">Devices</th><th scope="col">Last active</th><th scope="col">News</th></tr></thead>
+        <tbody id="accounts"></tbody>
+      </table>
+    </div>
+    <div class="pager">
+      <button id="previous" type="button">Previous page</button>
+      <button id="next" type="button">Next page</button>
+    </div>
+    <p id="dashboard-message" class="message" role="alert"></p>
+  </main>
+</body>
+</html>

@@ -1,0 +1,49 @@
+/* The same tokens as cloud/web/style.css. */
+:root { color-scheme: light dark; --page: light-dark(#f8f9fa, #191c21); --surface: light-dark(#fff, #23272e); --ink: light-dark(#20242b, #eef1f5); --muted: light-dark(#515d6d, #b4becc); --line: light-dark(#d8dee6, #444c58); --accent: light-dark(#315fb4, #9abaff); --accent-hover: light-dark(#264b91, #b6cdff); --on-accent: light-dark(#fff, #172b50); --selected: light-dark(#e7eefb, #2b3950); --danger: light-dark(#a32929, #ffa7a7); --focus: light-dark(#315fb4, #aecaff); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; padding: 0 1rem 3rem; color: var(--ink); background: var(--page); font-size: 15px; line-height: 1.55; }
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; padding: .65rem .9rem; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font-weight: 600; }
+button:hover { background: var(--selected); }
+button:disabled { opacity: .55; cursor: not-allowed; }
+button.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+button.primary:hover { background: var(--accent-hover); }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+input, select { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: .7rem; background: var(--surface); }
+label { display: block; margin: 1rem 0 .35rem; font-weight: 600; }
+h1, h2 { line-height: 1.2; }
+h1 { font-size: 1.8rem; font-weight: 650; letter-spacing: -.025em; margin: 0; }
+h2 { font-size: 1.25rem; margin-top: 2rem; }
+.muted { color: var(--muted); }
+.top { display: flex; align-items: center; justify-content: space-between; gap: 1rem; max-width: 1200px; margin: 0 auto; padding: 1rem 0; }
+.wordmark { display: flex; align-items: center; gap: .55rem; font-size: 1.25rem; font-weight: 650; white-space: nowrap; }
+.wordmark > span:last-child { font-size: .8rem; color: var(--muted); font-weight: 500; }
+.brand-mark { width: 30px; height: 34px; border-radius: 5px 5px 11px 5px; display: grid; place-items: center; background: #f4c458; color: #3a2d0a; font-size: 1.2rem; }
+.access { max-width: 490px; margin: 6vh auto; }
+.access p { color: var(--muted); }
+.access form button { margin-top: 1.2rem; width: 100%; }
+/* Errors carry a written "Error:" prefix, not only the red color. */
+.message, .access .message { color: var(--danger); min-height: 1.5em; margin: 1rem 0; font-weight: 600; }
+main { max-width: 1200px; margin: 0 auto; }
+.heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: .5rem 1rem; margin: 1.5rem 0 1rem; }
+.heading p { margin: 0; font-size: .9rem; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 140px), 1fr)); gap: .8rem; margin: 0; }
+.tiles div { padding: 1rem; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.tiles dt { color: var(--muted); font-size: .85rem; font-weight: 600; }
+.tiles dd { margin: .3rem 0 0; font-size: 1.5rem; font-weight: 650; overflow-wrap: anywhere; }
+.tiles dd small { display: block; color: var(--muted); font-size: .8rem; font-weight: 500; }
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; }
+.toolbar input[type="search"] { flex: 1 1 240px; width: auto; }
+.sort { display: flex; align-items: center; gap: .5rem; }
+.toolbar select { width: auto; }
+.inline-label { margin: 0; }
+.hidden-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+th, td { padding: .55rem .7rem; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { color: var(--muted); font-size: .8rem; font-weight: 650; }
+tbody tr:last-child td { border-bottom: 0; }
+td.email { white-space: normal; overflow-wrap: anywhere; min-width: 14rem; font-weight: 600; }
+td small { display: block; color: var(--muted); }
+.pager { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: 1rem; }

@@ -209,6 +209,20 @@ Erics besluit: een knop "Delete account" op website (Devices & recovery), plugin
 - Mail `account-deleted` naar het adres, en Brevo vergeet het contact (`DELETE /v3/contacts/<e-mail>`, 404 is goed). De notities op de eigen apparaten blijven; de website wist zijn eigen versleutelde kopie, plugin en Android koppelen los.
 - Tests: `cloud/accounts.test.mjs`, `cloud/billing.test.mjs`, `cloud/newsletter.test.mjs`, `npm run check:cloud-oauth` (website zonder wachtwoord).
 
+## Beheerdashboard (26 okt 2026)
+
+Een alleen-lezen overzicht voor de eigenaar op `https://admin.jotdrop.net`: aantallen en accountgegevens, nooit notities, enveloppen, sleutels, hashes, tokens of authenticatorgeheimen.
+
+- **Eigen host.** Caddy stuurt `admin.jotdrop.net` naar dezelfde poort (`127.0.0.1:8787`) en laat alleen Erics IP-adres door (de rest krijgt 403). De server kent de host via `JOTDROP_CLOUD_ADMIN_ORIGIN`. Op die host antwoordt alleen het dashboard (`/`, `/admin.js`, `/admin.css`, `/api/admin/*`); de app en `/api/v1/*` geven daar 404. Omgekeerd geven de dashboardroutes op `app.jotdrop.net`, `api.jotdrop.net` en loopback 404. `X-JotDrop-Client-IP` wordt ook voor de adminhost vertrouwd (alleen vanaf loopback), zodat de limieten per bezoeker tellen.
+- **Inloggen met drie sloten.** (1) IP-slot in Caddy, (2) wachtwoord, alleen als Argon2id-hash in `JOTDROP_CLOUD_ADMIN_PASSWORD_HASH` (vorm `argon2id:m=65536,t=3,p=1:<salt>:<hash>`, zonder `$` zodat env-bestanden en shells hem heel laten), (3) een 6-cijferige code uit een authenticator-app (RFC 6238, 30 seconden) met het base32-geheim in `JOTDROP_CLOUD_ADMIN_TOTP_SECRET`. Een gebruikte code werkt niet nog eens, ook niet na een herstart (de laatste stap staat in de tabel `secrets`).
+- **Remmen.** 5 pogingen per minuut per adres; na 10 foute pogingen 15 minuten dicht voor iedereen. Wachtwoord en code worden altijd allebei gecontroleerd (constante tijd), en elke fout krijgt hetzelfde antwoord: "Invalid password or code."
+- **Sessie.** Willekeurig token van 32 bytes in de cookie `__Host-jotdrop_admin` (`HttpOnly; Secure; SameSite=Strict; Path=/`); de server bewaart alleen de hash, in het geheugen. Maximaal 8 uur, en 30 minuten zonder gebruik is uitgelogd. Een herstart logt uit. Inloggen en uitloggen moeten precies de adminorigin als `Origin` meesturen.
+- **Uit tenzij compleet.** Zonder alle drie de instellingen bestaat het dashboard niet (alles 404, en zonder origin is de host onbekend: 403). Een half ingevuld trio geeft een waarschuwing in de log; een ongeldige hash of een te kort geheim stopt de start.
+- **Wat het laat zien.** Tegels: accounts, nieuw in de laatste 7 en 30 dagen, Plus (waarvan betalend) en gratis, oprichtersplaatsen (dezelfde telling als `founderPrice`, van de limiet), opgeslagen versleutelde bytes, grootte van het databasebestand, vrije en totale schijfruimte (`statfs` op de datamap). Tabel: e-mail, aanmaakdatum, inlogmethodes (wachtwoord ja/nee, Google/GitHub, authenticator aan), plan met einddatum en of er betaald wordt, opslag van quotum, actieve apparaten, laatst actief (laatste `lastSeenAt` van alle apparaten), nieuwsbrief ja/nee. Zoeken op een stukje e-mail en sorteren gebeurt op de server, 500 per pagina.
+- **Instellen.** `node cloud/admin-setup.mjs` vraagt het wachtwoord twee keer (niet zichtbaar), maakt een nieuw geheim en print de drie env-regels plus een `otpauth://`-link. De repo heeft geen QR-bibliotheek: het geheim gaat met de hand in de authenticator-app, of via de link op de telefoon. Wachtwoord en geheim in KeePassXC.
+- **Pagina.** `cloud/admin/` (HTML, JS, CSS, zonder externe bronnen, eigen strenge CSP met `form-action 'none'`), dezelfde kleurtokens als de webapp, werkt op telefoonbreedte. Alles staat er als tekst (geen betekenis alleen via kleur).
+- Tests: `cloud/admin.test.mjs`.
+
 ## Wat dit ontwerp bewust NIET beschermt
 
 - **Een zwak wachtwoord.** Wie de database steelt, kan wachtwoorden proberen te raden (traag door Argon2id). Daarom minimaal 12 tekens en een waarschuwing bij veelgebruikte wachtwoorden.

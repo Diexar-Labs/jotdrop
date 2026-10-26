@@ -1,7 +1,7 @@
 import http from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import { argon2, createCipheriv, createDecipheriv, createHash, createHmac, createPublicKey, hkdfSync, randomBytes, randomInt, randomUUID, timingSafeEqual, verify } from 'node:crypto';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, statSync, statfsSync } from 'node:fs';
 import { isIP } from 'node:net';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -64,6 +64,14 @@ const sqliteCode = (error) => error.code === 'ERR_SQLITE_ERROR' ? error.errcode 
 const deviceName = (value) => requireValue(typeof value === 'string' && value.trim().length > 0 && value.length <= 80 && !/[\x00-\x1f]/.test(value), 'Invalid device name');
 const newCode = () => String(randomInt(1000000)).padStart(6, '0');
 const validCode = (code) => typeof code === 'string' && /^[0-9]{6}$/.test(code);
+// The owner's dashboard: a session lasts 8 hours at most and ends after 30 idle minutes.
+const ADMIN_SESSION_TIME = 8 * 60 * 60 * 1000;
+const ADMIN_IDLE_TIME = 30 * 60 * 1000;
+const ADMIN_COOKIE = '__Host-jotdrop_admin';
+const ADMIN_PAGE = 500;
+// "argon2id:m=<KiB>,t=<passes>,p=<lanes>:<salt>:<hash>", base64url; no "$", so env files and shells keep it as is.
+const adminHashPattern = /^argon2id:m=(\d{1,7}),t=(\d{1,2}),p=(\d{1,2}):([A-Za-z0-9_-]{22,86}):([A-Za-z0-9_-]{43})$/;
+const BASE32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 
 /** QR code as rows of "1" (dark) and "0", so every client can draw it without a QR library of its own. */
 function qrRows(text) {
@@ -74,14 +82,23 @@ function qrRows(text) {
   return Array.from({ length: size }, (_, row) => Array.from({ length: size }, (_, column) => (qr.isDark(row, column) ? '1' : '0')).join(''));
 }
 
-function base32(bytes) {
-  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+export function base32(bytes) {
   let bits = 0, value = 0, output = '';
   for (const byte of bytes) {
     value = ((value << 8) | byte) & 0xfff; bits += 8;
-    while (bits >= 5) { output += alphabet[(value >>> (bits - 5)) & 31]; bits -= 5; }
+    while (bits >= 5) { output += BASE32[(value >>> (bits - 5)) & 31]; bits -= 5; }
   }
-  return bits ? output + alphabet[(value << (5 - bits)) & 31] : output;
+  return bits ? output + BASE32[(value << (5 - bits)) & 31] : output;
+}
+
+function fromBase32(text) {
+  let bits = 0, value = 0;
+  const bytes = [];
+  for (const character of text) {
+    value = ((value << 5) | BASE32.indexOf(character)) & 0xfff; bits += 5;
+    if (bits >= 8) { bytes.push((value >>> (bits - 8)) & 255); bits -= 8; }
+  }
+  return Buffer.from(bytes);
 }
 
 /** RFC 6238 with the defaults every authenticator app uses: SHA-1, 30 seconds, 6 digits. */
@@ -124,6 +141,20 @@ async function checkAuthKey(authKey, stored = `${'A'.repeat(22)}$${'0'.repeat(64
   return equal((await hashAuthKey(authKey, Buffer.from(salt, 'base64url'))).split('$')[1], digest);
 }
 
+/** The admin password as JOTDROP_CLOUD_ADMIN_PASSWORD_HASH stores it (see cloud/admin-setup.mjs). */
+export async function hashAdminPassword(password, { memory = 65536, passes = 3, parallelism = 1 } = {}, salt = randomBytes(16)) {
+  const digest = await argon2Async('argon2id', { message: Buffer.from(password.normalize('NFC')), nonce: salt, memory, passes, parallelism, tagLength: 32 });
+  return `argon2id:m=${memory},t=${passes},p=${parallelism}:${salt.toString('base64url')}:${digest.toString('base64url')}`;
+}
+
+function adminHashSettings(stored) {
+  const match = typeof stored === 'string' && adminHashPattern.exec(stored);
+  const [memory, passes, parallelism] = match ? match.slice(1, 4).map(Number) : [];
+  const salt = match && Buffer.from(match[4], 'base64url');
+  if (!match || memory < 19456 || memory > 1048576 || passes < 2 || passes > 10 || parallelism < 1 || parallelism > 4 || salt.length < 16 || salt.toString('base64url') !== match[4]) return undefined;
+  return { settings: { memory, passes, parallelism }, salt, digest: match[5] };
+}
+
 async function credentialValue(value) {
   const kdf = kdfValue(value.kdf);
   requireValue(validToken(value.authKey), 'Invalid login key');
@@ -163,7 +194,7 @@ async function body(req, maximum = MAX_BODY) {
 }
 
 /** Loopback-only server behind a trusted HTTPS proxy. Accounts need a mailer; no billing or provider credentials. `quotaBytes` and `freeDeviceLimit` are the free plan's limits. */
-export async function createCloudServer({ dataDir, enrollmentToken, mailer, newsletter, serverKey, stripe, oauth = {}, fetcher = globalThis.fetch, quotaBytes = 250 * 1024 * 1024, plusQuotaBytes = 10 * 1024 * 1024 * 1024, maxFileBytes = 25 * 1024 * 1024, plusMaxFileBytes = 200 * 1024 * 1024, freeDeviceLimit = 2, maxHistoryEntries = 100000, maxDeviceEntries = 1000, maxPairingEntries = 128, maxConcurrentRequests = 16, signupsPerAddress = 5, turnstile, webRoot = join(directory, 'web'), corsOrigins = [], publicOrigin, port = 0, enrollmentLimit = 1, sweepEvery = 60 * 60 * 1000, clock = Date.now }) {
+export async function createCloudServer({ dataDir, enrollmentToken, mailer, newsletter, serverKey, stripe, oauth = {}, fetcher = globalThis.fetch, quotaBytes = 250 * 1024 * 1024, plusQuotaBytes = 10 * 1024 * 1024 * 1024, maxFileBytes = 25 * 1024 * 1024, plusMaxFileBytes = 200 * 1024 * 1024, freeDeviceLimit = 2, maxHistoryEntries = 100000, maxDeviceEntries = 1000, maxPairingEntries = 128, maxConcurrentRequests = 16, signupsPerAddress = 5, turnstile, webRoot = join(directory, 'web'), corsOrigins = [], publicOrigin, adminOrigin, adminPasswordHash, adminTotpSecret, adminRoot = join(directory, 'admin'), port = 0, enrollmentLimit = 1, sweepEvery = 60 * 60 * 1000, clock = Date.now }) {
   if (!dataDir || (enrollmentToken !== undefined && !validToken(enrollmentToken)) || [quotaBytes, plusQuotaBytes, freeDeviceLimit].some((value) => !Number.isSafeInteger(value) || value < 1)) throw new Error('Provide a data directory, random 32-byte enrollment token and positive quota.');
   if (mailer !== undefined && typeof mailer !== 'function') throw new Error('Provide the mailer as a function.');
   // `newsletter(email)` adds someone who ticked "Email me news about JotDrop" to the mailing list (Brevo).
@@ -185,13 +216,23 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   if ([maxDeviceEntries, maxPairingEntries].some((limit) => !Number.isSafeInteger(limit) || limit < 1)) throw new Error('Provide positive safe-integer metadata entry limits.');
   if (!Number.isSafeInteger(maxConcurrentRequests) || maxConcurrentRequests < 1) throw new Error('Provide a positive safe-integer concurrent request limit.');
   if (!Number.isSafeInteger(enrollmentLimit) || enrollmentLimit < 1 || corsOrigins.some((origin) => !/^chrome-extension:\/\/[a-p]{32}$/.test(origin) && origin !== 'app://obsidian.md')) throw new Error('Invalid enrollment limit or explicit client origin.');
-  let publicHost;
-  if (publicOrigin !== undefined) {
+  function proxyHost(origin, error) {
+    if (origin === undefined) return undefined;
     let parsed;
-    try { parsed = new URL(publicOrigin); } catch { throw new Error('Provide one canonical HTTPS origin for the trusted reverse proxy.'); }
-    if (typeof publicOrigin !== 'string' || parsed.protocol !== 'https:' || parsed.origin !== publicOrigin || parsed.hostname.includes('*')) throw new Error('Provide one canonical HTTPS origin for the trusted reverse proxy.');
-    publicHost = parsed.host;
+    try { parsed = new URL(origin); } catch { throw new Error(error); }
+    if (typeof origin !== 'string' || parsed.protocol !== 'https:' || parsed.origin !== origin || parsed.hostname.includes('*')) throw new Error(error);
+    return parsed.host;
   }
+  const publicHost = proxyHost(publicOrigin, 'Provide one canonical HTTPS origin for the trusted reverse proxy.');
+  // The owner's dashboard has its own host behind the same proxy (which also locks it to the owner's IP address).
+  const adminHost = proxyHost(adminOrigin, 'Provide one canonical HTTPS origin for the admin dashboard.');
+  if (adminHost && adminHost === publicHost) throw new Error('The admin dashboard needs its own host, not the public one.');
+  const adminHashed = adminPasswordHash === undefined ? undefined : adminHashSettings(adminPasswordHash);
+  if (adminPasswordHash !== undefined && !adminHashed) throw new Error('Provide the admin password hash that cloud/admin-setup.mjs prints.');
+  if (adminTotpSecret !== undefined && (typeof adminTotpSecret !== 'string' || !/^[A-Z2-7]{26,128}$/.test(adminTotpSecret))) throw new Error('Provide the admin authenticator secret in base32 (at least 128 bits), as cloud/admin-setup.mjs prints it.');
+  // Without all three the dashboard does not exist: every request on its host is 404.
+  const adminEnabled = Boolean(adminHost && adminHashed && adminTotpSecret);
+  const adminSecret = adminEnabled && fromBase32(adminTotpSecret);
   mkdirSync(dataDir, { recursive: true, mode: 0o700 });
   const db = new DatabaseSync(join(dataDir, 'cloud.db'), { timeout: 5000 });
   const one = (sql, ...args) => db.prepare(sql).get(...args);
@@ -266,7 +307,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   // Caddy sets X-JotDrop-Client-IP to the visitor's address, replacing anything the visitor sent.
   function clientAddress(req) {
     const socket = req.socket.remoteAddress;
-    const proxied = publicHost && req.headers.host === publicHost && LOOPBACK_ADDRESSES.has(socket);
+    const proxied = (publicHost && req.headers.host === publicHost || adminEnabled && req.headers.host === adminHost) && LOOPBACK_ADDRESSES.has(socket);
     const forwarded = proxied ? req.headers['x-jotdrop-client-ip'] : undefined;
     return typeof forwarded === 'string' && isIP(forwarded) ? forwarded : socket;
   }
@@ -637,7 +678,96 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       return { id, revision, sequence };
     });
   }
-  const assets = new Map([['/', [join(webRoot, 'index.html'), 'text/html']], ['/app.js', [join(webRoot, 'app.js'), 'text/javascript']], ['/style.css', [join(webRoot, 'style.css'), 'text/css']], ['/export.mjs', [join(webRoot, 'export.mjs'), 'text/javascript']], ['/note.mjs', [join(webRoot, 'note.mjs'), 'text/javascript']], ['/shared/crypto.mjs', [join(directory, 'shared/crypto.mjs'), 'text/javascript']], ['/shared/client.mjs', [join(directory, 'shared/client.mjs'), 'text/javascript']]]);
+  // The owner's dashboard. Sessions live only in memory, keyed by the token's hash; a restart signs the owner out.
+  const adminSessions = new Map();
+  let adminFailures = 0, adminLockedUntil = 0;
+  const adminCookie = (req) => (req.headers.cookie || '').split(';').map((part) => part.trim()).find((part) => part.startsWith(`${ADMIN_COOKIE}=`))?.slice(ADMIN_COOKIE.length + 1);
+  const adminExpired = (session, now) => session.createdAt + ADMIN_SESSION_TIME <= now || session.seenAt + ADMIN_IDLE_TIME <= now;
+  function adminSession(req) {
+    const token = adminCookie(req), key = validToken(token) ? hash(token) : undefined, session = key && adminSessions.get(key), now = clock();
+    if (!session || adminExpired(session, now)) { if (key) adminSessions.delete(key); fail(401, 'Sign in again.'); }
+    session.seenAt = now;
+  }
+  // Password and code are both always checked and every wrong answer is the same. After 10 wrong answers nobody gets in for 15 minutes.
+  async function adminLogin(value) {
+    if (adminLockedUntil > clock()) fail(429, 'Too many attempts. Try again later.');
+    const password = typeof value.password === 'string' && value.password.length <= 1024 ? value.password : '';
+    const digest = (await hashAdminPassword(password, adminHashed.settings, adminHashed.salt)).split(':')[3];
+    // No await from here on, so two requests with the same code cannot both pass.
+    const now = clock(), current = Math.floor(now / 30000), lastStep = Number(one("SELECT value FROM secrets WHERE name='admin-totp-step'")?.value ?? 0);
+    if (adminLockedUntil > now) fail(429, 'Too many attempts. Try again later.');
+    const step = validCode(value.code) ? [current - 1, current, current + 1].find((candidate) => candidate > lastStep && equal(totpCode(adminSecret, candidate), value.code)) ?? 0 : 0;
+    if (!equal(digest, adminHashed.digest) || !step) {
+      if (++adminFailures >= 10) { adminFailures = 0; adminLockedUntil = now + LOCK_TIME; }
+      fail(401, 'Invalid password or code.');
+    }
+    // Kept in the database, so a used code stays used after a restart.
+    run("INSERT INTO secrets VALUES('admin-totp-step',?) ON CONFLICT(name) DO UPDATE SET value=excluded.value", String(step));
+    adminFailures = 0;
+    for (const [key, session] of adminSessions) if (adminExpired(session, now)) adminSessions.delete(key);
+    if (adminSessions.size >= 16) adminSessions.delete(adminSessions.keys().next().value);
+    const token = randomBytes(32).toString('base64url');
+    adminSessions.set(hash(token), { createdAt: now, seenAt: now });
+    return token;
+  }
+  // Plus as planRow works it out, for each account in one query.
+  const plusUntilSql = '(MAX(COALESCE((SELECT plusUntil FROM plans WHERE vaultId=a.vaultId),0),(SELECT COALESCE(MAX(paidUntil),0) FROM subscriptions WHERE vaultId=a.vaultId)))';
+  const runningSql = `(SELECT 1 FROM subscriptions WHERE vaultId=a.vaultId AND status IN (${RUNNING.map(() => '?').join(',')}))`;
+  // Counts and sizes only: never note content, envelopes, keys, hashes, tokens or authenticator secrets.
+  function adminSummary() {
+    const now = clock(), since = (days) => new Date(now - days * DAY).toISOString();
+    const accounts = one(`SELECT COUNT(*) AS total,COALESCE(SUM(createdAt>=?),0) AS newLast7Days,COALESCE(SUM(createdAt>=?),0) AS newLast30Days,COALESCE(SUM(${plusUntilSql}>?),0) AS plus,COALESCE(SUM(EXISTS${runningSql}),0) AS paying FROM accounts a`, since(7), since(30), now, ...RUNNING);
+    const disk = statfsSync(dataDir), file = (name) => statSync(join(dataDir, name), { throwIfNoEntry: false })?.size ?? 0;
+    return { generatedAt: new Date(now).toISOString(), accounts: { ...accounts, free: accounts.total - accounts.plus },
+      // The count founderPrice uses; no limit when there is no founder price.
+      founder: { taken: one('SELECT COUNT(DISTINCT vaultId) AS count FROM subscriptions WHERE paidUntil>0').count, limit: stripe?.founderYearPrice ? stripe.founderLimit ?? 500 : null },
+      storage: { storedBytes: one('SELECT (SELECT COALESCE(SUM(size),0) FROM envelopes) + (SELECT COALESCE(SUM(size),0) FROM chunks) AS size').size, databaseBytes: file('cloud.db') + file('cloud.db-wal'), diskFreeBytes: disk.bavail * disk.bsize, diskTotalBytes: disk.blocks * disk.bsize } };
+  }
+  const ADMIN_SORT = { created: 'a.createdAt', email: 'a.email', storage: 'usedBytes', active: 'lastActiveAt' };
+  function adminAccounts(params) {
+    const search = (params.get('q') ?? '').trim().toLowerCase(), sort = params.get('sort') ?? 'created', order = params.get('order') ?? (sort === 'email' ? 'asc' : 'desc');
+    const page = Number(params.get('page') ?? 1), pageSize = Number(params.get('limit') ?? ADMIN_PAGE);
+    requireValue(search.length <= 254 && Object.hasOwn(ADMIN_SORT, sort) && ['asc', 'desc'].includes(order) && Number.isSafeInteger(page) && page >= 1 && Number.isSafeInteger(pageSize) && pageSize >= 1 && pageSize <= ADMIN_PAGE, 'Invalid account list request');
+    const now = clock();
+    // ponytail: sums the storage of every matching account per page; keep per-vault counters if the account list grows large.
+    const rows = all(`SELECT a.email,a.createdAt,a.authHash<>'' AS hasPassword,a.totpSecret IS NOT NULL AS hasAuthenticator,(SELECT group_concat(provider,',') FROM (SELECT provider FROM identities WHERE accountId=a.id ORDER BY provider)) AS providers,
+      ${plusUntilSql} AS plusUntil,EXISTS${runningSql} AS subscribed,(SELECT COALESCE(SUM(size),0) FROM envelopes WHERE vaultId=a.vaultId)+(SELECT COALESCE(SUM(size),0) FROM chunks WHERE vaultId=a.vaultId) AS usedBytes,(SELECT COUNT(*) FROM devices WHERE vaultId=a.vaultId AND revoked=0) AS activeDevices,
+      (SELECT MAX(lastSeenAt) FROM devices WHERE vaultId=a.vaultId) AS lastActiveAt,EXISTS(SELECT 1 FROM newsletter WHERE accountId=a.id) AS newsletter
+      FROM accounts a WHERE instr(a.email,?)>0 ORDER BY ${ADMIN_SORT[sort]} ${order} NULLS LAST,a.email LIMIT ? OFFSET ?`, ...RUNNING, search, pageSize, (page - 1) * pageSize);
+    return { accounts: rows.map((row) => {
+      const plus = row.plusUntil > now;
+      return { email: row.email, createdAt: row.createdAt, hasPassword: Boolean(row.hasPassword), hasAuthenticator: Boolean(row.hasAuthenticator), providers: row.providers ? row.providers.split(',') : [], plan: plus ? 'plus' : 'free',
+        plusUntil: row.plusUntil ? new Date(row.plusUntil).toISOString() : null, subscribed: Boolean(row.subscribed), usedBytes: row.usedBytes, quotaBytes: plus ? plusQuotaBytes : quotaBytes, activeDevices: row.activeDevices, lastActiveAt: row.lastActiveAt ?? null, newsletter: Boolean(row.newsletter) };
+    }), total: one('SELECT COUNT(*) AS count FROM accounts WHERE instr(email,?)>0', search).count, page, pageSize };
+  }
+  const adminAssets = new Map([['/', [join(adminRoot, 'index.html'), 'text/html']], ['/admin.js', [join(adminRoot, 'admin.js'), 'text/javascript']], ['/admin.css', [join(adminRoot, 'admin.css'), 'text/css']]]);
+  // Only the dashboard answers on its host, and it answers nowhere else.
+  async function adminRequest(req, res, reply, url, ip) {
+    res.setHeader('Content-Security-Policy', "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'");
+    if (!adminEnabled) fail(404, 'Not found');
+    const method = req.method, pathname = url.pathname;
+    if (method === 'GET' && adminAssets.has(pathname)) {
+      const [filename, type] = adminAssets.get(pathname);
+      res.setHeader('Content-Type', type); res.end(readFileSync(filename)); return;
+    }
+    // The browser sends the cookie along with any request; a change must come from the dashboard page itself.
+    if (method !== 'GET' && req.headers.origin !== adminOrigin) fail(403, 'Origin not allowed');
+    const cookie = (value, age) => res.setHeader('Set-Cookie', `${ADMIN_COOKIE}=${value}; Max-Age=${age}; Path=/; Secure; HttpOnly; SameSite=Strict`);
+    if (method === 'POST' && pathname === '/api/admin/login') {
+      limit(`admin:${ip}`, 5);
+      cookie(await adminLogin(await body(req, MAX_METADATA_BODY)), ADMIN_SESSION_TIME / 1000);
+      reply(200, { ok: true }); return;
+    }
+    if (method === 'POST' && pathname === '/api/admin/logout') {
+      const token = adminCookie(req);
+      if (validToken(token)) adminSessions.delete(hash(token));
+      cookie('', 0); reply(200, { ok: true }); return;
+    }
+    if (method === 'GET' && pathname === '/api/admin/summary') { adminSession(req); reply(200, adminSummary()); return; }
+    if (method === 'GET' && pathname === '/api/admin/accounts') { adminSession(req); reply(200, adminAccounts(url.searchParams)); return; }
+    fail(404, 'Not found');
+  }
+  const assets = new Map([['/',[join(webRoot, 'index.html'), 'text/html']], ['/app.js', [join(webRoot, 'app.js'), 'text/javascript']], ['/style.css', [join(webRoot, 'style.css'), 'text/css']], ['/export.mjs', [join(webRoot, 'export.mjs'), 'text/javascript']], ['/note.mjs', [join(webRoot, 'note.mjs'), 'text/javascript']], ['/shared/crypto.mjs', [join(directory, 'shared/crypto.mjs'), 'text/javascript']], ['/shared/client.mjs', [join(directory, 'shared/client.mjs'), 'text/javascript']]]);
   assets.set('/ocr-worker.js', [join(webRoot, 'ocr-worker.js'), 'text/javascript']);
   assets.set('/privacy', [join(webRoot, 'privacy.html'), 'text/html']);
   assets.set('/human', [join(webRoot, 'human.html'), 'text/html']);
@@ -669,11 +799,11 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     try {
       const actualPort = server.address().port;
       const hosts = [`127.0.0.1:${actualPort}`, `localhost:${actualPort}`];
-      const loopback = hosts.includes(req.headers.host);
-      if (!loopback && (!publicHost || req.headers.host !== publicHost)) fail(403, 'Host not allowed');
+      const loopback = hosts.includes(req.headers.host), admin = Boolean(adminHost) && req.headers.host === adminHost;
+      if (!loopback && !admin && (!publicHost || req.headers.host !== publicHost)) fail(403, 'Host not allowed');
       const origin = req.headers.origin;
-      if (origin && origin !== (loopback ? `http://${req.headers.host}` : publicOrigin) && !corsOrigins.includes(origin)) fail(403, 'Origin not allowed');
-      if (origin && corsOrigins.includes(origin)) { res.setHeader('Access-Control-Allow-Origin', origin); res.setHeader('Vary', 'Origin'); }
+      if (origin && (admin ? origin !== adminOrigin : origin !== (loopback ? `http://${req.headers.host}` : publicOrigin) && !corsOrigins.includes(origin))) fail(403, 'Origin not allowed');
+      if (origin && !admin && corsOrigins.includes(origin)) { res.setHeader('Access-Control-Allow-Origin', origin); res.setHeader('Vary', 'Origin'); }
       const url = new URL(req.url, `http://${req.headers.host}`), method = req.method, pathname = url.pathname;
       if (activeRequests >= maxConcurrentRequests) {
         res.setHeader('Retry-After', '1');
@@ -683,6 +813,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       activeRequests++;
       // Hold capacity through response delivery, including slow readers and aborted uploads.
       res.once('close', () => { activeRequests--; });
+      if (admin) { await adminRequest(req, res, reply, url, clientAddress(req)); return; }
       if (method === 'OPTIONS') {
         if (!origin || !corsOrigins.includes(origin)) fail(403, 'Origin not allowed');
         res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
@@ -1496,7 +1627,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   const newsletter = process.env.JOTDROP_CLOUD_BREVO_API_KEY ? createBrevoList({ apiKey: process.env.JOTDROP_CLOUD_BREVO_API_KEY, listId: Number(process.env.JOTDROP_CLOUD_BREVO_LIST_ID) }) : undefined;
   // With a Turnstile key pair, new email accounts need the person check; without one there is none.
   const turnstile = process.env.JOTDROP_CLOUD_TURNSTILE_SECRET ? { siteKey: process.env.JOTDROP_CLOUD_TURNSTILE_SITE_KEY, secret: process.env.JOTDROP_CLOUD_TURNSTILE_SECRET } : undefined;
-  const app = await createCloudServer({ dataDir: process.env.JOTDROP_CLOUD_DATA_DIR, enrollmentToken, mailer, newsletter, serverKey, stripe, oauth: { google: provider('GOOGLE'), github: provider('GITHUB') }, maxHistoryEntries: Number(process.env.JOTDROP_CLOUD_MAX_HISTORY_ENTRIES ?? 100000), maxDeviceEntries: Number(process.env.JOTDROP_CLOUD_MAX_DEVICE_ENTRIES ?? 1000), maxPairingEntries: Number(process.env.JOTDROP_CLOUD_MAX_PAIRING_ENTRIES ?? 128), maxConcurrentRequests: Number(process.env.JOTDROP_CLOUD_MAX_CONCURRENT_REQUESTS ?? 16), signupsPerAddress: Number(process.env.JOTDROP_CLOUD_SIGNUPS_PER_ADDRESS ?? 5), turnstile, publicOrigin: process.env.JOTDROP_CLOUD_PUBLIC_ORIGIN, port: Number(process.env.JOTDROP_CLOUD_PORT || 8787), corsOrigins: (process.env.JOTDROP_CLOUD_CORS_ORIGINS || '').split(',').map((entry) => entry.trim()).filter(Boolean) });
+  // The owner's dashboard needs all three; cloud/admin-setup.mjs prints the hash and the authenticator secret.
+  const [adminOrigin, adminPasswordHash, adminTotpSecret] = ['ORIGIN', 'PASSWORD_HASH', 'TOTP_SECRET'].map((name) => process.env[`JOTDROP_CLOUD_ADMIN_${name}`] || undefined);
+  if ((adminOrigin || adminPasswordHash || adminTotpSecret) && !(adminOrigin && adminPasswordHash && adminTotpSecret)) console.warn('Admin dashboard off: set JOTDROP_CLOUD_ADMIN_ORIGIN, JOTDROP_CLOUD_ADMIN_PASSWORD_HASH and JOTDROP_CLOUD_ADMIN_TOTP_SECRET together.');
+  const app = await createCloudServer({ dataDir: process.env.JOTDROP_CLOUD_DATA_DIR, adminOrigin, adminPasswordHash, adminTotpSecret, enrollmentToken, mailer, newsletter, serverKey, stripe, oauth: { google: provider('GOOGLE'), github: provider('GITHUB') }, maxHistoryEntries: Number(process.env.JOTDROP_CLOUD_MAX_HISTORY_ENTRIES ?? 100000), maxDeviceEntries: Number(process.env.JOTDROP_CLOUD_MAX_DEVICE_ENTRIES ?? 1000), maxPairingEntries: Number(process.env.JOTDROP_CLOUD_MAX_PAIRING_ENTRIES ?? 128), maxConcurrentRequests: Number(process.env.JOTDROP_CLOUD_MAX_CONCURRENT_REQUESTS ?? 16), signupsPerAddress: Number(process.env.JOTDROP_CLOUD_SIGNUPS_PER_ADDRESS ?? 5), turnstile, publicOrigin: process.env.JOTDROP_CLOUD_PUBLIC_ORIGIN, port: Number(process.env.JOTDROP_CLOUD_PORT || 8787), corsOrigins: (process.env.JOTDROP_CLOUD_CORS_ORIGINS || '').split(',').map((entry) => entry.trim()).filter(Boolean) });
   console.log(`JotDrop Cloud listening on http://127.0.0.1:${app.port}.`);
   if (!process.env.JOTDROP_CLOUD_ENROLLMENT_TOKEN) console.log(`Single-use local enrollment token: ${enrollmentToken}`);
   for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { void app.close().then(() => process.exit(0)); });
