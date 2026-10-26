@@ -2,6 +2,7 @@ import http from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import { argon2, createCipheriv, createDecipheriv, createHash, createHmac, hkdfSync, randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
 import { mkdirSync, readFileSync } from 'node:fs';
+import { isIP } from 'node:net';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
@@ -10,6 +11,7 @@ import { createBrevoList, createSesMailer } from './mailer.mjs';
 const directory = dirname(fileURLToPath(import.meta.url));
 const MAX_BODY = 12 * 1024 * 1024;
 const MAX_METADATA_BODY = 16 * 1024;
+const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const TRANSFER_CHUNK_BYTES = 64 * 1024;
 const TRANSFER_LIFETIME = 24 * 60 * 60 * 1000;
 const CODE_LIFETIME = 15 * 60 * 1000;
@@ -224,6 +226,14 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   } catch (error) { db.close(); throw error; }
   const fakeSaltKey = one("SELECT value FROM secrets WHERE name='fake-salt'").value;
   const rate = new Map();
+  // Behind the reverse proxy every request arrives from loopback, so limits would be shared by all visitors.
+  // Caddy sets X-JotDrop-Client-IP to the visitor's address, replacing anything the visitor sent.
+  function clientAddress(req) {
+    const socket = req.socket.remoteAddress;
+    const proxied = publicHost && req.headers.host === publicHost && LOOPBACK_ADDRESSES.has(socket);
+    const forwarded = proxied ? req.headers['x-jotdrop-client-ip'] : undefined;
+    return typeof forwarded === 'string' && isIP(forwarded) ? forwarded : socket;
+  }
   function limit(key, maximum) {
     const now = clock();
     if (rate.size > 2048) for (const [entry, state] of rate) if (state.until <= now) rate.delete(entry);
@@ -556,7 +566,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       if (!pathname.startsWith('/api/v1/')) fail(404, 'Not found');
       const route = pathname.slice('/api/v1'.length);
       if (method === 'POST' && route === '/vaults') {
-        limit(`enroll:${req.socket.remoteAddress}`, 10);
+        limit(`enroll:${clientAddress(req)}`, 10);
         if (!enrollmentToken || !equal(req.headers.authorization || '', `Bearer ${enrollmentToken}`)) fail(401, 'Invalid enrollment token');
         const value = await body(req, MAX_METADATA_BODY);
         deviceName(value.deviceName);
@@ -570,7 +580,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         reply(201, created); return;
       }
       if (method === 'POST' && route === '/recover') {
-        limit(`recover:${req.socket.remoteAddress}`, 5);
+        limit(`recover:${clientAddress(req)}`, 5);
         const value = await body(req, MAX_METADATA_BODY);
         deviceName(value.deviceName);
         requireValue(validId(value.vaultId) && validHash(value.deviceTokenHash), 'Invalid recovery request');
@@ -580,7 +590,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       }
       const claim = /^\/pairings\/([0-9a-f-]+)\/claim$/.exec(route);
       if (method === 'POST' && claim) {
-        limit(`claim:${req.socket.remoteAddress}`, 10);
+        limit(`claim:${clientAddress(req)}`, 10);
         requireValue(validId(claim[1]), 'Invalid pairing ID');
         const value = await body(req, MAX_METADATA_BODY);
         const result = transaction(() => {
@@ -595,7 +605,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         });
         reply(201, result); return;
       }
-      const ip = req.socket.remoteAddress;
+      const ip = clientAddress(req);
       if (method === 'POST' && route === '/accounts') {
         requireAccounts();
         limit(`signup:${ip}`, 10);

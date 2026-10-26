@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { argon2Sync, createHash, createHmac, hkdfSync, randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { request } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import { createCloudServer } from './server.mjs';
 import { CloudClient } from './shared/client.mjs';
@@ -432,4 +433,26 @@ test('a cloud without a password or without an account is deleted with the confi
   try { db.prepare("UPDATE accounts SET kdf='',authHash='',wrappedVaultKey=''").run(); } finally { db.close(); }
   assert.equal((await app.api('/account/delete', { confirm: 'DELETE MY CLOUD' }, deviceHeaders(phone))).status, 200);
   await assert.rejects(phone.status(), (error) => error.status === 401);
+});
+
+test('behind the proxy each visitor gets its own sign-in limit; the client IP header counts only from the proxy', async (t) => {
+  const prelogin = (app, host, clientIp) => new Promise((done, reject) => {
+    const sent = request(`${app.url}/api/v1/auth/prelogin`, { method: 'POST', headers: { Host: host, 'Content-Type': 'application/json', ...(clientIp ? { 'X-JotDrop-Client-IP': clientIp } : {}) } },
+      (response) => { response.resume(); done(response.statusCode); });
+    sent.on('error', reject);
+    sent.end(JSON.stringify({ email: 'someone@example.com' }));
+  });
+  const proxied = await fixture(t, { publicOrigin: 'https://app.example.test' });
+  for (let attempt = 0; attempt < 30; attempt++) assert.equal(await prelogin(proxied, 'app.example.test', '203.0.113.5'), 200);
+  assert.equal(await prelogin(proxied, 'app.example.test', '203.0.113.5'), 429);
+  assert.equal(await prelogin(proxied, 'app.example.test', '203.0.113.6'), 200);
+  assert.equal(await prelogin(proxied, 'app.example.test', '2001:db8::7'), 200);
+  // A value that is not an address falls back to the connection, which has its own budget.
+  assert.equal(await prelogin(proxied, 'app.example.test', 'not-an-address'), 200);
+
+  // Without a public origin there is no proxy to trust: the header is ignored.
+  const direct = await fixture(t);
+  const host = `127.0.0.1:${direct.port}`;
+  for (let attempt = 0; attempt < 30; attempt++) assert.equal(await prelogin(direct, host, `198.51.100.${attempt}`), 200);
+  assert.equal(await prelogin(direct, host, '198.51.100.200'), 429);
 });
