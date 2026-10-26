@@ -6,6 +6,7 @@
   <meta name="color-scheme" content="light dark">
   <meta name="referrer" content="no-referrer">
   <title>JotDrop Cloud</title>
+  <link rel="icon" href="/logo.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/style.css">
   <script type="importmap">{"imports":{"hash-wasm":"/vendor/hash-wasm.mjs"}}</script>
   <script type="module" src="/app.js"></script>
@@ -17,7 +18,7 @@
   <div class="local-banner">Local development preview. Not a hosted service. Use test files only.</div>
   <div class="appearance"><div id="account-actions" class="account-actions" hidden><button id="lock" type="button">Lock workspace</button><button id="log-out" type="button">Log out</button></div><label for="theme">Appearance</label><select id="theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></div>
   <section id="access" class="access" aria-labelledby="access-title">
-    <div class="wordmark"><span class="brand-mark" aria-hidden="true">J</span> JotDrop <span>Cloud</span></div>
+    <div class="wordmark"><img class="brand-mark" src="/logo.svg" alt=""> JotDrop <span>Cloud</span></div>
     <h1 id="access-title">Your notes, within reach.</h1>
     <p>Open your encrypted workspace. Your password never leaves this device, so nobody else can read your notes. Not even us.</p>
     <form id="unlock-form" hidden>
@@ -134,7 +135,7 @@
 
   <div id="workspace" class="workspace" hidden>
     <aside id="sidebar" class="sidebar" aria-label="Workspace navigation">
-      <div class="wordmark"><span class="brand-mark" aria-hidden="true">J</span> JotDrop <span>Cloud</span></div>
+      <div class="wordmark"><img class="brand-mark" src="/logo.svg" alt=""> JotDrop <span>Cloud</span></div>
       <nav aria-label="Library">
         <button data-view="notes" aria-current="page">Notes <span id="note-count"></span></button>
         <div class="sidebar-labels" role="group" aria-labelledby="labels-heading">

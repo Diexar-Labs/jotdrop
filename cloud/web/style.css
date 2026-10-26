@@ -1,4 +1,4 @@
-:root { color-scheme: light dark; --page: light-dark(#f8f9fa, #191c21); --surface: light-dark(#fff, #23272e); --ink: light-dark(#20242b, #eef1f5); --muted: light-dark(#515d6d, #b4becc); --line: light-dark(#d8dee6, #444c58); --accent: light-dark(#315fb4, #9abaff); --accent-hover: light-dark(#264b91, #b6cdff); --on-accent: light-dark(#fff, #172b50); --selected: light-dark(#e7eefb, #2b3950); --danger: light-dark(#a32929, #ffa7a7); --note: light-dark(#fff, #23272e); --focus: light-dark(#315fb4, #aecaff); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+:root { color-scheme: light dark; --page: light-dark(#fbf8f1, #191c21); --surface: light-dark(#fff, #23272e); --ink: light-dark(#14213d, #eef1f5); --muted: light-dark(#515d6d, #b4becc); --line: light-dark(#d8dee6, #444c58); --accent: light-dark(#315fb4, #9abaff); --accent-hover: light-dark(#264b91, #b6cdff); --on-accent: light-dark(#fff, #172b50); --selected: light-dark(#e7eefb, #2b3950); --danger: light-dark(#a32929, #ffa7a7); --note: light-dark(#fff, #23272e); --focus: light-dark(#315fb4, #aecaff); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 :root[data-theme="light"] { color-scheme: light; }
 :root[data-theme="dark"] { color-scheme: dark; }
 * { box-sizing: border-box; }
@@ -29,7 +29,7 @@ h3 { font-size: 1.05rem; }
 .appearance select { width: auto; }
 .wordmark { display: flex; align-items: center; gap: .55rem; font-size: 1.25rem; font-weight: 650; white-space: nowrap; }
 .wordmark > span:last-child { font-size: .8rem; color: var(--muted); font-weight: 500; }
-.brand-mark { width: 30px; height: 34px; border-radius: 5px 5px 11px 5px; display: grid; place-items: center; background: #f4c458; color: #3a2d0a; font-size: 1.2rem; }
+.brand-mark { width: 34px; height: 34px; }
 .access { max-width: 490px; margin: 6vh auto; padding: 1.5rem; }
 .access h1 { margin-top: 2.2rem; }
 .access p { color: var(--muted); }

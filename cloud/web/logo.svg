@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1018 1018" role="img" aria-label="JotDrop">
+  <g transform="translate(0 13)">
+    <path fill="#F4C458" d="M120 0H898A120 120 0 0 1 1018 120V705L725 992H120A120 120 0 0 1 0 872V120A120 120 0 0 1 120 0Z"/>
+    <path fill="#D9A43A" d="M725 992V840A135 135 0 0 1 860 705H1018Z"/>
+    <path fill="#14213D" d="M384 130H755V570A289 289 0 0 1 177 570V550A30 30 0 0 1 207 520H390V600H318L462 745L612 600H545V298H384A84 84 0 0 1 384 130Z"/>
+  </g>
+</svg>

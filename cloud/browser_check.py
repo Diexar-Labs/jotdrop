@@ -28,14 +28,14 @@ def check_browser(browser, url, enrollment_token):
 
         first.emulate_media(color_scheme="light")
         assert first.locator("#theme").input_value() == "system"
-        check_theme(first, "rgb(248, 249, 250)")
+        check_theme(first, "rgb(251, 248, 241)")
         first.emulate_media(color_scheme="dark")
         check_theme(first, "rgb(25, 28, 33)")
         first.locator("#theme").select_option("light")
-        check_theme(first, "rgb(248, 249, 250)")
+        check_theme(first, "rgb(251, 248, 241)")
         first.reload(wait_until="networkidle")
         assert first.locator("#theme").input_value() == "light"
-        check_theme(first, "rgb(248, 249, 250)")
+        check_theme(first, "rgb(251, 248, 241)")
         first.locator("#theme").select_option("dark")
         first.emulate_media(color_scheme="light")
         check_theme(first, "rgb(25, 28, 33)")
@@ -43,13 +43,13 @@ def check_browser(browser, url, enrollment_token):
         assert first.locator("#theme").input_value() == "dark"
         check_theme(first, "rgb(25, 28, 33)")
         first.locator("#theme").select_option("system")
-        check_theme(first, "rgb(248, 249, 250)")
+        check_theme(first, "rgb(251, 248, 241)")
         first.reload(wait_until="networkidle")
         assert first.locator("#theme").input_value() == "system"
         first.emulate_media(color_scheme="dark")
         check_theme(first, "rgb(25, 28, 33)")
         first.emulate_media(color_scheme="light")
-        check_theme(first, "rgb(248, 249, 250)")
+        check_theme(first, "rgb(251, 248, 241)")
         blocked_context = browser.new_context()
         try:
             blocked_context.add_init_script("Object.defineProperty(window, 'localStorage', { get() { throw new DOMException('Blocked', 'SecurityError'); } });")
@@ -58,7 +58,7 @@ def check_browser(browser, url, enrollment_token):
             blocked.locator("#theme").select_option("dark")
             check_theme(blocked, "rgb(25, 28, 33)")
             blocked.locator("#theme").select_option("light")
-            check_theme(blocked, "rgb(248, 249, 250)")
+            check_theme(blocked, "rgb(251, 248, 241)")
         finally:
             blocked_context.close()
         first.locator("#show-connect").click()

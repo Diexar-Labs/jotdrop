@@ -527,6 +527,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   const assets = new Map([['/', [join(webRoot, 'index.html'), 'text/html']], ['/app.js', [join(webRoot, 'app.js'), 'text/javascript']], ['/style.css', [join(webRoot, 'style.css'), 'text/css']], ['/export.mjs', [join(webRoot, 'export.mjs'), 'text/javascript']], ['/note.mjs', [join(webRoot, 'note.mjs'), 'text/javascript']], ['/shared/crypto.mjs', [join(directory, 'shared/crypto.mjs'), 'text/javascript']], ['/shared/client.mjs', [join(directory, 'shared/client.mjs'), 'text/javascript']]]);
   assets.set('/ocr-worker.js', [join(webRoot, 'ocr-worker.js'), 'text/javascript']);
   assets.set('/privacy', [join(webRoot, 'privacy.html'), 'text/html']);
+  assets.set('/logo.svg', [join(webRoot, 'logo.svg'), 'image/svg+xml']);
   assets.set('/import.mjs', [join(webRoot, 'import.mjs'), 'text/javascript']);
   for (const name of ['account.mjs', 'words.mjs']) assets.set(`/shared/${name}`, [join(directory, 'shared', name), 'text/javascript']);
   assets.set('/vendor/hash-wasm.mjs', [join(directory, '../node_modules/hash-wasm/dist/index.esm.min.js'), 'text/javascript']);
