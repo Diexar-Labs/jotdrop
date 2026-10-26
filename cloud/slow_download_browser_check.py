@@ -26,10 +26,15 @@ def check_slow_download(browser, url, token):
         page.locator('[data-view="files"]').click()
         page.locator("#upload").set_input_files({"name": "synthetic-large.bin", "mimeType": "application/octet-stream", "buffer": secrets.token_bytes(4 * 1024 * 1024)})
         page.locator("#sync-status").filter(has_text="Cloud copy up to date").wait_for(timeout=120000)
-        # Reopen: sync starts from the beginning and downloads the large note again.
+        # Reopen as a new browser: no session and no cached notes, so the large note downloads again.
         page.evaluate("""async () => {
           const db = await new Promise(done => { const r = indexedDB.open('jotdrop-cloud-v1', 1); r.onsuccess = () => done(r.result); });
-          await new Promise(done => { const t = db.transaction('values', 'readwrite'); t.objectStore('values').delete('session'); t.oncomplete = done; });
+          await new Promise(done => {
+            const t = db.transaction('values', 'readwrite'), values = t.objectStore('values');
+            values.delete('session');
+            values.openCursor().onsuccess = (event) => { const c = event.target.result; if (!c) return; if (String(c.key).startsWith('cache:')) c.delete(); c.continue(); };
+            t.oncomplete = done;
+          });
           db.close();
         }""")
         page.reload(wait_until="networkidle")

@@ -748,6 +748,7 @@ async function performSync(signal) {
   const activeGeneration = generation;
   let changed = false;
   $('sync-status').textContent = 'Syncing encrypted changes...';
+  $('sync-status').classList.add('checking');
   // Storage and Plus first, so one slow or failing note does not hide them.
   await showPlan(activeClient, activeGeneration);
   if (activeGeneration !== generation) return;
@@ -808,15 +809,26 @@ async function performSync(signal) {
     }
     await store('ack', key, { queueId: uploading.queueId, revision: result.revision });
   }
-  let more = true;
+  let more = true, loaded = 0, toLoad = 0, shownAt = Date.now();
   while (more) {
     signal.throwIfAborted();
     const result = await activeClient.listChanges(cursor);
+    const latest = new Map();
     for (const change of result.changes) {
-      if (activeGeneration !== generation) return;
       // The time machine steps per minute with a change.
       const minute = change.updatedAt.slice(0, 16);
       if (!(moments.get(minute) > change.updatedAt)) moments.set(minute, change.updatedAt);
+      latest.set(change.id, change);
+    }
+    // Skip what this browser already has; a trash clear-out (deleted, size 0) keeps the revision, so always read it.
+    const reads = [...latest.values()].filter((change) => files.get(change.id)?.revision !== change.revision || (change.deleted && !change.size));
+    // Small notes first, so cards appear before large attachments finish.
+    reads.sort((a, b) => a.size - b.size);
+    toLoad += reads.length;
+    for (const change of reads) {
+      if (activeGeneration !== generation) return;
+      $('sync-status').textContent = `Loading your notes... ${loaded++} / ${toLoad}`;
+      if (changed && Date.now() - shownAt >= 1000) { render(); shownAt = Date.now(); }
       if (await store('get', `${keyPrefix}${change.id}`)) continue;
       let entry;
       try { entry = await activeClient.read(change.id); }
@@ -865,6 +877,7 @@ async function sync() {
     $('sync').textContent = syncPaused ? 'Resume sync' : 'Sync now';
     $('pause-sync').hidden = true;
     $('upload-progress').hidden = true;
+    $('sync-status').classList.remove('checking');
     if (syncPaused && !$('workspace').hidden) $('sync').focus();
   });
   return syncing;
