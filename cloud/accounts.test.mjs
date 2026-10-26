@@ -208,6 +208,9 @@ test('an authenticator app replaces the email code at login and cannot be replay
   const setup = await app.api('/account/totp', {}, deviceHeaders(phone));
   assert.equal(setup.status, 200);
   assert.match(setup.body.uri, /^otpauth:\/\/totp\/JotDrop%3Atotp%40example\.com\?secret=[A-Z2-7]+&issuer=JotDrop$/);
+  const { qr } = setup.body, finder = ['1111111', '1000001', '1011101', '1011101', '1011101', '1000001', '1111111'];
+  assert.ok(qr.length >= 21 && qr.every((row) => row.length === qr.length && /^[01]+$/.test(row)));
+  for (const [top, left] of [[0, 0], [0, qr.length - 7], [qr.length - 7, 0]]) assert.deepEqual(qr.slice(top, top + 7).map((row) => row.slice(left, left + 7)), finder);
   const wrong = String((Number(totp(setup.body.secret, app.time())) + 1) % 1000000).padStart(6, '0');
   assert.equal((await app.api('/account/totp/enable', { code: wrong, currentAuthKey }, deviceHeaders(phone))).status, 401);
   // A stolen device token alone cannot swap in an attacker's authenticator.

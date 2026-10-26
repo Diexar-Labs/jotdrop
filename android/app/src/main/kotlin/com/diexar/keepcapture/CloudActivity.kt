@@ -290,6 +290,7 @@ private fun CloudScreen(onBack: () -> Unit, onSettings: () -> Unit) {
         }
     }
     CloudRecoveryDialog()
+    CloudSecureOfferDialog { cloud() }
     if (confirmEnable) AlertDialog(onDismissRequest = { confirmEnable = false }, title = { Text("Enable sync for this vault?") },
         text = { Text("Cloud changes can update and remove synced local files. Recovery copies are kept. Do not use Syncthing or another sync system on the same folder. Confirm that this vault is dedicated to JotDrop Cloud.") },
         confirmButton = { TextButton(onClick = { confirmEnable = false; run { CloudSyncManager.setEnabled(context, true) } }) { Text("Enable cloud sync") } },

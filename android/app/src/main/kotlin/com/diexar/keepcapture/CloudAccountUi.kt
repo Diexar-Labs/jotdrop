@@ -1,9 +1,13 @@
 package com.diexar.keepcapture
 
+import android.content.ActivityNotFoundException
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
+import android.os.PersistableBundle
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
@@ -24,6 +28,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
@@ -41,7 +46,7 @@ import java.time.format.FormatStyle
 private const val DEFAULT_SERVER = "https://app.jotdrop.net"
 private val PROVIDER_NAMES = mapOf("google" to "Google", "github" to "GitHub")
 
-/** Pending sign-in steps survive rotation for the life of the process. Passwords are never kept here. */
+/** Pending sign-in steps survive rotation for the life of the process. Passwords are never kept here; `secureOffer` holds only the login key of a new password. */
 internal object CloudAccountFlow {
     var signup by mutableStateOf<CloudSignup?>(null)
     var login by mutableStateOf<CloudLoginChallenge?>(null)
@@ -54,7 +59,13 @@ internal object CloudAccountFlow {
     var waitingFor by mutableStateOf<String?>(null)
     var providerReturn by mutableStateOf<Uri?>(null)
     var provider by mutableStateOf<CloudProviderSignIn?>(null)
-    fun clear() { signup = null; login = null; reset = null; approval = null; deviceChoice = null; waitingFor = null; provider = null }
+    /** Signed up with a password: the authenticator offer follows the recovery code, then this is dropped. */
+    var secureOffer by mutableStateOf<CloudSecureOffer?>(null)
+    /** An authenticator being set up, in settings or in the offer, until it is turned on or cancelled. */
+    var totpSetup by mutableStateOf<CloudTotpSetup?>(null)
+    /** Bumped when the offer changed the account, so the account section loads it again. */
+    var accountChanged by mutableStateOf(0)
+    fun clear() { signup = null; login = null; reset = null; approval = null; deviceChoice = null; waitingFor = null; provider = null; totpSetup = null }
 }
 
 /** The free plan's device limit was reached: the person picks the device this phone replaces, and `retry` repeats the same sign-in. */
@@ -193,6 +204,37 @@ private fun Problem(text: String?) {
     text?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
 }
 
+/** Opens the otpauth:// link in an authenticator app on this phone; the setup key is for typing it in by hand. */
+@Composable
+private fun TotpSetupSteps(setup: CloudTotpSetup, code: String, onCode: (String) -> Unit, enabled: Boolean) {
+    val context = LocalContext.current
+    var noApp by remember(setup) { mutableStateOf(false) }
+    var copied by remember(setup) { mutableStateOf(false) }
+    Text("Add JotDrop to your authenticator app, then enter the 6-digit code it shows.")
+    Button(onClick = {
+        noApp = try { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(setup.uri))); false } catch (_: ActivityNotFoundException) { true }
+    }, enabled = enabled, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Open authenticator app") }
+    Problem(if (noApp) "No authenticator app is installed on this phone. Install one, like Google Authenticator, Microsoft Authenticator or 2FAS, " +
+        "and tap \"Open authenticator app\" again. Or type the setup key below into an authenticator app." else null)
+    Text("No authenticator on this phone? Choose \"enter a setup key\" in the app and type this key.", style = MaterialTheme.typography.bodySmall)
+    SelectionContainer { Text(setup.secret, fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodyLarge) }
+    TextButton(onClick = {
+        // Marked sensitive, so Android does not show the key in its clipboard preview.
+        val clip = ClipData.newPlainText("JotDrop setup key", setup.secret)
+        clip.description.extras = PersistableBundle().apply { putBoolean("android.content.extra.IS_SENSITIVE", true) }
+        context.getSystemService(ClipboardManager::class.java)?.setPrimaryClip(clip)
+        copied = true
+    }, enabled = enabled) { Text(if (copied) "Setup key copied" else "Copy setup key") }
+    CodeField(code, onCode, enabled)
+}
+
+/** Wrong code or password: the server's own words, shown next to the fields, which stay filled in. */
+private fun accountProblem(failure: Exception): String = when {
+    failure is CloudRequestException -> failure.serverMessage ?: failure.message
+    (failure is IllegalArgumentException || failure is IllegalStateException) -> failure.message
+    else -> null
+} ?: "This could not complete. Check the connection and try again."
+
 /** Sign in, create an account or recover access on a device that is not connected yet. */
 @Composable
 internal fun CloudSignIn(busy: Boolean, run: (suspend () -> Unit) -> Unit, showError: (String) -> Unit, pairing: @Composable () -> Unit) {
@@ -262,6 +304,7 @@ internal fun CloudSignIn(busy: Boolean, run: (suspend () -> Unit) -> Unit, showE
                     keepRecoveryCode(context, result.recoveryCode)
                     CloudSyncManager.connectAccount(context, result.client)
                     startAgain()
+                    flow.secureOffer = result.secureOffer
                 } } }, enabled = !busy && code.length == 6) { Text("Create account") }
                 TextButton(onClick = ::startAgain, enabled = !busy) { Text("Start again") }
             }
@@ -466,12 +509,21 @@ internal fun CloudAccountSection(busy: Boolean, run: (suspend () -> Unit) -> Uni
     var deleting by rememberSaveable { mutableStateOf(false) }
     var deletePassword by remember { mutableStateOf("") }
     var deleteTyped by remember { mutableStateOf("") }
+    var totp by remember { mutableStateOf(false) }
+    var vaultId by remember { mutableStateOf<String?>(null) }
+    var totpCode by remember { mutableStateOf("") }
+    var totpPassword by remember { mutableStateOf("") }
+    var totpProblem by remember { mutableStateOf<String?>(null) }
+    var turningOff by rememberSaveable { mutableStateOf(false) }
     val context = LocalContext.current
     var approvals by remember { mutableStateOf<List<CloudApproval>?>(null) }
     var approve by remember { mutableStateOf<CloudApproval?>(null) }
-    LaunchedEffect(reload) {
+    LaunchedEffect(reload, flow.accountChanged) {
         loadFailed = false
-        try { val client = cloud(); val info = io { CloudAccount.accountInfo(client) }; email = info?.email; hasPassword = info?.password ?: true; loaded = true }
+        try {
+            val client = cloud(); val info = io { CloudAccount.accountInfo(client) }
+            email = info?.email; hasPassword = info?.password ?: true; totp = info?.totp ?: false; vaultId = client.credentials.vaultId; loaded = true
+        }
         catch (cancelled: CancellationException) { throw cancelled }
         catch (_: Exception) { loadFailed = true }
     }
@@ -537,6 +589,53 @@ internal fun CloudAccountSection(busy: Boolean, run: (suspend () -> Unit) -> Uni
                             current = ""; password = ""; confirm = ""; changing = false; notice = "Password changed."
                         } }, enabled = !busy && current.isNotEmpty() && newPasswordProblem(password, confirm) == null) { Text("Change password") }
                         TextButton(onClick = { changing = false; current = ""; password = ""; confirm = "" }, enabled = !busy) { Text("Cancel") }
+                    }
+                }
+                // Recommended, never required: without an app a new device gets a code by email. Needs the password, like on the website.
+                if (hasPassword) {
+                    val setup = flow.totpSetup?.takeIf { it.vaultId == vaultId && flow.secureOffer == null }
+                    fun totpDone(message: String, on: Boolean) { flow.totpSetup = null; totpCode = ""; totpPassword = ""; totpProblem = null; turningOff = false; totp = on; notice = message }
+                    // A wrong code or password (401) shows next to the fields; anything else at the top, like other account forms.
+                    suspend fun checked(action: () -> Unit): Boolean {
+                        totpProblem = null
+                        try { io(action); return true }
+                        catch (failure: CloudRequestException) { if (failure.status != 401) throw failure; totpProblem = accountProblem(failure); return false }
+                    }
+                    Text("Authenticator app", style = MaterialTheme.typography.titleMedium)
+                    Text(if (totp) "On: a new device asks for a code from your app." else "Off: a new device asks for a code by email.")
+                    when {
+                        setup != null -> {
+                            TotpSetupSteps(setup, totpCode, { totpCode = it }, !busy)
+                            PasswordField(totpPassword, { totpPassword = it }, "Password", !busy)
+                            Problem(totpProblem)
+                            Row {
+                                Button(onClick = { run {
+                                    val client = cloud()
+                                    if (checked { CloudAccount.enableTotp(client, totpPassword, totpCode) })
+                                        totpDone("Authenticator app turned on. A new device now asks for a code from the app.", true)
+                                } }, enabled = !busy && totpCode.length == 6 && totpPassword.isNotEmpty()) { Text("Turn on") }
+                                TextButton(onClick = { flow.totpSetup = null; totpCode = ""; totpPassword = ""; totpProblem = null }, enabled = !busy) { Text("Cancel") }
+                            }
+                        }
+                        totp && turningOff -> {
+                            Text("New devices then get a code by email again.", style = MaterialTheme.typography.bodySmall)
+                            PasswordField(totpPassword, { totpPassword = it }, "Password", !busy)
+                            Problem(totpProblem)
+                            Row {
+                                Button(onClick = { run {
+                                    val client = cloud()
+                                    if (checked { CloudAccount.disableTotp(client, totpPassword) })
+                                        totpDone("Authenticator app turned off. New devices get a code by email.", false)
+                                } }, enabled = !busy && totpPassword.isNotEmpty()) { Text("Turn off") }
+                                TextButton(onClick = { turningOff = false; totpPassword = ""; totpProblem = null }, enabled = !busy) { Text("Cancel") }
+                            }
+                        }
+                        totp -> TextButton(onClick = { turningOff = true }, enabled = !busy) { Text("Turn off") }
+                        else -> TextButton(onClick = { run {
+                            val client = cloud()
+                            flow.totpSetup = io { CloudAccount.setupTotp(client) }
+                            totpCode = ""; totpPassword = ""; totpProblem = null
+                        } }, enabled = !busy) { Text("Set up an authenticator app") }
                     }
                 }
             }
@@ -612,4 +711,57 @@ internal fun CloudRecoveryDialog() {
             CloudAccountFlow.recoveryCode = null
             runCatching { CloudPreviewStore(context).clearRecoveryCode() }
         }, enabled = saved) { Text("Done") } })
+}
+
+/** After signing up with a password, once the recovery code is saved. Recommended, not required; the login key of the new password stands in for asking it again. */
+@Composable
+internal fun CloudSecureOfferDialog(cloud: suspend () -> CloudClient) {
+    val flow = CloudAccountFlow
+    val scope = rememberCoroutineScope()
+    var working by remember { mutableStateOf(false) }
+    var problem by remember { mutableStateOf<String?>(null) }
+    var code by remember { mutableStateOf("") }
+    var turnedOn by remember { mutableStateOf(false) }
+    val offer = flow.secureOffer
+    if (flow.recoveryCode != null || (offer == null && !turnedOn)) return
+    val setup = flow.totpSetup
+    fun close() { flow.secureOffer = null; flow.totpSetup = null; code = ""; problem = null; turnedOn = false }
+    fun attempt(action: suspend () -> Unit) {
+        if (working) return
+        working = true
+        problem = null
+        scope.launch {
+            try { action() }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) { problem = accountProblem(failure) }
+            finally { working = false }
+        }
+    }
+    if (offer == null) {
+        AlertDialog(onDismissRequest = ::close, title = { Text("Authenticator app turned on") },
+            text = { Text("Authenticator app turned on. A new device now asks for a code from the app.") },
+            confirmButton = { TextButton(onClick = ::close) { Text("Done") } })
+        return
+    }
+    // Once the key is shown it may already be in the app, so only the buttons close the dialog.
+    AlertDialog(onDismissRequest = { if (setup == null && !working) close() },
+        title = { Text("Secure your account with an authenticator app (recommended)") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.verticalScroll(rememberScrollState())) {
+            if (setup == null) {
+                Text("An authenticator app, like Google Authenticator, Microsoft Authenticator or 2FAS, shows a new 6-digit code every 30 seconds. " +
+                    "With one set up, a new device asks for that code instead of a code by email, so your account stays safe even if someone gets into your email.")
+                Text("You can also do this later in settings.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            } else TotpSetupSteps(setup, code, { code = it }, !working)
+            Problem(problem)
+        } },
+        confirmButton = {
+            if (setup == null) TextButton(onClick = { attempt { val client = cloud(); flow.totpSetup = io { CloudAccount.setupTotp(client) } } }, enabled = !working) { Text("Set up now") }
+            else TextButton(onClick = { attempt {
+                val client = cloud()
+                io { CloudAccount.enableTotp(client, offer, code) }
+                flow.secureOffer = null; flow.totpSetup = null; code = ""; turnedOn = true
+                flow.accountChanged++
+            } }, enabled = !working && code.length == 6) { Text("Turn on") }
+        },
+        dismissButton = { TextButton(onClick = ::close, enabled = !working) { Text("Later") } })
 }

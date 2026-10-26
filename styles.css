@@ -1615,6 +1615,15 @@
 .jotdrop-trash-bar.is-hidden { display: none; }
 
 /* JotDrop Cloud: the recovery code is shown once, readable in full. */
+/* Dark on white in both themes, so every authenticator app can scan it. */
+.jotdrop-qr {
+  display: block;
+  width: min(220px, 100%);
+  height: auto;
+  margin: var(--size-4-3) 0;
+  border-radius: var(--radius-s);
+}
+
 .jotdrop-recovery-code {
   width: 100%;
   font-family: var(--font-monospace);

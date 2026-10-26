@@ -6,6 +6,7 @@ import { isIP } from 'node:net';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+import qrcode from 'qrcode-generator';
 import { createBrevoList, createSesMailer } from './mailer.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
@@ -54,6 +55,15 @@ const sqliteCode = (error) => error.code === 'ERR_SQLITE_ERROR' ? error.errcode 
 const deviceName = (value) => requireValue(typeof value === 'string' && value.trim().length > 0 && value.length <= 80 && !/[\x00-\x1f]/.test(value), 'Invalid device name');
 const newCode = () => String(randomInt(1000000)).padStart(6, '0');
 const validCode = (code) => typeof code === 'string' && /^[0-9]{6}$/.test(code);
+
+/** QR code as rows of "1" (dark) and "0", so every client can draw it without a QR library of its own. */
+function qrRows(text) {
+  const qr = qrcode(0, 'M');
+  qr.addData(text);
+  qr.make();
+  const size = qr.getModuleCount();
+  return Array.from({ length: size }, (_, row) => Array.from({ length: size }, (_, column) => (qr.isDark(row, column) ? '1' : '0')).join(''));
+}
 
 function base32(bytes) {
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
@@ -897,7 +907,8 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         requireAccounts();
         const account = accountFor(vaultId), secret = randomBytes(20);
         run('UPDATE accounts SET totpPending=? WHERE id=?', sealTotp(secret, account.id), account.id);
-        reply(200, { secret: base32(secret), uri: `otpauth://totp/${encodeURIComponent(`JotDrop:${account.email}`)}?secret=${base32(secret)}&issuer=JotDrop` }); return;
+        const uri = `otpauth://totp/${encodeURIComponent(`JotDrop:${account.email}`)}?secret=${base32(secret)}&issuer=JotDrop`;
+        reply(200, { secret: base32(secret), uri, qr: qrRows(uri) }); return;
       }
       if (route === '/account/totp/enable' && method === 'POST') {
         requireAccounts();

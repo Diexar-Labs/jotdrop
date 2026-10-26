@@ -217,7 +217,8 @@
           <p id="totp-status"></p>
           <button id="totp-setup" type="button">Set up an authenticator app</button>
           <div id="totp-enable" hidden>
-            <p>Add this key to your authenticator app (choose "enter a setup key"), then enter the code it shows.</p>
+            <p>Scan this QR code with your authenticator app, then enter the code it shows. No camera? Choose "enter a setup key" in the app and type the key below.</p>
+            <div id="totp-qr" class="qr"></div>
             <label for="totp-secret">Setup key</label><input id="totp-secret" readonly spellcheck="false">
             <label for="totp-code">Code from the app</label><input id="totp-code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code">
           </div>
@@ -311,6 +312,22 @@
     <p id="labels-message" class="message" role="status" aria-live="polite"></p>
   </dialog>
 
+  <dialog id="secure-dialog" aria-labelledby="secure-title">
+    <h2 id="secure-title">Secure your account with an authenticator app (recommended)</h2>
+    <p>An authenticator app, like Google Authenticator, Microsoft Authenticator or 2FAS, shows a new 6-digit code every 30 seconds. With one set up, a new device asks for that code instead of a code by email, so your account stays safe even if someone gets into your email.</p>
+    <div id="secure-choice">
+      <p class="dialog-note">You can also do this later in Devices &amp; recovery.</p>
+      <div class="dialog-actions"><button id="secure-later" type="button">Later</button><button id="secure-start" class="primary" type="button">Set up now</button></div>
+    </div>
+    <form id="secure-form" hidden>
+      <p>Scan this QR code with your authenticator app, then enter the code it shows. No camera? Choose "enter a setup key" in the app and type the key below.</p>
+      <div id="secure-qr" class="qr"></div>
+      <label for="secure-secret">Setup key</label><input id="secure-secret" readonly spellcheck="false">
+      <label for="secure-code">Code from the app</label><input id="secure-code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required>
+      <p id="secure-message" role="status"></p>
+      <div class="dialog-actions"><button id="secure-skip" type="button">Later</button><button class="primary" type="submit">Turn on</button></div>
+    </form>
+  </dialog>
   <dialog id="recovery-dialog" aria-labelledby="recovery-title">
     <h2 id="recovery-title">Keep your recovery code safe</h2>
     <p>This is the only time this browser shows it. Anyone with this code can access and decrypt your workspace.</p>

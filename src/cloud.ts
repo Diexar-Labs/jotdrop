@@ -3,7 +3,7 @@ import type JotDropPlugin from "./main";
 import { ConfirmModal } from "./confirmModal";
 import { CloudClient } from "../cloud/shared/client.mjs";
 import { availableProviders, checkApproval, completeApproval, confirmLogin, confirmSignup, logIn, providerApproval, providerRecover, providerSignUp, providerTicket, requestApproval, resetWithRecoveryCode, signUp, startOver, startProviderSignIn, startReset } from "../cloud/shared/account.mjs";
-import { RecoveryCodeModal } from "./cloudAccount";
+import { AuthenticatorModal, RecoveryCodeModal } from "./cloudAccount";
 import { ConflictReviewModal, TimeMachineModal } from "./cloudReview";
 import { base64ToBytes, decryptEnvelope, MAX_FILE_BYTES, objectId } from "../cloud/shared/crypto.mjs";
 import { cloudTimeline, conflictOriginal, copyName, hash, isPreserved, MAX_SYNC_BYTES, MAX_SYNC_FILES, remoteFiles, restorePlan, syncFolder, syncPath, unavailable } from "../cloud/shared/sync.mjs";
@@ -868,7 +868,7 @@ class CloudSignInModal extends Modal {
         const pending = this.signup
           ? await signUp({ url: this.url, email, password, deviceName: deviceName(), newsletter, fetcher: cloudFetch })
           : await logIn({ url: this.url, email, password, deviceName: deviceName(), fetcher: cloudFetch });
-        this.code(pending as Pending, email);
+        this.code(pending as Pending, email, password);
       })));
   }
 
@@ -911,7 +911,7 @@ class CloudSignInModal extends Modal {
     new Setting(el).addButton((button) => button.setButtonText("Back").onClick(() => this.form()));
   }
 
-  private code(pending: Pending, email: string): void {
+  private code(pending: Pending, email: string, password: string): void {
     const el = this.start("Enter your code");
     el.createEl("p", { text: pending.secondFactor === "totp" ? "Enter the 6-digit code from your authenticator app." : `Enter the 6-digit code we emailed to ${email}.` });
     let code = "";
@@ -923,7 +923,7 @@ class CloudSignInModal extends Modal {
         const { client, recoveryCode } = await confirmSignup(pending, code, { fetcher: cloudFetch });
         if (!client || !recoveryCode) throw new Error("The server did not finish creating the account. Try again.");
         await this.cloud.finishSignIn(client, email);
-        this.done(recoveryCode);
+        this.done(recoveryCode, password);
         return;
       }
       await this.withDeviceChoice(choices, async (replaceDeviceId) => {
@@ -1017,9 +1017,11 @@ class CloudSignInModal extends Modal {
     window.setTimeout(() => void poll(), 3000);
   }
 
-  private done(recoveryCode?: string): void {
+  /** With `password` (a new account with a password) the recovery code is followed by the recommended authenticator step. */
+  private done(recoveryCode?: string, password?: string): void {
     this.close();
     new Notice("Signed in to JotDrop Cloud.");
-    if (recoveryCode) new RecoveryCodeModal(this.app, recoveryCode).open();
+    const secure = password === undefined ? undefined : () => new AuthenticatorModal(this.app, this.cloud, { password }).open();
+    if (recoveryCode) new RecoveryCodeModal(this.app, recoveryCode, secure).open();
   }
 }

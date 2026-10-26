@@ -164,6 +164,10 @@ dialog::backdrop { background: rgb(15 23 36 / .4); }
 #photo-tools p { color: var(--muted); overflow-wrap: anywhere; }
 .photo-actions { display: flex; flex-wrap: wrap; gap: .6rem; align-items: center; margin-top: 1rem; }
 #camera-preview { display: block; width: 100%; max-height: 320px; margin: 1rem 0; object-fit: contain; }
+.dialog-note { color: var(--muted); font-size: .9rem; }
+/* QR codes stay dark on white in both themes, so every authenticator app can scan them. */
+.qr { width: min(220px, 100%); margin: 1rem 0; }
+.qr svg { display: block; width: 100%; height: auto; border-radius: 6px; }
 .check-label { display: flex; align-items: start; gap: .7rem; margin: 1.2rem 0; cursor: pointer; }
 .check-label input { width: 1.3rem; height: 1.3rem; flex: none; margin-top: .05rem; cursor: pointer; }
 @media (max-width: 760px) {

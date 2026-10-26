@@ -53,6 +53,7 @@ def check_plans(browser, url, codes, database):
     phone.locator('#code-form button[type="submit"]').click()
     phone.locator("#recovery-saved").check()
     phone.locator("#finish-recovery").click()
+    phone.locator("#secure-later").click()  # The authenticator offer after signing up.
     phone.locator("#plan-status").filter(has_text="Free plan: 2 devices, 30 days of history").wait_for()
     assert phone.locator("#start-trial").is_visible()
     # Buy buttons only; a click would contact Stripe with the synthetic settings below.

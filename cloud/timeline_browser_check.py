@@ -65,6 +65,7 @@ def check_timeline(browser, url, codes, database):
     phone.locator('#code-form button[type="submit"]').click()
     phone.locator("#recovery-saved").check()
     phone.locator("#finish-recovery").click()
+    phone.locator("#secure-later").click()  # The authenticator offer after signing up.
     phone.locator("#plan-status").filter(has_text="Free plan").wait_for()
 
     save(phone, "notes/a.md", "# Shopping\n\nmilk")

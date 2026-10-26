@@ -178,6 +178,23 @@ function showMenu(anchor, items) {
 
 const colorNames = [['default', 'Default'], ['red', 'Red'], ['orange', 'Orange'], ['yellow', 'Yellow'], ['green', 'Cream'], ['teal', 'Slate blue'], ['blue', 'Blue'], ['purple', 'Purple'], ['pink', 'Pink'], ['brown', 'Brown'], ['gray', 'Gray']];
 
+// Draws the server's QR rows ("1" = dark) as one SVG path, with the quiet zone scanners need.
+function qrCode(rows) {
+  const svgNs = 'http://www.w3.org/2000/svg', size = rows.length + 8, svg = document.createElementNS(svgNs, 'svg'), path = document.createElementNS(svgNs, 'path');
+  svg.setAttribute('viewBox', `0 0 ${size} ${size}`);
+  svg.setAttribute('role', 'img');
+  svg.setAttribute('aria-label', 'QR code for your authenticator app');
+  svg.setAttribute('shape-rendering', 'crispEdges');
+  const background = document.createElementNS(svgNs, 'rect');
+  background.setAttribute('width', size);
+  background.setAttribute('height', size);
+  background.setAttribute('fill', '#fff');
+  path.setAttribute('d', rows.flatMap((row, y) => [...row].map((dark, x) => (dark === '1' ? `M${x + 4} ${y + 4}h1v1h-1z` : ''))).join(''));
+  path.setAttribute('fill', '#000');
+  svg.append(background, path);
+  return svg;
+}
+
 function paragraph(text, className) {
   const element = document.createElement('p');
   element.textContent = text;
@@ -1394,6 +1411,8 @@ function lock(notice = '') {
   attaching = undefined;
   $('totp-enable').hidden = true;
   $('totp-secret').value = '';
+  $('totp-qr').replaceChildren();
+  $('secure-dialog').close();
   $('workspace').hidden = true;
   $('account-actions').hidden = true;
   $('access').hidden = false;
@@ -1410,6 +1429,8 @@ let providerSignIn;
 const PROVIDER_NAMES = { google: 'Google', github: 'GitHub' };
 let attaching;
 let totpOn = false;
+// The password of a brand-new account, kept only while the authenticator offer after signing up is open.
+let secureOffer;
 let approvalRun = 0;
 const accessError = (error) => error?.message || 'Something went wrong. Try again.';
 // Account forms report the server's own reason (wrong password, wrong code), except a revoked device.
@@ -1517,6 +1538,7 @@ accessForm('code-form', async () => {
   else {
     const { client: connected, recoveryCode } = await confirmSignup(step.pending, code);
     await finishAccess(connected, { ...step, recoveryCode });
+    secureOffer = step.password;
   }
 });
 accessForm('forgot-form', async () => {
@@ -1729,8 +1751,9 @@ workspaceForm('delete-account-form', async () => {
   field.value = $('delete-confirm').value = '';
   lock('Your account and cloud were deleted. The notes on your own devices were not touched.');
 });
-$('totp-setup').addEventListener('click', () => setupTotp(client).then(({ secret }) => {
+$('totp-setup').addEventListener('click', () => setupTotp(client).then(({ secret, qr }) => {
   $('totp-secret').value = secret;
+  $('totp-qr').replaceChildren(qrCode(qr));
   $('totp-enable').hidden = false;
   $('totp-setup').hidden = true;
   $('totp-submit').hidden = false;
@@ -1742,6 +1765,7 @@ workspaceForm('totp-form', async () => {
   else await enableTotp(client, { password, code: $('totp-code').value.trim() });
   message(totpOn ? 'Authenticator app turned off. New devices get a code by email.' : 'Authenticator app turned on.');
   for (const id of ['totp-password', 'totp-code', 'totp-secret']) $(id).value = '';
+  $('totp-qr').replaceChildren();
   $('totp-enable').hidden = true;
   await renderAccount();
 });
@@ -2169,7 +2193,45 @@ $('export-all').addEventListener('click', () => {
 $('download-recovery').addEventListener('click', () => download(encoder.encode($('recovery-code').value), 'jotdrop-recovery.txt', 'text/plain'));
 $('recovery-dialog').addEventListener('cancel', (event) => event.preventDefault());
 $('recovery-saved').addEventListener('change', () => { $('finish-recovery').disabled = !$('recovery-saved').checked; });
-$('finish-recovery').addEventListener('click', () => { $('recovery-dialog').close(); $('recovery-code').value = ''; });
+$('finish-recovery').addEventListener('click', () => {
+  $('recovery-dialog').close();
+  $('recovery-code').value = '';
+  if (secureOffer === undefined) return;
+  $('secure-choice').hidden = false;
+  $('secure-form').hidden = true;
+  $('secure-dialog').showModal();
+});
+$('secure-later').addEventListener('click', () => $('secure-dialog').close());
+$('secure-skip').addEventListener('click', () => $('secure-dialog').close());
+$('secure-dialog').addEventListener('close', () => {
+  secureOffer = undefined;
+  $('secure-secret').value = $('secure-code').value = $('secure-message').textContent = '';
+  $('secure-qr').replaceChildren();
+});
+$('secure-start').addEventListener('click', async () => {
+  $('secure-start').disabled = true;
+  try {
+    const { secret, qr } = await setupTotp(client);
+    $('secure-qr').replaceChildren(qrCode(qr));
+    $('secure-secret').value = secret;
+    $('secure-choice').hidden = true;
+    $('secure-form').hidden = false;
+    $('secure-code').focus();
+  } catch (error) { message(accountError(error)); $('secure-dialog').close(); }
+  finally { $('secure-start').disabled = false; }
+});
+$('secure-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const submit = event.submitter;
+  submit.disabled = true;
+  $('secure-message').textContent = 'Checking the code...';
+  try {
+    await enableTotp(client, { password: secureOffer, code: $('secure-code').value.trim() });
+    $('secure-dialog').close();
+    message('Authenticator app turned on. A new device now asks for a code from the app.');
+  } catch (error) { $('secure-message').textContent = accountError(error); }
+  finally { submit.disabled = false; }
+});
 window.addEventListener('online', () => { if (client) void sync(); });
 window.addEventListener('pagehide', () => { syncController?.abort(); resetPhoto(); discardVoice(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) { stopCamera(); if (voiceJob?.recorder?.state === 'recording') voiceJob.recorder.stop(); } });

@@ -5,7 +5,7 @@ import java.security.PrivateKey
 
 /** A registration waiting for the emailed code. A new cloud carries its keys; an existing cloud only its id. */
 class CloudSignup internal constructor(val url: String, val signupId: String, val vaultId: String?,
-    internal val vaultKey: String?, internal val recoveryToken: String?, internal val deviceToken: String?)
+    internal val vaultKey: String?, internal val recoveryToken: String?, internal val deviceToken: String?, internal val authKey: String? = null)
 class CloudLoginChallenge internal constructor(val url: String, val challengeId: String, val secondFactor: String,
     internal val unlockKey: String, internal val deviceToken: String)
 class CloudReset internal constructor(val url: String, val resetId: String)
@@ -17,8 +17,13 @@ class CloudApprovalRequest internal constructor(val url: String, val approvalId:
     val approved: Boolean get() = vaultKey != null
 }
 class CloudApproval(val id: String, val publicKey: String, val expiresAt: String, val words: List<String>)
-class CloudSignedUp(val client: CloudClient, val recoveryCode: String)
-class CloudAccountInfo(val email: String, val password: Boolean)
+/** `secureOffer` is set after signing up with a password: it turns on an authenticator app without asking the password again. */
+class CloudSignedUp(val client: CloudClient, val recoveryCode: String, val secureOffer: CloudSecureOffer? = null)
+/** The login key derived from the password just chosen, not the password itself. Memory only, dropped when the offer closes. */
+class CloudSecureOffer internal constructor(internal val authKey: String)
+class CloudAccountInfo(val email: String, val password: Boolean, val totp: Boolean = false)
+/** A new authenticator secret for one cloud, waiting until enableTotp confirms a code from the app. `uri` is the otpauth:// link that adds it to an app. */
+class CloudTotpSetup(val vaultId: String, val secret: String, val uri: String)
 /** Open `href` in the browser and keep `verifier` on this device until the ticket comes back. */
 class CloudProviderStart(val url: String, val verifier: String, val href: String)
 /** Who signed in with Google or GitHub, and whether that address already has an account. The ticket only works with this device's verifier. */
@@ -74,9 +79,10 @@ object CloudAccount {
         val vaultKey = CloudCrypto.token()
         val recoveryToken = CloudCrypto.token()
         val (deviceToken, fields) = device(deviceName)
-        val body = JSONObject().put("email", email.trim()).with(credentials(password, vaultKey)).put("recoveryTokenHash", CloudCrypto.hashToken(recoveryToken)).with(fields).put("newsletter", newsletter)
+        val keys = credentials(password, vaultKey)
+        val body = JSONObject().put("email", email.trim()).with(keys).put("recoveryTokenHash", CloudCrypto.hashToken(recoveryToken)).with(fields).put("newsletter", newsletter)
         val result = post(origin(url), "/accounts", body)
-        return CloudSignup(origin(url), id(result.getString("signupId")), null, vaultKey, recoveryToken, deviceToken)
+        return CloudSignup(origin(url), id(result.getString("signupId")), null, vaultKey, recoveryToken, deviceToken, keys.getString("authKey"))
     }
 
     /** Gives the cloud this device is already connected to an account. Confirm with confirmSignup. */
@@ -93,7 +99,8 @@ object CloudAccount {
             return null
         }
         val client = connect(pending.url, result, pending.deviceToken, requireNotNull(pending.vaultKey))
-        return CloudSignedUp(client, encodeRecovery(client.credentials.vaultId, client.credentials.vaultKey, requireNotNull(pending.recoveryToken)))
+        return CloudSignedUp(client, encodeRecovery(client.credentials.vaultId, client.credentials.vaultKey, requireNotNull(pending.recoveryToken)),
+            pending.authKey?.let(::CloudSecureOffer))
     }
 
     /** First step of logging in; then confirmLogin with the code from the email or the authenticator app. */
@@ -116,7 +123,7 @@ object CloudAccount {
     }
 
     /** The account of the connected cloud, or null when it has no account yet. Accounts made with Google or GitHub may have no password. */
-    fun accountInfo(client: CloudClient): CloudAccountInfo? = try { client.call("/account").let { CloudAccountInfo(it.getString("email"), it.optBoolean("password", true)) } }
+    fun accountInfo(client: CloudClient): CloudAccountInfo? = try { client.call("/account").let { CloudAccountInfo(it.getString("email"), it.optBoolean("password", true), it.optBoolean("totp")) } }
         catch (error: CloudRequestException) { if (error.status == 404) null else throw error }
 
     fun accountEmail(client: CloudClient): String? = accountInfo(client)?.email
@@ -146,6 +153,30 @@ object CloudAccount {
         val body = JSONObject().put("confirm", "DELETE MY CLOUD")
         if (password != null) body.put("currentAuthKey", currentAuthKey(client, password))
         client.call("/account/delete", "POST", body)
+    }
+
+    /** Starts over each time: a new secret replaces one that was never confirmed. Turning it on needs a code from the app and the password. */
+    fun setupTotp(client: CloudClient): CloudTotpSetup {
+        val result = client.call("/account/totp", "POST", JSONObject())
+        val secret = result.getString("secret")
+        val uri = result.getString("uri")
+        require(secret.matches(Regex("[A-Z2-7]{16,128}")) && uri.startsWith("otpauth://totp/")) { "The server sent an invalid authenticator setup." }
+        return CloudTotpSetup(client.credentials.vaultId, secret, uri)
+    }
+
+    /** From then on a new device asks for a code from the app instead of a code by email. */
+    fun enableTotp(client: CloudClient, password: String, code: String) = turnOnTotp(client, code, currentAuthKey(client, password))
+
+    /** Right after signing up: the key from the new password, so it is not asked twice. */
+    fun enableTotp(client: CloudClient, offer: CloudSecureOffer, code: String) = turnOnTotp(client, code, offer.authKey)
+
+    private fun turnOnTotp(client: CloudClient, code: String, authKey: String) {
+        client.call("/account/totp/enable", "POST", JSONObject().put("code", code.trim()).put("currentAuthKey", authKey))
+    }
+
+    /** New devices get a code by email again. */
+    fun disableTotp(client: CloudClient, password: String) {
+        client.call("/account/totp/disable", "POST", JSONObject().put("currentAuthKey", currentAuthKey(client, password)))
     }
 
     /** Forgot password: the server mails a code that one of the three routes below needs. */
