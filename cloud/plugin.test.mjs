@@ -91,7 +91,7 @@ function vault() {
 test('the plugin signs in with an account, syncs the real JotDrop folders both ways and refuses a second sync system', async (t) => {
   const dataDir = await mkdtemp(join(tmpdir(), 'jotdrop-plugin-test-'));
   const mails = [];
-  const app = await createCloudServer({ dataDir, enrollmentToken: randomToken(), mailer: async (mail) => { mails.push(mail); }, serverKey: randomToken(), freeDeviceLimit: 100 });
+  const app = await createCloudServer({ dataDir, enrollmentToken: randomToken(), mailer: async (mail) => { mails.push(mail); }, serverKey: randomToken(), freeDeviceLimit: 100, maxFileBytes: 6 * 1024 * 1024 });
   t.after(async () => { await app.close(); await rm(dataDir, { recursive: true, force: true }); });
   const url = `http://127.0.0.1:${app.port}`;
 
@@ -126,13 +126,16 @@ test('the plugin signs in with an account, syncs the real JotDrop folders both w
   };
   assert.deepEqual(await pathsInCloud(), { 'attachments/photo.jpg': '\x01\x02\x03', 'notes/Archive/Old.md': 'Archived', 'notes/Shopping.md': 'Milk' });
 
-  // A photo over 4 MiB stays in this vault and is named; the rest still syncs.
-  v.put('Mini Notes/.attachments/Big photo.jpg', new Uint8Array(5 * 1024 * 1024));
+  // A photo over 4 MiB goes up in encrypted pieces; a file over the plan's maximum stays in this vault and is named.
+  v.put('Mini Notes/.attachments/Big photo.jpg', new Uint8Array(5 * 1024 * 1024).fill(7));
+  v.put('Mini Notes/.attachments/Huge video.mp4', new Uint8Array(7 * 1024 * 1024));
   v.put('Mini Notes/Later.md', 'Still syncs');
   await cloud.syncNow();
-  assert.match(cloud.status, /Synced\. 1 up, 0 down, 0 removed\. 1 file is larger than 4 MiB and stays only on this device: Big photo\.jpg\./);
-  assert.ok(!('attachments/Big photo.jpg' in await pathsInCloud()));
+  assert.match(cloud.status, /Synced\. 2 up, 0 down, 0 removed\. 1 file is larger than 6 MB, your plan's maximum per file, and stays only on this device: Huge video\.mp4\./);
+  const inCloud = await pathsInCloud();
+  assert.ok('attachments/Big photo.jpg' in inCloud && !('attachments/Huge video.mp4' in inCloud));
   v.files.delete('Mini Notes/.attachments/Big photo.jpg');
+  v.files.delete('Mini Notes/.attachments/Huge video.mp4');
 
   // A note made on the phone arrives; an edit here goes up.
   await phone.write('notes/From phone.md', text('Hello from Android'), 0);

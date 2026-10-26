@@ -5,11 +5,13 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.AtomicFile
 import android.util.Log
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
 import java.io.File
 import java.io.FileNotFoundException
+import java.io.IOException
 import java.net.SocketTimeoutException
 import java.nio.ByteBuffer
 import java.nio.charset.CodingErrorAction
@@ -36,6 +38,8 @@ data class CloudCredentials(val url: String, val vaultId: String, val deviceId: 
 /** [serverMessage] is the server's own short error text, shown by the account screens. */
 /** A device the server lists when a free cloud is at its device limit. */
 class CloudDeviceInfo(val id: String, val name: String, val lastSeenAt: String)
+/** A v2 upload whose missing pieces need the file, which changed or went away since; the newer local file wins. */
+class CloudSourceMissingException : IllegalStateException("The file is needed to finish this upload. The encrypted draft was kept.")
 /** `code` names a plan limit: "device-limit" comes with the active `devices` to choose from, "plus-required" with none. */
 class CloudRequestException(val status: Int, val serverMessage: String? = null, val code: String? = null, val devices: List<CloudDeviceInfo> = emptyList()) : Exception(if (status == 409) "A newer cloud version exists. Your local draft was kept; refresh and compare before saving." else "Cloud request failed ($status). Your local draft was kept.")
 
@@ -74,8 +78,8 @@ class CloudClient(val credentials: CloudCredentials) {
         return files.values.toList()
     }
 
-    /** The newest version of a file, or null when a full free cloud cleared it after 30 days in the trash. */
-    fun readOrNull(id: String): CloudPreviewFile? = try { read(id) } catch (error: CloudRequestException) { if (error.status == 404) null else throw error }
+    /** The newest manifest of a file, or null when a full free cloud cleared it after 30 days in the trash. */
+    fun manifestOrNull(id: String): CloudManifest? = try { readManifest(id) } catch (error: CloudRequestException) { if (error.status == 404) null else throw error }
 
     /** The steps of the time machine: the last change time of each minute with a change, oldest first. */
     fun moments(checkActive: () -> Unit = {}): List<String> {
@@ -115,40 +119,123 @@ class CloudClient(val credentials: CloudCredentials) {
         return files
     }
 
-    fun read(id: String, version: Int? = null): CloudPreviewFile {
+    /** The whole file: its manifest, then its pieces. */
+    fun read(id: String, version: Int? = null): CloudPreviewFile = readManifest(id, version).let { CloudPreviewFile(id, it.revision, it.path, readPieces(it), it.deleted) }
+
+    /** The manifest only, as `readManifest` in cloud/shared/client.mjs: enough to compare with a local file without downloading its pieces. */
+    fun readManifest(id: String, version: Int? = null): CloudManifest {
         require(id.matches(Regex("[0-9a-f]{64}")) && (version == null || version > 0)) { "Invalid cloud object identity" }
-        // A note of up to 4 MiB: allow minutes on a slow line.
+        // A v1 note of up to 4 MiB: allow minutes on a slow line.
         val response = request(credentials.url, "/objects/$id${if (version == null) "" else "?revision=$version"}", "GET", null, credentials, limitSeconds = 300)
         val encrypted = parseEnvelope(response.getString("envelope"))
-        val payload = JSONObject(utf8(CloudCrypto.decrypt(credentials.vaultKey, encrypted, "jotdrop:object:v1:${credentials.vaultId}:$id")))
-        val path = CloudCrypto.safePath(payload.getString("path"))
-        require(CloudCrypto.objectId(credentials.vaultKey, path) == id) { "Encrypted file identity does not match" }
-        val bytes = CloudCrypto.decode(payload.getString("content"))
-        require(bytes.size <= CloudCrypto.MAX_FILE_BYTES) { "Cloud file exceeds the 4 MiB preview limit" }
-        Instant.parse(payload.getString("modifiedAt"))
-        return CloudPreviewFile(id, revision(response), path, bytes, response.getBoolean("deleted"))
+        val value = JSONObject(utf8(CloudCrypto.decrypt(credentials.vaultKey, encrypted, "jotdrop:object:v1:${credentials.vaultId}:$id")))
+        return manifest(id, revision(response), response.getBoolean("deleted"), value, CloudCrypto.safePath(value.getString("path")))
     }
 
+    private fun manifest(id: String, revision: Int, deleted: Boolean, value: JSONObject, path: String): CloudManifest {
+        val invalid = "Encrypted file validation failed. No local files were changed."
+        require(CloudCrypto.objectId(credentials.vaultKey, path) == id) { "Encrypted file identity does not match" }
+        Instant.parse(value.getString("modifiedAt"))
+        if (value.optInt("v", 1) != 2) {
+            val bytes = CloudCrypto.decode(value.getString("content"))
+            require(bytes.size <= CloudCrypto.MAX_FILE_BYTES) { "Cloud file exceeds the 4 MiB preview limit" }
+            return CloudManifest(id, revision, path, deleted, bytes.size, CloudSyncEngine.hash(bytes), emptyList(), bytes)
+        }
+        val size = value.getLong("size")
+        val hash = value.getString("hash")
+        val list = value.getJSONArray("chunks")
+        require(size in 0..CloudCrypto.MAX_CHUNKED_BYTES && hash.matches(hex64)) { invalid }
+        val count = if (size > CloudCrypto.INLINE_BYTES) pieces(size.toInt()) else 0
+        require(list.length() == count) { invalid }
+        val pieces = List(count) { index ->
+            list.getJSONObject(index).let { CloudPiece(it.getString("name"), it.getInt("size")) }.also {
+                require(it.name.matches(hex64) && it.size == pieceSize(size.toInt(), index) + 28) { invalid }
+            }
+        }
+        val bytes = if (count == 0) CloudCrypto.decode(value.getString("content")).also { require(it.size.toLong() == size && CloudCrypto.sha256Hex(it) == hash) { invalid } } else null
+        return CloudManifest(id, revision, path, deleted, size.toInt(), CloudCrypto.encode(hash.chunked(2).map { it.toInt(16).toByte() }.toByteArray()), pieces, bytes)
+    }
+
+    /** The file's bytes from its manifest, piece by piece; each piece and the whole file are checked. */
+    fun readPieces(manifest: CloudManifest): ByteArray {
+        manifest.bytes?.let { return it }
+        val bytes = ByteArray(manifest.size)
+        for ((index, piece) in manifest.pieces.withIndex()) {
+            val sealed = requestBytes(credentials.url, "/chunks/${piece.name}", "GET", null, credentials, limitSeconds = 300)
+            require(sealed.size == piece.size && CloudCrypto.sha256Hex(sealed) == piece.name) { "An encrypted piece did not match. No local files were changed." }
+            CloudCrypto.decryptChunk(credentials.vaultKey, credentials.vaultId, manifest.id, index, sealed).copyInto(bytes, index * CloudCrypto.CHUNK_BYTES)
+        }
+        require(CloudSyncEngine.hash(bytes) == manifest.hash) { "Encrypted file validation failed. No local files were changed." }
+        return bytes
+    }
+
+    private fun seal(id: String, index: Int, bytes: ByteArray): ByteArray = CloudCrypto.encryptChunk(credentials.vaultKey, credentials.vaultId, id, index,
+        bytes.copyOfRange(index * CloudCrypto.CHUNK_BYTES, index * CloudCrypto.CHUNK_BYTES + pieceSize(bytes.size, index)))
+
+    /**
+     * A v2 object, as cloud/shared/client.mjs: an encrypted manifest (path, size, fingerprint, pieces) plus encrypted
+     * pieces of 1 MiB. Only the piece names are kept, so a prepared write stays small; [commitWrite] encrypts the
+     * pieces again from the file, which gives the same bytes.
+     */
     fun prepareWrite(path: String, bytes: ByteArray, baseRevision: Int): CloudPreparedUpload {
         CloudCrypto.safePath(path)
-        require(bytes.size <= CloudCrypto.MAX_FILE_BYTES && baseRevision in 0 until Int.MAX_VALUE) { "Invalid cloud file or revision" }
+        require(bytes.size <= CloudCrypto.MAX_CHUNKED_BYTES && baseRevision in 0 until Int.MAX_VALUE) { "Invalid cloud file or revision" }
         val id = CloudCrypto.objectId(credentials.vaultKey, path)
-        val payload = JSONObject().put("path", path).put("content", CloudCrypto.encode(bytes)).put("modifiedAt", Instant.now().toString())
-        val envelope = CloudCrypto.encrypt(credentials.vaultKey, payload.toString().toByteArray(Charsets.UTF_8), "jotdrop:object:v1:${credentials.vaultId}:$id")
-        return CloudPreparedUpload(id, baseRevision, envelope)
+        val chunks = if (bytes.size > CloudCrypto.INLINE_BYTES) List(pieces(bytes.size)) { CloudCrypto.sha256Hex(seal(id, it, bytes)) } else emptyList()
+        val manifest = JSONObject().put("v", 2).put("path", path).put("modifiedAt", Instant.now().toString()).put("size", bytes.size).put("hash", CloudCrypto.sha256Hex(bytes))
+            .put("chunks", JSONArray(chunks.mapIndexed { index, name -> JSONObject().put("name", name).put("size", pieceSize(bytes.size, index) + 28) }))
+        if (chunks.isEmpty()) manifest.put("content", CloudCrypto.encode(bytes))
+        val envelope = CloudCrypto.encrypt(credentials.vaultKey, manifest.toString().toByteArray(Charsets.UTF_8), "jotdrop:object:v1:${credentials.vaultId}:$id")
+        return CloudPreparedUpload(id, baseRevision, envelope, chunks)
     }
 
-    fun preparedFile(prepared: CloudPreparedUpload): CloudPreviewFile {
+    /** A saved upload's manifest; [CloudManifest.bytes] is null for a large v2 file, which the local file finishes. */
+    fun preparedManifest(prepared: CloudPreparedUpload): CloudManifest {
         prepared.canonicalEnvelope()
-        val payload = JSONObject(utf8(CloudCrypto.decrypt(credentials.vaultKey, prepared.envelope, "jotdrop:object:v1:${credentials.vaultId}:${prepared.id}")))
-        val path = CloudSyncEngine.path(payload.getString("path"))
-        val bytes = CloudCrypto.decode(payload.getString("content"))
-        require(bytes.size <= CloudCrypto.MAX_FILE_BYTES && CloudCrypto.objectId(credentials.vaultKey, path) == prepared.id) { "Invalid encrypted upload snapshot" }
-        Instant.parse(payload.getString("modifiedAt"))
-        return CloudPreviewFile(prepared.id, prepared.baseRevision, path, bytes, false)
+        val value = JSONObject(utf8(CloudCrypto.decrypt(credentials.vaultKey, prepared.envelope, "jotdrop:object:v1:${credentials.vaultId}:${prepared.id}")))
+        val manifest = manifest(prepared.id, prepared.baseRevision, false, value, CloudSyncEngine.path(value.getString("path")))
+        require(prepared.chunks == null || prepared.chunks == manifest.pieces.map { it.name }) { "Invalid encrypted upload snapshot" }
+        return manifest
     }
 
-    fun commitWrite(prepared: CloudPreparedUpload, checkActive: () -> Unit): Int = CloudUpload.commit(prepared, checkActive) { path, method, body, binary ->
+    /** The plan's maximum per file; a server without encrypted pieces takes 4 MiB. */
+    fun maxFileBytes(): Long = call("/status").optJSONObject("pieces")?.optLong("maxFileBytes")?.takeIf { it > 0 } ?: CloudCrypto.MAX_FILE_BYTES.toLong()
+
+    /** [source]: the file a v2 upload was prepared from, for the pieces the cloud does not have yet. */
+    fun commitWrite(prepared: CloudPreparedUpload, source: ByteArray?, checkActive: () -> Unit): Int =
+        prepared.chunks?.let { commitPieces(prepared, it, source, checkActive) } ?: commitEnvelope(prepared, checkActive)
+
+    /** Uploads the pieces the cloud does not have yet, then saves the manifest, as `commitPieces` in cloud/shared/client.mjs. */
+    private fun commitPieces(prepared: CloudPreparedUpload, names: List<String>, source: ByteArray?, checkActive: () -> Unit): Int {
+        require(prepared.id.matches(hex64) && names.size <= pieces(CloudCrypto.MAX_CHUNKED_BYTES) && names.all { it.matches(hex64) }) { "Invalid prepared upload" }
+        // One identical retry is safe for every transfer request, including a lost successful response.
+        fun <T> retrying(block: () -> T): T {
+            checkActive()
+            return try { block() } catch (_: IOException) { checkActive(); block() }
+        }
+        // An older server would keep a manifest that older devices cannot read: never save there.
+        val capability = retrying { call("/status") }.optJSONObject("pieces")
+        check(capability?.optInt("version") == 1 && capability.optInt("pieceBytes") == CloudCrypto.CHUNK_BYTES) { "This server does not support encrypted pieces. The encrypted draft was kept." }
+        val missing = if (names.isEmpty()) emptySet() else retrying { call("/chunks/missing", "POST", JSONObject().put("names", JSONArray(names))) }
+            .getJSONArray("missing").let { list -> List(list.length()) { list.getString(it) }.toSet() }
+        if (missing.isNotEmpty() && source == null) throw CloudSourceMissingException()
+        for ((index, name) in names.withIndex()) {
+            if (name !in missing) continue
+            val sealed = seal(prepared.id, index, requireNotNull(source))
+            check(CloudCrypto.sha256Hex(sealed) == name) { "The file changed after it was prepared. The encrypted draft was kept." }
+            // A piece of 1 MiB on a slow line: allow minutes, like a download.
+            retrying { request(credentials.url, "/chunks/$name", "PUT", null, credentials, sealed, true, 300) }
+        }
+        checkActive()
+        // Not retried: a lost answer comes back as 409 or as the same receipt on the next sync.
+        val saved = request(credentials.url, objectPath(prepared.id), "PUT", JSONObject().put("baseRevision", prepared.baseRevision)
+            .put("envelope", prepared.canonicalEnvelope()).put("chunks", JSONArray(names)), credentials)
+        require(saved.getString("id") == prepared.id && revision(saved) == prepared.baseRevision + 1) { "Invalid cloud write acknowledgment" }
+        return prepared.baseRevision + 1
+    }
+
+    /** A v1 draft saved before this version: the single-envelope upload. */
+    private fun commitEnvelope(prepared: CloudPreparedUpload, checkActive: () -> Unit): Int = CloudUpload.commit(prepared, checkActive) { path, method, body, binary ->
         val result = request(credentials.url, path, method, null, credentials, body, binary)
         when {
             path == "/status" -> result.getJSONObject("transport").let {
@@ -170,6 +257,8 @@ class CloudClient(val credentials: CloudCredentials) {
     }
 
     fun discardWrite(prepared: CloudPreparedUpload) {
+        // A v2 upload leaves only pieces, which the server clears after a day when no version uses them.
+        if (prepared.chunks != null) return
         try { call(prepared.uploadPath(), "DELETE") }
         catch (error: CloudRequestException) { if (error.status != 404 && error.status != 410) throw error }
     }
@@ -213,6 +302,9 @@ class CloudClient(val credentials: CloudCredentials) {
     companion object {
         private val deadlines = ScheduledThreadPoolExecutor(1) { runnable -> Thread(runnable, "JotDropCloudDeadline").apply { isDaemon = true } }
             .apply { removeOnCancelPolicy = true }
+        private val hex64 = Regex("[0-9a-f]{64}")
+        private fun pieces(size: Int): Int = (size + CloudCrypto.CHUNK_BYTES - 1) / CloudCrypto.CHUNK_BYTES
+        private fun pieceSize(size: Int, index: Int): Int = minOf(CloudCrypto.CHUNK_BYTES, size - index * CloudCrypto.CHUNK_BYTES)
         private fun integer(json: JSONObject, name: String): Long {
             val value = json.get(name)
             require(value is Int || value is Long) { "Invalid upload acknowledgment" }
@@ -267,7 +359,12 @@ class CloudClient(val credentials: CloudCredentials) {
             return CloudClient(CloudCredentials(origin, response.getString("vaultId"), response.getString("deviceId"), keys.getString("token"), keys.getString("vaultKey")))
         }
         // readTimeout already fails after 30s without bytes; limitSeconds bounds the whole request.
-        internal fun request(origin: String, path: String, method: String, value: JSONObject?, auth: CloudCredentials?, body: ByteArray? = null, binary: Boolean = false, limitSeconds: Long = 30): JSONObject {
+        internal fun request(origin: String, path: String, method: String, value: JSONObject?, auth: CloudCredentials?, body: ByteArray? = null, binary: Boolean = false, limitSeconds: Long = 30): JSONObject =
+            exchange(origin, path, method, value, auth, body, binary, limitSeconds) { JSONObject(utf8(it)) }
+        /** A successful body as bytes (an encrypted piece) instead of JSON. */
+        internal fun requestBytes(origin: String, path: String, method: String, value: JSONObject?, auth: CloudCredentials?, limitSeconds: Long = 30): ByteArray =
+            exchange(origin, path, method, value, auth, null, false, limitSeconds) { it }
+        private fun <T> exchange(origin: String, path: String, method: String, value: JSONObject?, auth: CloudCredentials?, body: ByteArray?, binary: Boolean, limitSeconds: Long, decode: (ByteArray) -> T): T {
             val connection = URI(secureOrigin(origin) + "/api/v1" + path).toURL().openConnection() as HttpURLConnection
             val startedAt = System.nanoTime()
             val deadline = startedAt + TimeUnit.SECONDS.toNanos(limitSeconds)
@@ -319,7 +416,7 @@ class CloudClient(val credentials: CloudCredentials) {
                     throw SocketTimeoutException("Cloud response deadline exceeded")
                 }
                 phase = CloudDiagnostics.Phase.REQUEST_DECODE
-                return JSONObject(utf8(output.toByteArray()))
+                return decode(output.toByteArray())
             } catch (error: Exception) {
                 val failure = if (timedOut.get()) SocketTimeoutException("Cloud request deadline exceeded") else error
                 if (timedOut.get()) phase = CloudDiagnostics.Phase.REQUEST_DEADLINE
@@ -398,7 +495,8 @@ class CloudPreviewStore(context: Context) {
         return "upload-$scope-$deviceId"
     }
     fun upload(scope: String, deviceId: String): CloudPreparedUpload? = load(uploadName(scope, deviceId), 12 * 1024 * 1024)?.let {
-        CloudPreparedUpload(it.getString("id"), it.getInt("baseRevision"), CloudClient.parseEnvelope(it.getString("envelope")))
+        CloudPreparedUpload(it.getString("id"), it.getInt("baseRevision"), CloudClient.parseEnvelope(it.getString("envelope")),
+            it.optJSONArray("chunks")?.let { names -> List(names.length()) { index -> names.getString(index) } })
     }
     fun hasUploads(deviceId: String): Boolean = synchronized(lock) {
         UUID.fromString(deviceId)
@@ -414,7 +512,8 @@ class CloudPreviewStore(context: Context) {
     }
     fun saveUpload(scope: String, deviceId: String, value: CloudPreparedUpload) = synchronized(lock) {
         check(!hasUploads(deviceId)) { "Resume or recover the previous encrypted upload before changing files or vaults" }
-        save(uploadName(scope, deviceId), JSONObject().put("id", value.id).put("baseRevision", value.baseRevision).put("envelope", value.canonicalEnvelope()))
+        save(uploadName(scope, deviceId), JSONObject().put("id", value.id).put("baseRevision", value.baseRevision).put("envelope", value.canonicalEnvelope())
+            .put("chunks", value.chunks?.let { JSONArray(it) }))
     }
     fun clearUpload(scope: String, deviceId: String) = synchronized(lock) {
         val file = AtomicFile(File(folder, uploadName(scope, deviceId)))

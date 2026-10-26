@@ -50,14 +50,24 @@ private fun recipeBytes(recipe: String): ByteArray {
 }
 private fun recipeOf(bytes: ByteArray): String = String(bytes, 0, bytes.indexOf('\n'.code.toByte()))
 
+/** Like the server with v2 objects: a manifest carries the fingerprint, and only a small file's bytes. */
 private class ScaleCloud {
-    class Stored(val path: String, val revision: Int, val deleted: Boolean, val recipe: String)
+    class Stored(val path: String, val revision: Int, val deleted: Boolean, val recipe: String) {
+        val hash = CloudSyncEngine.hash(recipeBytes(recipe))
+    }
     val objects = linkedMapOf<String, Stored>()
     val feed = mutableListOf<CloudChange>()
     var reads = 0
+    var downloads = 0
     fun store(file: Stored) { objects[file.path] = file; feed += CloudChange(file.path, file.revision) }
     fun changes(after: Long): CloudChanges = feed.drop(after.toInt()).take(500).let { CloudChanges(it, after + it.size, after + 500 < feed.size) }
-    fun read(id: String): CloudPreviewFile? { reads++; val file = objects[id] ?: return null; return CloudPreviewFile(id, file.revision, file.path, recipeBytes(file.recipe), file.deleted) }
+    fun read(id: String): CloudManifest? {
+        reads++
+        val file = objects[id] ?: return null
+        val size = file.recipe.substringAfterLast('#').toInt()
+        return CloudManifest(id, file.revision, file.path, file.deleted, size, file.hash, emptyList(), if (size <= CloudCrypto.INLINE_BYTES) recipeBytes(file.recipe) else null)
+    }
+    fun download(manifest: CloudManifest): ByteArray = manifest.bytes ?: recipeBytes(objects.getValue(manifest.id).recipe).also { downloads++ }
 }
 
 /** One device with what it last saved, so a restart goes on from exactly that. */
@@ -89,7 +99,7 @@ private class ScaleDevice(val cloud: ScaleCloud) {
     }
     fun sync(stop: () -> Unit = {}): CloudSyncReport {
         val remote = object : CloudSyncRemote {
-            override fun list() = CloudSyncEngine.remoteFiles(index, cloud::changes, cloud::read, stop, { savedIndex = copy(index) })
+            override fun list() = CloudSyncEngine.remoteFiles(index, cloud::changes, cloud::read, cloud::download, stop, { savedIndex = copy(index) })
             // Like the app: what this device wrote goes into its index, so the feed does not bring it back.
             override fun write(path: String, bytes: ByteArray, baseRevision: Int): CloudSyncObject {
                 check((cloud.objects[path]?.revision ?: 0) == baseRevision)
@@ -158,6 +168,12 @@ private fun checkScale() {
     check(a.sync() == CloudSyncReport(uploaded = 10, deleted = 5) && a.reads == 10)
     cloud.reads = 0
     check(b.sync() == CloudSyncReport(downloaded = 10, deleted = 5) && cloud.reads <= 15)
+
+    // A device that already has the files learns the cloud from manifests alone: no piece is downloaded.
+    val c = ScaleDevice(cloud)
+    for ((path, recipe) in a.files) c.set(path, recipe)
+    cloud.downloads = 0
+    check(c.sync() == CloudSyncReport() && cloud.downloads == 0)
     println("Native sync scale check passed: 5,000 files, ${total / 1024 / 1024} MiB in a ${Runtime.getRuntime().maxMemory() / 1024 / 1024} MiB heap, cut off twice and resumed, ${(System.currentTimeMillis() - started) / 1000} s")
 }
 
@@ -388,6 +404,10 @@ fun main() {
     oversized.files["attachments/small.bin"] = ByteArray(CloudCrypto.MAX_FILE_BYTES + 1)
     check(CloudSyncEngine.sync(bigRemote, oversized, bigTracked) {} == CloudSyncReport(skipped = mutableListOf("attachments/small.bin", note)))
     check(!bigRemote.files.getValue("attachments/small.bin").deleted && bigRemote.files.getValue("attachments/small.bin").bytes.size == 10)
+    // The plan's maximum replaces 4 MiB: a 5 MiB photo goes along, a file over the maximum stays.
+    val planRemote = CheckRemote()
+    val planLocal = CheckLocal().also { it.files["attachments/photo.jpg"] = ByteArray(5 * 1024 * 1024); it.files["attachments/video.mp4"] = ByteArray(7 * 1024 * 1024) }
+    check(CloudSyncEngine.sync(planRemote, planLocal, mutableMapOf(), maxFileBytes = 6L * 1024 * 1024) {} == CloudSyncReport(uploaded = 1, skipped = mutableListOf("attachments/video.mp4")))
     val stopped = CheckRemote()
     val unsent = CheckLocal().also { it.files[note] = "retained after pause".toByteArray() }
     check(runCatching { CloudSyncEngine.sync(stopped, unsent, mutableMapOf(), { error("Paused") }) {} }.isFailure)

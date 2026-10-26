@@ -54,6 +54,35 @@ object CloudCrypto {
         return CloudEnvelope(encode(iv), encode(cipher.doFinal(bytes)))
     }
 
+    // v2 objects, as cloud/shared/crypto.mjs: a file goes in encrypted pieces of 1 MiB, small files stay inside the manifest.
+    const val CHUNK_BYTES = 1024 * 1024
+    const val INLINE_BYTES = 64 * 1024
+    /** The largest plan maximum (JotDrop Plus); the server enforces each plan's own maximum. */
+    const val MAX_CHUNKED_BYTES = 200 * 1024 * 1024
+
+    fun sha256Hex(bytes: ByteArray): String = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it.toInt() and 255) }
+
+    private fun chunkAad(vaultId: String, id: String, index: Int) = "jotdrop:chunk:v1:$vaultId:$id:$index".toByteArray(StandardCharsets.UTF_8)
+
+    /** `iv || ciphertext+tag`. The IV follows from the piece itself, so the same piece gives the same bytes and an interrupted upload resumes. */
+    fun encryptChunk(vaultKey: String, vaultId: String, id: String, index: Int, plain: ByteArray): ByteArray {
+        val mac = Mac.getInstance("HmacSHA256")
+        mac.init(SecretKeySpec(key(vaultKey), "HmacSHA256"))
+        val iv = mac.doFinal("jotdrop:chunk-iv:v1:$id:$index:${sha256Hex(plain)}".toByteArray(StandardCharsets.UTF_8)).copyOf(12)
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, SecretKeySpec(key(vaultKey), "AES"), GCMParameterSpec(128, iv))
+        cipher.updateAAD(chunkAad(vaultId, id, index))
+        return iv + cipher.doFinal(plain)
+    }
+
+    fun decryptChunk(vaultKey: String, vaultId: String, id: String, index: Int, sealed: ByteArray): ByteArray {
+        require(sealed.size in 28..CHUNK_BYTES + 28) { "Invalid encrypted piece" }
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(key(vaultKey), "AES"), GCMParameterSpec(128, sealed, 0, 12))
+        cipher.updateAAD(chunkAad(vaultId, id, index))
+        return cipher.doFinal(sealed, 12, sealed.size - 12)
+    }
+
     fun decrypt(vaultKey: String, envelope: CloudEnvelope, aad: String): ByteArray {
         val iv = decode(envelope.iv)
         val bytes = decode(envelope.ciphertext)

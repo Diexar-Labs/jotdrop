@@ -1,11 +1,18 @@
 import assert from 'node:assert/strict';
 import test, { mock } from 'node:test';
 import { CloudClient, CloudError, request, validateUrl } from './client.mjs';
-import { generateVaultKey, randomToken } from './crypto.mjs';
+import { bytesToBase64, encryptEnvelope, generateVaultKey, MAX_CHUNKED_BYTES, objectId, randomToken } from './crypto.mjs';
+
+// The v1 single-envelope draft that devices made before encrypted pieces; the server still accepts it.
+async function legacyPrepare(client, path, bytes, baseRevision) {
+  const { vaultKey, vaultId } = client.credentials, id = await objectId(vaultKey, path);
+  const envelope = await encryptEnvelope(vaultKey, { path, content: bytesToBase64(bytes), modifiedAt: new Date().toISOString() }, `jotdrop:object:v1:${vaultId}:${id}`);
+  return { id, baseRevision, envelope: JSON.stringify(envelope) };
+}
 
 test('client transmits opaque ciphertext, scoped credentials and strict optimistic revision', async () => {
   let sent;
-  const client = new CloudClient({ url: 'http://127.0.0.1:8080', vaultId: crypto.randomUUID(), deviceId: crypto.randomUUID(), token: randomToken(), vaultKey: generateVaultKey(), fetcher: async (url, options) => { sent = { url, options }; return new Response(JSON.stringify({ revision: 1, sequence: 1 }), { status: 200 }); } });
+  const client = new CloudClient({ url: 'http://127.0.0.1:8080', vaultId: crypto.randomUUID(), deviceId: crypto.randomUUID(), token: randomToken(), vaultKey: generateVaultKey(), fetcher: async (url, options) => { sent = { url, options }; return new Response(JSON.stringify({ revision: 1, sequence: 1, pieces: { version: 1, pieceBytes: 1024 * 1024 } }), { status: 200 }); } });
   const prepared = await client.prepareWrite('notes/private.md', new TextEncoder().encode('secret note body'), 0);
   await client.commitWrite(prepared);
   assert.ok(!sent.options.body.includes('secret note body'));
@@ -19,7 +26,12 @@ test('client transmits opaque ciphertext, scoped credentials and strict optimist
   assert.equal((await client.read(prepared.id)).file.path, 'notes/private.md');
   client.fetcher = async () => new Response(JSON.stringify({ error: 'Conflict', currentRevision: 2 }), { status: 409 });
   await assert.rejects(client.commitWrite(prepared), (error) => error instanceof CloudError && error.status === 409 && error.currentRevision === 2);
-  await assert.rejects(client.prepareWrite('notes/x', new Uint8Array(4 * 1024 * 1024 + 1), 0));
+  await assert.rejects(client.prepareWrite('notes/x', new Uint8Array(MAX_CHUNKED_BYTES + 1), 0));
+  // A server without encrypted pieces gets nothing: older devices could not read what it would keep.
+  const methods = [];
+  client.fetcher = async (url, options) => { methods.push(options.method); return new Response(JSON.stringify({ usedBytes: 0 }), { status: 200 }); };
+  await assert.rejects(client.commitWrite(prepared), /does not support encrypted pieces/);
+  assert.deepEqual(methods, ['GET']);
 });
 
 test('client refuses insecure servers, URL credentials, path injection and malformed keys', () => {
@@ -70,7 +82,7 @@ test('client rejects announced oversized responses before reading and rejects no
 
 test('resumable uploads fail closed on missing capabilities and never silently downgrade', async () => {
   const client = new CloudClient({ url: 'https://example.com', vaultId: crypto.randomUUID(), deviceId: crypto.randomUUID(), token: randomToken(), vaultKey: generateVaultKey() });
-  const prepared = await client.prepareWrite('notes/test.md', new TextEncoder().encode('Synthetic draft'), 0);
+  const prepared = await legacyPrepare(client, 'notes/test.md', new TextEncoder().encode('Synthetic draft'), 0);
   for (const transport of [undefined, { version: 2, chunkBytes: 65536 }, { version: 1, chunkBytes: 1 }]) {
     const requests = [];
     client.fetcher = async (url, options) => { requests.push({ url, options }); return new Response(JSON.stringify({ transport })); };
@@ -95,7 +107,7 @@ test('resumable uploads fail closed on missing capabilities and never silently d
 
 test('resumable uploads reject impossible offsets and invalid final receipts without reporting success', async () => {
   const client = new CloudClient({ url: 'https://example.com', vaultId: crypto.randomUUID(), deviceId: crypto.randomUUID(), token: randomToken(), vaultKey: generateVaultKey() });
-  const prepared = await client.prepareWrite('notes/test.md', new TextEncoder().encode('Synthetic draft'), 0);
+  const prepared = await legacyPrepare(client, 'notes/test.md', new TextEncoder().encode('Synthetic draft'), 0);
   for (const mode of ['negative', 'wrong-size', 'no-progress', 'wrong-id', 'wrong-revision', 'wrong-sequence', 'missing-commit']) {
     const progress = [];
     let size;

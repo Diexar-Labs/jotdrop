@@ -1,7 +1,8 @@
 // 5,000 files and about 300 MB through syncFolder and remoteFiles. Run by sync.test.mjs with --expose-gc,
 // so memory can be measured after collecting garbage. Prints one JSON line with the numbers.
 import assert from 'node:assert/strict';
-import { bytesToBase64 } from './crypto.mjs';
+import { createHash } from 'node:crypto';
+import { INLINE_BYTES } from './crypto.mjs';
 import { copyName, hash, remoteFiles, syncFolder } from './sync.mjs';
 
 const encoder = new TextEncoder(), decoder = new TextDecoder();
@@ -13,6 +14,10 @@ const make = (recipe) => {
   bytes.set(encoder.encode(`${recipe}\n`));
   return bytes;
 };
+// A request waits for the network; without that wait Node frees released buffers only later, which the peak would count.
+const wire = () => new Promise((done) => setImmediate(done));
+// The client decodes a small file from base64 into a buffer of exactly its size; `make` keeps a bigger one alive.
+const exact = (bytes) => Uint8Array.fromBase64(bytes.toBase64());
 const recipe = (bytes) => decoder.decode(bytes.subarray(0, bytes.indexOf(10)));
 
 let peak = 0;
@@ -24,18 +29,22 @@ const measure = (done) => {
 
 function cloud() {
   const objects = new Map(), feed = [];
-  const counts = { reads: 0 };
+  const counts = { reads: 0 }, fingerprints = new Map();
   const change = (object) => { objects.set(object.path, object); feed.push({ id: object.path, revision: object.revision }); };
   const client = {
     async listChanges(after) {
       const changes = feed.slice(after, after + 500);
       return { changes, cursor: after + changes.length, hasMore: after + 500 < feed.length };
     },
-    async read(id) {
+    // Like CloudClient: the manifest carries the fingerprint, saved with the file as the server saves the manifest,
+    // and small files inside it.
+    async readManifest(id) {
+      await wire();
       counts.reads++;
-      const object = objects.get(id);
-      return { revision: object.revision, deleted: object.deleted, file: { path: object.path, content: bytesToBase64(make(object.recipe)) } };
+      const object = objects.get(id), size = Number(object.recipe.split('#')[2]);
+      return { revision: object.revision, deleted: object.deleted, manifest: { path: object.path, size, hash: fingerprints.get(object.recipe), bytes: size <= INLINE_BYTES ? exact(make(object.recipe)) : undefined } };
     },
+    async readPieces(id, manifest) { if (!manifest.bytes) await wire(); return manifest.bytes ?? exact(make(objects.get(id).recipe)); },
   };
   const remote = (state, stop = () => {}) => ({
     list: () => remoteFiles(client, state.index, { checkActive: stop, save: async () => { state.saved.index = structuredClone(state.index); }, progress: measure }),
@@ -43,6 +52,7 @@ function cloud() {
     async write(path, bytes, baseRevision) {
       assert.equal(objects.get(path)?.revision ?? 0, baseRevision);
       change({ path, revision: baseRevision + 1, deleted: false, recipe: recipe(bytes) });
+      fingerprints.set(recipe(bytes), createHash('sha256').update(bytes).digest('hex'));
       return state.index.objects[path] = { path, revision: baseRevision + 1, deleted: false, hash: await hash(bytes) };
     },
     async delete(path, baseRevision) {

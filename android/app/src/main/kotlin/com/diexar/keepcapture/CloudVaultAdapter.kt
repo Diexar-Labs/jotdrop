@@ -87,14 +87,15 @@ class CloudVaultAdapter(
 
     private fun read(file: DocumentFile): ByteArray {
         check(file.isFile) { "Expected a local file" }
-        require(file.length() <= CloudCrypto.MAX_FILE_BYTES) { "Local file exceeds the 4 MiB sync limit" }
+        // The sync leaves files over the plan's maximum alone; this is the largest any plan allows.
+        require(file.length() <= CloudCrypto.MAX_CHUNKED_BYTES) { "Local file exceeds the 200 MB sync limit" }
         return (context.contentResolver.openInputStream(file.uri) ?: error("Local file could not be read")).use { input ->
-            val output = ByteArrayOutputStream()
+            val output = ByteArrayOutputStream(file.length().toInt().coerceAtLeast(8192))
             val buffer = ByteArray(8192)
             while (true) {
                 val count = input.read(buffer)
                 if (count < 0) break
-                require(output.size() + count <= CloudCrypto.MAX_FILE_BYTES) { "Local file exceeds the 4 MiB sync limit" }
+                require(output.size() + count <= CloudCrypto.MAX_CHUNKED_BYTES) { "Local file exceeds the 200 MB sync limit" }
                 output.write(buffer, 0, count)
             }
             output.toByteArray()

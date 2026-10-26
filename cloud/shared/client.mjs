@@ -1,4 +1,4 @@
-import { base64ToBytes, bytesToBase64, decodeRecovery, decryptEnvelope, encodeRecovery, encryptEnvelope, generateVaultKey, hashToken, MAX_FILE_BYTES, normalizePath, objectId, randomToken, validId } from './crypto.mjs';
+import { base64ToBytes, bytesToBase64, CHUNK_BYTES, decodeRecovery, decryptChunk, decryptEnvelope, encodeRecovery, encryptChunk, encryptEnvelope, generateVaultKey, hashToken, INLINE_BYTES, MAX_CHUNKED_BYTES, MAX_FILE_BYTES, normalizePath, objectId, randomToken, sha256Hex, validId } from './crypto.mjs';
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder('utf-8', { fatal: true });
@@ -24,14 +24,16 @@ function token(value) {
   return value;
 }
 
-export async function request(url, path, { method = 'GET', body, headers = {}, fetcher = globalThis.fetch, signal, binary = false, limit = 30000 } = {}) {
+/** `raw` returns a successful body as bytes (an encrypted piece) instead of JSON. */
+export async function request(url, path, { method = 'GET', body, headers = {}, fetcher = globalThis.fetch, signal, binary = false, raw = false, limit = 30000 } = {}) {
   // A large note on a slow line can take minutes: the body only fails after 30s without any bytes, or at `limit`.
   const stalled = new AbortController();
   let idle;
   const wait = () => { clearTimeout(idle); idle = setTimeout(() => stalled.abort(new DOMException('The cloud stopped sending data.', 'TimeoutError')), 30000); };
   const timeout = AbortSignal.any([AbortSignal.timeout(limit), stalled.signal]);
   const response = await fetcher(`${validateUrl(url)}/api/v1${path}`, { method, headers: { ...headers, ...(body !== undefined ? { 'Content-Type': binary ? 'application/octet-stream' : 'application/json' } : {}) }, ...(body !== undefined ? { body: binary ? body : JSON.stringify(body) } : {}), cache: 'no-store', redirect: 'error', signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
-  const reader = response.body?.getReader(), decoder = new TextDecoder(), chunks = [];
+  const reader = response.body?.getReader(), decoder = new TextDecoder(), chunks = [], parts = [];
+  const bytes = raw && response.ok;
   let size = 0;
   try {
     if (Number(response.headers.get('content-length')) > MAX_RESPONSE_BYTES) throw new CloudError('The server response is too large.', 502);
@@ -42,12 +44,18 @@ export async function request(url, path, { method = 'GET', body, headers = {}, f
       if (done) break;
       size += value.byteLength;
       if (size > MAX_RESPONSE_BYTES) throw new CloudError('The server response is too large.', 502);
-      chunks.push(decoder.decode(value, { stream: true }));
+      if (bytes) parts.push(value); else chunks.push(decoder.decode(value, { stream: true }));
     }
     chunks.push(decoder.decode());
   } finally {
     clearTimeout(idle);
     if (reader) { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+  }
+  if (bytes) {
+    const result = new Uint8Array(size);
+    let offset = 0;
+    for (const part of parts) { result.set(part, offset); offset += part.length; }
+    return result;
   }
   let result;
   try { result = JSON.parse(chunks.join('')); } catch { throw new CloudError('The server did not return a valid response.', response.status); }
@@ -84,22 +92,72 @@ export class CloudClient {
     return new CloudClient({ url, ...recovered, token: deviceToken, vaultKey: recovery.vaultKey, fetcher });
   }
 
-  call(path, method = 'GET', body, { signal, binary = false, limit } = {}) {
+  call(path, method = 'GET', body, { signal, binary = false, raw = false, limit } = {}) {
     const c = this.credentials;
-    return request(c.url, path, { method, body, signal, binary, limit, headers: { Authorization: `Bearer ${c.token}`, 'X-JotDrop-Vault': c.vaultId, 'X-JotDrop-Device': c.deviceId }, fetcher: this.fetcher });
+    return request(c.url, path, { method, body, signal, binary, raw, limit, headers: { Authorization: `Bearer ${c.token}`, 'X-JotDrop-Vault': c.vaultId, 'X-JotDrop-Device': c.deviceId }, fetcher: this.fetcher });
   }
 
+  /**
+   * A v2 object: an encrypted manifest (path, size, fingerprint, pieces) plus encrypted pieces of 1 MiB.
+   * Only the piece names are kept, so a prepared write stays small; `commitWrite` encrypts the pieces again from
+   * the file, which gives the same bytes.
+   */
   async prepareWrite(path, bytes, baseRevision, modifiedAt = new Date().toISOString()) {
     normalizePath(path);
-    if (!(bytes instanceof Uint8Array) || bytes.length > MAX_FILE_BYTES) throw new Error('Files in this preview must be 4 MiB or smaller.');
+    if (!(bytes instanceof Uint8Array) || bytes.length > MAX_CHUNKED_BYTES) throw new Error('Files can be at most 200 MB.');
     if (!Number.isSafeInteger(baseRevision) || baseRevision < 0 || !Number.isFinite(Date.parse(modifiedAt))) throw new Error('Invalid file revision or date.');
-    const id = await objectId(this.credentials.vaultKey, path);
-    const envelope = await encryptEnvelope(this.credentials.vaultKey, { path, content: bytesToBase64(bytes), modifiedAt }, `jotdrop:object:v1:${this.credentials.vaultId}:${id}`);
-    return { id, baseRevision, envelope: JSON.stringify(envelope) };
+    const { vaultKey, vaultId } = this.credentials;
+    const id = await objectId(vaultKey, path), chunks = [];
+    if (bytes.length > INLINE_BYTES) {
+      for (let index = 0; index * CHUNK_BYTES < bytes.length; index++) {
+        const sealed = await encryptChunk(vaultKey, vaultId, id, index, bytes.subarray(index * CHUNK_BYTES, (index + 1) * CHUNK_BYTES));
+        chunks.push({ name: await sha256Hex(sealed), size: sealed.length });
+      }
+    }
+    const manifest = { v: 2, path, modifiedAt, size: bytes.length, hash: await sha256Hex(bytes), chunks, ...(chunks.length ? {} : { content: bytesToBase64(bytes) }) };
+    const envelope = await encryptEnvelope(vaultKey, manifest, `jotdrop:object:v1:${vaultId}:${id}`);
+    return { id, baseRevision, envelope: JSON.stringify(envelope), chunks: chunks.map((chunk) => chunk.name) };
   }
 
-  /** @param {{ resumable?: boolean, signal?: AbortSignal, onProgress?: (event: { phase: string, transferredBytes: number, totalBytes: number }) => void }} [options] */
+  /** One identical retry is safe for every transfer request, including a lost successful response. */
+  async retrying(path, method, body, options) {
+    options.signal?.throwIfAborted();
+    try { return await this.call(path, method, body, options); }
+    catch (error) {
+      if (options.signal?.aborted || !(error instanceof TypeError || error.name === 'TimeoutError' || error.name === 'AbortError')) throw error;
+      return this.call(path, method, body, options);
+    }
+  }
+
+  /** Uploads the pieces the cloud does not have yet, then saves the manifest. `source` is the file the write was prepared from. */
+  async commitPieces(prepared, { source, signal, onProgress } = {}) {
+    const names = prepared.chunks, { vaultKey, vaultId } = this.credentials;
+    if (!/^[0-9a-f]{64}$/.test(prepared.id) || names.length > Math.ceil(MAX_CHUNKED_BYTES / CHUNK_BYTES) || names.some((name) => !/^[0-9a-f]{64}$/.test(name))) throw new Error('Invalid prepared upload.');
+    // An older server would keep a manifest that older devices cannot read: never save there.
+    const capability = (await this.retrying('/status', 'GET', undefined, { signal })).pieces;
+    if (capability?.version !== 1 || capability.pieceBytes !== CHUNK_BYTES) throw new Error('This server does not support encrypted pieces. The encrypted draft was kept.');
+    const missing = new Set(names.length ? (await this.retrying('/chunks/missing', 'POST', { names }, { signal })).missing : []);
+    if (missing.size && !(source instanceof Uint8Array)) throw new Error('The file is needed to finish this upload. The encrypted draft was kept.');
+    const totalBytes = source?.length ?? 0;
+    for (const [index, name] of names.entries()) {
+      if (!missing.has(name)) continue;
+      onProgress?.({ phase: 'upload', transferredBytes: Math.min(index * CHUNK_BYTES, totalBytes), totalBytes });
+      const sealed = await encryptChunk(vaultKey, vaultId, prepared.id, index, source.subarray(index * CHUNK_BYTES, (index + 1) * CHUNK_BYTES));
+      if (await sha256Hex(sealed) !== name) throw new Error('The file changed after it was prepared. The encrypted draft was kept.');
+      // A piece of 1 MiB on a slow line: allow minutes, like a download.
+      await this.retrying(`/chunks/${name}`, 'PUT', sealed, { signal, binary: true, limit: 5 * 60 * 1000 });
+    }
+    onProgress?.({ phase: 'committing', transferredBytes: totalBytes, totalBytes });
+    // Not retried: a lost answer comes back as 409, and the caller compares with the cloud version as before.
+    const saved = await this.call(`/objects/${prepared.id}`, 'PUT', { baseRevision: prepared.baseRevision, envelope: prepared.envelope, chunks: names }, { signal });
+    onProgress?.({ phase: 'committed', transferredBytes: totalBytes, totalBytes });
+    return { ...saved, id: prepared.id };
+  }
+
+  /** @param {{ resumable?: boolean, source?: Uint8Array, signal?: AbortSignal, onProgress?: (event: { phase: string, transferredBytes: number, totalBytes: number }) => void }} [options] `source`: the file a v2 draft was prepared from, for the pieces the cloud does not have yet. */
   async commitWrite(prepared, options = {}) {
+    if (Array.isArray(prepared.chunks)) return this.commitPieces(prepared, options);
+    // A v1 draft prepared before this version: the single-envelope upload.
     let { resumable = false, signal, onProgress } = options;
     if (!/^[0-9a-f]{64}$/.test(prepared.id)) throw new Error('Invalid object ID.');
     if (!resumable) {
@@ -153,18 +211,59 @@ export class CloudClient {
     catch (error) { if (![404, 410].includes(error.status)) throw error; }
   }
 
-  async write(path, bytes, baseRevision, modifiedAt) { return this.commitWrite(await this.prepareWrite(path, bytes, baseRevision, modifiedAt)); }
+  async write(path, bytes, baseRevision, modifiedAt) { return this.commitWrite(await this.prepareWrite(path, bytes, baseRevision, modifiedAt), { source: bytes }); }
   listChanges(after = 0) {
     if (!Number.isSafeInteger(after) || after < 0) throw new Error('Invalid changes cursor.');
     return this.call(`/changes?after=${after}`);
   }
 
-  async read(id, revision) {
+  /**
+   * The manifest only: `{ path, modifiedAt, size, hash, pieces }`, plus `bytes` when the file is inside it (a v1
+   * object or a small v2 file). Enough to compare with a local file without downloading its pieces.
+   */
+  async readManifest(id, revision) {
     if (!/^[0-9a-f]{64}$/.test(id) || (revision !== undefined && (!Number.isSafeInteger(revision) || revision < 1))) throw new Error('Invalid file revision.');
-    // A note of up to 4 MiB: allow minutes on a slow line.
+    // A v1 note of up to 4 MiB: allow minutes on a slow line.
     const result = await this.call(`/objects/${id}${revision === undefined ? '' : `?revision=${revision}`}`, 'GET', undefined, { limit: 5 * 60 * 1000 });
-    const file = await decryptEnvelope(this.credentials.vaultKey, JSON.parse(result.envelope), `jotdrop:object:v1:${this.credentials.vaultId}:${id}`);
-    if (!file || normalizePath(file.path) !== file.path || typeof file.content !== 'string' || base64ToBytes(file.content).length > MAX_FILE_BYTES || !Number.isFinite(Date.parse(file.modifiedAt)) || await objectId(this.credentials.vaultKey, file.path) !== id) throw new Error('Encrypted file validation failed. No local files were changed.');
+    const value = await decryptEnvelope(this.credentials.vaultKey, JSON.parse(result.envelope), `jotdrop:object:v1:${this.credentials.vaultId}:${id}`);
+    const invalid = () => { throw new Error('Encrypted file validation failed. No local files were changed.'); };
+    if (!value || typeof value.path !== 'string' || normalizePath(value.path) !== value.path || !Number.isFinite(Date.parse(value.modifiedAt)) || await objectId(this.credentials.vaultKey, value.path) !== id) invalid();
+    let manifest;
+    if (value.v === 2) {
+      const pieces = value.chunks;
+      if (!Number.isSafeInteger(value.size) || value.size < 0 || value.size > MAX_CHUNKED_BYTES || !/^[0-9a-f]{64}$/.test(value.hash) || !Array.isArray(pieces)) invalid();
+      if (pieces.length !== (value.size > INLINE_BYTES ? Math.ceil(value.size / CHUNK_BYTES) : 0) || pieces.some((piece, index) => !/^[0-9a-f]{64}$/.test(piece?.name) || piece.size !== Math.min(CHUNK_BYTES, value.size - index * CHUNK_BYTES) + 28)) invalid();
+      const bytes = pieces.length ? undefined : base64ToBytes(typeof value.content === 'string' ? value.content : invalid());
+      if (bytes && (bytes.length !== value.size || await sha256Hex(bytes) !== value.hash)) invalid();
+      manifest = { path: value.path, modifiedAt: value.modifiedAt, size: value.size, hash: value.hash, pieces, bytes };
+    } else {
+      const bytes = typeof value.content === 'string' ? base64ToBytes(value.content) : invalid();
+      if (bytes.length > MAX_FILE_BYTES) invalid();
+      manifest = { path: value.path, modifiedAt: value.modifiedAt, size: bytes.length, hash: await sha256Hex(bytes), pieces: [], bytes };
+    }
+    return { ...result, manifest };
+  }
+
+  /** The file's bytes from its manifest, piece by piece; each piece and the whole file are checked. */
+  async readPieces(id, manifest) {
+    if (manifest.bytes) return manifest.bytes;
+    const { vaultKey, vaultId } = this.credentials, bytes = new Uint8Array(manifest.size);
+    for (const [index, piece] of manifest.pieces.entries()) {
+      const sealed = await this.call(`/chunks/${piece.name}`, 'GET', undefined, { raw: true, limit: 5 * 60 * 1000 });
+      if (sealed.length !== piece.size || await sha256Hex(sealed) !== piece.name) throw new Error('An encrypted piece did not match. No local files were changed.');
+      bytes.set(await decryptChunk(vaultKey, vaultId, id, index, sealed), index * CHUNK_BYTES);
+    }
+    if (await sha256Hex(bytes) !== manifest.hash) throw new Error('Encrypted file validation failed. No local files were changed.');
+    return bytes;
+  }
+
+  /** The whole file: `file` is `{ path, content, modifiedAt }` with base64 content, and `file.bytes` the same bytes. */
+  async read(id, revision) {
+    const { manifest, ...result } = await this.readManifest(id, revision);
+    const bytes = await this.readPieces(id, manifest);
+    const file = { path: manifest.path, content: bytesToBase64(bytes), modifiedAt: manifest.modifiedAt, bytes };
+    // Left out of JSON and copies: stored drafts and caches keep the base64 content only.
+    Object.defineProperty(file, 'bytes', { enumerable: false });
     return { ...result, file };
   }
 

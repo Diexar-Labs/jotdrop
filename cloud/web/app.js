@@ -1,6 +1,6 @@
 import { CloudClient } from '/shared/client.mjs';
 import { accountInfo, approveDevice, attachAccount, availableProviders, changePassword, checkApproval, completeApproval, confirmLogin, confirmSignup, deleteAccount, disableTotp, enableTotp, listApprovals, logIn, newRecoveryCode, providerApproval, providerRecover, providerSignUp, providerTicket, rejectDevice, requestApproval, resetWithRecoveryCode, setupTotp, signUp, startOver, startProviderSignIn, startReset } from '/shared/account.mjs';
-import { base64ToBytes, bytesToBase64, decodeRecovery, decryptEnvelope, sealLocal, unsealLocal } from '/shared/crypto.mjs';
+import { base64ToBytes, bytesToBase64, decodeRecovery, decryptEnvelope, encryptEnvelope, objectId, sealLocal, unsealLocal } from '/shared/crypto.mjs';
 import { exportZip } from '/export.mjs';
 import { noteSummary, updateMetadata, toggleTask, attachmentPath, plainPreviewText, splitNote, joinNote, noteFilename } from '/note.mjs';
 
@@ -31,6 +31,9 @@ let syncing;
 let syncController;
 let syncPaused = false;
 let cursor = 0;
+// The plan's maximum per file, from the cloud status; 4 MiB until it is known.
+let maxFileBytes = 4 * 1024 * 1024;
+const maxFileText = () => `${Math.round(maxFileBytes / 1048576)} MB`;
 let generation = 0;
 let cameraStream;
 let cameraRequest = 0;
@@ -97,6 +100,11 @@ async function store(action, key, value) {
 const cachePrefix = () => `cache:${client.credentials.vaultId}:`;
 const pendingPrefix = () => `pending:${client.credentials.vaultId}:`;
 const aad = (id) => `jotdrop:object:v1:${client.credentials.vaultId}:${id}`;
+// What this browser keeps of a file: all of it, encrypted with the workspace key. The cloud gets a manifest and pieces.
+async function sealFile(path, bytes, revision, modifiedAt = new Date().toISOString()) {
+  const id = await objectId(client.credentials.vaultKey, path);
+  return { id, baseRevision: revision, envelope: JSON.stringify(await encryptEnvelope(client.credentials.vaultKey, { path, content: bytesToBase64(bytes), modifiedAt }, aad(id))) };
+}
 const errorText = (error) => error?.status === 401 ? 'This device no longer has access. Lock the workspace and reconnect using another device or your recovery code.' : error?.message || 'The operation failed. Your local files have not been changed.';
 const message = (text = '') => { $('workspace-message').textContent = text; };
 
@@ -327,7 +335,7 @@ function render() {
     empty.className = 'empty-state';
     const heading = document.createElement('h2');
     heading.textContent = query ? 'No matching files' : labelFilter ? 'No notes with this label yet' : view === 'trash' ? 'Nothing in the trash' : view === 'files' ? 'A place for your attachments' : 'Room for your next thought';
-    empty.append(heading, paragraph(query ? 'Try a different word or filename.' : labelFilter ? 'Give a note this label with the label button on its card or in the editor.' : view === 'notes' ? 'Create a note or upload a Markdown file. Existing notes on your computer are never imported automatically.' : view === 'files' ? 'Upload an image, recording, or document. This local preview accepts files up to 4 MiB each.' : 'Files you move to trash will appear here.'));
+    empty.append(heading, paragraph(query ? 'Try a different word or filename.' : labelFilter ? 'Give a note this label with the label button on its card or in the editor.' : view === 'notes' ? 'Create a note or upload a Markdown file. Existing notes on your computer are never imported automatically.' : view === 'files' ? `Upload an image, recording, or document, up to ${maxFileText()} each.` : 'Files you move to trash will appear here.'));
     $('items').append(empty);
   }
   navOrder = matching.filter((entry) => !entry.deleted && isMarkdown(entry.file.path)).map((entry) => entry.id);
@@ -583,7 +591,7 @@ async function loadLocalLabels() {
   localLabels = file ? JSON.parse(decoder.decode(base64ToBytes(file.content))) : [];
 }
 async function saveLocalLabels(next) {
-  await store('put', labelsKey(), await client.prepareWrite('local/labels.json', encoder.encode(JSON.stringify(next)), 0));
+  await store('put', labelsKey(), await sealFile('local/labels.json', encoder.encode(JSON.stringify(next)), 0));
   localLabels = next;
 }
 
@@ -655,7 +663,7 @@ function toggleLabel(entry, current, label) {
 }
 
 async function cacheEntry(entry) {
-  const prepared = await client.prepareWrite(entry.file.path, base64ToBytes(entry.file.content), entry.revision, entry.file.modifiedAt);
+  const prepared = await sealFile(entry.file.path, base64ToBytes(entry.file.content), entry.revision, entry.file.modifiedAt);
   await store('put', `${cachePrefix()}${entry.id}`, { prepared, revision: entry.revision, deleted: entry.deleted, updatedAt: entry.updatedAt });
 }
 
@@ -665,7 +673,8 @@ async function loadLocal() {
     files.set(record.prepared.id, { id: record.prepared.id, file, revision: record.revision, deleted: record.deleted });
   }
   for (const [, record] of await store('entries', pendingPrefix())) {
-    const file = await decryptEnvelope(client.credentials.vaultKey, JSON.parse(record.prepared.envelope), aad(record.prepared.id));
+    // `local` holds the whole file; a draft from before encrypted pieces has it in its envelope.
+    const file = await decryptEnvelope(client.credentials.vaultKey, JSON.parse(record.local ?? record.prepared.envelope), aad(record.prepared.id));
     files.set(record.prepared.id, { id: record.prepared.id, file, revision: record.prepared.baseRevision, deleted: record.deleted, pending: true });
   }
 }
@@ -681,7 +690,7 @@ async function queueFile(path, bytes, expectedRevision, modifiedAt = new Date().
   if (current?.conflict) throw new Error('Review the cloud conflict before saving another edit. Download this draft to keep a separate copy.');
   const key = `${pendingPrefix()}${prepared.id}`;
   prepared.baseRevision = current?.revision ?? 0;
-  const record = { prepared, deleted: false, queueId: crypto.randomUUID() };
+  const record = { prepared, local: (await sealFile(path, bytes, 0, modifiedAt)).envelope, deleted: false, queueId: crypto.randomUUID() };
   await store('queue', key, record);
   if (generation !== activeGeneration) return;
   files.set(prepared.id, { id: prepared.id, revision: prepared.baseRevision, deleted: false, pending: true, file: { path, content: bytesToBase64(bytes), modifiedAt } });
@@ -701,7 +710,7 @@ async function deleteEntry(entry, ask = true) {
     await store('delete', key);
     files.delete(entry.id);
   } else {
-    const prepared = prior?.prepared || await client.prepareWrite(entry.file.path, base64ToBytes(entry.file.content), entry.revision, entry.file.modifiedAt);
+    const prepared = prior?.prepared || await sealFile(entry.file.path, base64ToBytes(entry.file.content), entry.revision, entry.file.modifiedAt);
     await store('queue', key, { prepared, deleted: true, queueId: crypto.randomUUID() });
     files.set(entry.id, { ...entry, deleted: true, pending: true });
   }
@@ -735,6 +744,7 @@ async function showPlan(activeClient, activeGeneration) {
   if (activeGeneration !== generation) return;
   $('storage-usage').classList.remove('checking');
   $('storage-usage').textContent = `${(status.usedBytes / 1048576).toFixed(1)} / ${(status.quotaBytes / 1048576).toFixed(0)} MiB encrypted storage`;
+  if (status.pieces?.maxFileBytes) maxFileBytes = status.pieces.maxFileBytes;
   const plan = status.plan;
   $('plan-status').textContent = plan.name === 'plus' ? `JotDrop Plus until ${new Date(plan.plusUntil).toLocaleDateString()}` : `Free plan: ${plan.deviceLimit} devices, ${plan.historyDays} days of history`;
   $('start-trial').hidden = !plan.trialAvailable;
@@ -764,8 +774,10 @@ async function performSync(signal) {
     const uploading = await store('get', uploadKey) || pending;
     await store('put', uploadKey, uploading);
     let result;
+    // The pieces the cloud does not have yet come from this browser's encrypted copy of the file.
+    const source = !uploading.deleted && uploading.local ? base64ToBytes((await decryptEnvelope(activeClient.credentials.vaultKey, JSON.parse(uploading.local), aad(uploading.prepared.id))).content) : undefined;
     try { result = uploading.deleted ? await activeClient.remove(uploading.prepared.id, uploading.prepared.baseRevision) : await activeClient.commitWrite(uploading.prepared, {
-      resumable: true, signal,
+      resumable: true, signal, source,
       onProgress: ({ phase, transferredBytes, totalBytes }) => {
         if (activeGeneration !== generation || signal.aborted) return;
         const progress = $('upload-progress');
@@ -790,7 +802,7 @@ async function performSync(signal) {
         changed = true;
         continue;
       }
-      const expected = await decryptEnvelope(activeClient.credentials.vaultKey, JSON.parse(uploading.prepared.envelope), `jotdrop:object:v1:${activeClient.credentials.vaultId}:${uploading.prepared.id}`);
+      const expected = await decryptEnvelope(activeClient.credentials.vaultKey, JSON.parse(uploading.local ?? uploading.prepared.envelope), `jotdrop:object:v1:${activeClient.credentials.vaultId}:${uploading.prepared.id}`);
       if (remote.deleted === uploading.deleted && remote.file.path === expected.path && remote.file.content === expected.content) result = { revision: remote.revision };
       else {
         const entry = files.get(pending.prepared.id);
@@ -1172,7 +1184,7 @@ async function keepVoice() {
   if (!job?.blob || job.saving) return;
   job.saving = true;
   try {
-    if (job.blob.size > 4 * 1024 * 1024) throw new Error('This recording exceeds 4 MiB. Download it before closing this note.');
+    if (job.blob.size > maxFileBytes) throw new Error(`This recording is larger than ${maxFileText()}, your plan's maximum per file. Download it before closing this note.`);
     await queueFile(job.path, new Uint8Array(await job.blob.arrayBuffer()));
     if (voiceJob !== job || job.generation !== generation || !$('editor').open) return;
     appendToNote(`\n\n[Voice memo](${'../'.repeat($('note-path').value.split('/').length - 1)}${job.path})\n`);
@@ -1908,7 +1920,7 @@ async function recognizePhoto(photo) {
   $('editor-form').querySelector('button[type="submit"]').disabled = true;
   const current = () => photoJob === job && job.generation === generation && $('editor').open;
   try {
-    if (photo.size > 4 * 1024 * 1024) throw new Error('This photo exceeds 4 MiB. Choose a smaller photo; the original has not been uploaded.');
+    if (photo.size > maxFileBytes) throw new Error(`This photo is larger than ${maxFileText()}, your plan's maximum per file. Choose a smaller photo; the original has not been uploaded.`);
     const bytes = new Uint8Array(await photo.arrayBuffer());
     const extension = bytes[0] === 0x89 && decoder.decode(bytes.slice(1, 4)) === 'PNG' ? 'png' : bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff ? 'jpg' : decoder.decode(bytes.slice(0, 4)) === 'RIFF' && decoder.decode(bytes.slice(8, 12)) === 'WEBP' ? 'webp' : undefined;
     if (!extension) throw new Error('Choose a valid PNG, JPEG or WebP photo.');
@@ -2080,7 +2092,7 @@ $('resolve-now').addEventListener('click', () => {
 $('upload').addEventListener('change', async () => {
   try {
     for (const file of $('upload').files) {
-      if (file.size > 4 * 1024 * 1024) throw new Error(`"${file.name}" exceeds the local preview's 4 MiB limit.`);
+      if (file.size > maxFileBytes) throw new Error(`"${file.name}" is larger than ${maxFileText()}, your plan's maximum per file.`);
       const path = `${isMarkdown(file.name) ? 'notes' : 'attachments'}/${file.name}`;
       if ([...files.values()].some((entry) => entry.file.path === path)) throw new Error(`"${path}" already exists. Rename the upload to avoid overwriting it.`);
       await queueFile(path, new Uint8Array(await file.arrayBuffer()));
@@ -2126,7 +2138,7 @@ async function writeImport({ items, files: sources, failed: unreadable }) {
         if (names.has(source) || broken.has(source)) continue;
         try {
           const bytes = await sources.get(source)();
-          if (bytes.length > 4 * 1024 * 1024) { tooLarge += 1; broken.add(source); continue; }
+          if (bytes.length > maxFileBytes) { tooLarge += 1; broken.add(source); continue; }
           // `[ ] | # ^` would break the ![[…]] embed; same name and bytes reuse the file, otherwise the next number.
           const base = source.slice(source.lastIndexOf('/') + 1).replace(/[[\]|#^]/g, '_');
           const dot = base.lastIndexOf('.') > 0 ? base.lastIndexOf('.') : base.length;
@@ -2146,7 +2158,7 @@ async function writeImport({ items, files: sources, failed: unreadable }) {
     } catch (error) { console.error('Could not import', item.name, error); failed += 1; }
   }
   message(`Import: ${imported} imported, ${existing} already there, ${failed} could not be imported.`
-    + (broken.size ? ` ${broken.size} attachments could not be added${tooLarge ? ` (${tooLarge} over 4 MiB)` : ''}.` : ''));
+    + (broken.size ? ` ${broken.size} attachments could not be added${tooLarge ? ` (${tooLarge} over ${maxFileText()})` : ''}.` : ''));
   await sync();
   void sync();
 }

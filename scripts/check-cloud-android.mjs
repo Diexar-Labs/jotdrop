@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { base64ToBytes, bytesToBase64, decryptEnvelope, encryptEnvelope, generateVaultKey, hashToken, normalizePath, objectId } from '../cloud/shared/crypto.mjs';
+import { base64ToBytes, bytesToBase64, CHUNK_BYTES, decryptChunk, decryptEnvelope, encryptChunk, encryptEnvelope, generateVaultKey, hashToken, normalizePath, objectId, sha256Hex } from '../cloud/shared/crypto.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const temporary = mkdtempSync(path.join(tmpdir(), 'jotdrop-android-crypto-'));
@@ -28,16 +28,33 @@ try {
     const envelope = await encryptEnvelope(key, payload, aad);
     vectors.push({ key, aad, payload, line: [key, encodeText(filename), encodeText(aad), encodeText(JSON.stringify(payload)), envelope.iv, envelope.ciphertext, id, await hashToken(key)].join('\t') });
   }
+  // v2 pieces: a full piece, a last partial piece and a tiny one; Android must give exactly the same bytes.
+  const pieces = [];
+  for (const [index, size] of [[0, CHUNK_BYTES], [1, 123457], [199, 1]]) {
+    const key = generateVaultKey(), vaultId = '00000000-0000-4000-8000-000000000002';
+    const id = await objectId(key, `attachments/piece-${index}.bin`);
+    const plain = Uint8Array.from({ length: size }, (_, offset) => (offset * 7 + index) % 256);
+    const sealed = await encryptChunk(key, vaultId, id, index, plain);
+    pieces.push({ key, vaultId, id, index, plain, sealed, line: ['chunk', key, vaultId, id, index, bytesToBase64(plain), bytesToBase64(sealed)].join('\t') });
+  }
   const input = path.join(temporary, 'input.tsv'), output = path.join(temporary, 'output.tsv');
-  writeFileSync(input, vectors.map((vector) => vector.line).join('\n'));
+  writeFileSync(input, [...vectors, ...pieces].map((vector) => vector.line).join('\n'));
   const windows = process.platform === 'win32';
   execFileSync(windows ? process.env.ComSpec || 'cmd.exe' : './gradlew', windows ? ['/d', '/c', 'gradlew.bat checkCloudCrypto checkCloudSync --no-daemon --console=plain'] : ['checkCloudCrypto', 'checkCloudSync', '--no-daemon', '--console=plain'], {
     cwd: path.join(root, 'android'), stdio: 'inherit',
     env: { ...process.env, JOTDROP_CRYPTO_INPUT: input, JOTDROP_CRYPTO_OUTPUT: output },
   });
   const results = readFileSync(output, 'utf8').split('\n');
-  assert.equal(results.length, vectors.length);
-  for (const [index, line] of results.entries()) {
+  assert.equal(results.length, vectors.length + pieces.length);
+  for (const [offset, line] of results.slice(vectors.length).entries()) {
+    const [kind, sealed, name] = line.split('\t');
+    const piece = pieces[offset];
+    assert.equal(kind, 'chunk');
+    assert.equal(sealed, bytesToBase64(piece.sealed), 'Android encrypts a piece to the same bytes');
+    assert.equal(name, await sha256Hex(piece.sealed));
+    assert.deepEqual(await decryptChunk(piece.key, piece.vaultId, piece.id, piece.index, base64ToBytes(sealed)), piece.plain);
+  }
+  for (const [index, line] of results.slice(0, vectors.length).entries()) {
     const [iv, ciphertext, uploadPath] = line.split('\t');
     const { key, aad, payload } = vectors[index];
     const envelope = { v: 1, iv, ciphertext };
@@ -54,7 +71,7 @@ try {
     tampered[0] ^= 1;
     await assert.rejects(decryptEnvelope(key, { ...envelope, ciphertext: bytesToBase64(tampered) }, aad));
   }
-  console.log('JavaScript <-> Android JVM AES-GCM, HMAC paths, token hashes and canonical resumable upload hashes passed, including 4 MiB. Synthetic data only; no APK or device access.');
+  console.log('JavaScript <-> Android JVM AES-GCM, HMAC paths, token hashes, canonical resumable upload hashes and v2 pieces passed, including 4 MiB. Synthetic data only; no APK or device access.');
 } finally {
   rmSync(temporary, { recursive: true, force: true });
 }

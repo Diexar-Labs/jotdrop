@@ -11,7 +11,14 @@ import { request } from 'node:http';
 import { createCloudServer } from './server.mjs';
 import { backupCloudDatabase } from './backup.mjs';
 import { CloudClient } from './shared/client.mjs';
-import { base64ToBytes, randomToken } from './shared/crypto.mjs';
+import { base64ToBytes, bytesToBase64, encryptEnvelope, objectId, randomToken } from './shared/crypto.mjs';
+
+// The v1 single-envelope draft that devices made before encrypted pieces; the server still accepts it.
+async function legacyPrepare(client, path, bytes, baseRevision) {
+  const { vaultKey, vaultId } = client.credentials, id = await objectId(vaultKey, path);
+  const envelope = await encryptEnvelope(vaultKey, { path, content: bytesToBase64(bytes), modifiedAt: new Date().toISOString() }, `jotdrop:object:v1:${vaultId}:${id}`);
+  return { id, baseRevision, envelope: JSON.stringify(envelope) };
+}
 
 function uploadRequest(client, prepared) {
   const envelope = JSON.parse(prepared.envelope);
@@ -29,7 +36,7 @@ test('opt-in binary upload resumes after interruption and restart without changi
   t.after(async () => { await app.close(); await rm(dataDir, { recursive: true, force: true }); });
   const { client } = await CloudClient.create({ url: `http://127.0.0.1:${app.port}`, enrollmentToken, deviceName: 'Synthetic transfer' });
   const bytes = randomBytes(4 * 1024 * 1024);
-  const prepared = await client.prepareWrite('attachments/synthetic.bin', bytes, 0);
+  const prepared = await legacyPrepare(client, 'attachments/synthetic.bin', bytes, 0);
   const controller = new AbortController(), progress = [];
   await assert.rejects(client.commitWrite(prepared, { resumable: true, signal: controller.signal, onProgress(event) {
     progress.push(event);
@@ -76,7 +83,7 @@ test('hard process kill during an incomplete chunk preserves only acknowledged b
   const url = `http://127.0.0.1:${port}`;
   const { client } = await CloudClient.create({ url, enrollmentToken, deviceName: 'Synthetic crash test' });
   const bytes = randomBytes(128 * 1024);
-  const prepared = await client.prepareWrite('attachments/process-kill.bin', bytes, 0);
+  const prepared = await legacyPrepare(client, 'attachments/process-kill.bin', bytes, 0);
   const { wire, route, put } = uploadRequest(client, prepared);
   await client.call(route, 'POST', { size: wire.length });
   assert.equal((await put(wire.subarray(0, 65536))).status, 200);
@@ -121,7 +128,7 @@ test('binary upload verifies complete ciphertext before publishing and isolates 
   const url = `http://127.0.0.1:${app.port}`;
   const { client } = await CloudClient.create({ url, enrollmentToken, deviceName: 'Owner' });
   const peer = await CloudClient.claim({ pairingCode: (await client.makePairing('Other device')).pairingCode });
-  const prepared = await client.prepareWrite('notes/test.md', new TextEncoder().encode('Synthetic private bytes'), 0);
+  const prepared = await legacyPrepare(client, 'notes/test.md', new TextEncoder().encode('Synthetic private bytes'), 0);
   const { wire, route, put } = uploadRequest(client, prepared);
   assert.deepEqual(await client.call(route, 'POST', { size: wire.length }), { offset: 0, size: wire.length });
   await assert.rejects(peer.call(route), (error) => error.status === 404);
@@ -151,7 +158,7 @@ test('binary staging enforces byte limits, offsets, retry identity, auth, expiry
   const url = `http://127.0.0.1:${app.port}`;
   const { client } = await CloudClient.create({ url, enrollmentToken, deviceName: 'Owner' });
   const { client: other } = await CloudClient.create({ url, enrollmentToken, deviceName: 'Other vault' });
-  const prepared = await client.prepareWrite('notes/quota.md', new TextEncoder().encode('x'.repeat(300)), 0);
+  const prepared = await legacyPrepare(client, 'notes/quota.md', new TextEncoder().encode('x'.repeat(300)), 0);
   const { wire, route, put } = uploadRequest(client, prepared);
   for (const size of [0, 27, -1, 1.5, '100', 6 * 1024 * 1024, 6 * 1024 * 1024 + 1]) {
     await assert.rejects(client.call(route, 'POST', { size }), (error) => error.status === 400);
@@ -190,7 +197,7 @@ test('pending upload slots are bounded and failed publication keeps resumable by
   const { client } = await CloudClient.create({ url: `http://127.0.0.1:${app.port}`, enrollmentToken, deviceName: 'Owner' });
   const uploads = [];
   for (let i = 0; i < 5; i++) {
-    const prepared = await client.prepareWrite(`notes/slot${i}.md`, new TextEncoder().encode('Synthetic draft'), 0);
+    const prepared = await legacyPrepare(client, `notes/slot${i}.md`, new TextEncoder().encode('Synthetic draft'), 0);
     const request = uploadRequest(client, prepared);
     uploads.push({ ...request, prepared });
     if (i < 4) await client.call(request.route, 'POST', { size: request.wire.length });
@@ -232,7 +239,7 @@ test('lost start, chunk and commit responses retry identically and publish exact
     if (!lost.has(stage)) { lost.add(stage); await response.arrayBuffer(); throw new TypeError('Synthetic lost response'); }
     return response;
   } });
-  const prepared = await retrying.prepareWrite('attachments/retry.bin', randomBytes(128 * 1024), 0);
+  const prepared = await legacyPrepare(retrying, 'attachments/retry.bin', randomBytes(128 * 1024), 0);
   const result = await retrying.commitWrite(prepared, { resumable: true, onProgress: (event) => progress.push(event) });
   assert.deepEqual([...lost].sort(), ['chunk', 'commit', 'start']);
   assert.equal(sent[0].offset, 0);
@@ -252,7 +259,7 @@ test('WAL backup restores a partial upload into an independent database with its
   let restored;
   t.after(async () => { await restored?.close(); await app.close(); await rm(dataDir, { recursive: true, force: true }); await rm(restoredDir, { recursive: true, force: true }); });
   const { client } = await CloudClient.create({ url: `http://127.0.0.1:${app.port}`, enrollmentToken, deviceName: 'Owner' });
-  const prepared = await client.prepareWrite('attachments/backup.bin', randomBytes(128 * 1024), 0);
+  const prepared = await legacyPrepare(client, 'attachments/backup.bin', randomBytes(128 * 1024), 0);
   const { wire, route, put } = uploadRequest(client, prepared);
   await client.call(route, 'POST', { size: wire.length });
   assert.equal((await put(wire.subarray(0, 65536))).status, 200);
@@ -273,16 +280,16 @@ test('device revocation clears reservations atomically without deleting history 
   t.after(async () => { await app.close(); await rm(dataDir, { recursive: true, force: true }); });
   const { client } = await CloudClient.create({ url: `http://127.0.0.1:${app.port}`, enrollmentToken, deviceName: 'Owner' });
   const peer = await CloudClient.claim({ pairingCode: (await client.makePairing('To revoke')).pairingCode });
-  const committed = await peer.prepareWrite('notes/committed.md', new TextEncoder().encode('Keep immutable history'), 0);
+  const committed = await legacyPrepare(peer, 'notes/committed.md', new TextEncoder().encode('Keep immutable history'), 0);
   await peer.commitWrite(committed, { resumable: true });
   const before = await client.status(), pending = [];
   for (let index = 0; index < 4; index++) {
-    const prepared = await peer.prepareWrite(`notes/pending-${index}.md`, new TextEncoder().encode('Unfinished draft'), 0);
+    const prepared = await legacyPrepare(peer, `notes/pending-${index}.md`, new TextEncoder().encode('Unfinished draft'), 0);
     const upload = uploadRequest(peer, prepared);
     await peer.call(upload.route, 'POST', { size: upload.wire.length });
     pending.push(upload);
   }
-  const next = await client.prepareWrite('notes/owner.md', new TextEncoder().encode('Owner can continue'), 0);
+  const next = await legacyPrepare(client, 'notes/owner.md', new TextEncoder().encode('Owner can continue'), 0);
   await assert.rejects(client.commitWrite(next, { resumable: true }), (error) => error.status === 507);
   const db = new DatabaseSync(app.dbPath);
   try {
@@ -298,7 +305,7 @@ test('device revocation clears reservations atomically without deleting history 
     assert.equal((await client.history(committed.id)).versions.length, 1);
     assert.equal((await client.commitWrite(next, { resumable: true })).revision, 1);
     for (const upload of pending) assert.equal((await upload.put(upload.wire)).status, 401);
-    const active = uploadRequest(client, await client.prepareWrite('notes/still-active.md', new Uint8Array(1), 0));
+    const active = uploadRequest(client, await legacyPrepare(client, 'notes/still-active.md', new Uint8Array(1), 0));
     await client.call(active.route, 'POST', { size: active.wire.length });
     await client.revokeDevice(peer.credentials.deviceId);
     assert.equal((await client.call(active.route)).offset, 0, 'Repeated revoke must preserve other devices staging');
@@ -315,7 +322,7 @@ test('device revocation while a chunk body is in flight prevents storing any new
   const url = `http://127.0.0.1:${app.port}`;
   const { client } = await CloudClient.create({ url, enrollmentToken, deviceName: 'Owner' });
   const peer = await CloudClient.claim({ pairingCode: (await client.makePairing('To revoke')).pairingCode });
-  const prepared = await peer.prepareWrite('notes/revoked.md', new TextEncoder().encode('Synthetic revoked draft'), 0);
+  const prepared = await legacyPrepare(peer, 'notes/revoked.md', new TextEncoder().encode('Synthetic revoked draft'), 0);
   const { wire, route } = uploadRequest(peer, prepared);
   await peer.call(route, 'POST', { size: wire.length });
   const received = new Promise((done) => app.server.once('request', done));
@@ -343,14 +350,14 @@ test('reservations are atomic across connections and stale uploads never overwri
   t.after(async () => { await peer.close(); await app.close(); await rm(dataDir, { recursive: true, force: true }); });
   const { client } = await CloudClient.create({ url: `http://127.0.0.1:${app.port}`, enrollmentToken, deviceName: 'Owner' });
   const second = new CloudClient({ ...client.credentials, url: `http://127.0.0.1:${peer.port}` });
-  const a = await client.prepareWrite('notes/a.md', new TextEncoder().encode('x'.repeat(300)), 0);
-  const b = await second.prepareWrite('notes/b.md', new TextEncoder().encode('y'.repeat(300)), 0);
+  const a = await legacyPrepare(client, 'notes/a.md', new TextEncoder().encode('x'.repeat(300)), 0);
+  const b = await legacyPrepare(second, 'notes/b.md', new TextEncoder().encode('y'.repeat(300)), 0);
   const first = uploadRequest(client, a), next = uploadRequest(second, b);
   const results = await Promise.allSettled([client.call(first.route, 'POST', { size: first.wire.length }), second.call(next.route, 'POST', { size: next.wire.length })]);
   assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
   assert.equal(results.filter((result) => result.status === 'rejected' && result.reason.status === 507).length, 1);
   await (results[0].status === 'fulfilled' ? client.call(first.route, 'DELETE') : second.call(next.route, 'DELETE'));
-  const small = await client.prepareWrite('notes/concurrent.md', new TextEncoder().encode('Old pending draft'), 0);
+  const small = await legacyPrepare(client, 'notes/concurrent.md', new TextEncoder().encode('Old pending draft'), 0);
   const pending = uploadRequest(client, small);
   await client.call(pending.route, 'POST', { size: pending.wire.length });
   assert.equal((await pending.put(pending.wire)).status, 200);

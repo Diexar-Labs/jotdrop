@@ -12,6 +12,23 @@ fun main(args: Array<String>) {
     for (value in listOf("=", "a", "a+", "ab")) rejects { CloudCrypto.decode(value) }
     val output = File(args[0]).readLines().map { line ->
         val fields = line.split('\t')
+        // A v2 piece: the same bytes as cloud/shared/crypto.mjs, since its IV follows from the piece.
+        if (fields[0] == "chunk") {
+            check(fields.size == 7)
+            val (_, key, vaultId, id) = fields
+            val index = fields[4].toInt()
+            val plain = CloudCrypto.decode(fields[5])
+            val sealed = CloudCrypto.decode(fields[6])
+            val mine = CloudCrypto.encryptChunk(key, vaultId, id, index, plain)
+            check(mine.contentEquals(sealed) && mine.contentEquals(CloudCrypto.encryptChunk(key, vaultId, id, index, plain)))
+            check(CloudCrypto.decryptChunk(key, vaultId, id, index, sealed).contentEquals(plain))
+            rejects { CloudCrypto.decryptChunk(key, vaultId, id, index + 1, sealed) }
+            rejects { CloudCrypto.decryptChunk(key, vaultId, "b".repeat(64), index, sealed) }
+            rejects { CloudCrypto.decryptChunk(CloudCrypto.token(), vaultId, id, index, sealed) }
+            rejects { CloudCrypto.decryptChunk(key, vaultId, id, index, sealed.copyOf().also { it[20] = (it[20].toInt() xor 1).toByte() }) }
+            rejects { CloudCrypto.decryptChunk(key, vaultId, id, index, ByteArray(27)) }
+            return@map listOf("chunk", CloudCrypto.encode(mine), CloudCrypto.sha256Hex(sealed)).joinToString("\t")
+        }
         check(fields.size == 8)
         val (key, encodedPath, encodedAad, plaintext, iv) = fields
         val ciphertext = fields[5]

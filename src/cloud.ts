@@ -5,8 +5,8 @@ import { CloudClient } from "../cloud/shared/client.mjs";
 import { availableProviders, checkApproval, completeApproval, confirmLogin, confirmSignup, logIn, providerApproval, providerRecover, providerSignUp, providerTicket, requestApproval, resetWithRecoveryCode, signUp, startOver, startProviderSignIn, startReset } from "../cloud/shared/account.mjs";
 import { AuthenticatorModal, RecoveryCodeModal } from "./cloudAccount";
 import { ConflictReviewModal, TimeMachineModal } from "./cloudReview";
-import { base64ToBytes, decryptEnvelope, MAX_FILE_BYTES, objectId } from "../cloud/shared/crypto.mjs";
-import { cloudTimeline, conflictOriginal, copyName, hash, isPreserved, remoteFiles, restorePlan, syncFolder, syncPath, unavailable } from "../cloud/shared/sync.mjs";
+import { base64ToBytes, decryptEnvelope, MAX_CHUNKED_BYTES, MAX_FILE_BYTES, objectId, sha256Hex } from "../cloud/shared/crypto.mjs";
+import { cloudTimeline, conflictOriginal, copyName, fromHex, hash, isPreserved, remoteFiles, restorePlan, syncFolder, syncPath, unavailable } from "../cloud/shared/sync.mjs";
 
 export const DEFAULT_CLOUD_SERVER = "https://app.jotdrop.net";
 const PROVIDER_NAMES: Record<string, string> = { google: "Google", github: "GitHub" };
@@ -167,7 +167,8 @@ class VaultFolder {
   private async readFile(path: string): Promise<Uint8Array> {
     const stat = await this.adapter.stat(path);
     if (!stat || stat.type !== "file") throw new Error("Expected a local file. No deletions were inferred.");
-    if (stat.size > MAX_FILE_BYTES) throw new Error(`${path} is larger than the 4 MiB cloud limit.`);
+    // The sync leaves files over the plan's maximum alone; this is the largest any plan allows.
+    if (stat.size > MAX_CHUNKED_BYTES) throw new Error(`${path} is larger than the 200 MB cloud limit.`);
     return new Uint8Array(await this.adapter.readBinary(path));
   }
 
@@ -507,14 +508,25 @@ export class CloudController {
         // An upload cut off by a restart: finish it, or keep it as a copy when the cloud moved on.
         const prepared = state.upload;
         const file = await decryptEnvelope(vaultKey, JSON.parse(prepared.envelope), `jotdrop:object:v1:${vaultId}:${prepared.id}`);
-        const path = syncPath(file.path), bytes = base64ToBytes(file.content);
+        const path = syncPath(file.path);
+        // A large v2 file is not inside its manifest: the local file finishes it, if it is still the same.
+        let bytes: Uint8Array | null = typeof file.content === "string" ? base64ToBytes(file.content) : null;
+        if (!bytes) {
+          const local = await folder.read(path).catch(() => null);
+          if (local && await sha256Hex(local) === file.hash) bytes = local;
+        }
         try {
-          const saved = await client.commitWrite(prepared, { resumable: true, signal: abort.signal });
-          if ((state.tracked[path]?.revision ?? 0) < saved.revision) state.tracked[path] = { revision: saved.revision, hash: await hash(bytes), deleted: false };
+          const saved = await client.commitWrite(prepared, { resumable: true, signal: abort.signal, source: bytes ?? undefined });
+          const fingerprint = bytes ? await hash(bytes) : fromHex(file.hash);
+          if ((state.tracked[path]?.revision ?? 0) < saved.revision) state.tracked[path] = { revision: saved.revision, hash: fingerprint, deleted: false };
         } catch (error) {
-          if ((error as { status?: number }).status !== 409) throw error;
-          await folder.recover(path, bytes);
-          await client.discardWrite(prepared);
+          // Changed since: the cloud did not get it, and the file here is newer; the sync takes it from here.
+          if (!bytes && error instanceof Error && /file is needed/.test(error.message)) { state.upload = undefined; await save(); }
+          else {
+            if ((error as { status?: number }).status !== 409) throw error;
+            if (bytes) await folder.recover(path, bytes);
+            await client.discardWrite(prepared);
+          }
         }
         state.upload = undefined;
         await save();
@@ -531,11 +543,13 @@ export class CloudController {
           return object;
         },
       };
-      const report = await syncFolder(remote, folder, state.tracked, (next: Record<string, Base>) => this.store.put("state", { ...state, tracked: next }), { checkActive: active, seen: state.seen ??= {}, progress: progress("Syncing...") });
+      // The plan's maximum per file; a server without encrypted pieces takes 4 MiB.
+      const maxFileBytes: number = (await client.status()).pieces?.maxFileBytes ?? MAX_FILE_BYTES;
+      const report = await syncFolder(remote, folder, state.tracked, (next: Record<string, Base>) => this.store.put("state", { ...state, tracked: next }), { checkActive: active, seen: state.seen ??= {}, progress: progress("Syncing..."), maxFileBytes });
       state.lastSynced = new Date().toISOString();
       state.conflicts = report.conflicts;
       const big = report.skipped.length
-        ? ` ${report.skipped.length === 1 ? "1 file is" : `${report.skipped.length} files are`} larger than 4 MiB and ${report.skipped.length === 1 ? "stays" : "stay"} only on this device: ${report.skipped.slice(0, 3).map((path: string) => path.split("/").pop()).join(", ")}${report.skipped.length > 3 ? ` and ${report.skipped.length - 3} more` : ""}.`
+        ? ` ${report.skipped.length === 1 ? "1 file is" : `${report.skipped.length} files are`} larger than ${Math.round(maxFileBytes / 1048576)} MB, your plan's maximum per file, and ${report.skipped.length === 1 ? "stays" : "stay"} only on this device: ${report.skipped.slice(0, 3).map((path: string) => path.split("/").pop()).join(", ")}${report.skipped.length > 3 ? ` and ${report.skipped.length - 3} more` : ""}.`
         : "";
       state.message = (report.conflicts
         ? `${report.conflicts} ${report.conflicts === 1 ? "note was" : "notes were"} changed in two places. Both versions are kept: choose one with "Resolve now".`
@@ -564,7 +578,7 @@ export class CloudController {
   private async upload(client: CloudClient, state: SyncState, path: string, bytes: Uint8Array, baseRevision: number, signal?: AbortSignal) {
     const prepared = state.upload = await client.prepareWrite(path, bytes, baseRevision);
     await this.store.put("state", state);
-    const saved = await client.commitWrite(prepared, { resumable: true, signal });
+    const saved = await client.commitWrite(prepared, { resumable: true, signal, source: bytes });
     state.upload = undefined;
     const object = { path, revision: saved.revision, deleted: false, hash: await hash(bytes) };
     state.index.objects[prepared.id] = object;
@@ -620,7 +634,7 @@ export class CloudController {
     const id = await objectId(client.credentials.vaultKey, path);
     try {
       const entry = await client.read(id);
-      return { id, revision: entry.revision, deleted: Boolean(entry.deleted), bytes: base64ToBytes(entry.file.content) };
+      return { id, revision: entry.revision, deleted: Boolean(entry.deleted), bytes: entry.file.bytes };
     } catch (error) {
       // Cleared from a full free cloud after 30 days in the trash: the name starts over.
       if ((error as { status?: number }).status === 404) return { id, revision: 0, deleted: true, bytes: null };
@@ -673,7 +687,7 @@ export class CloudController {
   async readVersion(id: string, revision: number): Promise<Uint8Array> {
     await this.ready;
     const { client } = this.syncing();
-    return base64ToBytes((await client.read(id, revision)).file.content);
+    return (await client.read(id, revision)).file.bytes;
   }
 
   /** An older version becomes the newest one; history keeps every version, so this can be undone. */
@@ -711,7 +725,7 @@ export class CloudController {
       if (!isCurrent()) throw new Error("A newer moment was chosen.");
       // The newest version is always open; older ones by revision.
       const read = await Promise.all(open.slice(start, start + 8).map((file) => now.get(file.id) === file.revision ? client.read(file.id) : client.read(file.id, file.revision!)));
-      for (const entry of read) files.push({ path: entry.file.path, bytes: base64ToBytes(entry.file.content) });
+      for (const entry of read) files.push({ path: entry.file.path, bytes: entry.file.bytes });
     }
     files.sort((a, b) => a.path.localeCompare(b.path));
     return { at, then, files, trashed: then.filter((file) => file.deleted).length, locked: missing.filter((file) => !file.cleared).length, cleared: missing.filter((file) => file.cleared).length };

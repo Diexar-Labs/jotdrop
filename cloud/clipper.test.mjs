@@ -35,8 +35,8 @@ test('clipper reconciles an error after COMMIT across server restart and preserv
   let loseNetworkResponse = false;
   const clipper = createClipperCloud(storage, async (url, options) => {
     const response = await fetch(url, options);
-    if (options.method === 'POST' && url.endsWith('/commit') && loseNetworkResponse) {
-      assert.equal(response.status, 200);
+    if ((options.method === 'POST' && url.endsWith('/commit') || options.method === 'PUT' && /\/objects\/[0-9a-f]{64}$/.test(url)) && loseNetworkResponse) {
+      assert.ok(response.ok);
       await response.text();
       throw new TypeError('Synthetic lost network response');
     }
@@ -99,7 +99,7 @@ test('clipper preserves encrypted drafts at the history limit and reconciles los
   let loseResponse = true;
   const clipper = createClipperCloud(storage, async (url, options) => {
     const response = await fetch(url, options);
-    if (options.method === 'POST' && url.endsWith('/commit') && loseResponse) { await response.text(); throw new TypeError('Synthetic lost network response'); }
+    if ((options.method === 'POST' && url.endsWith('/commit') || options.method === 'PUT' && /\/objects\/[0-9a-f]{64}$/.test(url)) && loseResponse) { await response.text(); throw new TypeError('Synthetic lost network response'); }
     return response;
   });
   const captureId = crypto.randomUUID();
@@ -133,16 +133,18 @@ test('reopened clipper resumes the same cancelled encrypted draft without captur
   const payload = { url: 'https://example.com', title: 'Synthetic resume', selection: 'Kept privately' };
   const progress = [], confirmed = [];
   const clipper = createClipperCloud(storage);
-  await assert.rejects(clipper.save(payload, password, captureId, { signal: controller.signal, onCaptureCommitted: (id) => confirmed.push(id), onProgress(event) { progress.push(event); if (event.transferredBytes) controller.abort(); } }), (error) => error.name === 'AbortError');
+  await assert.rejects(clipper.save(payload, password, captureId, { signal: controller.signal, onCaptureCommitted: (id) => confirmed.push(id), onProgress(event) { progress.push(event); if (event.transferredBytes || event.phase === 'committing') controller.abort(); } }), (error) => error.name === 'AbortError');
   assert.deepEqual(confirmed, [], 'An uncertain upload must retain its capture identity');
   const key = Object.keys(data).find((key) => key.startsWith('cloudDraft:'));
   const prepared = structuredClone(data[key]);
   assert.ok(prepared && !JSON.stringify(data).includes(payload.selection));
-  assert.ok(progress.at(-1).transferredBytes > 0);
+  // A small clip is one encrypted manifest: cancelled just before it was sent.
+  assert.equal(progress.at(-1).phase, 'committing');
   assert.equal((await client.listChanges()).changes.length, 0);
   const retry = [];
+  let saves = 0;
   const reopened = createClipperCloud(storage, async (url, options) => {
-    assert.notEqual(options.method, 'PUT', 'Server-confirmed ciphertext must not be uploaded twice');
+    if (options.method === 'PUT') assert.equal(++saves, 1, 'The resumed draft is saved exactly once');
     return fetch(url, options);
   });
   assert.equal(await reopened.resume(password, { onCaptureCommitted: (id) => confirmed.push(id), onProgress: (event) => retry.push(event) }), 1);

@@ -229,7 +229,7 @@ private fun CloudScreen(onBack: () -> Unit, onSettings: () -> Unit) {
                             enabled = !busy, modifier = Modifier.semantics { contentDescription = "Automatic cloud sync" })
                     }
                     Text("Android schedules background sync at 15-minute intervals or later. Saved changes and opening the app also request a sync; offline changes wait for connectivity.", style = MaterialTheme.typography.bodySmall)
-                    Text("Up to 4 MiB per file; your plan sets the total storage. No automatic merging or cleanup of recovery copies.", style = MaterialTheme.typography.bodySmall)
+                    Text("Your plan sets the maximum per file and the total storage. No automatic merging or cleanup of recovery copies.", style = MaterialTheme.typography.bodySmall)
                     Button(onClick = { run { CloudSyncManager.sync(context) } }, enabled = !busy && status!!.enabled, modifier = Modifier.padding(top = 12.dp)) { Text("Sync now") }
                 }
                 item(key = "account") { CloudAccountSection(busy, ::accountRun) { cloud() } }

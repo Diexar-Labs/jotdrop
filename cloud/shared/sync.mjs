@@ -1,4 +1,4 @@
-import { base64ToBytes, bytesToBase64, MAX_FILE_BYTES, normalizePath } from './crypto.mjs';
+import { bytesToBase64, MAX_FILE_BYTES, normalizePath } from './crypto.mjs';
 
 // Two-way sync of a local notes folder, the same rules as Android's CloudSyncEngine.
 // No limit on the number of files or their total size: one file at a time is in memory; the cloud plan sets the storage.
@@ -8,6 +8,8 @@ export const KEPT_BYTES = 16 * 1024 * 1024;
 const SAVE_EVERY_MS = 1000;
 
 export const hash = async (bytes) => bytesToBase64(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)));
+// A manifest's fingerprint is hex; saved baselines keep the base64 form.
+export const fromHex = (value) => bytesToBase64(new Uint8Array(value.match(/../g).map((pair) => parseInt(pair, 16))));
 export const isPreserved = (name) => name.includes('.cloud-conflict-') || name.includes('.cloud-recovery-');
 
 export function syncPath(value, allowPreserved = false) {
@@ -30,9 +32,9 @@ export function copyName(path, suffix) {
  * compareAndSet(path, expected, replacement) uses null for "no file".
  * `seen` keeps each local file's hash by size and modification time, so a sync reads only files that changed.
  * Baselines are saved at least every second and at the end: every step is safe to repeat after a cut-off sync.
- * Files over 4 MiB are left alone and come back in `skipped`.
+ * Files over `maxFileBytes` (the plan's maximum per file) are left alone and come back in `skipped`.
  */
-export async function syncFolder(remote, local, tracked, persist, { checkActive = () => {}, seen = {}, progress = (done, total) => {} } = {}) {
+export async function syncFolder(remote, local, tracked, persist, { checkActive = () => {}, seen = {}, progress = (done, total) => {}, maxFileBytes = MAX_FILE_BYTES } = {}) {
   checkActive();
   const result = { uploaded: 0, downloaded: 0, deleted: 0, conflicts: 0, skipped: [] };
   const files = await local.list();
@@ -46,7 +48,7 @@ export async function syncFolder(remote, local, tracked, persist, { checkActive 
   for (const [name, stat] of files) {
     syncPath(name);
     // Too big for one cloud file: it stays on this device as it is, nothing about it changes anywhere, the rest syncs.
-    if (stat.size > MAX_FILE_BYTES) result.skipped.push(name);
+    if (stat.size > maxFileBytes) result.skipped.push(name);
   }
   result.skipped.sort();
   for (const name of Object.keys(seen)) if (!files.has(name)) delete seen[name];
@@ -189,13 +191,14 @@ export async function remoteFiles(client, index, { checkActive = () => {}, save 
       checkActive();
       progress(done, waiting.length);
       let entry;
+      // The manifest is enough to compare; pieces are downloaded only for a file that is missing or different here.
       // A file cleared from a full free cloud after 30 days in the trash stays in the feed but reads as 404.
-      try { entry = await client.read(id); }
+      try { entry = await client.readManifest(id); }
       catch (error) { if (error.status !== 404) throw error; delete index.objects[id]; delete index.pending[id]; continue; }
-      const bytes = base64ToBytes(entry.file.content);
-      index.objects[id] = { path: syncPath(entry.file.path), revision: entry.revision, deleted: Boolean(entry.deleted), hash: await hash(bytes) };
+      const { manifest } = entry;
+      index.objects[id] = { path: syncPath(manifest.path), revision: entry.revision, deleted: Boolean(entry.deleted), hash: fromHex(manifest.hash) };
       delete index.pending[id];
-      if (kept + bytes.length <= KEPT_BYTES) { loaded.set(id, bytes); kept += bytes.length; }
+      if (manifest.bytes && kept + manifest.size <= KEPT_BYTES) { loaded.set(id, manifest.bytes); kept += manifest.size; }
       if (Date.now() - savedAt >= SAVE_EVERY_MS) { await save(); savedAt = Date.now(); }
     }
   } catch (error) {
@@ -206,10 +209,9 @@ export async function remoteFiles(client, index, { checkActive = () => {}, save 
   return Object.entries(index.objects).map(([id, object]) => ({ ...object, bytes: async () => {
     if (loaded.has(id)) { const bytes = loaded.get(id); loaded.delete(id); return bytes; }
     // The current version, not `?revision=`: the free plan locks older versions, never the newest.
-    const entry = await client.read(id);
-    const bytes = base64ToBytes(entry.file.content);
-    if (entry.revision !== object.revision || entry.file.path !== object.path || await hash(bytes) !== object.hash) throw new Error('Cloud file changed during sync. Local files were kept');
-    return bytes;
+    const entry = await client.readManifest(id);
+    if (entry.revision !== object.revision || entry.manifest.path !== object.path || fromHex(entry.manifest.hash) !== object.hash) throw new Error('Cloud file changed during sync. Local files were kept');
+    return client.readPieces(id, entry.manifest);
   } }));
 }
 

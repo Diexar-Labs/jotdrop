@@ -4,7 +4,8 @@ import java.io.IOException
 import java.net.SocketTimeoutException
 import java.security.MessageDigest
 
-data class CloudPreparedUpload(val id: String, val baseRevision: Int, val envelope: CloudEnvelope) {
+/** [chunks]: the names of a v2 file's encrypted pieces (empty for a small file); null for a v1 draft from an older version. */
+data class CloudPreparedUpload(val id: String, val baseRevision: Int, val envelope: CloudEnvelope, val chunks: List<String>? = null) {
     fun canonicalEnvelope(): String {
         require(id.matches(Regex("[0-9a-f]{64}")) && baseRevision in 0 until Int.MAX_VALUE) { "Invalid prepared upload" }
         val iv = CloudCrypto.decode(envelope.iv)

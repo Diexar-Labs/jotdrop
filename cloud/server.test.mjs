@@ -8,7 +8,7 @@ import { get, request } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import { createCloudServer } from './server.mjs';
 import { CloudClient } from './shared/client.mjs';
-import { base64ToBytes, decodeRecovery, randomToken } from './shared/crypto.mjs';
+import { base64ToBytes, bytesToBase64, decodeRecovery, encryptEnvelope, objectId, randomToken } from './shared/crypto.mjs';
 import { backupCloudDatabase } from './backup.mjs';
 
 // These tests cover metadata ceilings with many devices; plans.test.mjs covers the free device limit.
@@ -21,6 +21,12 @@ async function fixture(t, options = {}) {
   return { ...app, dataDir, url, enrollmentToken, create: (deviceName = 'Test browser') => CloudClient.create({ url, enrollmentToken, deviceName }) };
 }
 const text = (value) => new TextEncoder().encode(value);
+// These tests cover the strict v1 save that devices used before encrypted pieces (cloud/chunks.test.mjs covers v2).
+async function legacyPrepare(client, path, bytes, baseRevision) {
+  const { vaultKey, vaultId } = client.credentials, id = await objectId(vaultKey, path);
+  const envelope = await encryptEnvelope(vaultKey, { path, content: bytesToBase64(bytes), modifiedAt: new Date().toISOString() }, `jotdrop:object:v1:${vaultId}:${id}`);
+  return { id, baseRevision, envelope: JSON.stringify(envelope) };
+}
 
 test('real clients pair, sync, reject stale edits, preserve immutable versions, trash, restore and revoke', async (t) => {
   const app = await fixture(t);
@@ -123,7 +129,7 @@ test('public proxy configuration requires one canonical HTTPS origin, not a URL 
 test('quota and validation are atomic, including restore and concurrent uploads', async (t) => {
   const app = await fixture(t, { quotaBytes: 2500 });
   const { client } = await app.create();
-  const prepared = await client.prepareWrite('notes/concurrent.md', text('same revision'), 0);
+  const prepared = await legacyPrepare(client, 'notes/concurrent.md', text('same revision'), 0);
   const results = await Promise.allSettled([client.commitWrite(prepared), client.commitWrite(prepared)]);
   assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
   assert.equal(results.filter((result) => result.status === 'rejected' && result.reason.status === 409).length, 1);
@@ -131,7 +137,7 @@ test('quota and validation are atomic, including restore and concurrent uploads'
   await assert.rejects(client.write('notes/too-large.md', text('x'.repeat(2000)), 0), (error) => error.status === 507);
   const bad = { ...prepared, id: 'a'.repeat(64), envelope: JSON.stringify({ v: 1, iv: 'x', ciphertext: 'x' }) };
   await assert.rejects(client.commitWrite(bad), (error) => error.status === 400);
-  const nonzero = await client.prepareWrite('notes/missing.md', text('no base exists'), 9);
+  const nonzero = await legacyPrepare(client, 'notes/missing.md', text('no base exists'), 9);
   await assert.rejects(client.commitWrite(nonzero), (error) => error.status === 409);
   assert.equal((await client.listChanges()).changes.length, 1);
 });
@@ -139,7 +145,7 @@ test('quota and validation are atomic, including restore and concurrent uploads'
 test('nearly full storage can trash and restore immutable versions without copying ciphertext', async (t) => {
   const app = await fixture(t, { quotaBytes: 1024 });
   const { client } = await app.create();
-  const prepared = await client.prepareWrite('notes/full.md', text('x'.repeat(300)), 0);
+  const prepared = await legacyPrepare(client, 'notes/full.md', text('x'.repeat(300)), 0);
   const saved = await client.commitWrite(prepared);
   const used = Buffer.byteLength(prepared.envelope);
   assert.ok(used <= 1024 && used * 2 > 1024);
@@ -179,8 +185,8 @@ test('nearly full storage can trash and restore immutable versions without copyi
 test('concurrent distinct uploads respect quota and failed change writes roll back payloads and revisions', async (t) => {
   const app = await fixture(t, { quotaBytes: 1024 });
   const { client } = await app.create();
-  const a = await client.prepareWrite('notes/a.md', text('x'.repeat(300)), 0);
-  const b = await client.prepareWrite('notes/b.md', text('y'.repeat(300)), 0);
+  const a = await legacyPrepare(client, 'notes/a.md', text('x'.repeat(300)), 0);
+  const b = await legacyPrepare(client, 'notes/b.md', text('y'.repeat(300)), 0);
   const db = new DatabaseSync(app.dbPath);
   try {
     db.exec(`CREATE TRIGGER fail_change BEFORE INSERT ON changes BEGIN SELECT RAISE(ABORT, 'Synthetic write failure'); END;`);
@@ -216,7 +222,7 @@ test('SQLite storage failures preserve readable history, atomic writes and retry
   const second = await CloudClient.recover({ url: app.url, recoveryCode, deviceName: 'Second device' });
   const pairing = await client.makePairing('Pending device');
   const saved = await client.write('notes/storage.md', text('Existing encrypted history'), 0);
-  const prepared = await client.prepareWrite('notes/storage.md', text('x'.repeat(65536)), 1);
+  const prepared = await legacyPrepare(client, 'notes/storage.md', text('x'.repeat(65536)), 1);
   const db = new DatabaseSync(app.dbPath, { readOnly: true });
   const snapshot = () => ['vaults', 'pairings', 'envelopes', 'revisions', 'changes'].map((table) => db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all());
   try {
@@ -307,7 +313,7 @@ test('SQLite storage failures preserve readable history, atomic writes and retry
     });
 
     await t.test('WAL commit and begin failures never consume credentials or leave partial mutations', async (t) => {
-      const next = await client.prepareWrite('notes/storage.md', text('Next draft'), (await client.read(saved.id)).revision);
+      const next = await legacyPrepare(client, 'notes/storage.md', text('Next draft'), (await client.read(saved.id)).revision);
       const attempts = [
         () => app.create('Failed enrollment'),
         () => CloudClient.recover({ url: app.url, recoveryCode, deviceName: 'Failed recovery' }),
@@ -359,7 +365,7 @@ test('SQLite storage failures preserve readable history, atomic writes and retry
 test('history entries are bounded independently of payload reuse without deleting existing versions', async (t) => {
   const app = await fixture(t, { maxHistoryEntries: 3, quotaBytes: 1024, enrollmentLimit: 2 });
   const { client } = await app.create();
-  const prepared = await client.prepareWrite('notes/bounded.md', text('x'.repeat(300)), 0);
+  const prepared = await legacyPrepare(client, 'notes/bounded.md', text('x'.repeat(300)), 0);
   await client.commitWrite(prepared);
   await client.remove(prepared.id, 1);
   await client.restore(prepared.id, 1, 2);
@@ -392,10 +398,10 @@ test('history entries are bounded independently of payload reuse without deletin
 test('history capacity is atomic across connections, failed inserts and stale retries', async (t) => {
   const app = await fixture(t, { maxHistoryEntries: 2 });
   const { client } = await app.create();
-  const first = await client.prepareWrite('notes/first.md', text('first'), 0);
+  const first = await legacyPrepare(client, 'notes/first.md', text('first'), 0);
   await client.commitWrite(first);
-  const a = await client.prepareWrite('notes/a.md', text('A'), 0);
-  const b = await client.prepareWrite('notes/b.md', text('B'), 0);
+  const a = await legacyPrepare(client, 'notes/a.md', text('A'), 0);
+  const b = await legacyPrepare(client, 'notes/b.md', text('B'), 0);
   const peer = await createCloudServer({ freeDeviceLimit: 100, dataDir: app.dataDir, enrollmentToken: app.enrollmentToken, maxHistoryEntries: 2 });
   const second = new CloudClient({ ...client.credentials, url: `http://127.0.0.1:${peer.port}` });
   const db = new DatabaseSync(app.dbPath);
@@ -424,7 +430,7 @@ test('history limits validate configuration and independently bound revision and
     await assert.rejects(createCloudServer({ freeDeviceLimit: 100, dataDir: app.dataDir, enrollmentToken: app.enrollmentToken, maxHistoryEntries }), /history entry limit/);
   }
   const { client } = await app.create();
-  const prepared = await client.prepareWrite('notes/independent.md', text('independent counts'), 0);
+  const prepared = await legacyPrepare(client, 'notes/independent.md', text('independent counts'), 0);
   await client.commitWrite(prepared);
   const db = new DatabaseSync(app.dbPath);
   try {
@@ -474,7 +480,7 @@ test('history counts survive lower restart limits and live WAL backup without pu
 test('payload reuse is scoped to each vault and object and never makes historical storage free', async (t) => {
   const app = await fixture(t, { enrollmentLimit: 2 });
   const a = (await app.create('A')).client, b = (await app.create('B')).client;
-  const prepared = await a.prepareWrite('notes/a.md', text('one encrypted payload'), 0);
+  const prepared = await legacyPrepare(a, 'notes/a.md', text('one encrypted payload'), 0);
   const size = Buffer.byteLength(prepared.envelope);
   await a.commitWrite(prepared);
   await a.commitWrite({ ...prepared, baseRevision: 1 });
@@ -485,7 +491,7 @@ test('payload reuse is scoped to each vault and object and never makes historica
   assert.equal((await a.status()).usedBytes, size * 2);
   assert.equal((await b.status()).usedBytes, size);
   await assert.rejects(b.call(`/objects/${separateId}`), (error) => error.status === 404);
-  const changed = await a.prepareWrite('notes/a.md', text('different encrypted payload'), 2);
+  const changed = await legacyPrepare(a, 'notes/a.md', text('different encrypted payload'), 2);
   await a.commitWrite(changed);
   await a.remove(prepared.id, 3);
   await a.restore(prepared.id, 1, 4);
@@ -717,7 +723,7 @@ test('revoking a device denies pairing creation even when its request body is al
   const app = await fixture(t, { clock: () => { observe?.(); return Date.now(); } });
   const { client } = await app.create();
   const second = await CloudClient.claim({ pairingCode: (await client.makePairing('Second device')).pairingCode });
-  const prepared = await second.prepareWrite('notes/test.md', text('Synthetic test data'), 0);
+  const prepared = await legacyPrepare(second, 'notes/test.md', text('Synthetic test data'), 0);
   const payload = JSON.stringify({ deviceName: 'Revoked pairing', deviceTokenHash: 'a'.repeat(64), claimTokenHash: 'b'.repeat(64), envelope: prepared.envelope });
   const authorized = new Promise((done) => { observe = done; });
   let pending;
@@ -765,8 +771,8 @@ test('concurrent request admission bounds slow uploads across vaults and never c
   let observe;
   const app = await fixture(t, { maxConcurrentRequests: 2, enrollmentLimit: 2, clock: () => { observe?.(); return Date.now(); } });
   const a = (await app.create('A')).client, b = (await app.create('B')).client;
-  const preparedA = await a.prepareWrite('notes/a.md', text('A retained locally'), 0);
-  const preparedB = await b.prepareWrite('notes/b.md', text('B retained locally'), 0);
+  const preparedA = await legacyPrepare(a, 'notes/a.md', text('A retained locally'), 0);
+  const preparedB = await legacyPrepare(b, 'notes/b.md', text('B retained locally'), 0);
   async function hold(client, prepared) {
     const payload = JSON.stringify({ baseRevision: prepared.baseRevision, envelope: prepared.envelope });
     const authorized = new Promise((done) => { observe = done; });
@@ -813,7 +819,7 @@ test('request capacity is released after aborts, validation errors and failed tr
     await assert.rejects(createCloudServer({ freeDeviceLimit: 100, dataDir: app.dataDir, enrollmentToken: app.enrollmentToken, maxConcurrentRequests }), /concurrent request limit/);
   }
   const { client } = await app.create();
-  const prepared = await client.prepareWrite('notes/aborted.md', text('aborted draft'), 0);
+  const prepared = await legacyPrepare(client, 'notes/aborted.md', text('aborted draft'), 0);
   let started, pending;
   const received = new Promise((done) => { started = done; });
   const closed = new Promise((done) => { app.server.once('request', (req, res) => { res.once('close', done); started(); }); });
@@ -844,7 +850,7 @@ test('request capacity is released after aborts, validation errors and failed tr
 test('blocked WAL checkpoints preserve live history and backups until readers release their snapshot', async (t) => {
   const app = await fixture(t);
   const { client } = await app.create();
-  const first = await client.prepareWrite('notes/checkpoint.md', text('First version'), 0);
+  const first = await legacyPrepare(client, 'notes/checkpoint.md', text('First version'), 0);
   await client.commitWrite(first);
   const reader = new DatabaseSync(app.dbPath, { readOnly: true });
   const checkpoint = new DatabaseSync(app.dbPath);
@@ -891,10 +897,10 @@ test('blocked WAL checkpoints preserve live history and backups until readers re
 test('restart retains committed WAL writes and discards a process-interrupted transaction before COMMIT', async (t) => {
   const app = await fixture(t);
   const { client } = await app.create();
-  const first = await client.prepareWrite('notes/restart.md', text('First durable version'), 0);
+  const first = await legacyPrepare(client, 'notes/restart.md', text('First durable version'), 0);
   await client.commitWrite(first);
-  const committed = await client.prepareWrite('notes/restart.md', text('Committed without checkpoint'), 1);
-  const pending = await client.prepareWrite('notes/interrupted.md', text('x'.repeat(65536)), 0);
+  const committed = await legacyPrepare(client, 'notes/restart.md', text('Committed without checkpoint'), 1);
+  const pending = await legacyPrepare(client, 'notes/interrupted.md', text('x'.repeat(65536)), 0);
   await app.close();
   const child = spawnSync(process.execPath, ['--input-type=module', '-e', `
     import assert from 'node:assert/strict';

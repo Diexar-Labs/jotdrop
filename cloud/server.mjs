@@ -14,6 +14,9 @@ const MAX_BODY = 12 * 1024 * 1024;
 const MAX_METADATA_BODY = 16 * 1024;
 const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const TRANSFER_CHUNK_BYTES = 64 * 1024;
+// v2 objects: encrypted pieces of up to 1 MiB of file plus a 28-byte IV and tag.
+const PIECE_BYTES = 1024 * 1024;
+const MAX_PIECES = 200;
 const TRANSFER_LIFETIME = 24 * 60 * 60 * 1000;
 const CODE_LIFETIME = 15 * 60 * 1000;
 const LOCK_TIME = 15 * 60 * 1000;
@@ -144,7 +147,7 @@ async function body(req, maximum = MAX_BODY) {
 }
 
 /** Loopback-only server behind a trusted HTTPS proxy. Accounts need a mailer; no billing or provider credentials. `quotaBytes` and `freeDeviceLimit` are the free plan's limits. */
-export async function createCloudServer({ dataDir, enrollmentToken, mailer, newsletter, serverKey, stripe, oauth = {}, fetcher = globalThis.fetch, quotaBytes = 250 * 1024 * 1024, plusQuotaBytes = 10 * 1024 * 1024 * 1024, freeDeviceLimit = 2, maxHistoryEntries = 100000, maxDeviceEntries = 1000, maxPairingEntries = 128, maxConcurrentRequests = 16, webRoot = join(directory, 'web'), corsOrigins = [], publicOrigin, port = 0, enrollmentLimit = 1, clock = Date.now }) {
+export async function createCloudServer({ dataDir, enrollmentToken, mailer, newsletter, serverKey, stripe, oauth = {}, fetcher = globalThis.fetch, quotaBytes = 250 * 1024 * 1024, plusQuotaBytes = 10 * 1024 * 1024 * 1024, maxFileBytes = 25 * 1024 * 1024, plusMaxFileBytes = 200 * 1024 * 1024, freeDeviceLimit = 2, maxHistoryEntries = 100000, maxDeviceEntries = 1000, maxPairingEntries = 128, maxConcurrentRequests = 16, webRoot = join(directory, 'web'), corsOrigins = [], publicOrigin, port = 0, enrollmentLimit = 1, clock = Date.now }) {
   if (!dataDir || (enrollmentToken !== undefined && !validToken(enrollmentToken)) || [quotaBytes, plusQuotaBytes, freeDeviceLimit].some((value) => !Number.isSafeInteger(value) || value < 1)) throw new Error('Provide a data directory, random 32-byte enrollment token and positive quota.');
   if (mailer !== undefined && typeof mailer !== 'function') throw new Error('Provide the mailer as a function.');
   // `newsletter(email)` adds someone who ticked "Email me news about JotDrop" to the mailing list (Brevo).
@@ -212,7 +215,10 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         CREATE TABLE IF NOT EXISTS identities(provider TEXT NOT NULL, subject TEXT NOT NULL, accountId TEXT NOT NULL REFERENCES accounts(id), createdAt TEXT NOT NULL, PRIMARY KEY(provider,subject));
         CREATE TABLE IF NOT EXISTS oauth_states(id TEXT PRIMARY KEY, provider TEXT NOT NULL, client TEXT NOT NULL, challenge TEXT NOT NULL, expiresAt INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS oauth_tickets(id TEXT PRIMARY KEY, provider TEXT NOT NULL, subject TEXT NOT NULL, email TEXT NOT NULL, challenge TEXT NOT NULL, expiresAt INTEGER NOT NULL);
-        CREATE TABLE IF NOT EXISTS newsletter(accountId TEXT PRIMARY KEY REFERENCES accounts(id), consentedAt TEXT NOT NULL, addedAt TEXT);`);
+        CREATE TABLE IF NOT EXISTS newsletter(accountId TEXT PRIMARY KEY REFERENCES accounts(id), consentedAt TEXT NOT NULL, addedAt TEXT);
+        CREATE TABLE IF NOT EXISTS chunks(vaultId TEXT NOT NULL REFERENCES vaults(id), name TEXT NOT NULL, size INTEGER NOT NULL, data BLOB NOT NULL, createdAt INTEGER NOT NULL, claimed INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(vaultId,name));
+        CREATE TABLE IF NOT EXISTS envelope_chunks(vaultId TEXT NOT NULL, id TEXT NOT NULL, envelopeHash TEXT NOT NULL, name TEXT NOT NULL, PRIMARY KEY(vaultId,id,envelopeHash,name));
+        CREATE INDEX IF NOT EXISTS envelope_chunks_by_name ON envelope_chunks(vaultId,name);`);
       // The newsletter tick waits with the signup until the email address is confirmed.
       if (!all('PRAGMA table_info(signups)').some((column) => column.name === 'newsletter')) db.exec('ALTER TABLE signups ADD COLUMN newsletter INTEGER NOT NULL DEFAULT 0;');
       run("INSERT INTO secrets VALUES('fake-salt',?) ON CONFLICT(name) DO NOTHING", randomBytes(32).toString('base64url'));
@@ -445,9 +451,18 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   function requireActiveDevice(vaultId, deviceId) {
     if (one('SELECT revoked FROM devices WHERE vaultId=? AND id=?', vaultId, deviceId)?.revoked !== 0) fail(401, 'Device access denied');
   }
-  const pruneUploads = (vaultId) => run('DELETE FROM uploads WHERE vaultId=? AND expiresAt<=?', vaultId, clock());
-  const storageUsage = (vaultId) => one('SELECT (SELECT COALESCE(SUM(size),0) FROM envelopes WHERE vaultId=?) + (SELECT COALESCE(SUM(reservedBytes),0) FROM uploads WHERE vaultId=?) AS used', vaultId, vaultId).used;
+  // A piece that no saved version uses after a day was an upload that never finished.
+  const pruneUploads = (vaultId) => {
+    run('DELETE FROM uploads WHERE vaultId=? AND expiresAt<=?', vaultId, clock());
+    run('DELETE FROM chunks WHERE vaultId=? AND claimed=0 AND createdAt<=?', vaultId, clock() - TRANSFER_LIFETIME);
+  };
+  // Pieces of versions that were cleared: nothing reads them any more.
+  const dropUnusedPieces = (vaultId) => run('DELETE FROM chunks WHERE vaultId=? AND claimed=1 AND NOT EXISTS (SELECT 1 FROM envelope_chunks ec WHERE ec.vaultId=chunks.vaultId AND ec.name=chunks.name)', vaultId);
+  // Each piece counts once, however many versions use it.
+  const storageUsage = (vaultId) => one('SELECT (SELECT COALESCE(SUM(size),0) FROM envelopes WHERE vaultId=?) + (SELECT COALESCE(SUM(size),0) FROM chunks WHERE vaultId=?) + (SELECT COALESCE(SUM(reservedBytes),0) FROM uploads WHERE vaultId=?) AS used', vaultId, vaultId, vaultId).used;
   const quotaFor = (vaultId) => isPlus(vaultId) ? plusQuotaBytes : quotaBytes;
+  const maxFileFor = (vaultId) => isPlus(vaultId) ? plusMaxFileBytes : maxFileBytes;
+  const pieceBytes = (vaultId, id, envelopeHash) => one('SELECT COALESCE(SUM(c.size),0) AS size FROM envelope_chunks ec JOIN chunks c ON c.vaultId=ec.vaultId AND c.name=ec.name WHERE ec.vaultId=? AND ec.id=? AND ec.envelopeHash=?', vaultId, id, envelopeHash).size;
   // Free clouds keep older versions, but only Plus opens one that was replaced before this moment.
   function lockedBefore(vaultId) {
     const now = clock();
@@ -474,7 +489,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     if (shortfall <= 0) return true;
     const cutoff = lockedBefore(vaultId);
     if (!cutoff) return false;
-    const trashed = all(`SELECT r.id,r.revision,(SELECT COALESCE(SUM(e.size),0) FROM envelopes e WHERE e.vaultId=r.vaultId AND e.id=r.id) AS size ${trashedNotes} AND r.id<>? ORDER BY r.updatedAt`, vaultId, cutoff, id);
+    const trashed = all(`SELECT r.id,r.revision,(SELECT COALESCE(SUM(e.size),0) FROM envelopes e WHERE e.vaultId=r.vaultId AND e.id=r.id) + (SELECT COALESCE(SUM(c.size),0) FROM chunks c WHERE c.vaultId=r.vaultId AND c.name IN (SELECT ec.name FROM envelope_chunks ec WHERE ec.vaultId=r.vaultId AND ec.id=r.id)) AS size ${trashedNotes} AND r.id<>? ORDER BY r.updatedAt`, vaultId, cutoff, id);
     const cleared = new Set(trashed.map((note) => note.id));
     // Group by envelope, oldest first; an envelope a newer open version still uses (a restore) is never freed.
     const groups = new Map();
@@ -487,36 +502,58 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     const freeable = [...groups.values()].filter((group) => one('SELECT COUNT(*) AS count FROM revisions WHERE vaultId=? AND id=? AND envelopeHash=?', vaultId, group.id, group.envelopeHash).count === group.revisions.length);
     if ([...trashed, ...freeable].reduce((sum, entry) => sum + entry.size, 0) < shortfall) return false;
     const now = new Date(clock()).toISOString();
+    // A piece shared with a version that stays is not freed, so the real usage decides when there is room.
+    const roomMade = () => { dropUnusedPieces(vaultId); return storageUsage(vaultId) + extra <= quotaFor(vaultId); };
     for (const note of trashed) {
       run('DELETE FROM revisions WHERE vaultId=? AND id=?', vaultId, note.id);
       run('DELETE FROM envelopes WHERE vaultId=? AND id=?', vaultId, note.id);
+      run('DELETE FROM envelope_chunks WHERE vaultId=? AND id=?', vaultId, note.id);
       run('INSERT INTO changes(vaultId,id,revision,deleted,size,updatedAt,deviceId) VALUES(?,?,?,1,0,?,?)', vaultId, note.id, note.revision, now, deviceId);
-      if ((shortfall -= note.size) <= 0) return true;
+      if (roomMade()) return true;
     }
     for (const group of freeable) {
       for (const revision of group.revisions) run('DELETE FROM revisions WHERE vaultId=? AND id=? AND revision=?', vaultId, group.id, revision);
       run('DELETE FROM envelopes WHERE vaultId=? AND id=? AND envelopeHash=?', vaultId, group.id, group.envelopeHash);
-      if ((shortfall -= group.size) <= 0) break;
+      run('DELETE FROM envelope_chunks WHERE vaultId=? AND id=? AND envelopeHash=?', vaultId, group.id, group.envelopeHash);
+      if (roomMade()) return true;
     }
-    return true;
+    return roomMade();
   }
-  function append(vaultId, deviceId, id, baseRevision, envelope, deleted) {
+  /** `pieces`: for a v2 save, the names of its encrypted pieces, already uploaded (none for a small file); a stored envelope keeps its own. */
+  function append(vaultId, deviceId, id, baseRevision, envelope, deleted, pieces = null) {
     return transaction(() => {
       requireActiveDevice(vaultId, deviceId);
       pruneUploads(vaultId);
       const current = latest(vaultId, id);
+      // A v2 save is idempotent like a resumable upload: immutable history is the receipt when the answer was lost,
+      // even when newer versions exist.
+      const receipt = pieces && one('SELECT r.revision,c.sequence FROM revisions r JOIN changes c USING(vaultId,id,revision) WHERE r.vaultId=? AND r.deviceId=? AND r.id=? AND r.revision=? AND r.envelopeHash=? ORDER BY c.sequence LIMIT 1', vaultId, deviceId, id, baseRevision + 1, hash(envelope));
+      if (receipt) return { id, ...receipt };
       if ((current?.revision || 0) !== baseRevision) fail(409, 'Another version was saved. Review both versions.', { currentRevision: current?.revision || 0 });
       if (deleted) { if (!current) fail(404, 'File not found'); envelope = current.envelope; }
-      const size = envelopeSize(envelope);
+      let size = envelopeSize(envelope);
       const envelopeHash = hash(envelope);
       const stored = one('SELECT envelope FROM envelopes WHERE vaultId=? AND id=? AND envelopeHash=?', vaultId, id, envelopeHash);
       if (stored && stored.envelope !== envelope) throw new Error('Cloud envelope hash mismatch.');
       const history = historyUsage(vaultId);
       if (history.revisionCount >= maxHistoryEntries || history.changeCount >= maxHistoryEntries) fail(507, 'Cloud history safety limit reached. Existing versions remain readable; no history was deleted.');
       if (!stored) {
+        let total = 0;
+        for (const name of pieces ?? []) {
+          const piece = one('SELECT size FROM chunks WHERE vaultId=? AND name=?', vaultId, name);
+          if (!piece) fail(409, 'An encrypted piece is missing. Upload it again.');
+          total += piece.size;
+        }
+        if (pieces && total - 28 * pieces.length > maxFileFor(vaultId)) fail(413, `Files can be at most ${Math.round(maxFileFor(vaultId) / 1048576)} MB on your plan.`, { code: isPlus(vaultId) ? 'file-too-large' : 'plus-required' });
         if (!fits(vaultId, size, deviceId, id)) fail(507, 'Cloud storage is full. Your local files remain available.');
         run('INSERT INTO envelopes VALUES(?,?,?,?,?)', vaultId, id, envelopeHash, envelope, size);
+        for (const name of new Set(pieces ?? [])) {
+          run('INSERT INTO envelope_chunks VALUES(?,?,?,?)', vaultId, id, envelopeHash, name);
+          run('UPDATE chunks SET claimed=1 WHERE vaultId=? AND name=?', vaultId, name);
+        }
       }
+      // A version's size is its real size: the manifest plus its pieces.
+      size += pieceBytes(vaultId, id, envelopeHash);
       const revision = baseRevision + 1, now = new Date(clock()).toISOString();
       // The local history ceiling bounds rows, not physical SQLite/WAL bytes or other metadata.
       run('INSERT INTO revisions VALUES(?,?,?,?,?,?,?,?)', vaultId, id, revision, envelopeHash, deleted ? 1 : 0, size, now, deviceId);
@@ -780,7 +817,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           setCredentials(account.id, next);
           run('DELETE FROM device_approvals WHERE accountId=?', account.id);
           // Nobody can read the old ciphertext any more; deleting it is what the user confirmed.
-          for (const table of ['uploads', 'pairings', 'revisions', 'envelopes', 'changes', 'signups', 'devices']) run(`DELETE FROM ${table} WHERE vaultId=?`, account.vaultId);
+          for (const table of ['uploads', 'pairings', 'revisions', 'envelope_chunks', 'chunks', 'envelopes', 'changes', 'signups', 'devices']) run(`DELETE FROM ${table} WHERE vaultId=?`, account.vaultId);
           run('DELETE FROM vaults WHERE id=?', account.vaultId);
           return addDevice(vaultId, value.deviceName, value.deviceTokenHash);
         })); return;
@@ -1002,7 +1039,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
             run('DELETE FROM code_failures WHERE scope IN (?,?,?)', `login:${account.id}`, `reset:${account.id}`, `signup:${account.email}`);
             run('DELETE FROM accounts WHERE id=?', account.id);
           }
-          for (const table of ['uploads', 'pairings', 'revisions', 'envelopes', 'changes', 'signups', 'devices', 'plans', 'subscriptions']) run(`DELETE FROM ${table} WHERE vaultId=?`, vaultId);
+          for (const table of ['uploads', 'pairings', 'revisions', 'envelope_chunks', 'chunks', 'envelopes', 'changes', 'signups', 'devices', 'plans', 'subscriptions']) run(`DELETE FROM ${table} WHERE vaultId=?`, vaultId);
           run('DELETE FROM vaults WHERE id=?', vaultId);
         });
         if (account) {
@@ -1059,7 +1096,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       }
       if (method === 'GET' && route === '/status') {
         const plan = planRow(vaultId), plus = plan.plusUntil > clock();
-        reply(200, { usedBytes: one('SELECT COALESCE(SUM(size),0) AS size FROM envelopes WHERE vaultId=?', vaultId).size, quotaBytes: quotaFor(vaultId), plan: { name: plus ? 'plus' : 'free', plusUntil: plan.plusUntil ? new Date(plan.plusUntil).toISOString() : null, trialAvailable: !plan.trialUsed && !plus, deviceLimit: plus ? null : freeDeviceLimit, historyDays: plus ? null : FREE_HISTORY / DAY, subscribed: subscribed(vaultId), checkout: Boolean(stripe), founderPrice: founderPrice() }, sequence: one('SELECT COALESCE(MAX(sequence),0) AS sequence FROM changes WHERE vaultId=?', vaultId).sequence, history: historyUsage(vaultId), transport: { version: 1, chunkBytes: TRANSFER_CHUNK_BYTES, reservedBytes: one('SELECT COALESCE(SUM(reservedBytes),0) AS size FROM uploads WHERE vaultId=?', vaultId).size } }); return;
+        reply(200, { usedBytes: one('SELECT (SELECT COALESCE(SUM(size),0) FROM envelopes WHERE vaultId=?) + (SELECT COALESCE(SUM(size),0) FROM chunks WHERE vaultId=?) AS size', vaultId, vaultId).size, quotaBytes: quotaFor(vaultId), plan: { name: plus ? 'plus' : 'free', plusUntil: plan.plusUntil ? new Date(plan.plusUntil).toISOString() : null, trialAvailable: !plan.trialUsed && !plus, deviceLimit: plus ? null : freeDeviceLimit, historyDays: plus ? null : FREE_HISTORY / DAY, subscribed: subscribed(vaultId), checkout: Boolean(stripe), founderPrice: founderPrice() }, sequence: one('SELECT COALESCE(MAX(sequence),0) AS sequence FROM changes WHERE vaultId=?', vaultId).sequence, history: historyUsage(vaultId), transport: { version: 1, chunkBytes: TRANSFER_CHUNK_BYTES, reservedBytes: one('SELECT COALESCE(SUM(reservedBytes),0) AS size FROM uploads WHERE vaultId=?', vaultId).size }, pieces: { version: 1, pieceBytes: PIECE_BYTES, maxFileBytes: maxFileFor(vaultId) } }); return;
       }
       if (method === 'GET' && route === '/changes') {
         const after = Number(url.searchParams.get('after') || 0);
@@ -1118,6 +1155,34 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         });
         reply(201, result); return;
       }
+      if (method === 'POST' && route === '/chunks/missing') {
+        const value = await body(req, MAX_METADATA_BODY);
+        requireValue(Array.isArray(value.names) && value.names.length <= MAX_PIECES && value.names.every(validHash), 'Invalid piece names');
+        reply(200, { missing: value.names.filter((name) => !one('SELECT 1 FROM chunks WHERE vaultId=? AND name=?', vaultId, name)) }); return;
+      }
+      const piece = /^\/chunks\/([0-9a-f]{64})$/.exec(route);
+      if (piece && method === 'PUT') {
+        requireValue(req.headers['content-type'] === 'application/octet-stream', 'Expected binary content type');
+        const bytes = await bodyBytes(req, PIECE_BYTES + 28);
+        requireValue(bytes.length >= 28 && hash(bytes) === piece[1], 'Encrypted piece hash mismatch');
+        transaction(() => {
+          requireActiveDevice(vaultId, deviceId);
+          pruneUploads(vaultId);
+          if (one('SELECT 1 FROM chunks WHERE vaultId=? AND name=?', vaultId, piece[1])) return;
+          // Enough for the largest file twice over; a piece no version uses is cleared after a day.
+          if (one('SELECT COUNT(*) AS count FROM chunks WHERE vaultId=? AND claimed=0', vaultId).count >= 2 * MAX_PIECES) fail(507, 'Cloud pending upload limit reached');
+          if (!fits(vaultId, bytes.length, deviceId, '')) fail(507, 'Cloud storage is full. Your local files remain available.');
+          run('INSERT INTO chunks(vaultId,name,size,data,createdAt) VALUES(?,?,?,?,?)', vaultId, piece[1], bytes.length, bytes, clock());
+        });
+        reply(200, { ok: true }); return;
+      }
+      if (piece && method === 'GET') {
+        const row = one('SELECT data FROM chunks WHERE vaultId=? AND name=?', vaultId, piece[1]);
+        if (!row) fail(404, 'Encrypted piece not found');
+        res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': row.data.length });
+        res.end(Buffer.from(row.data)); return;
+      }
+      if (piece) fail(405, 'Method not allowed');
       const upload = /^\/objects\/([0-9a-f]{64})\/uploads\/(0|[1-9][0-9]*)\/([0-9a-f]{64})(\/commit)?$/.exec(route);
       if (upload) {
         const [, id, base, envelopeHash, commit] = upload, baseRevision = Number(base);
@@ -1243,7 +1308,12 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           if (!old) fail(404, 'Version not found');
           envelope = old.envelope;
         }
-        reply(method === 'DELETE' ? 200 : 201, append(vaultId, deviceId, id, value.baseRevision, envelope, method === 'DELETE')); return;
+        let pieces = null;
+        if (method === 'PUT' && value.chunks !== undefined) {
+          requireValue(Array.isArray(value.chunks) && value.chunks.length <= MAX_PIECES && value.chunks.every(validHash), 'Invalid piece names');
+          pieces = value.chunks;
+        }
+        reply(method === 'DELETE' ? 200 : 201, append(vaultId, deviceId, id, value.baseRevision, envelope, method === 'DELETE', pieces)); return;
       }
       fail(405, 'Method not allowed');
     } catch (error) {

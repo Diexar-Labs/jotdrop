@@ -2,6 +2,7 @@
 from contextlib import closing
 import json
 import os
+import re
 from pathlib import Path
 import secrets
 import socket
@@ -114,10 +115,11 @@ def check_browser(browser, url, enrollment_token):
         second_context.unroute("**/api/v1/objects/**", busy_upload)
 
         def lose_upload_response(route):
-            if route.request.method != "POST" or not route.request.url.endswith("/commit"):
+            # The save of the manifest; its pieces are already in the cloud.
+            if route.request.method != "PUT" or not re.search(r"/api/v1/objects/[0-9a-f]{64}$", route.request.url):
                 route.continue_()
                 return
-            assert route.fetch().status == 200
+            assert route.fetch().ok
             route.abort("failed")
 
         second_context.route("**/api/v1/objects/**", lose_upload_response)

@@ -78,10 +78,11 @@ object CloudSyncManager {
         }
         for (scope in oldUploadScopes(store, client, adapter.binding)) {
             val prepared = store.upload(scope, client.credentials.deviceId) ?: continue
-            val file = try { client.preparedFile(prepared) } catch (_: Exception) {
+            val file = try { client.preparedManifest(prepared) } catch (_: Exception) {
                 throw CloudSyncException("An old encrypted upload cannot be opened with this device's keys. It was kept.")
             }
-            adapter.recoverUpload(file.path, file.bytes)
+            // A large v2 file is not inside its upload; it is still in that local vault.
+            file.bytes?.let { adapter.recoverUpload(file.path, it) }
             // The server may have dropped the unfinished upload already; the local copy is what matters.
             try { client.discardWrite(prepared) } catch (_: Exception) {}
             store.clearUpload(scope, client.credentials.deviceId)
@@ -166,8 +167,9 @@ object CloudSyncManager {
             val adapter = CloudVaultAdapter(context)
             val scope = scope(client, adapter.binding)
             val prepared = store.upload(scope, client.credentials.deviceId) ?: throw CloudSyncException(OLD_UPLOAD)
-            val file = client.preparedFile(prepared)
-            adapter.recoverUpload(file.path, file.bytes)
+            val file = client.preparedManifest(prepared)
+            // A large v2 file is not inside its upload; it is still in this vault.
+            file.bytes?.let { adapter.recoverUpload(file.path, it) }
             store.clearUpload(scope, client.credentials.deviceId)
             if (store.hasUploads(client.credentials.deviceId)) throw CloudSyncException(OLD_UPLOAD)
         }
@@ -215,20 +217,28 @@ object CloudSyncManager {
         val store = CloudPreviewStore(context)
         val client = client(context) ?: throw CloudSyncException("Pair this device first")
         val index = loadIndex(store, client)
-        CloudSyncEngine.remoteFiles(index, client::changes, client::readOrNull, { coroutine.ensureActive() }, { saveIndex(store, client, index) })
+        CloudSyncEngine.remoteFiles(index, client::changes, client::manifestOrNull, client::readPieces, { coroutine.ensureActive() }, { saveIndex(store, client, index) })
         index.objects.map { (id, file) -> CloudListedFile(id, file.path, file.revision, file.deleted) }
     }
 
-    private fun finishUpload(store: CloudPreviewStore, scope: String, client: CloudClient, state: JSONObject, checkActive: () -> Unit): CloudSyncObject? {
+    /** [source]: the file just prepared. After a restart, the local file finishes a large v2 upload if it is still the same. */
+    private fun finishUpload(store: CloudPreviewStore, scope: String, client: CloudClient, state: JSONObject, checkActive: () -> Unit,
+        source: ByteArray? = null, local: (String) -> ByteArray = { error("No local file") }): CloudSyncObject? {
         val prepared = store.upload(scope, client.credentials.deviceId) ?: return null
-        val file = client.preparedFile(prepared)
-        val saved = CloudSyncObject(file.path, file.bytes, client.commitWrite(prepared, checkActive))
+        val file = client.preparedManifest(prepared)
+        val bytes = file.bytes ?: source ?: runCatching { local(file.path) }.getOrNull()?.takeIf { CloudSyncEngine.hash(it) == file.hash }
+        val revision = try { client.commitWrite(prepared, bytes, checkActive) } catch (_: CloudSourceMissingException) {
+            // Changed since: the cloud did not get it, and the file here is newer; the sync takes it from here.
+            store.clearUpload(scope, client.credentials.deviceId)
+            return null
+        }
+        val saved = CloudSyncObject(file.path, bytes ?: ByteArray(0), revision, hash = file.hash)
         val tracked = JSONObject((state.optJSONObject("tracked") ?: JSONObject()).toString())
         val previous = tracked.optJSONObject(saved.path)
         if (previous == null || previous.getInt("revision") < saved.revision) {
-            tracked.put(saved.path, JSONObject().put("revision", saved.revision).put("hash", CloudSyncEngine.hash(saved.bytes)).put("deleted", false))
+            tracked.put(saved.path, JSONObject().put("revision", saved.revision).put("hash", saved.hash).put("deleted", false))
         } else if (previous.getInt("revision") == saved.revision) {
-            check(!previous.getBoolean("deleted") && previous.getString("hash") == CloudSyncEngine.hash(saved.bytes)) { "Upload receipt differs from the saved baseline" }
+            check(!previous.getBoolean("deleted") && previous.getString("hash") == saved.hash) { "Upload receipt differs from the saved baseline" }
         }
         // The baseline must survive a restart before the exact encrypted snapshot may be removed.
         val next = JSONObject(state.toString()).put("tracked", tracked)
@@ -243,7 +253,7 @@ object CloudSyncManager {
         checkActive()
         check(store.upload(scope, client.credentials.deviceId) == null) { "Resume the previous encrypted upload before saving another file" }
         store.saveUpload(scope, client.credentials.deviceId, client.prepareWrite(path, bytes, baseRevision))
-        return requireNotNull(finishUpload(store, scope, client, state, checkActive))
+        return requireNotNull(finishUpload(store, scope, client, state, checkActive, bytes))
     }
 
     suspend fun resolve(context: Context, path: String, keepLocal: Boolean) {
@@ -314,15 +324,17 @@ object CloudSyncManager {
                 store.saveSyncState(scope, state)
             }
             phase = CloudDiagnostics.Phase.REMOTE_WRITE
-            try { finishUpload(store, scope, client, state, uploadActive) }
+            try { finishUpload(store, scope, client, state, uploadActive, local = initial::read) }
             catch (error: CloudRequestException) {
                 if (error.status != 409) throw error
                 // A newer cloud revision wins. Preserve the sealed draft outside sync before discarding staging.
                 uploadActive()
                 val prepared = store.upload(scope, client.credentials.deviceId) ?: throw error
-                val file = client.preparedFile(prepared)
+                val file = client.preparedManifest(prepared)
                 phase = CloudDiagnostics.Phase.RECOVERY
-                initial.recoverUpload(file.path, file.bytes)
+                // A large v2 file is not inside its upload: the local file is that version while it is still the same.
+                (file.bytes ?: runCatching { initial.read(file.path) }.getOrNull()?.takeIf { CloudSyncEngine.hash(it) == file.hash })
+                    ?.let { initial.recoverUpload(file.path, it) }
                 uploadActive()
                 client.discardWrite(prepared)
                 store.clearUpload(scope, client.credentials.deviceId)
@@ -348,6 +360,10 @@ object CloudSyncManager {
             }
             val index = loadIndex(store, client)
             val seen = loadSeen(store, scope)
+            phase = CloudDiagnostics.Phase.REMOTE_LIST
+            // The plan's maximum per file, and no more than this device can hold a few times over while syncing it.
+            val planMax = client.maxFileBytes()
+            val maxFileBytes = minOf(planMax, Runtime.getRuntime().maxMemory() / 4)
             // A big first sync takes a while: show how far it is, once a second at most.
             var shownAt = 0L
             fun progress(label: String): (Int, Int) -> Unit = { done, total ->
@@ -360,7 +376,7 @@ object CloudSyncManager {
             val remote = object : CloudSyncRemote {
                 override fun list(): List<CloudSyncEntry> {
                     phase = CloudDiagnostics.Phase.REMOTE_LIST
-                    val files = CloudSyncEngine.remoteFiles(index, client::changes, client::readOrNull, uploadActive, { saveIndex(store, client, index) }, progress("Reading the cloud..."))
+                    val files = CloudSyncEngine.remoteFiles(index, client::changes, client::manifestOrNull, client::readPieces, uploadActive, { saveIndex(store, client, index) }, progress("Reading the cloud..."))
                     phase = CloudDiagnostics.Phase.RECONCILE
                     return files
                 }
@@ -377,17 +393,17 @@ object CloudSyncManager {
                     checkActive()
                     phase = CloudDiagnostics.Phase.REMOTE_DELETE
                     val id = CloudCrypto.objectId(client.credentials.vaultKey, path)
-                    val current = client.read(id)
+                    val current = client.readManifest(id)
                     check(current.revision == baseRevision) { "Cloud changed during sync. Retry to compare both versions" }
-                    val deleted = CloudSyncObject(path, current.bytes, client.remove(id, baseRevision), true)
-                    index.objects[id] = CloudIndexedFile(path, deleted.revision, true, CloudSyncEngine.hash(current.bytes))
+                    val deleted = CloudSyncObject(path, ByteArray(0), client.remove(id, baseRevision), true, current.hash)
+                    index.objects[id] = CloudIndexedFile(path, deleted.revision, true, current.hash)
                     phase = CloudDiagnostics.Phase.RECONCILE
                     return deleted
                 }
             }
             phase = CloudDiagnostics.Phase.RECONCILE
             val report = try {
-                CloudSyncEngine.sync(remote, adapter, tracked, uploadActive, seen, progress("Syncing...")) { values ->
+                CloudSyncEngine.sync(remote, adapter, tracked, uploadActive, seen, progress("Syncing..."), maxFileBytes) { values ->
                     phase = CloudDiagnostics.Phase.STATE_SAVE
                     val next = JSONObject()
                     for ((path, base) in values) next.put(path, JSONObject().put("revision", base.revision).put("hash", base.hash).put("deleted", base.deleted))
@@ -405,7 +421,8 @@ object CloudSyncManager {
                 .put("message", "Uploaded ${report.uploaded}, downloaded ${report.downloaded}, deleted ${report.deleted}. " +
                     (if (report.conflicts > 0) "${if (report.conflicts == 1) "1 note was" else "${report.conflicts} notes were"} changed in two places. Both versions are kept: tap Resolve now." else "Sync complete. Recovery copies remain local.") +
                     report.skipped.takeIf { it.isNotEmpty() }?.let { big ->
-                        " ${if (big.size == 1) "1 file is" else "${big.size} files are"} larger than 4 MiB and ${if (big.size == 1) "stays" else "stay"} only on this device: " +
+                        " ${if (big.size == 1) "1 file is" else "${big.size} files are"} larger than ${(maxFileBytes + 524288) / 1048576} MB, " +
+                            "${if (maxFileBytes < planMax) "this device's" else "your plan's"} maximum per file, and ${if (big.size == 1) "stays" else "stay"} only on this device: " +
                             big.take(3).joinToString(", ") { it.substringAfterLast('/') } + (if (big.size > 3) " and ${big.size - 3} more." else ".")
                     }.orEmpty())
             store.saveSettings(settings)

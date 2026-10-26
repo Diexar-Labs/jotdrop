@@ -4,12 +4,18 @@ import java.security.MessageDigest
 
 /** One cloud file with its content, as read from the server. */
 data class CloudPreviewFile(val id: String, val revision: Int, val path: String, val bytes: ByteArray, val deleted: Boolean)
-/** What the cloud acknowledged for a write or delete. */
-data class CloudSyncObject(val path: String, val bytes: ByteArray, val revision: Int, val deleted: Boolean = false)
+/**
+ * A cloud file's manifest: path and fingerprint without downloading its pieces. [hash] has the form of
+ * [CloudSyncEngine.hash]; [bytes] is set when the file is inside the manifest (a v1 object or a small v2 file).
+ */
+class CloudManifest(val id: String, val revision: Int, val path: String, val deleted: Boolean, val size: Int, val hash: String, val pieces: List<CloudPiece>, val bytes: ByteArray?)
+data class CloudPiece(val name: String, val size: Int)
+/** What the cloud acknowledged for a write or delete; a delete can give [hash] without the file's bytes. */
+data class CloudSyncObject(val path: String, val bytes: ByteArray, val revision: Int, val deleted: Boolean = false, val hash: String = CloudSyncEngine.hash(bytes))
 /** A cloud file as the sync sees it; [bytes] downloads it only when it is needed. */
 class CloudSyncEntry(val path: String, val revision: Int, val deleted: Boolean, val hash: String, val bytes: () -> ByteArray)
 data class CloudSyncBase(val revision: Int, val hash: String, val deleted: Boolean = false)
-/** [skipped]: files over 4 MiB, left alone on this device. */
+/** [skipped]: files over the maximum per file, left alone on this device. */
 data class CloudSyncReport(var uploaded: Int = 0, var downloaded: Int = 0, var deleted: Int = 0, var conflicts: Int = 0, val skipped: MutableList<String> = mutableListOf(), val conflictPaths: MutableList<String> = mutableListOf())
 /** A local file without reading it. */
 data class CloudLocalFile(val size: Long, val modified: Long)
@@ -56,7 +62,8 @@ object CloudSyncEngine {
     }
 
     fun sync(remote: CloudSyncRemote, local: CloudSyncLocal, tracked: MutableMap<String, CloudSyncBase>, checkActive: () -> Unit = {},
-        seen: MutableMap<String, CloudSeenFile> = mutableMapOf(), progress: (Int, Int) -> Unit = { _, _ -> }, persist: (Map<String, CloudSyncBase>) -> Unit): CloudSyncReport {
+        seen: MutableMap<String, CloudSeenFile> = mutableMapOf(), progress: (Int, Int) -> Unit = { _, _ -> },
+        maxFileBytes: Long = CloudCrypto.MAX_FILE_BYTES.toLong(), persist: (Map<String, CloudSyncBase>) -> Unit): CloudSyncReport {
         checkActive()
         val result = CloudSyncReport()
         val files = local.list()
@@ -66,7 +73,7 @@ object CloudSyncEngine {
         for ((name, file) in files) {
             path(name)
             // Too big for one cloud file: it stays on this device as it is, nothing about it changes anywhere, the rest syncs.
-            if (file.size > CloudCrypto.MAX_FILE_BYTES) result.skipped += name
+            if (file.size > maxFileBytes) result.skipped += name
         }
         result.skipped.sort()
         for (entry in entries) require(entry.revision > 0) { "Invalid cloud file or revision" }
@@ -99,7 +106,7 @@ object CloudSyncEngine {
             if (System.currentTimeMillis() - savedAt >= SAVE_EVERY_MS) flush()
         }
         fun remember(entry: CloudSyncEntry) = remember(entry.path, CloudSyncBase(entry.revision, entry.hash, entry.deleted))
-        fun remember(saved: CloudSyncObject) = remember(saved.path, CloudSyncBase(saved.revision, hash(saved.bytes), saved.deleted))
+        fun remember(saved: CloudSyncObject) = remember(saved.path, CloudSyncBase(saved.revision, saved.hash, saved.deleted))
         if (cleared.isNotEmpty()) { next -= cleared; dirty = true; flush() }
         fun conflict(entry: CloudSyncEntry) {
             result.conflicts++
@@ -161,7 +168,7 @@ object CloudSyncEngine {
                         removals.add {
                             if (!local.compareAndSet(name, null, null)) { conflict(entry); return@add }
                             val saved = remote.delete(name, entry.revision)
-                            require(saved.path == name && saved.deleted && saved.revision == entry.revision + 1 && hash(saved.bytes) == entry.hash) { "Invalid cloud delete acknowledgment" }
+                            require(saved.path == name && saved.deleted && saved.revision == entry.revision + 1 && saved.hash == entry.hash) { "Invalid cloud delete acknowledgment" }
                             remember(saved)
                             result.deleted++
                         }
@@ -191,10 +198,11 @@ object CloudSyncEngine {
 
     /**
      * The cloud side for [sync], kept up to date from the changes feed so a sync only reads what changed. [index] is
-     * updated in place and [save] keeps it, so a first sync cut off halfway goes on from where it was. [read] gives
-     * null for a file cleared from a full free cloud after 30 days in the trash.
+     * updated in place and [save] keeps it, so a first sync cut off halfway goes on from where it was. [read] gives a
+     * manifest, or null for a file cleared from a full free cloud after 30 days in the trash; [download] gives the
+     * file's bytes from its manifest, only for a file that is missing or different here.
      */
-    fun remoteFiles(index: CloudRemoteIndex, changes: (Long) -> CloudChanges, read: (String) -> CloudPreviewFile?,
+    fun remoteFiles(index: CloudRemoteIndex, changes: (Long) -> CloudChanges, read: (String) -> CloudManifest?, download: (CloudManifest) -> ByteArray,
         checkActive: () -> Unit = {}, save: () -> Unit = {}, progress: (Int, Int) -> Unit = { _, _ -> }): List<CloudSyncEntry> {
         do {
             checkActive()
@@ -219,8 +227,8 @@ object CloudSyncEngine {
                 index.pending.remove(id)
                 if (file == null) { index.objects.remove(id); continue }
                 require(file.id == id && file.revision > 0) { "Invalid cloud file or revision" }
-                index.objects[id] = CloudIndexedFile(path(file.path), file.revision, file.deleted, hash(file.bytes))
-                if (kept + file.bytes.size <= KEPT_BYTES) { loaded[id] = file.bytes; kept += file.bytes.size }
+                index.objects[id] = CloudIndexedFile(path(file.path), file.revision, file.deleted, file.hash)
+                file.bytes?.let { if (kept + it.size <= KEPT_BYTES) { loaded[id] = it; kept += it.size } }
                 if (System.currentTimeMillis() - savedAt >= SAVE_EVERY_MS) { save(); savedAt = System.currentTimeMillis() }
             }
         } catch (error: Throwable) {
@@ -230,10 +238,11 @@ object CloudSyncEngine {
         if (waiting.isNotEmpty()) save()
         return index.objects.map { (id, item) ->
             CloudSyncEntry(item.path, item.revision, item.deleted, item.hash) {
-                loaded.remove(id) ?: requireNotNull(read(id)) { "Cloud file changed during sync. Local files were kept" }.also {
+                loaded.remove(id) ?: requireNotNull(read(id)) { "Cloud file changed during sync. Local files were kept" }.let {
                     // The current version, like the web: the free plan locks older versions, never the newest.
-                    require(it.revision == item.revision && it.path == item.path && hash(it.bytes) == item.hash) { "Cloud file changed during sync. Local files were kept" }
-                }.bytes
+                    require(it.revision == item.revision && it.path == item.path && it.hash == item.hash) { "Cloud file changed during sync. Local files were kept" }
+                    download(it)
+                }
             }
         }
     }

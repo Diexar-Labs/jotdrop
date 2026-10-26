@@ -12,7 +12,8 @@ export function bytesToBase64(bytes) {
 }
 
 export function base64ToBytes(value) {
-  if (typeof value !== 'string' || value.length > 16 * 1024 * 1024 || !/^[A-Za-z0-9_-]*$/.test(value) || value.length % 4 === 1) throw new Error('Invalid encoded data.');
+  // Up to the largest file in pieces (200 MB), which the website keeps as base64.
+  if (typeof value !== 'string' || value.length > 280 * 1024 * 1024 || !/^[A-Za-z0-9_-]*$/.test(value) || value.length % 4 === 1) throw new Error('Invalid encoded data.');
   let result;
   if (Uint8Array.fromBase64) result = Uint8Array.fromBase64(value, { alphabet: 'base64url' });
   else {
@@ -55,6 +56,36 @@ export async function encryptEnvelope(vaultKey, payload, aad) {
   const key = await crypto.subtle.importKey('raw', keyBytes(vaultKey), 'AES-GCM', false, ['encrypt']);
   const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: encoder.encode(aad), tagLength: 128 }, key, encoder.encode(JSON.stringify(payload)));
   return { v: 1, iv: bytesToBase64(iv), ciphertext: bytesToBase64(new Uint8Array(ciphertext)) };
+}
+
+// v2 objects: a file goes in encrypted pieces of 1 MiB; a slow line still sends one within the server's 30 s limit.
+export const CHUNK_BYTES = 1024 * 1024;
+// Small files stay inside the manifest, so a note needs one request.
+export const INLINE_BYTES = 64 * 1024;
+// The largest plan maximum (JotDrop Plus); the server enforces each plan's own maximum.
+export const MAX_CHUNKED_BYTES = 200 * 1024 * 1024;
+
+export async function sha256Hex(bytes) {
+  return [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+const chunkAad = (vaultId, id, index) => encoder.encode(`jotdrop:chunk:v1:${vaultId}:${id}:${index}`);
+
+/** `iv || ciphertext+tag`. The IV follows from the piece itself, so the same piece gives the same bytes and an interrupted upload resumes. */
+export async function encryptChunk(vaultKey, vaultId, id, index, plain) {
+  const mac = await crypto.subtle.importKey('raw', keyBytes(vaultKey), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const iv = new Uint8Array(await crypto.subtle.sign('HMAC', mac, encoder.encode(`jotdrop:chunk-iv:v1:${id}:${index}:${await sha256Hex(plain)}`))).slice(0, 12);
+  const key = await crypto.subtle.importKey('raw', keyBytes(vaultKey), 'AES-GCM', false, ['encrypt']);
+  const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: chunkAad(vaultId, id, index), tagLength: 128 }, key, plain));
+  const sealed = new Uint8Array(12 + ciphertext.length);
+  sealed.set(iv); sealed.set(ciphertext, 12);
+  return sealed;
+}
+
+export async function decryptChunk(vaultKey, vaultId, id, index, sealed) {
+  if (!(sealed instanceof Uint8Array) || sealed.length < 28 || sealed.length > CHUNK_BYTES + 28) throw new Error('Invalid encrypted piece.');
+  const key = await crypto.subtle.importKey('raw', keyBytes(vaultKey), 'AES-GCM', false, ['decrypt']);
+  return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: sealed.subarray(0, 12), additionalData: chunkAad(vaultId, id, index), tagLength: 128 }, key, sealed.subarray(12)));
 }
 
 export async function decryptEnvelope(vaultKey, envelope, aad) {
