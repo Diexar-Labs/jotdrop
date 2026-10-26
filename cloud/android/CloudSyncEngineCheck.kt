@@ -282,7 +282,7 @@ fun main() {
     a.files[note] = "from A".toByteArray()
     check(syncA().uploaded == 1)
     b.files[note] = "from B offline".toByteArray()
-    check(syncB().conflicts == 1)
+    check(syncB().let { it.conflicts == 1 && it.conflictPaths == listOf(note) })
     check(String(b.files.getValue(note)) == "from B offline")
     check(b.copies.values.any { String(it) == "from A" })
     check(String(remote.files.getValue(note).bytes) == "from A")

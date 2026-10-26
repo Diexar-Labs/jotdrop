@@ -538,10 +538,11 @@ export class CloudController {
         ? ` ${report.skipped.length === 1 ? "1 file is" : `${report.skipped.length} files are`} larger than 4 MiB and ${report.skipped.length === 1 ? "stays" : "stay"} only on this device: ${report.skipped.slice(0, 3).map((path: string) => path.split("/").pop()).join(", ")}${report.skipped.length > 3 ? ` and ${report.skipped.length - 3} more` : ""}.`
         : "";
       state.message = (report.conflicts
-        ? `${report.conflicts} ${report.conflicts === 1 ? "note was" : "notes were"} changed in two places. Both versions are kept: choose one with "Review conflicts".`
+        ? `${report.conflicts} ${report.conflicts === 1 ? "note was" : "notes were"} changed in two places. Both versions are kept: choose one with "Resolve now".`
         : `Synced. ${report.uploaded} up, ${report.downloaded} down, ${report.deleted} removed.`) + big;
       await save();
       this.status = state.message;
+      if (report.conflicts) this.conflictNotice(report.conflicts);
     } catch (error) {
       if (this.generation !== generation) return;
       const status = (error as { status?: number }).status;
@@ -588,6 +589,16 @@ export class CloudController {
     const folder = new VaultFolder(this.plugin, this.editing);
     if (folder.binding !== this.state.binding) throw new Error("The notes or attachments folder changed. Turn cloud sync off and on again for the new folder.");
     return { client: this.client, state: this.state, folder };
+  }
+
+  /** Right after a sync that kept two versions: the way to choose stays on screen until dismissed. */
+  private conflictNotice(count: number): void {
+    const notice = new Notice(`${count === 1 ? "1 note was" : `${count} notes were`} changed in two places. Both versions are kept.`, 0);
+    // Obsidian's notice element; the test stub has none.
+    notice.noticeEl?.createEl("button", { cls: "mod-cta", text: "Resolve now" }).addEventListener("click", () => {
+      notice.hide();
+      new ConflictReviewModal(this.plugin.app, this).open();
+    });
   }
 
   /** The notes changed in two places: each original with its ".cloud-conflict" copies, as vault paths. */

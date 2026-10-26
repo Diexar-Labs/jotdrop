@@ -10,7 +10,7 @@ data class CloudSyncObject(val path: String, val bytes: ByteArray, val revision:
 class CloudSyncEntry(val path: String, val revision: Int, val deleted: Boolean, val hash: String, val bytes: () -> ByteArray)
 data class CloudSyncBase(val revision: Int, val hash: String, val deleted: Boolean = false)
 /** [skipped]: files over 4 MiB, left alone on this device. */
-data class CloudSyncReport(var uploaded: Int = 0, var downloaded: Int = 0, var deleted: Int = 0, var conflicts: Int = 0, val skipped: MutableList<String> = mutableListOf())
+data class CloudSyncReport(var uploaded: Int = 0, var downloaded: Int = 0, var deleted: Int = 0, var conflicts: Int = 0, val skipped: MutableList<String> = mutableListOf(), val conflictPaths: MutableList<String> = mutableListOf())
 /** A local file without reading it. */
 data class CloudLocalFile(val size: Long, val modified: Long)
 /** The hash of a local file as it was at this size and modification time. */
@@ -103,6 +103,7 @@ object CloudSyncEngine {
         if (cleared.isNotEmpty()) { next -= cleared; dirty = true; flush() }
         fun conflict(entry: CloudSyncEntry) {
             result.conflicts++
+            result.conflictPaths += entry.path
             local.conflict(entry.path, entry.revision, entry.bytes())
         }
         fun upload(name: String, read: ByteArray?, baseRevision: Int) {

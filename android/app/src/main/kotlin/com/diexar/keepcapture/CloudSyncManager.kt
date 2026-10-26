@@ -22,13 +22,14 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import java.time.Instant
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 data class CloudSyncStatus(val connected: Boolean, val enabled: Boolean, val server: String, val vaultId: String,
-    val localVault: String?, val lastSynced: String?, val message: String, val conflicts: Int, val oldUpload: Boolean = false)
+    val localVault: String?, val lastSynced: String?, val message: String, val conflicts: Int, val oldUpload: Boolean = false, val conflictPaths: List<String> = emptyList())
 class CloudSyncException(message: String) : Exception(message)
 /** A cloud file without its content, for the Files tab. */
 data class CloudListedFile(val id: String, val path: String, val revision: Int, val deleted: Boolean)
@@ -58,7 +59,8 @@ object CloudSyncManager {
         return CloudSyncStatus(credentials != null, settings.optBoolean("enabled") && credentials != null,
             credentials?.url.orEmpty(), credentials?.vaultId.orEmpty(), Storage.getVaultUri(context)?.toString(),
             settings.optString("lastSynced").takeIf { it.isNotBlank() }, settings.optString("message", "Cloud sync is off. Local notes remain available."), settings.optInt("conflicts"),
-            credentials != null && runCatching { oldUploadScopes(store, CloudClient(credentials), CloudVaultAdapter.binding(context)).isNotEmpty() }.getOrDefault(false))
+            credentials != null && runCatching { oldUploadScopes(store, CloudClient(credentials), CloudVaultAdapter.binding(context)).isNotEmpty() }.getOrDefault(false),
+            settings.optJSONArray("conflictPaths")?.let { paths -> List(paths.length()) { paths.getString(it) } }.orEmpty())
     }
 
     /** Uploads this device started for a previously chosen local vault; they block enabling and disconnecting. */
@@ -399,9 +401,9 @@ object CloudSyncManager {
                 runCatching { saveIndex(store, client, index); saveSeen(store, scope, seen) }
             }
             phase = CloudDiagnostics.Phase.STATE_SAVE
-            settings.put("lastSynced", Instant.now().toString()).put("conflicts", report.conflicts)
+            settings.put("lastSynced", Instant.now().toString()).put("conflicts", report.conflicts).put("conflictPaths", JSONArray(report.conflictPaths))
                 .put("message", "Uploaded ${report.uploaded}, downloaded ${report.downloaded}, deleted ${report.deleted}. " +
-                    (if (report.conflicts > 0) "${report.conflicts} conflicts: originals were kept. Compare .cloud-conflict copies before choosing a version." else "Sync complete. Recovery copies remain local.") +
+                    (if (report.conflicts > 0) "${if (report.conflicts == 1) "1 note was" else "${report.conflicts} notes were"} changed in two places. Both versions are kept: tap Resolve now." else "Sync complete. Recovery copies remain local.") +
                     report.skipped.takeIf { it.isNotEmpty() }?.let { big ->
                         " ${if (big.size == 1) "1 file is" else "${big.size} files are"} larger than 4 MiB and ${if (big.size == 1) "stays" else "stay"} only on this device: " +
                             big.take(3).joinToString(", ") { it.substringAfterLast('/') } + (if (big.size > 3) " and ${big.size - 3} more." else ".")

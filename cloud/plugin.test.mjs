@@ -155,7 +155,7 @@ test('the plugin signs in with an account, syncs the real JotDrop folders both w
   await cloud.syncNow();
   assert.equal(decode(v.files.get('Mini Notes/Shopping.md')), 'Milk, eggs');
   assert.equal(decode(v.files.get('Mini Notes/Shopping.cloud-conflict-r3.md')), 'Phone list');
-  assert.match(cloud.status, /changed in two places/);
+  assert.match(cloud.status, /changed in two places.*"Resolve now"/);
   cloud.endEdit('Mini Notes/Shopping.md');
 
   // Two sync systems: Syncthing markers or Obsidian Sync stop the cloud before it touches anything.

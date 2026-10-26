@@ -268,6 +268,8 @@ const gridSpans = new ResizeObserver((entries) => {
 
 function render() {
   closeMenu();
+  // Notes changed in two places stay in sight until a version is chosen.
+  $('resolve-now').hidden = ![...files.values()].some((entry) => entry.conflict);
   for (const url of mediaUrls) URL.revokeObjectURL(url);
   mediaUrls.clear();
   gridSpans.disconnect();
@@ -414,7 +416,7 @@ function render() {
     if (entry.conflict) card.append(paragraph('Another device saved a different version. Review both before choosing.', 'message'));
     if (markdown) for (const label of parts.labels) card.append(button(label, () => showLabel(label.toLowerCase()), 'label-chip'));
     if (markdown) for (const tag of [...parts.tags, ...parts.inlineTags]) card.append(button(`#${tag}`, () => { selectedTags.add(tag.toLowerCase()); render(); }, 'label-chip'));
-    if (entry.conflict) card.append(button('Review cloud version', () => reviewConflict(entry)));
+    if (entry.conflict) card.append(button('Resolve now', () => reviewConflict(entry)));
     // Like Keep and the plugin: actions and file details show on hover or focus (always on touch).
     // An earlier moment is read-only; the time machine restores it as a whole.
     const actions = document.createElement('div');
@@ -853,7 +855,7 @@ async function performSync(signal) {
   if (activeGeneration !== generation) return;
   const pending = await store('entries', keyPrefix);
   const conflicts = [...files.values()].filter((entry) => entry.conflict).length;
-  $('sync-status').textContent = conflicts ? `${conflicts} conflict(s) need review. Local drafts are preserved.` : pending.length ? `${pending.length} encrypted change(s) waiting to upload.` : `Cloud copy up to date at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`;
+  $('sync-status').textContent = conflicts ? `${conflicts === 1 ? '1 note was' : `${conflicts} notes were`} changed in two places. Both versions are kept: select Resolve now.` : pending.length ? `${pending.length} encrypted change(s) waiting to upload.` : `Cloud copy up to date at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`;
   if (changed) render();
 }
 
@@ -2070,6 +2072,11 @@ $('timeline-range').addEventListener('input', () => {
 $('timeline-range').addEventListener('change', () => showMoment().catch((error) => message(errorText(error))));
 $('timeline-close').addEventListener('click', closeMoment);
 $('timeline-restore').addEventListener('click', () => restoreMoment().catch((error) => message(errorText(error))));
+$('resolve-now').addEventListener('click', () => {
+  const entry = [...files.values()].find((item) => item.conflict);
+  if (entry) reviewConflict(entry).catch((error) => message(errorText(error)));
+});
+
 $('upload').addEventListener('change', async () => {
   try {
     for (const file of $('upload').files) {

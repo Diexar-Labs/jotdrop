@@ -386,7 +386,7 @@ export class JotDropSettingTab extends PluginSettingTab {
       conflicts.empty();
       if (!list.length || !el.isConnected) return;
       new Setting(conflicts).setName("Conflicts").setDesc(`${list.length === 1 ? "1 note was" : `${list.length} notes were`} changed in two places. Choose which version to keep.`)
-        .addButton((button) => button.setButtonText("Review conflicts").setCta().onClick(() => new ConflictReviewModal(this.app, cloud).open()));
+        .addButton((button) => button.setButtonText("Resolve now").setCta().onClick(() => new ConflictReviewModal(this.app, cloud).open()));
     }, () => {});
     if (cloud.enabled) showConflicts();
     new Setting(el).setName("Time machine").setDesc("See your notes as they were at an earlier moment, and go back to it.")

@@ -75,6 +75,7 @@ main { min-width: 0; padding: 0 2rem 3rem; }
 .upload-button:focus-within { outline: 3px solid var(--focus); outline-offset: 3px; }
 .workspace-heading { display: flex; gap: 1rem; align-items: start; justify-content: space-between; margin: 2.5rem 0 1rem; }
 .workspace-heading p { color: var(--muted); margin: .5rem 0; font-size: .9rem; }
+.sync-state { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; justify-content: end; }
 #sync-status { text-align: right; max-width: 35ch; }
 #upload-progress { width: 100%; accent-color: var(--accent); }
 .message { color: var(--danger); min-height: 1.5em; margin: 0 0 1rem; }

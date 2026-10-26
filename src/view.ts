@@ -366,6 +366,7 @@ export class JotDropView extends ItemView {
   private selectionDeleteBtn!: HTMLButtonElement;
   private labelBtnEl!: HTMLButtonElement;
   private trashBarEl!: HTMLElement;
+  private conflictBarEl!: HTMLElement;
   // Like the Android app: deleted notes go to <notes folder>/Trash and this
   // view can show that folder instead of the notes.
   private showTrash = false;
@@ -481,6 +482,7 @@ export class JotDropView extends ItemView {
     this.trashBarEl.createSpan({ text: t("trash_banner") });
     const backBtn = this.trashBarEl.createEl("button", { text: t("trash_back") });
     backBtn.addEventListener("click", () => this.setShowTrash(false));
+    this.conflictBarEl = root.createDiv({ cls: "jotdrop-trash-bar jotdrop-conflict-bar is-hidden" });
     this.gridEl = root.createDiv({ cls: "jotdrop-grid" });
     this.applyCardWidth();
 
@@ -1248,6 +1250,17 @@ export class JotDropView extends ItemView {
     }
   }
 
+  /** Cloud notes changed in two places stay in sight until the user chooses a version. */
+  private async renderConflictBar(): Promise<void> {
+    const cloud = this.plugin.cloud;
+    const list = cloud?.enabled ? await cloud.conflicts().catch(() => []) : [];
+    this.conflictBarEl.empty();
+    this.conflictBarEl.toggleClass("is-hidden", !list.length);
+    if (!list.length) return;
+    this.conflictBarEl.createSpan({ text: `${list.length === 1 ? "1 note was" : `${list.length} notes were`} changed in two places. Both versions are kept.` });
+    this.conflictBarEl.createEl("button", { cls: "mod-cta", text: "Resolve now" }).addEventListener("click", () => new ConflictReviewModal(this.app, cloud).open());
+  }
+
   async render(): Promise<void> {
     if (!this.gridEl) return;
     this.applyCardWidth();
@@ -1255,6 +1268,7 @@ export class JotDropView extends ItemView {
     this.sentinelObserver = null;
     this.gridEl.empty();
 
+    void this.renderConflictBar();
     const cards = await this.collectCards();
     this.lastCards = cards;
     await this.refreshLabels();
@@ -1977,7 +1991,7 @@ export class JotDropView extends ItemView {
     if (file.name.includes(".cloud-conflict-") && this.plugin.cloud?.enabled) {
       const conflict = body.createDiv({ cls: "jotdrop-card-conflict" });
       conflict.createEl("p", { text: "Changed in two places: this is the other version." });
-      const review = conflict.createEl("button", { cls: "mod-cta", text: "Review conflict" });
+      const review = conflict.createEl("button", { cls: "mod-cta", text: "Resolve now" });
       review.addEventListener("click", (e) => {
         e.stopPropagation();
         if (this.selectionMode) { this.toggleSelect(file.path); return; }

@@ -114,6 +114,15 @@ private fun CloudScreen(onBack: () -> Unit, onSettings: () -> Unit) {
     fun accountRun(action: suspend () -> Unit) = run(true, action)
     suspend fun cloud(): CloudClient = withContext(Dispatchers.IO) { CloudSyncManager.client(context) ?: throw CloudSyncException("Pair this device first") }
     fun loadFiles() = run { files = CloudSyncManager.cloudFiles(context).sortedBy { it.path }; selected = null }
+    suspend fun showHistory(file: CloudListedFile) {
+        val client = cloud()
+        withContext(Dispatchers.IO) {
+            val array = client.history(file.id).getJSONArray("versions")
+            versions = List(array.length()) { array.getJSONObject(it) }
+            preview = if (file.path.endsWith(".md", true) && !file.deleted) String(client.read(file.id).bytes, Charsets.UTF_8).take(1024) else null
+        }
+        selected = file
+    }
     fun loadDevices() = run {
         val client = cloud()
         devices = withContext(Dispatchers.IO) { val array = client.devices().getJSONArray("devices"); List(array.length()) { array.getJSONObject(it) } }
@@ -190,6 +199,14 @@ private fun CloudScreen(onBack: () -> Unit, onSettings: () -> Unit) {
                 item {
                     Text("Sync status", style = MaterialTheme.typography.titleLarge)
                     Text(status!!.message)
+                    // A note changed in two places opens straight into its comparison.
+                    status!!.conflictPaths.firstOrNull()?.let { path ->
+                        Button(onClick = { run {
+                            tab = 0
+                            files = CloudSyncManager.cloudFiles(context).sortedBy { it.path }
+                            showHistory(files.firstOrNull { it.path == path } ?: throw CloudSyncException("$path is no longer in the cloud. Sync again."))
+                        } }, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) { Text("Resolve now") }
+                    }
                     status!!.lastSynced?.let { Text("Last completed sync: $it", style = MaterialTheme.typography.bodySmall) }
                     Text("Server: ${status!!.server}", style = MaterialTheme.typography.bodySmall)
                     Text("Notes: ${Storage.getSubfolder(context)}  |  Attachments: ${Storage.resolveAssetsFolder(context)}", style = MaterialTheme.typography.bodySmall)
@@ -270,11 +287,7 @@ private fun CloudScreen(onBack: () -> Unit, onSettings: () -> Unit) {
                         Column {
                             Text(file.path, style = MaterialTheme.typography.titleMedium)
                             Text("Revision ${file.revision}${if (file.deleted) " | Deleted" else ""}", style = MaterialTheme.typography.bodySmall)
-                            TextButton(onClick = { run { val client = cloud(); withContext(Dispatchers.IO) {
-                                val array = client.history(file.id).getJSONArray("versions")
-                                versions = List(array.length()) { array.getJSONObject(it) }
-                                preview = if (file.path.endsWith(".md", true) && !file.deleted) String(client.read(file.id).bytes, Charsets.UTF_8).take(1024) else null
-                            }; selected = file } }, enabled = !busy) { Text("View history") }
+                            TextButton(onClick = { run { showHistory(file) } }, enabled = !busy) { Text("View history") }
                         }
                     }
                 }

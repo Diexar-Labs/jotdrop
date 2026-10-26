@@ -170,7 +170,7 @@
         <label class="upload-button" for="upload">Upload files<input id="upload" type="file" multiple></label>
         <label class="upload-button" for="import-notes" title="Google Keep (Takeout zip), Evernote (.enex), Apple Notes and other Markdown exports">Import notes<input id="import-notes" type="file" multiple></label>
       </header>
-      <div class="workspace-heading"><div><h1 id="view-title">Notes</h1><p id="view-description">Plain Markdown. Your files, your workspace.</p></div><p id="sync-status" role="status" aria-live="polite">Connecting...</p></div>
+      <div class="workspace-heading"><div><h1 id="view-title">Notes</h1><p id="view-description">Plain Markdown. Your files, your workspace.</p></div><div class="sync-state"><p id="sync-status" role="status" aria-live="polite">Connecting...</p><button id="resolve-now" class="primary" type="button" hidden>Resolve now</button></div></div>
       <section id="timeline" aria-label="Time machine" hidden>
         <label for="timeline-range">Slide back to see your notes as they were</label>
         <input id="timeline-range" type="range" min="0" max="0" step="1" value="0">
