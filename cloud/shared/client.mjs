@@ -24,15 +24,21 @@ function token(value) {
   return value;
 }
 
-export async function request(url, path, { method = 'GET', body, headers = {}, fetcher = globalThis.fetch, signal, binary = false } = {}) {
-  const timeout = AbortSignal.timeout(30000);
+export async function request(url, path, { method = 'GET', body, headers = {}, fetcher = globalThis.fetch, signal, binary = false, limit = 30000 } = {}) {
+  // A large note on a slow line can take minutes: the body only fails after 30s without any bytes, or at `limit`.
+  const stalled = new AbortController();
+  let idle;
+  const wait = () => { clearTimeout(idle); idle = setTimeout(() => stalled.abort(new DOMException('The cloud stopped sending data.', 'TimeoutError')), 30000); };
+  const timeout = AbortSignal.any([AbortSignal.timeout(limit), stalled.signal]);
   const response = await fetcher(`${validateUrl(url)}/api/v1${path}`, { method, headers: { ...headers, ...(body !== undefined ? { 'Content-Type': binary ? 'application/octet-stream' : 'application/json' } : {}) }, ...(body !== undefined ? { body: binary ? body : JSON.stringify(body) } : {}), cache: 'no-store', redirect: 'error', signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
   const reader = response.body?.getReader(), decoder = new TextDecoder(), chunks = [];
   let size = 0;
   try {
     if (Number(response.headers.get('content-length')) > MAX_RESPONSE_BYTES) throw new CloudError('The server response is too large.', 502);
+    wait();
     if (reader) while (true) {
       const { done, value } = await reader.read();
+      wait();
       if (done) break;
       size += value.byteLength;
       if (size > MAX_RESPONSE_BYTES) throw new CloudError('The server response is too large.', 502);
@@ -40,6 +46,7 @@ export async function request(url, path, { method = 'GET', body, headers = {}, f
     }
     chunks.push(decoder.decode());
   } finally {
+    clearTimeout(idle);
     if (reader) { await reader.cancel().catch(() => {}); reader.releaseLock(); }
   }
   let result;
@@ -77,9 +84,9 @@ export class CloudClient {
     return new CloudClient({ url, ...recovered, token: deviceToken, vaultKey: recovery.vaultKey, fetcher });
   }
 
-  call(path, method = 'GET', body, { signal, binary = false } = {}) {
+  call(path, method = 'GET', body, { signal, binary = false, limit } = {}) {
     const c = this.credentials;
-    return request(c.url, path, { method, body, signal, binary, headers: { Authorization: `Bearer ${c.token}`, 'X-JotDrop-Vault': c.vaultId, 'X-JotDrop-Device': c.deviceId }, fetcher: this.fetcher });
+    return request(c.url, path, { method, body, signal, binary, limit, headers: { Authorization: `Bearer ${c.token}`, 'X-JotDrop-Vault': c.vaultId, 'X-JotDrop-Device': c.deviceId }, fetcher: this.fetcher });
   }
 
   async prepareWrite(path, bytes, baseRevision, modifiedAt = new Date().toISOString()) {
@@ -154,7 +161,8 @@ export class CloudClient {
 
   async read(id, revision) {
     if (!/^[0-9a-f]{64}$/.test(id) || (revision !== undefined && (!Number.isSafeInteger(revision) || revision < 1))) throw new Error('Invalid file revision.');
-    const result = await this.call(`/objects/${id}${revision === undefined ? '' : `?revision=${revision}`}`);
+    // A note of up to 4 MiB: allow minutes on a slow line.
+    const result = await this.call(`/objects/${id}${revision === undefined ? '' : `?revision=${revision}`}`, 'GET', undefined, { limit: 5 * 60 * 1000 });
     const file = await decryptEnvelope(this.credentials.vaultKey, JSON.parse(result.envelope), `jotdrop:object:v1:${this.credentials.vaultId}:${id}`);
     if (!file || normalizePath(file.path) !== file.path || typeof file.content !== 'string' || base64ToBytes(file.content).length > MAX_FILE_BYTES || !Number.isFinite(Date.parse(file.modifiedAt)) || await objectId(this.credentials.vaultKey, file.path) !== id) throw new Error('Encrypted file validation failed. No local files were changed.');
     return { ...result, file };

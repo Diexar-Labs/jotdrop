@@ -728,6 +728,19 @@ async function moveArchive(entry, ask = true) {
   await deleteEntry(entry, false);
 }
 
+async function showPlan(activeClient, activeGeneration) {
+  const status = await activeClient.status();
+  if (activeGeneration !== generation) return;
+  $('storage-usage').classList.remove('checking');
+  $('storage-usage').textContent = `${(status.usedBytes / 1048576).toFixed(1)} / ${(status.quotaBytes / 1048576).toFixed(0)} MiB encrypted storage`;
+  const plan = status.plan;
+  $('plan-status').textContent = plan.name === 'plus' ? `JotDrop Plus until ${new Date(plan.plusUntil).toLocaleDateString()}` : `Free plan: ${plan.deviceLimit} devices, ${plan.historyDays} days of history`;
+  $('start-trial').hidden = !plan.trialAvailable;
+  $('plus-offer').hidden = !plan.checkout || plan.subscribed;
+  $('buy-year').textContent = plan.founderPrice ? '€29 per year (founder price)' : '€39 per year';
+  $('plus-manage').hidden = !plan.subscribed;
+}
+
 async function performSync(signal) {
   if (!client) return;
   const { credentials, fetcher } = client;
@@ -735,6 +748,9 @@ async function performSync(signal) {
   const activeGeneration = generation;
   let changed = false;
   $('sync-status').textContent = 'Syncing encrypted changes...';
+  // Storage and Plus first, so one slow or failing note does not hide them.
+  await showPlan(activeClient, activeGeneration);
+  if (activeGeneration !== generation) return;
   const keyPrefix = pendingPrefix();
   for (const [key, pending] of await store('entries', keyPrefix)) {
     if (activeGeneration !== generation) return;
@@ -821,15 +837,8 @@ async function performSync(signal) {
     more = result.hasMore;
   }
   updateTimeline();
-  const status = await activeClient.status();
+  await showPlan(activeClient, activeGeneration);
   if (activeGeneration !== generation) return;
-  $('storage-usage').textContent = `${(status.usedBytes / 1048576).toFixed(1)} / ${(status.quotaBytes / 1048576).toFixed(0)} MiB encrypted storage`;
-  const plan = status.plan;
-  $('plan-status').textContent = plan.name === 'plus' ? `JotDrop Plus until ${new Date(plan.plusUntil).toLocaleDateString()}` : `Free plan: ${plan.deviceLimit} devices, ${plan.historyDays} days of history`;
-  $('start-trial').hidden = !plan.trialAvailable;
-  $('plus-offer').hidden = !plan.checkout || plan.subscribed;
-  $('buy-year').textContent = plan.founderPrice ? '€29 per year (founder price)' : '€39 per year';
-  $('plus-manage').hidden = !plan.subscribed;
   const pending = await store('entries', keyPrefix);
   const conflicts = [...files.values()].filter((entry) => entry.conflict).length;
   $('sync-status').textContent = conflicts ? `${conflicts} conflict(s) need review. Local drafts are preserved.` : pending.length ? `${pending.length} encrypted change(s) waiting to upload.` : `Cloud copy up to date at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`;

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
-import { CloudClient, CloudError, validateUrl } from './client.mjs';
+import test, { mock } from 'node:test';
+import { CloudClient, CloudError, request, validateUrl } from './client.mjs';
 import { generateVaultKey, randomToken } from './crypto.mjs';
 
 test('client transmits opaque ciphertext, scoped credentials and strict optimistic revision', async () => {
@@ -114,4 +114,26 @@ test('resumable uploads reject impossible offsets and invalid final receipts wit
     await assert.rejects(client.commitWrite(prepared, { resumable: true, onProgress: (event) => progress.push(event) }), /acknowledgment/);
     assert.ok(progress.every((event) => event.phase !== 'committed'));
   }
+});
+
+test('a slow body keeps going while bytes arrive and fails only after 30 seconds without any', async (t) => {
+  t.after(() => mock.timers.reset());
+  mock.timers.enable({ apis: ['setTimeout'] });
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+  // One chunk every 20 seconds: 60 seconds in total, never 30 seconds silent.
+  const parts = ['{"ok":', 'true', '}'];
+  const slow = async (url, options) => new Response(new ReadableStream({
+    pull: (controller) => new Promise((resolve) => setTimeout(() => { const part = parts.shift(); if (part) controller.enqueue(new TextEncoder().encode(part)); else controller.close(); resolve(); }, 20000)),
+  }), { status: 200 });
+  const done = request('http://127.0.0.1:8080/', '/status', { fetcher: slow });
+  for (let step = 0; step < 4; step++) { await flush(); mock.timers.tick(20000); }
+  assert.deepEqual(await done, { ok: true });
+  // One chunk, then silence: the request aborts after 30 seconds.
+  const stalled = async (url, options) => new Response(new ReadableStream({
+    start: (controller) => { controller.enqueue(new TextEncoder().encode('{"ok":')); options.signal.addEventListener('abort', () => controller.error(options.signal.reason)); },
+  }), { status: 200 });
+  const failed = assert.rejects(request('http://127.0.0.1:8080/', '/status', { fetcher: stalled }), { name: 'TimeoutError' });
+  await flush(); mock.timers.tick(29999); await flush();
+  mock.timers.tick(1);
+  await failed;
 });

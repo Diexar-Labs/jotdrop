@@ -188,6 +188,8 @@ dialog::backdrop { background: rgb(15 23 36 / .4); }
   dialog { padding: 1rem; }
 }
 @media (prefers-reduced-motion: no-preference) { .note-card { animation: appear .16s ease-out; } @keyframes appear { from { opacity: .7; transform: translateY(3px); } to { opacity: 1; transform: none; } } }
+.checking::before { content: ""; display: inline-block; width: .8em; height: .8em; margin-right: .45em; vertical-align: -.1em; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; }
+@media (prefers-reduced-motion: no-preference) { .checking::before { animation: spin .9s linear infinite; } @keyframes spin { to { transform: rotate(360deg); } } }
 /* Editor, like the plugin's: title and text, then the tool rows. */
 .dialog-heading { flex-wrap: wrap; }
 .editor-heading-actions { display: flex; flex-wrap: wrap; gap: .4rem; }

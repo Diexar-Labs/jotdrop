@@ -111,7 +111,8 @@ class CloudClient(val credentials: CloudCredentials) {
 
     fun read(id: String, version: Int? = null): CloudPreviewFile {
         require(id.matches(Regex("[0-9a-f]{64}")) && (version == null || version > 0)) { "Invalid cloud object identity" }
-        val response = request(credentials.url, "/objects/$id${if (version == null) "" else "?revision=$version"}", "GET", null, credentials)
+        // A note of up to 4 MiB: allow minutes on a slow line.
+        val response = request(credentials.url, "/objects/$id${if (version == null) "" else "?revision=$version"}", "GET", null, credentials, limitSeconds = 300)
         val encrypted = parseEnvelope(response.getString("envelope"))
         val payload = JSONObject(utf8(CloudCrypto.decrypt(credentials.vaultKey, encrypted, "jotdrop:object:v1:${credentials.vaultId}:$id")))
         val path = CloudCrypto.safePath(payload.getString("path"))
@@ -259,14 +260,15 @@ class CloudClient(val credentials: CloudCredentials) {
             require(keys.getString("vaultId") == response.getString("vaultId")) { "Pairing workspace mismatch" }
             return CloudClient(CloudCredentials(origin, response.getString("vaultId"), response.getString("deviceId"), keys.getString("token"), keys.getString("vaultKey")))
         }
-        internal fun request(origin: String, path: String, method: String, value: JSONObject?, auth: CloudCredentials?, body: ByteArray? = null, binary: Boolean = false): JSONObject {
+        // readTimeout already fails after 30s without bytes; limitSeconds bounds the whole request.
+        internal fun request(origin: String, path: String, method: String, value: JSONObject?, auth: CloudCredentials?, body: ByteArray? = null, binary: Boolean = false, limitSeconds: Long = 30): JSONObject {
             val connection = URI(secureOrigin(origin) + "/api/v1" + path).toURL().openConnection() as HttpURLConnection
             val startedAt = System.nanoTime()
-            val deadline = startedAt + 30_000_000_000L
+            val deadline = startedAt + TimeUnit.SECONDS.toNanos(limitSeconds)
             var phase = CloudDiagnostics.Phase.REQUEST_SETUP
             var receivedBytes = 0
             val timedOut = AtomicBoolean(false)
-            val timeout = deadlines.schedule({ timedOut.set(true); connection.disconnect() }, 30, TimeUnit.SECONDS)
+            val timeout = deadlines.schedule({ timedOut.set(true); connection.disconnect() }, limitSeconds, TimeUnit.SECONDS)
             try {
                 connection.instanceFollowRedirects = false
                 connection.connectTimeout = 10000
