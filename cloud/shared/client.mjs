@@ -178,16 +178,18 @@ export class CloudClient {
         const { envelope, manifest } = await this.readManifest(id, revision);
         // Saved again or moved by another device meanwhile: a later run sees what is left.
         if (await sha256Hex(encoder.encode(envelope)) !== envelopeHash) continue;
+        // Another device (or this page before a reload) may move the same version first: then there is nothing to do.
+        const swap = (body) => this.retrying(`/objects/${id}/convert`, 'POST', body, { signal }).then(() => true, (error) => { if (error.status === 404 || error.status === 409) return false; throw error; });
         if (manifest.size <= INLINE_BYTES) {
           // Would stay inside a manifest, at the same size: only marked as checked.
-          await this.retrying(`/objects/${id}/convert`, 'POST', { from: envelopeHash }, { signal });
+          if (!await swap({ from: envelopeHash })) continue;
           kept++;
         } else {
           const prepared = await this.prepareWrite(manifest.path, manifest.bytes, 0, manifest.modifiedAt);
           await this.uploadPieces(prepared, manifest.bytes, { signal });
           const pieces = prepared.chunks.map((name, index) => ({ name, size: Math.min(CHUNK_BYTES, manifest.size - index * CHUNK_BYTES) + 28 }));
           await this.readPieces(id, { size: manifest.size, hash: manifest.hash, pieces });
-          await this.retrying(`/objects/${id}/convert`, 'POST', { from: envelopeHash, envelope: prepared.envelope, chunks: prepared.chunks }, { signal });
+          if (!await swap({ from: envelopeHash, envelope: prepared.envelope, chunks: prepared.chunks })) continue;
           // The version as other devices will now read it: the checked pieces and the same fingerprint.
           const swapped = (await this.readManifest(id, revision)).manifest;
           if (swapped.hash !== manifest.hash || swapped.pieces.map((piece) => piece.name).join() !== prepared.chunks.join()) throw new Error('A file moved into pieces did not read back the same. The cloud keeps the old copy for seven days.');

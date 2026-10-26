@@ -265,3 +265,18 @@ test('the old envelope stays aside for seven days, and a lost answer is not a fa
   await client.write('notes/later.md', text('A later save clears the old envelope'), 0);
   assert.equal(retired(app), 0);
 });
+
+test('a version another device moved first is skipped, not an error', async (t) => {
+  const { client, setNetwork } = await fixture(t);
+  const bytes = new Uint8Array(randomBytes(2 * MiB));
+  const saved = await writeLegacy(client, 'attachments/both.bin', bytes, 0);
+  const other = await CloudClient.claim({ pairingCode: (await client.makePairing('Other device')).pairingCode });
+  // The other device swaps the same version while this one is about to.
+  setNetwork(async (url, options) => {
+    if (/\/convert$/.test(url)) { setNetwork((url, options) => fetch(url, options)); assert.deepEqual(await other.convertLegacy(), { converted: 1, kept: 0 }); }
+    return fetch(url, options);
+  });
+  assert.deepEqual(await client.convertLegacy(), { converted: 0, kept: 0 });
+  assert.equal((await client.status()).pieces.legacy, 0);
+  assert.deepEqual((await client.read(saved.id)).file.bytes, bytes);
+});
