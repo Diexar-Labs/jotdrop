@@ -1,0 +1,2 @@
+# Piped to the device shell; CRLF would break it on Windows checkouts.
+*.sh text eol=lf
