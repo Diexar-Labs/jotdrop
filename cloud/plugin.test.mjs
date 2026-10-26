@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os';
 import { createCloudServer } from './server.mjs';
 import { CloudClient } from './shared/client.mjs';
 import { accountInfo, confirmSignup, providerSignUp, signUp } from './shared/account.mjs';
-import { objectId, randomToken } from './shared/crypto.mjs';
+import { bytesToBase64, encryptEnvelope, objectId, randomToken } from './shared/crypto.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 // Obsidian's requestUrl answers every status without throwing, like `throw: false`.
@@ -144,6 +144,18 @@ test('the plugin signs in with an account, syncs the real JotDrop folders both w
   v.put('Mini Notes/Shopping.md', 'Milk, eggs');
   await cloud.syncNow();
   assert.equal((await pathsInCloud())['notes/Shopping.md'], 'Milk, eggs');
+
+  // A large file saved before encrypted pieces arrives, then moves into pieces in the cloud; the vault keeps it as it is.
+  const { vaultKey, vaultId } = phone.credentials, oldPath = 'attachments/Old scan.png', oldId = await objectId(vaultKey, oldPath);
+  const old = new Uint8Array(2 * 1024 * 1024).fill(9);
+  await phone.commitWrite({ id: oldId, baseRevision: 0, envelope: JSON.stringify(await encryptEnvelope(vaultKey, { path: oldPath, content: bytesToBase64(old), modifiedAt: new Date().toISOString() }, `jotdrop:object:v1:${vaultId}:${oldId}`)) });
+  assert.equal((await phone.status()).pieces.legacy, 1);
+  await cloud.syncNow();
+  assert.match(cloud.status, /Synced\. 0 up, 1 down/);
+  assert.deepEqual(v.files.get('Mini Notes/.attachments/Old scan.png'), old);
+  assert.equal((await phone.status()).pieces.legacy, 0);
+  assert.equal((await phone.readManifest(oldId)).manifest.pieces.length, 2);
+  assert.deepEqual((await phone.read(oldId)).file.bytes, old);
 
   // A deletion on the phone moves the note to Obsidian's trash, never deletes it outright.
   const id = await objectId(client.credentials.vaultKey, 'notes/From phone.md');

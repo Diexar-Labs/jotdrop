@@ -52,7 +52,15 @@ Branch: `feat/cloud-development-preview`.
 - **B** bestaande v1-objecten omzetten (open keuze hieronder).
 - **C** (later) één verzoek voor veel manifesten tegelijk, zodat de eerste sync nog sneller wordt.
 
-## Open keuze (fase B): hoe bestaande bestanden omzetten
+## Fase B zoals gebouwd (keuze 2: vervangen met controle)
+
+- Server: kolom `envelopes.pieces` (1 = v2-manifest of door een apparaat nagekeken). `GET /status` geeft `pieces.legacy` = aantal oude enveloppen groter dan 116.508 bytes (daarboven zit meer dan 64 KiB bestand in; kleinere bestanden blijven in een manifest even groot, dus die blijven zoals ze zijn). `GET /pieces/legacy?after=` geeft ze per 100 met de nieuwste versie die ze gebruikt; versies die het gratis abonnement op slot heeft, worden niet aangeboden.
+- `POST /objects/{id}/convert {from, envelope, chunks}` wisselt in één transactie: nieuw manifest + stukken erbij, alle versies die de oude envelop gebruikten wijzen naar het nieuwe manifest (zelfde versienummers, `revisions.size` en `changes.size` = echte grootte), oude envelop naar `retired_envelopes` (telt niet mee, na 7 dagen gewist). Zonder `envelope` markeert het alleen als nagekeken. Een herhaling na een verloren antwoord slaagt.
+- Client `convertLegacy()` (`cloud/shared/client.mjs`): per versie lezen, stukken uploaden, stukken terughalen en vergelijken, dan pas wisselen, daarna het manifest nog eens teruglezen. Andere apparaten hoeven niets te downloaden: versie en vingerafdruk blijven gelijk.
+- Website en plugin doen dit vanzelf na een sync zolang `pieces.legacy > 0`, met voortgang "Making your cloud storage smaller... n / m". Android doet het niet (één apparaat is genoeg; Android heeft minder geheugen).
+- Terugdraaien kan alleen met de hand op de server (envelop uit `retired_envelopes` terugzetten), binnen 7 dagen.
+
+## Open keuze (fase B, besloten: 2): hoe bestaande bestanden omzetten
 
 Erics teller moet van ~225 MB naar ~125 MB. Twee manieren:
 1. **Als nieuwe versie**: het apparaat uploadt elk bestand opnieuw in v2 als nieuwe versie; niets wordt overschreven. Nadeel: de oude versies blijven meetellen zolang ze in de geschiedenis staan. Gratis: na 30 dagen mag de server ze opruimen als er ruimte nodig is. **Plus bewaart alle geschiedenis, dus bij Eric zakt de teller dan niet** (eerder ~350 MB: oud + nieuw). Een gratis gebruiker die bijna vol zit, kan halverwege op "vol" stuiten.

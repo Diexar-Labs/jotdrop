@@ -131,11 +131,23 @@ export class CloudClient {
 
   /** Uploads the pieces the cloud does not have yet, then saves the manifest. `source` is the file the write was prepared from. */
   async commitPieces(prepared, { source, signal, onProgress } = {}) {
-    const names = prepared.chunks, { vaultKey, vaultId } = this.credentials;
+    const names = prepared.chunks;
     if (!/^[0-9a-f]{64}$/.test(prepared.id) || names.length > Math.ceil(MAX_CHUNKED_BYTES / CHUNK_BYTES) || names.some((name) => !/^[0-9a-f]{64}$/.test(name))) throw new Error('Invalid prepared upload.');
     // An older server would keep a manifest that older devices cannot read: never save there.
     const capability = (await this.retrying('/status', 'GET', undefined, { signal })).pieces;
     if (capability?.version !== 1 || capability.pieceBytes !== CHUNK_BYTES) throw new Error('This server does not support encrypted pieces. The encrypted draft was kept.');
+    await this.uploadPieces(prepared, source, { signal, onProgress });
+    const totalBytes = source?.length ?? 0;
+    onProgress?.({ phase: 'committing', transferredBytes: totalBytes, totalBytes });
+    // Not retried: a lost answer comes back as 409, and the caller compares with the cloud version as before.
+    const saved = await this.call(`/objects/${prepared.id}`, 'PUT', { baseRevision: prepared.baseRevision, envelope: prepared.envelope, chunks: names }, { signal });
+    onProgress?.({ phase: 'committed', transferredBytes: totalBytes, totalBytes });
+    return { ...saved, id: prepared.id };
+  }
+
+  /** Sends the pieces of a prepared write that the cloud does not have yet, encrypted again from `source`. */
+  async uploadPieces(prepared, source, { signal, onProgress } = {}) {
+    const names = prepared.chunks, { vaultKey, vaultId } = this.credentials;
     const missing = new Set(names.length ? (await this.retrying('/chunks/missing', 'POST', { names }, { signal })).missing : []);
     if (missing.size && !(source instanceof Uint8Array)) throw new Error('The file is needed to finish this upload. The encrypted draft was kept.');
     const totalBytes = source?.length ?? 0;
@@ -147,11 +159,44 @@ export class CloudClient {
       // A piece of 1 MiB on a slow line: allow minutes, like a download.
       await this.retrying(`/chunks/${name}`, 'PUT', sealed, { signal, binary: true, limit: 5 * 60 * 1000 });
     }
-    onProgress?.({ phase: 'committing', transferredBytes: totalBytes, totalBytes });
-    // Not retried: a lost answer comes back as 409, and the caller compares with the cloud version as before.
-    const saved = await this.call(`/objects/${prepared.id}`, 'PUT', { baseRevision: prepared.baseRevision, envelope: prepared.envelope, chunks: names }, { signal });
-    onProgress?.({ phase: 'committed', transferredBytes: totalBytes, totalBytes });
-    return { ...saved, id: prepared.id };
+  }
+
+  /**
+   * Moves versions saved before pieces (the whole file as base64 inside one envelope) into pieces, so they count
+   * their real size. Per version: upload its pieces, read them back and compare, and only then ask the cloud to
+   * swap. Revisions and history stay the same, so other devices download nothing; the cloud keeps the old envelope
+   * aside for seven days.
+   * @param {{ signal?: AbortSignal, onProgress?: (event: { done: number, total: number }) => void }} [options]
+   */
+  async convertLegacy({ signal, onProgress } = {}) {
+    const total = (await this.retrying('/status', 'GET', undefined, { signal })).pieces?.legacy ?? 0;
+    let converted = 0, kept = 0;
+    for (let page = { cursor: '', hasMore: total > 0 }; page.hasMore;) {
+      page = await this.retrying(`/pieces/legacy?after=${page.cursor}`, 'GET', undefined, { signal });
+      for (const { id, envelopeHash, revision } of page.objects) {
+        signal?.throwIfAborted();
+        const { envelope, manifest } = await this.readManifest(id, revision);
+        // Saved again or moved by another device meanwhile: a later run sees what is left.
+        if (await sha256Hex(encoder.encode(envelope)) !== envelopeHash) continue;
+        if (manifest.size <= INLINE_BYTES) {
+          // Would stay inside a manifest, at the same size: only marked as checked.
+          await this.retrying(`/objects/${id}/convert`, 'POST', { from: envelopeHash }, { signal });
+          kept++;
+        } else {
+          const prepared = await this.prepareWrite(manifest.path, manifest.bytes, 0, manifest.modifiedAt);
+          await this.uploadPieces(prepared, manifest.bytes, { signal });
+          const pieces = prepared.chunks.map((name, index) => ({ name, size: Math.min(CHUNK_BYTES, manifest.size - index * CHUNK_BYTES) + 28 }));
+          await this.readPieces(id, { size: manifest.size, hash: manifest.hash, pieces });
+          await this.retrying(`/objects/${id}/convert`, 'POST', { from: envelopeHash, envelope: prepared.envelope, chunks: prepared.chunks }, { signal });
+          // The version as other devices will now read it: the checked pieces and the same fingerprint.
+          const swapped = (await this.readManifest(id, revision)).manifest;
+          if (swapped.hash !== manifest.hash || swapped.pieces.map((piece) => piece.name).join() !== prepared.chunks.join()) throw new Error('A file moved into pieces did not read back the same. The cloud keeps the old copy for seven days.');
+          converted++;
+        }
+        onProgress?.({ done: converted + kept, total });
+      }
+    }
+    return { converted, kept };
   }
 
   /** @param {{ resumable?: boolean, source?: Uint8Array, signal?: AbortSignal, onProgress?: (event: { phase: string, transferredBytes: number, totalBytes: number }) => void }} [options] `source`: the file a v2 draft was prepared from, for the pieces the cloud does not have yet. */

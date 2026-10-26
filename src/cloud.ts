@@ -544,8 +544,14 @@ export class CloudController {
         },
       };
       // The plan's maximum per file; a server without encrypted pieces takes 4 MiB.
-      const maxFileBytes: number = (await client.status()).pieces?.maxFileBytes ?? MAX_FILE_BYTES;
+      const pieces = (await client.status()).pieces;
+      const maxFileBytes: number = pieces?.maxFileBytes ?? MAX_FILE_BYTES;
       const report = await syncFolder(remote, folder, state.tracked, (next: Record<string, Base>) => this.store.put("state", { ...state, tracked: next }), { checkActive: active, seen: state.seen ??= {}, progress: progress("Syncing..."), maxFileBytes });
+      // Files saved before encrypted pieces move into pieces once, so storage counts their real size.
+      if (pieces?.legacy) {
+        const shrinking = progress("Making your cloud storage smaller...");
+        await client.convertLegacy({ signal: abort.signal, onProgress: ({ done, total }: { done: number, total: number }) => { active(); shrinking(done, total); } });
+      }
       state.lastSynced = new Date().toISOString();
       state.conflicts = report.conflicts;
       const big = report.skipped.length

@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
 import { createCloudServer } from './server.mjs';
 import { CloudClient } from './shared/client.mjs';
 import { bytesToBase64, CHUNK_BYTES, decryptChunk, encryptChunk, encryptEnvelope, objectId, randomToken, sha256Hex } from './shared/crypto.mjs';
@@ -36,7 +37,7 @@ test('a large file goes up and down in encrypted pieces and counts its real size
   const status = await client.status();
   // Pieces are stored as raw bytes: no base64, only a 28-byte IV and tag per piece plus a small manifest.
   assert.ok(status.usedBytes >= bytes.length && status.usedBytes < bytes.length + 64 * 1024, `used ${status.usedBytes}`);
-  assert.deepEqual(status.pieces, { version: 1, pieceBytes: CHUNK_BYTES, maxFileBytes: 25 * MiB });
+  assert.deepEqual(status.pieces, { version: 1, pieceBytes: CHUNK_BYTES, maxFileBytes: 25 * MiB, legacy: 0 });
   assert.equal((await client.listChanges()).changes[0].size, status.usedBytes);
 
   // The manifest alone is enough to compare: no piece is downloaded.
@@ -184,4 +185,83 @@ test('a full free cloud makes room by clearing the pieces of old locked versions
   assert.ok(status.usedBytes <= 5 * MiB && status.usedBytes >= 4 * MiB, `used ${status.usedBytes}`);
   assert.deepEqual((await client.read(saved.id)).file.bytes, third);
   assert.deepEqual((await client.read(saved.id, 2)).file.bytes, second);
+});
+
+// A version as clients saved it before pieces: one envelope with the whole file in base64.
+async function writeLegacy(client, path, bytes, baseRevision) {
+  const { vaultKey, vaultId } = client.credentials, id = await objectId(vaultKey, path);
+  const envelope = await encryptEnvelope(vaultKey, { path, content: bytesToBase64(bytes), modifiedAt: new Date().toISOString() }, `jotdrop:object:v1:${vaultId}:${id}`);
+  return client.commitWrite({ id, baseRevision, envelope: JSON.stringify(envelope) });
+}
+const retired = (app) => {
+  const db = new DatabaseSync(app.dbPath, { readOnly: true });
+  try { return db.prepare('SELECT COUNT(*) AS count FROM retired_envelopes').get().count; } finally { db.close(); }
+};
+
+test('versions saved before pieces move into pieces in place, and the cloud counts their real size', async (t) => {
+  const { app, client, requests } = await fixture(t);
+  const first = new Uint8Array(randomBytes(3 * MiB)), second = new Uint8Array(randomBytes(2 * MiB + 5));
+  const saved = await writeLegacy(client, 'attachments/old.jpg', first, 0);
+  await writeLegacy(client, 'attachments/old.jpg', second, 1);
+  const note = await writeLegacy(client, 'notes/old.md', text('# Small notes stay as they are'), 0);
+  const before = await client.status(), changes = (await client.listChanges()).changes.length;
+  // Only the two large versions: a small file is not smaller in pieces.
+  assert.equal(before.pieces.legacy, 2);
+  assert.ok(before.usedBytes > 1.7 * (first.length + second.length), `used ${before.usedBytes}`);
+
+  const progress = [];
+  assert.deepEqual(await client.convertLegacy({ onProgress: (event) => progress.push(event) }), { converted: 2, kept: 0 });
+  assert.deepEqual(progress.at(-1), { done: 2, total: 2 });
+  const after = await client.status();
+  assert.equal(after.pieces.legacy, 0);
+  assert.ok(after.usedBytes < first.length + second.length + 64 * 1024, `used ${after.usedBytes}`);
+  // Same versions, same numbers, no new changes: other devices have nothing to download.
+  assert.deepEqual((await client.read(saved.id)).file.bytes, second);
+  assert.deepEqual((await client.read(saved.id, 1)).file.bytes, first);
+  assert.deepEqual((await client.history(saved.id)).versions.map((version) => version.revision), [2, 1]);
+  assert.equal((await client.listChanges()).changes.length, changes);
+  assert.equal(new TextDecoder().decode((await client.read(note.id)).file.bytes), '# Small notes stay as they are');
+  assert.equal(retired(app), 2);
+
+  // Nothing left: a second run reads and sends nothing.
+  requests.length = 0;
+  assert.deepEqual(await client.convertLegacy(), { converted: 0, kept: 0 });
+  assert.deepEqual(requests, ['GET /status']);
+});
+
+test('a version is only swapped after its pieces read back the same', async (t) => {
+  const { client, setNetwork } = await fixture(t);
+  const bytes = new Uint8Array(randomBytes(2 * MiB));
+  const saved = await writeLegacy(client, 'attachments/check.bin', bytes, 0);
+  // The cloud hands back a different piece than the one that was sent.
+  setNetwork(async (url, options) => {
+    const response = await fetch(url, options);
+    if ((options.method ?? 'GET') !== 'GET' || !/\/chunks\/[0-9a-f]{64}$/.test(url)) return response;
+    const body = new Uint8Array(await response.arrayBuffer());
+    body[body.length - 1] ^= 1;
+    return new Response(body, { status: response.status, headers: response.headers });
+  });
+  await assert.rejects(client.convertLegacy(), /did not match/);
+  setNetwork((url, options) => fetch(url, options));
+  assert.equal((await client.status()).pieces.legacy, 1);
+  assert.deepEqual((await client.read(saved.id)).file.bytes, bytes);
+});
+
+test('the old envelope stays aside for seven days, and a lost answer is not a failure', async (t) => {
+  const { app, client, advance, setNetwork } = await fixture(t);
+  const saved = await writeLegacy(client, 'attachments/aside.bin', new Uint8Array(randomBytes(MiB)), 0);
+  setNetwork(async (url, options) => {
+    const response = await fetch(url, options);
+    if (/\/convert$/.test(url)) { await response.text(); setNetwork((url, options) => fetch(url, options)); throw new TypeError('Synthetic lost answer'); }
+    return response;
+  });
+  assert.deepEqual(await client.convertLegacy(), { converted: 1, kept: 0 });
+  assert.equal(retired(app), 1);
+  // Only versions saved before pieces can be swapped, and only for the same file.
+  const envelopeHash = (await client.readManifest(saved.id)).envelope;
+  await assert.rejects(client.call(`/objects/${saved.id}/convert`, 'POST', { from: await sha256Hex(text(envelopeHash)) }), (error) => error.status === 409);
+  await assert.rejects(client.call(`/objects/${saved.id}/convert`, 'POST', { from: '0'.repeat(64) }), (error) => error.status === 404);
+  advance(7 * 24 * 60 * 60 * 1000 + 1);
+  await client.write('notes/later.md', text('A later save clears the old envelope'), 0);
+  assert.equal(retired(app), 0);
 });

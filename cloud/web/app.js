@@ -751,6 +751,7 @@ async function showPlan(activeClient, activeGeneration) {
   $('plus-offer').hidden = !plan.checkout || plan.subscribed;
   $('buy-year').textContent = plan.founderPrice ? '€29 per year (founder price)' : '€39 per year';
   $('plus-manage').hidden = !plan.subscribed;
+  return status;
 }
 
 async function performSync(signal) {
@@ -762,7 +763,7 @@ async function performSync(signal) {
   $('sync-status').textContent = 'Syncing encrypted changes...';
   $('sync-status').classList.add('checking');
   // Storage and Plus first, so one slow or failing note does not hide them.
-  await showPlan(activeClient, activeGeneration);
+  const legacy = (await showPlan(activeClient, activeGeneration))?.pieces?.legacy;
   if (activeGeneration !== generation) return;
   const keyPrefix = pendingPrefix();
   for (const [key, pending] of await store('entries', keyPrefix)) {
@@ -863,6 +864,12 @@ async function performSync(signal) {
     more = result.hasMore;
   }
   updateTimeline();
+  // Files saved before encrypted pieces move into pieces once, so storage counts their real size.
+  if (legacy) {
+    const shrinking = ({ done, total }) => { if (activeGeneration === generation) $('sync-status').textContent = `Making your cloud storage smaller... ${done} / ${total}`; };
+    shrinking({ done: 0, total: legacy });
+    await activeClient.convertLegacy({ signal, onProgress: shrinking });
+  }
   await showPlan(activeClient, activeGeneration);
   if (activeGeneration !== generation) return;
   const pending = await store('entries', keyPrefix);

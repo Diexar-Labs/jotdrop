@@ -17,6 +17,11 @@ const TRANSFER_CHUNK_BYTES = 64 * 1024;
 // v2 objects: encrypted pieces of up to 1 MiB of file plus a 28-byte IV and tag.
 const PIECE_BYTES = 1024 * 1024;
 const MAX_PIECES = 200;
+// A v1 envelope (base64 inside base64, about 16/9 of the file) above this size holds more than 64 KiB, which
+// pieces store at its real size; smaller files stay inside a manifest either way.
+const LEGACY_ENVELOPE_BYTES = 116508;
+// A version moved into pieces keeps its old envelope aside this long, so a mistake can be undone by hand.
+const RETIRED_LIFETIME = 7 * 24 * 60 * 60 * 1000;
 const TRANSFER_LIFETIME = 24 * 60 * 60 * 1000;
 const CODE_LIFETIME = 15 * 60 * 1000;
 const LOCK_TIME = 15 * 60 * 1000;
@@ -218,7 +223,10 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         CREATE TABLE IF NOT EXISTS newsletter(accountId TEXT PRIMARY KEY REFERENCES accounts(id), consentedAt TEXT NOT NULL, addedAt TEXT);
         CREATE TABLE IF NOT EXISTS chunks(vaultId TEXT NOT NULL REFERENCES vaults(id), name TEXT NOT NULL, size INTEGER NOT NULL, data BLOB NOT NULL, createdAt INTEGER NOT NULL, claimed INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(vaultId,name));
         CREATE TABLE IF NOT EXISTS envelope_chunks(vaultId TEXT NOT NULL, id TEXT NOT NULL, envelopeHash TEXT NOT NULL, name TEXT NOT NULL, PRIMARY KEY(vaultId,id,envelopeHash,name));
-        CREATE INDEX IF NOT EXISTS envelope_chunks_by_name ON envelope_chunks(vaultId,name);`);
+        CREATE INDEX IF NOT EXISTS envelope_chunks_by_name ON envelope_chunks(vaultId,name);
+        CREATE TABLE IF NOT EXISTS retired_envelopes(vaultId TEXT NOT NULL, id TEXT NOT NULL, envelopeHash TEXT NOT NULL, envelope TEXT NOT NULL, size INTEGER NOT NULL, retiredAt INTEGER NOT NULL, replacedBy TEXT NOT NULL, PRIMARY KEY(vaultId,id,envelopeHash));`);
+      // `pieces`: saved as a v2 manifest, or checked by a device and left as it is. Older versions are moved by devices.
+      if (!all('PRAGMA table_info(envelopes)').some((column) => column.name === 'pieces')) db.exec('ALTER TABLE envelopes ADD COLUMN pieces INTEGER NOT NULL DEFAULT 0; UPDATE envelopes SET pieces=1 WHERE EXISTS (SELECT 1 FROM envelope_chunks ec WHERE ec.vaultId=envelopes.vaultId AND ec.id=envelopes.id AND ec.envelopeHash=envelopes.envelopeHash);');
       // The newsletter tick waits with the signup until the email address is confirmed.
       if (!all('PRAGMA table_info(signups)').some((column) => column.name === 'newsletter')) db.exec('ALTER TABLE signups ADD COLUMN newsletter INTEGER NOT NULL DEFAULT 0;');
       run("INSERT INTO secrets VALUES('fake-salt',?) ON CONFLICT(name) DO NOTHING", randomBytes(32).toString('base64url'));
@@ -229,7 +237,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         for (const row of db.prepare('SELECT * FROM revisions').iterate()) {
           const envelopeHash = hash(row.envelope);
           if (envelopeSize(row.envelope) !== row.size) throw new Error('Cloud revision size mismatch.');
-          run('INSERT INTO envelopes VALUES(?,?,?,?,?) ON CONFLICT(vaultId,id,envelopeHash) DO NOTHING', row.vaultId, row.id, envelopeHash, row.envelope, row.size);
+          run('INSERT INTO envelopes(vaultId,id,envelopeHash,envelope,size) VALUES(?,?,?,?,?) ON CONFLICT(vaultId,id,envelopeHash) DO NOTHING', row.vaultId, row.id, envelopeHash, row.envelope, row.size);
           run('INSERT INTO revisions_migrated VALUES(?,?,?,?,?,?,?,?)', row.vaultId, row.id, row.revision, envelopeHash, row.deleted, row.size, row.updatedAt, row.deviceId);
         }
         db.exec('DROP TABLE revisions; ALTER TABLE revisions_migrated RENAME TO revisions;');
@@ -455,6 +463,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   const pruneUploads = (vaultId) => {
     run('DELETE FROM uploads WHERE vaultId=? AND expiresAt<=?', vaultId, clock());
     run('DELETE FROM chunks WHERE vaultId=? AND claimed=0 AND createdAt<=?', vaultId, clock() - TRANSFER_LIFETIME);
+    run('DELETE FROM retired_envelopes WHERE vaultId=? AND retiredAt<=?', vaultId, clock() - RETIRED_LIFETIME);
   };
   // Pieces of versions that were cleared: nothing reads them any more.
   const dropUnusedPieces = (vaultId) => run('DELETE FROM chunks WHERE vaultId=? AND claimed=1 AND NOT EXISTS (SELECT 1 FROM envelope_chunks ec WHERE ec.vaultId=chunks.vaultId AND ec.name=chunks.name)', vaultId);
@@ -546,7 +555,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         }
         if (pieces && total - 28 * pieces.length > maxFileFor(vaultId)) fail(413, `Files can be at most ${Math.round(maxFileFor(vaultId) / 1048576)} MB on your plan.`, { code: isPlus(vaultId) ? 'file-too-large' : 'plus-required' });
         if (!fits(vaultId, size, deviceId, id)) fail(507, 'Cloud storage is full. Your local files remain available.');
-        run('INSERT INTO envelopes VALUES(?,?,?,?,?)', vaultId, id, envelopeHash, envelope, size);
+        run('INSERT INTO envelopes(vaultId,id,envelopeHash,envelope,size,pieces) VALUES(?,?,?,?,?,?)', vaultId, id, envelopeHash, envelope, size, pieces ? 1 : 0);
         for (const name of new Set(pieces ?? [])) {
           run('INSERT INTO envelope_chunks VALUES(?,?,?,?)', vaultId, id, envelopeHash, name);
           run('UPDATE chunks SET claimed=1 WHERE vaultId=? AND name=?', vaultId, name);
@@ -817,7 +826,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           setCredentials(account.id, next);
           run('DELETE FROM device_approvals WHERE accountId=?', account.id);
           // Nobody can read the old ciphertext any more; deleting it is what the user confirmed.
-          for (const table of ['uploads', 'pairings', 'revisions', 'envelope_chunks', 'chunks', 'envelopes', 'changes', 'signups', 'devices']) run(`DELETE FROM ${table} WHERE vaultId=?`, account.vaultId);
+          for (const table of ['uploads', 'pairings', 'revisions', 'envelope_chunks', 'chunks', 'retired_envelopes', 'envelopes', 'changes', 'signups', 'devices']) run(`DELETE FROM ${table} WHERE vaultId=?`, account.vaultId);
           run('DELETE FROM vaults WHERE id=?', account.vaultId);
           return addDevice(vaultId, value.deviceName, value.deviceTokenHash);
         })); return;
@@ -1039,7 +1048,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
             run('DELETE FROM code_failures WHERE scope IN (?,?,?)', `login:${account.id}`, `reset:${account.id}`, `signup:${account.email}`);
             run('DELETE FROM accounts WHERE id=?', account.id);
           }
-          for (const table of ['uploads', 'pairings', 'revisions', 'envelope_chunks', 'chunks', 'envelopes', 'changes', 'signups', 'devices', 'plans', 'subscriptions']) run(`DELETE FROM ${table} WHERE vaultId=?`, vaultId);
+          for (const table of ['uploads', 'pairings', 'revisions', 'envelope_chunks', 'chunks', 'retired_envelopes', 'envelopes', 'changes', 'signups', 'devices', 'plans', 'subscriptions']) run(`DELETE FROM ${table} WHERE vaultId=?`, vaultId);
           run('DELETE FROM vaults WHERE id=?', vaultId);
         });
         if (account) {
@@ -1096,7 +1105,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       }
       if (method === 'GET' && route === '/status') {
         const plan = planRow(vaultId), plus = plan.plusUntil > clock();
-        reply(200, { usedBytes: one('SELECT (SELECT COALESCE(SUM(size),0) FROM envelopes WHERE vaultId=?) + (SELECT COALESCE(SUM(size),0) FROM chunks WHERE vaultId=?) AS size', vaultId, vaultId).size, quotaBytes: quotaFor(vaultId), plan: { name: plus ? 'plus' : 'free', plusUntil: plan.plusUntil ? new Date(plan.plusUntil).toISOString() : null, trialAvailable: !plan.trialUsed && !plus, deviceLimit: plus ? null : freeDeviceLimit, historyDays: plus ? null : FREE_HISTORY / DAY, subscribed: subscribed(vaultId), checkout: Boolean(stripe), founderPrice: founderPrice() }, sequence: one('SELECT COALESCE(MAX(sequence),0) AS sequence FROM changes WHERE vaultId=?', vaultId).sequence, history: historyUsage(vaultId), transport: { version: 1, chunkBytes: TRANSFER_CHUNK_BYTES, reservedBytes: one('SELECT COALESCE(SUM(reservedBytes),0) AS size FROM uploads WHERE vaultId=?', vaultId).size }, pieces: { version: 1, pieceBytes: PIECE_BYTES, maxFileBytes: maxFileFor(vaultId) } }); return;
+        reply(200, { usedBytes: one('SELECT (SELECT COALESCE(SUM(size),0) FROM envelopes WHERE vaultId=?) + (SELECT COALESCE(SUM(size),0) FROM chunks WHERE vaultId=?) AS size', vaultId, vaultId).size, quotaBytes: quotaFor(vaultId), plan: { name: plus ? 'plus' : 'free', plusUntil: plan.plusUntil ? new Date(plan.plusUntil).toISOString() : null, trialAvailable: !plan.trialUsed && !plus, deviceLimit: plus ? null : freeDeviceLimit, historyDays: plus ? null : FREE_HISTORY / DAY, subscribed: subscribed(vaultId), checkout: Boolean(stripe), founderPrice: founderPrice() }, sequence: one('SELECT COALESCE(MAX(sequence),0) AS sequence FROM changes WHERE vaultId=?', vaultId).sequence, history: historyUsage(vaultId), transport: { version: 1, chunkBytes: TRANSFER_CHUNK_BYTES, reservedBytes: one('SELECT COALESCE(SUM(reservedBytes),0) AS size FROM uploads WHERE vaultId=?', vaultId).size }, pieces: { version: 1, pieceBytes: PIECE_BYTES, maxFileBytes: maxFileFor(vaultId), legacy: one('SELECT COUNT(*) AS count FROM envelopes WHERE vaultId=? AND pieces=0 AND size>?', vaultId, LEGACY_ENVELOPE_BYTES).count } }); return;
       }
       if (method === 'GET' && route === '/changes') {
         const after = Number(url.searchParams.get('after') || 0);
@@ -1154,6 +1163,18 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           return { pairingId, expiresAt: new Date(expiresAt).toISOString() };
         });
         reply(201, result); return;
+      }
+      if (method === 'GET' && route === '/pieces/legacy') {
+        // Versions a device can move into pieces: each with the newest revision that uses it, for reading it.
+        const after = url.searchParams.get('after') || '';
+        requireValue(after === '' || /^[0-9a-f]{64}\.[0-9a-f]{64}$/.test(after), 'Invalid cursor');
+        const [afterId = '', afterHash = ''] = after.split('.');
+        const rows = all('SELECT e.id,e.envelopeHash,(SELECT MAX(r.revision) FROM revisions r WHERE r.vaultId=e.vaultId AND r.id=e.id AND r.envelopeHash=e.envelopeHash) AS revision FROM envelopes e WHERE e.vaultId=? AND e.pieces=0 AND e.size>? AND (e.id,e.envelopeHash)>(?,?) ORDER BY e.id,e.envelopeHash LIMIT 101', vaultId, LEGACY_ENVELOPE_BYTES, afterId, afterHash);
+        const hasMore = rows.length > 100;
+        if (hasMore) rows.pop();
+        // A version the free plan locked cannot be read, so it is not offered; the cloud may clear it when full.
+        const open = (row) => { try { requireOpenVersion(vaultId, row.id, row.revision); return true; } catch (error) { if (error.status === 402) return false; throw error; } };
+        reply(200, { objects: rows.filter((row) => row.revision !== null && open(row)), cursor: rows.length ? `${rows.at(-1).id}.${rows.at(-1).envelopeHash}` : after, hasMore }); return;
       }
       if (method === 'POST' && route === '/chunks/missing') {
         const value = await body(req, MAX_METADATA_BODY);
@@ -1270,7 +1291,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         }
         fail(405, 'Method not allowed');
       }
-      const object = /^\/objects\/([0-9a-f]{64})(?:\/(history|restore))?$/.exec(route);
+      const object = /^\/objects\/([0-9a-f]{64})(?:\/(history|restore|convert))?$/.exec(route);
       if (!object) fail(404, 'Not found');
       const id = object[1], action = object[2];
       const current = latest(vaultId, id);
@@ -1285,6 +1306,41 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           replacedEarlier ||= Boolean(cutoff) && entry.updatedAt < cutoff;
           return { ...entry, deleted: Boolean(entry.deleted), locked };
         }) }); return;
+      }
+      if (method === 'POST' && action === 'convert') {
+        // Swaps a version saved before pieces for the same file in pieces: same revisions, same history, nothing new
+        // for other devices. The device read the pieces back first; the server cannot compare encrypted content.
+        // Without `envelope` the device only marks a version it leaves as it is.
+        const value = await body(req, MAX_BODY);
+        requireValue(validHash(value.from) && (value.envelope === undefined || Array.isArray(value.chunks) && value.chunks.length > 0 && value.chunks.length <= MAX_PIECES && value.chunks.every(validHash)), 'Invalid conversion');
+        const result = transaction(() => {
+          requireActiveDevice(vaultId, deviceId);
+          pruneUploads(vaultId);
+          const old = one('SELECT envelope,size,pieces FROM envelopes WHERE vaultId=? AND id=? AND envelopeHash=?', vaultId, id, value.from);
+          if (!old) {
+            // The answer was lost: the swap already happened.
+            if (value.envelope !== undefined && one('SELECT 1 FROM retired_envelopes WHERE vaultId=? AND id=? AND envelopeHash=? AND replacedBy=?', vaultId, id, value.from, hash(value.envelope))) return { converted: true };
+            fail(404, 'Version not found');
+          }
+          if (old.pieces) fail(409, 'This version already uses pieces.');
+          if (value.envelope === undefined) { run('UPDATE envelopes SET pieces=1 WHERE vaultId=? AND id=? AND envelopeHash=?', vaultId, id, value.from); return { converted: false }; }
+          const size = envelopeSize(value.envelope), envelopeHash = hash(value.envelope);
+          requireValue(!one('SELECT 1 FROM envelopes WHERE vaultId=? AND id=? AND envelopeHash=?', vaultId, id, envelopeHash), 'Invalid conversion');
+          for (const name of value.chunks) if (!one('SELECT 1 FROM chunks WHERE vaultId=? AND name=?', vaultId, name)) fail(409, 'An encrypted piece is missing. Upload it again.');
+          run('INSERT INTO envelopes(vaultId,id,envelopeHash,envelope,size,pieces) VALUES(?,?,?,?,?,1)', vaultId, id, envelopeHash, value.envelope, size);
+          for (const name of new Set(value.chunks)) {
+            run('INSERT INTO envelope_chunks VALUES(?,?,?,?)', vaultId, id, envelopeHash, name);
+            run('UPDATE chunks SET claimed=1 WHERE vaultId=? AND name=?', vaultId, name);
+          }
+          const total = size + pieceBytes(vaultId, id, envelopeHash);
+          // Cleared notes keep size 0 in the change feed.
+          run('UPDATE changes SET size=? WHERE vaultId=? AND id=? AND size>0 AND revision IN (SELECT revision FROM revisions WHERE vaultId=? AND id=? AND envelopeHash=?)', total, vaultId, id, vaultId, id, value.from);
+          run('UPDATE revisions SET envelopeHash=?,size=? WHERE vaultId=? AND id=? AND envelopeHash=?', envelopeHash, total, vaultId, id, value.from);
+          run('INSERT INTO retired_envelopes VALUES(?,?,?,?,?,?,?)', vaultId, id, value.from, old.envelope, old.size, clock(), envelopeHash);
+          run('DELETE FROM envelopes WHERE vaultId=? AND id=? AND envelopeHash=?', vaultId, id, value.from);
+          return { converted: true };
+        });
+        reply(200, result); return;
       }
       if (method === 'GET' && !action) {
         const revision = url.searchParams.has('revision') ? Number(url.searchParams.get('revision')) : undefined;
