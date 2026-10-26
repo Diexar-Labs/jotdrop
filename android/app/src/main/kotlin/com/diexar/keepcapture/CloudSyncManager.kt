@@ -30,6 +30,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 data class CloudSyncStatus(val connected: Boolean, val enabled: Boolean, val server: String, val vaultId: String,
     val localVault: String?, val lastSynced: String?, val message: String, val conflicts: Int, val oldUpload: Boolean = false)
 class CloudSyncException(message: String) : Exception(message)
+/** A cloud file without its content, for the Files tab. */
+data class CloudListedFile(val id: String, val path: String, val revision: Int, val deleted: Boolean)
 
 object CloudSyncManager {
     private val mutex = Mutex()
@@ -176,6 +178,45 @@ object CloudSyncManager {
 
     private fun scope(client: CloudClient, binding: String): String = CloudSyncEngine.hash((client.credentials.url + "\n" + client.credentials.vaultId + "\n" + client.credentials.vaultKey + "\n" + binding).toByteArray(Charsets.UTF_8))
 
+    // The cloud index belongs to the cloud, not to a local folder: the sync and the Files tab share it.
+    private fun indexScope(client: CloudClient): String = scope(client, "\u0000cloud index")
+    private fun loadIndex(store: CloudPreviewStore, client: CloudClient): CloudRemoteIndex {
+        val json = store.syncState(indexScope(client)) ?: return CloudRemoteIndex()
+        val index = CloudRemoteIndex(json.getLong("cursor"))
+        val objects = json.getJSONObject("objects")
+        for (id in objects.keys()) objects.getJSONObject(id).let { index.objects[id] = CloudIndexedFile(it.getString("path"), it.getInt("revision"), it.getBoolean("deleted"), it.getString("hash")) }
+        val pending = json.getJSONObject("pending")
+        for (id in pending.keys()) index.pending[id] = pending.getInt(id)
+        return index
+    }
+    private fun saveIndex(store: CloudPreviewStore, client: CloudClient, index: CloudRemoteIndex) {
+        val objects = JSONObject()
+        for ((id, file) in index.objects) objects.put(id, JSONObject().put("path", file.path).put("revision", file.revision).put("deleted", file.deleted).put("hash", file.hash))
+        val pending = JSONObject()
+        for ((id, revision) in index.pending) pending.put(id, revision)
+        store.saveSyncState(indexScope(client), JSONObject().put("cursor", index.cursor).put("objects", objects).put("pending", pending))
+    }
+    // Each local file's hash by size and time, so a sync reads only changed files; losing it only costs one full read.
+    private fun loadSeen(store: CloudPreviewStore, scope: String): MutableMap<String, CloudSeenFile> {
+        val json = store.syncState("$scope-seen") ?: return mutableMapOf()
+        return json.keys().asSequence().associateWithTo(mutableMapOf()) { path -> json.getJSONObject(path).let { CloudSeenFile(it.getLong("size"), it.getLong("modified"), it.getString("hash")) } }
+    }
+    private fun saveSeen(store: CloudPreviewStore, scope: String, seen: Map<String, CloudSeenFile>) {
+        val json = JSONObject()
+        for ((path, file) in seen) json.put(path, JSONObject().put("size", file.size).put("modified", file.modified).put("hash", file.hash))
+        store.saveSyncState("$scope-seen", json)
+    }
+
+    /** The cloud's files without their content, from the index the sync keeps: only new changes are read. */
+    suspend fun cloudFiles(context: Context): List<CloudListedFile> = serialized {
+        val coroutine = currentCoroutineContext()
+        val store = CloudPreviewStore(context)
+        val client = client(context) ?: throw CloudSyncException("Pair this device first")
+        val index = loadIndex(store, client)
+        CloudSyncEngine.remoteFiles(index, client::changes, client::readOrNull, { coroutine.ensureActive() }, { saveIndex(store, client, index) })
+        index.objects.map { (id, file) -> CloudListedFile(id, file.path, file.revision, file.deleted) }
+    }
+
     private fun finishUpload(store: CloudPreviewStore, scope: String, client: CloudClient, state: JSONObject, checkActive: () -> Unit): CloudSyncObject? {
         val prepared = store.upload(scope, client.credentials.deviceId) ?: return null
         val file = client.preparedFile(prepared)
@@ -226,7 +267,7 @@ object CloudSyncManager {
                 state.put("pending", JSONObject().put("path", name).put("original", original.orEmpty()).put("replacement", replacement.orEmpty()))
                 store.saveSyncState(scope, state)
             }, { state.remove("pending"); store.saveSyncState(scope, state) })
-            val bytes = adapter.list()[path]
+            val bytes = if (path in adapter.list()) adapter.read(path) else null
             val remote = client.read(CloudCrypto.objectId(client.credentials.vaultKey, path))
             if (keepLocal) {
                 if (bytes == null) { if (!remote.deleted) client.remove(remote.id, remote.revision) }
@@ -303,10 +344,21 @@ object CloudSyncManager {
                 val value = baseline.getJSONObject(name)
                 tracked[name] = CloudSyncBase(value.getInt("revision"), value.getString("hash"), value.getBoolean("deleted"))
             }
+            val index = loadIndex(store, client)
+            val seen = loadSeen(store, scope)
+            // A big first sync takes a while: show how far it is, once a second at most.
+            var shownAt = 0L
+            fun progress(label: String): (Int, Int) -> Unit = { done, total ->
+                if (System.currentTimeMillis() - shownAt >= 1000) {
+                    shownAt = System.currentTimeMillis()
+                    store.saveSettings(settings.put("message", "$label $done / $total"))
+                    changed.value++
+                }
+            }
             val remote = object : CloudSyncRemote {
-                override fun list(): List<CloudSyncObject> {
+                override fun list(): List<CloudSyncEntry> {
                     phase = CloudDiagnostics.Phase.REMOTE_LIST
-                    val files = client.changesAndFiles(uploadActive).map { CloudSyncObject(it.path, it.bytes, it.revision, it.deleted) }
+                    val files = CloudSyncEngine.remoteFiles(index, client::changes, client::readOrNull, uploadActive, { saveIndex(store, client, index) }, progress("Reading the cloud..."))
                     phase = CloudDiagnostics.Phase.RECONCILE
                     return files
                 }
@@ -314,6 +366,8 @@ object CloudSyncManager {
                     checkActive()
                     phase = CloudDiagnostics.Phase.REMOTE_WRITE
                     val saved = writeUpload(store, scope, client, state, path, bytes, baseRevision, uploadActive)
+                    // What this device wrote goes into its index, so the changes feed does not bring it back.
+                    index.objects[CloudCrypto.objectId(client.credentials.vaultKey, path)] = CloudIndexedFile(path, saved.revision, false, CloudSyncEngine.hash(bytes))
                     phase = CloudDiagnostics.Phase.RECONCILE
                     return saved
                 }
@@ -324,23 +378,34 @@ object CloudSyncManager {
                     val current = client.read(id)
                     check(current.revision == baseRevision) { "Cloud changed during sync. Retry to compare both versions" }
                     val deleted = CloudSyncObject(path, current.bytes, client.remove(id, baseRevision), true)
+                    index.objects[id] = CloudIndexedFile(path, deleted.revision, true, CloudSyncEngine.hash(current.bytes))
                     phase = CloudDiagnostics.Phase.RECONCILE
                     return deleted
                 }
             }
             phase = CloudDiagnostics.Phase.RECONCILE
-            val report = CloudSyncEngine.sync(remote, adapter, tracked, uploadActive) { values ->
-                phase = CloudDiagnostics.Phase.STATE_SAVE
-                val next = JSONObject()
-                for ((path, base) in values) next.put(path, JSONObject().put("revision", base.revision).put("hash", base.hash).put("deleted", base.deleted))
-                state.put("tracked", next)
-                store.saveSyncState(scope, state)
-                phase = CloudDiagnostics.Phase.RECONCILE
+            val report = try {
+                CloudSyncEngine.sync(remote, adapter, tracked, uploadActive, seen, progress("Syncing...")) { values ->
+                    phase = CloudDiagnostics.Phase.STATE_SAVE
+                    val next = JSONObject()
+                    for ((path, base) in values) next.put(path, JSONObject().put("revision", base.revision).put("hash", base.hash).put("deleted", base.deleted))
+                    state.put("tracked", next)
+                    store.saveSyncState(scope, state)
+                    // With the baselines, so a sync cut off by a crash does not download its own uploads again.
+                    saveIndex(store, client, index)
+                    phase = CloudDiagnostics.Phase.RECONCILE
+                }
+            } finally {
+                runCatching { saveIndex(store, client, index); saveSeen(store, scope, seen) }
             }
             phase = CloudDiagnostics.Phase.STATE_SAVE
             settings.put("lastSynced", Instant.now().toString()).put("conflicts", report.conflicts)
                 .put("message", "Uploaded ${report.uploaded}, downloaded ${report.downloaded}, deleted ${report.deleted}. " +
-                    if (report.conflicts > 0) "${report.conflicts} conflicts: originals were kept. Compare .cloud-conflict copies before choosing a version." else "Sync complete. Recovery copies remain local.")
+                    (if (report.conflicts > 0) "${report.conflicts} conflicts: originals were kept. Compare .cloud-conflict copies before choosing a version." else "Sync complete. Recovery copies remain local.") +
+                    report.skipped.takeIf { it.isNotEmpty() }?.let { big ->
+                        " ${if (big.size == 1) "1 file is" else "${big.size} files are"} larger than 4 MiB and ${if (big.size == 1) "stays" else "stay"} only on this device: " +
+                            big.take(3).joinToString(", ") { it.substringAfterLast('/') } + (if (big.size > 3) " and ${big.size - 3} more." else ".")
+                    }.orEmpty())
             store.saveSettings(settings)
             changed.value++
         } catch (error: Exception) {

@@ -4,7 +4,8 @@ private class CheckRemote : CloudSyncRemote {
     val files = linkedMapOf<String, CloudSyncObject>()
     var loseWrite = false
     var loseDelete = false
-    override fun list(): List<CloudSyncObject> = files.values.toList()
+    var downloads = 0
+    override fun list(): List<CloudSyncEntry> = files.values.map { file -> CloudSyncEntry(file.path, file.revision, file.deleted, CloudSyncEngine.hash(file.bytes)) { downloads++; file.bytes.copyOf() } }
     override fun write(path: String, bytes: ByteArray, baseRevision: Int): CloudSyncObject {
         check((files[path]?.revision ?: 0) == baseRevision) { "409" }
         val entry = CloudSyncObject(path, bytes.copyOf(), baseRevision + 1)
@@ -26,7 +27,11 @@ private class CheckLocal : CloudSyncLocal {
     val files = linkedMapOf<String, ByteArray>()
     val copies = linkedMapOf<String, ByteArray>()
     var race = false
-    override fun list(): Map<String, ByteArray> = files.mapValues { it.value.copyOf() }
+    var reads = 0
+    // Each new content is a new array, so its identity stands in for a modification time.
+    private val times = java.util.IdentityHashMap<ByteArray, Long>()
+    override fun list(): Map<String, CloudLocalFile> = files.mapValues { (_, bytes) -> CloudLocalFile(bytes.size.toLong(), times.getOrPut(bytes) { times.size + 1L }) }
+    override fun read(path: String): ByteArray { reads++; return requireNotNull(files[path]) { "Expected a local file" }.copyOf() }
     override fun compareAndSet(path: String, expected: ByteArray?, replacement: ByteArray?): Boolean {
         if (race) { race = false; files[path] = "racing edit".toByteArray(); return false }
         val current = files[path]
@@ -35,6 +40,125 @@ private class CheckLocal : CloudSyncLocal {
         return true
     }
     override fun conflict(path: String, remoteRevision: Int, remoteBytes: ByteArray) { copies["$path:$remoteRevision"] = remoteBytes.copyOf() }
+}
+
+// A synthetic file carries its own recipe in its first line, so neither side has to keep 300 MB around.
+private fun recipeBytes(recipe: String): ByteArray {
+    val bytes = ByteArray(recipe.substringAfterLast('#').toInt()) { recipe.length.toByte() }
+    "$recipe\n".toByteArray().copyInto(bytes)
+    return bytes
+}
+private fun recipeOf(bytes: ByteArray): String = String(bytes, 0, bytes.indexOf('\n'.code.toByte()))
+
+private class ScaleCloud {
+    class Stored(val path: String, val revision: Int, val deleted: Boolean, val recipe: String)
+    val objects = linkedMapOf<String, Stored>()
+    val feed = mutableListOf<CloudChange>()
+    var reads = 0
+    fun store(file: Stored) { objects[file.path] = file; feed += CloudChange(file.path, file.revision) }
+    fun changes(after: Long): CloudChanges = feed.drop(after.toInt()).take(500).let { CloudChanges(it, after + it.size, after + 500 < feed.size) }
+    fun read(id: String): CloudPreviewFile? { reads++; val file = objects[id] ?: return null; return CloudPreviewFile(id, file.revision, file.path, recipeBytes(file.recipe), file.deleted) }
+}
+
+/** One device with what it last saved, so a restart goes on from exactly that. */
+private class ScaleDevice(val cloud: ScaleCloud) {
+    val files = linkedMapOf<String, String>()
+    private val times = mutableMapOf<String, Long>()
+    private var clock = 0L
+    var reads = 0
+    var writes = 0
+    var tracked = mutableMapOf<String, CloudSyncBase>()
+    var seen = mutableMapOf<String, CloudSeenFile>()
+    var index = CloudRemoteIndex()
+    private var savedTracked = mapOf<String, CloudSyncBase>()
+    private var savedSeen = mapOf<String, CloudSeenFile>()
+    private var savedIndex = CloudRemoteIndex()
+    fun set(path: String, recipe: String) { files[path] = recipe; times[path] = ++clock }
+    private fun copy(value: CloudRemoteIndex) = CloudRemoteIndex(value.cursor, LinkedHashMap(value.objects), LinkedHashMap(value.pending))
+    val local = object : CloudSyncLocal {
+        override fun list(): Map<String, CloudLocalFile> = files.filterKeys { !it.contains(".cloud-") }.mapValues { (path, recipe) -> CloudLocalFile(recipe.substringAfterLast('#').toLong(), times.getValue(path)) }
+        override fun read(path: String): ByteArray { reads++; return recipeBytes(files.getValue(path)) }
+        override fun compareAndSet(path: String, expected: ByteArray?, replacement: ByteArray?): Boolean {
+            val actual = files[path]
+            if ((actual == null) != (expected == null) || actual != null && recipeOf(expected!!) != actual) return false
+            if (replacement == null) files.remove(path) else set(path, recipeOf(replacement))
+            writes++
+            return true
+        }
+        override fun conflict(path: String, remoteRevision: Int, remoteBytes: ByteArray) = set("$path.cloud-conflict-r$remoteRevision", recipeOf(remoteBytes))
+    }
+    fun sync(stop: () -> Unit = {}): CloudSyncReport {
+        val remote = object : CloudSyncRemote {
+            override fun list() = CloudSyncEngine.remoteFiles(index, cloud::changes, cloud::read, stop, { savedIndex = copy(index) })
+            // Like the app: what this device wrote goes into its index, so the feed does not bring it back.
+            override fun write(path: String, bytes: ByteArray, baseRevision: Int): CloudSyncObject {
+                check((cloud.objects[path]?.revision ?: 0) == baseRevision)
+                cloud.store(ScaleCloud.Stored(path, baseRevision + 1, false, recipeOf(bytes)))
+                index.objects[path] = CloudIndexedFile(path, baseRevision + 1, false, CloudSyncEngine.hash(bytes))
+                return CloudSyncObject(path, bytes, baseRevision + 1)
+            }
+            override fun delete(path: String, baseRevision: Int): CloudSyncObject {
+                val old = cloud.objects.getValue(path)
+                check(old.revision == baseRevision)
+                cloud.store(ScaleCloud.Stored(path, baseRevision + 1, true, old.recipe))
+                val bytes = recipeBytes(old.recipe)
+                index.objects[path] = CloudIndexedFile(path, baseRevision + 1, true, CloudSyncEngine.hash(bytes))
+                return CloudSyncObject(path, bytes, baseRevision + 1, true)
+            }
+        }
+        return CloudSyncEngine.sync(remote, local, tracked, stop, seen) { savedTracked = it; savedSeen = seen.toMap() }
+    }
+    fun restart() { tracked = savedTracked.toMutableMap(); seen = savedSeen.toMutableMap(); index = copy(savedIndex) }
+}
+
+/** 5,000 files and about 300 MB; checkCloudSync runs in a 160 MiB heap, so a sync that held them all would fail. */
+private fun checkScale() {
+    val started = System.currentTimeMillis()
+    val cloud = ScaleCloud()
+    val a = ScaleDevice(cloud)
+    val b = ScaleDevice(cloud)
+    var total = 0L
+    for (n in 0 until 4500) { a.set("notes/Folder ${n % 30}/Note $n.md", "notes/$n#1#2048"); total += 2048 }
+    for (n in 0 until 500) {
+        val size = if (n < 10) CloudCrypto.MAX_FILE_BYTES else 520 * 1024
+        a.set("attachments/photo-$n.jpg", "attachments/$n#1#$size")
+        total += size
+    }
+    check(total > 290L * 1024 * 1024)
+    check(a.sync() == CloudSyncReport(uploaded = 5000))
+    a.reads = 0
+    cloud.reads = 0
+    check(a.sync() == CloudSyncReport())
+    check(a.reads == 0 && cloud.reads == 0) { "A quiet sync reads and downloads nothing" }
+
+    // A new device, cut off twice: once while it learns the cloud, once while it downloads.
+    check(runCatching { b.sync { check(cloud.reads < 2000) { "Cut off" } } }.isFailure)
+    b.restart()
+    val learned = b.index.objects.size
+    check(learned >= 1000) { "Files learned before the cut-off are kept" }
+    cloud.reads = 0
+    check(runCatching { b.sync { check(b.writes < 1500) { "Cut off" } } }.isFailure)
+    b.restart()
+    check(cloud.reads - b.writes <= 5000 - learned + 1) { "A resumed listing reads only the files it had not learned" }
+    val resumed = b.sync()
+    check(resumed.uploaded == 0 && resumed.conflicts == 0)
+    check(b.writes == 5000) { "Every file arrives exactly once" }
+    check(b.files == a.files)
+
+    // Downloaded files are read once more to learn their time; after that a quiet sync reads nothing.
+    b.sync()
+    b.reads = 0
+    cloud.reads = 0
+    check(b.sync() == CloudSyncReport() && b.reads == 0 && cloud.reads == 0)
+
+    // Small changes stay small.
+    for (n in 0 until 10) a.set("notes/Folder ${n % 30}/Note $n.md", "notes/$n#2#2100")
+    for (n in 10 until 15) a.files.remove("notes/Folder ${n % 30}/Note $n.md")
+    a.reads = 0
+    check(a.sync() == CloudSyncReport(uploaded = 10, deleted = 5) && a.reads == 10)
+    cloud.reads = 0
+    check(b.sync() == CloudSyncReport(downloaded = 10, deleted = 5) && cloud.reads <= 15)
+    println("Native sync scale check passed: 5,000 files, ${total / 1024 / 1024} MiB in a ${Runtime.getRuntime().maxMemory() / 1024 / 1024} MiB heap, cut off twice and resumed, ${(System.currentTimeMillis() - started) / 1000} s")
 }
 
 fun main() {
@@ -255,11 +379,28 @@ fun main() {
     }
     check(CloudSyncEngine.path("notes/x.cloud-conflict-r1.md", allowPreserved = true) == "notes/x.cloud-conflict-r1.md")
     check(CloudSyncEngine.path("attachments/x.cloud-recovery-hash.bin", allowPreserved = true) == "attachments/x.cloud-recovery-hash.bin")
-    val oversized = CheckLocal().also { it.files[note] = ByteArray(CloudCrypto.MAX_FILE_BYTES + 1) }
-    check(runCatching { CloudSyncEngine.sync(CheckRemote(), oversized, mutableMapOf()) {} }.isFailure)
+    // A file over 4 MiB stays on its device and the rest syncs; a synced file that grows past it is never deleted elsewhere.
+    val bigRemote = CheckRemote()
+    val oversized = CheckLocal().also { it.files[note] = ByteArray(CloudCrypto.MAX_FILE_BYTES + 1); it.files["attachments/small.bin"] = ByteArray(10) }
+    val bigTracked = mutableMapOf<String, CloudSyncBase>()
+    check(CloudSyncEngine.sync(bigRemote, oversized, bigTracked) {} == CloudSyncReport(uploaded = 1, skipped = mutableListOf(note)))
+    check(note !in bigRemote.files)
+    oversized.files["attachments/small.bin"] = ByteArray(CloudCrypto.MAX_FILE_BYTES + 1)
+    check(CloudSyncEngine.sync(bigRemote, oversized, bigTracked) {} == CloudSyncReport(skipped = mutableListOf("attachments/small.bin", note)))
+    check(!bigRemote.files.getValue("attachments/small.bin").deleted && bigRemote.files.getValue("attachments/small.bin").bytes.size == 10)
     val stopped = CheckRemote()
     val unsent = CheckLocal().also { it.files[note] = "retained after pause".toByteArray() }
     check(runCatching { CloudSyncEngine.sync(stopped, unsent, mutableMapOf(), { error("Paused") }) {} }.isFailure)
     check(stopped.files.isEmpty() && String(unsent.files.getValue(note)) == "retained after pause")
+    // A quiet sync reads no unchanged local file again.
+    val quiet = CheckLocal().also { it.files["notes/quiet.md"] = "quiet".toByteArray() }
+    val quietSeen = mutableMapOf<String, CloudSeenFile>()
+    val quietRemote = CheckRemote()
+    val quietTracked = mutableMapOf<String, CloudSyncBase>()
+    CloudSyncEngine.sync(quietRemote, quiet, quietTracked, seen = quietSeen) {}
+    quiet.reads = 0
+    quietRemote.downloads = 0
+    check(CloudSyncEngine.sync(quietRemote, quiet, quietTracked, seen = quietSeen) {} == CloudSyncReport() && quiet.reads == 0 && quietRemote.downloads == 0)
     println("Native sync checks passed: two devices, binary attachments, offline conflicts, CAS races, delete/recreate/restore, lost responses, persisted baselines and fail-closed limits")
+    checkScale()
 }

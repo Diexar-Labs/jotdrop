@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { createCloudServer } from '../server.mjs';
 import { CloudClient } from './client.mjs';
 import { objectId, randomToken } from './crypto.mjs';
@@ -13,11 +15,21 @@ const decode = (value) => new TextDecoder().decode(value);
 
 // One device: a folder in memory, its baselines and its view of the changes feed.
 function device(client) {
-  const files = new Map(), tracked = {}, index = { cursor: 0, objects: {} };
+  const files = new Map(), tracked = {}, index = { cursor: 0, objects: {} }, seen = {};
+  // Each new content is a new array, so its identity stands in for a modification time.
+  const times = new WeakMap();
+  let clock = 0;
+  const modified = (bytes) => { if (!times.has(bytes)) times.set(bytes, ++clock); return times.get(bytes); };
   const local = {
     editing: new Set(),
+    reads: 0,
     // Like the vault adapters: conflict copies stay local.
-    async list() { return new Map([...files].filter(([path]) => !isPreserved(path))); },
+    async list() { return new Map([...files].filter(([path]) => !isPreserved(path)).map(([path, bytes]) => [path, { size: bytes.length, modified: modified(bytes) }])); },
+    async read(path) {
+      this.reads++;
+      if (!files.has(path)) throw new Error('Expected a local file');
+      return files.get(path);
+    },
     async compareAndSet(path, expected, replacement) {
       const actual = files.get(path);
       if ((actual === undefined) !== (expected === null) || (actual && decode(actual) !== decode(expected)) || this.editing.has(path)) return false;
@@ -31,7 +43,7 @@ function device(client) {
     async write(path, bytes, baseRevision) { const saved = await client.write(path, bytes, baseRevision); return { path, revision: saved.revision, deleted: false, hash: await hash(bytes) }; },
     async delete(path, baseRevision) { const saved = await client.remove(await objectId(client.credentials.vaultKey, path), baseRevision); return { path, revision: saved.revision, deleted: true, hash: '' }; },
   };
-  return { files, tracked, index, local, sync: () => syncFolder(remote, { list: () => local.list(), compareAndSet: (...args) => local.compareAndSet(...args), conflict: (...args) => local.conflict(...args) }, tracked, async () => {}) };
+  return { files, tracked, index, local, sync: () => syncFolder(remote, local, tracked, async () => {}, { seen }) };
 }
 
 test('two devices sync edits, moves and deletions, and keep both versions on conflict', async (t) => {
@@ -44,8 +56,8 @@ test('two devices sync edits, moves and deletions, and keep both versions on con
 
   a.files.set('notes/Shopping.md', text('Milk'));
   a.files.set('attachments/photo.jpg', new Uint8Array([1, 2, 3]));
-  assert.deepEqual(await a.sync(), { uploaded: 2, downloaded: 0, deleted: 0, conflicts: 0 });
-  assert.deepEqual(await b.sync(), { uploaded: 0, downloaded: 2, deleted: 0, conflicts: 0 });
+  assert.deepEqual(await a.sync(), { uploaded: 2, downloaded: 0, deleted: 0, conflicts: 0, skipped: [] });
+  assert.deepEqual(await b.sync(), { uploaded: 0, downloaded: 2, deleted: 0, conflicts: 0, skipped: [] });
   assert.equal(decode(b.files.get('notes/Shopping.md')), 'Milk');
 
   // An edit on one device arrives on the other; a quiet sync reads nothing new.
@@ -54,15 +66,18 @@ test('two devices sync edits, moves and deletions, and keep both versions on con
   assert.equal((await a.sync()).downloaded, 1);
   assert.equal(decode(a.files.get('notes/Shopping.md')), 'Milk, eggs');
   const reads = t.mock.method(owner, 'read');
-  assert.deepEqual(await a.sync(), { uploaded: 0, downloaded: 0, deleted: 0, conflicts: 0 });
+  assert.deepEqual(await a.sync(), { uploaded: 0, downloaded: 0, deleted: 0, conflicts: 0, skipped: [] });
   assert.equal(reads.mock.callCount(), 0, 'Unchanged files are not downloaded again');
   reads.mock.restore();
+  a.local.reads = 0;
+  await a.sync();
+  assert.equal(a.local.reads, 0, 'Unchanged local files are not read again');
 
   // Archive = a move: the new place uploads before the old one is removed.
   a.files.set('notes/Archive/Shopping.md', a.files.get('notes/Shopping.md'));
   a.files.delete('notes/Shopping.md');
-  assert.deepEqual(await a.sync(), { uploaded: 1, downloaded: 0, deleted: 1, conflicts: 0 });
-  assert.deepEqual(await b.sync(), { uploaded: 0, downloaded: 1, deleted: 1, conflicts: 0 });
+  assert.deepEqual(await a.sync(), { uploaded: 1, downloaded: 0, deleted: 1, conflicts: 0, skipped: [] });
+  assert.deepEqual(await b.sync(), { uploaded: 0, downloaded: 1, deleted: 1, conflicts: 0, skipped: [] });
   assert.ok(!b.files.has('notes/Shopping.md') && b.files.has('notes/Archive/Shopping.md'));
 
   // Both change the same note: the local text stays, the cloud text comes next to it.
@@ -98,6 +113,50 @@ test('two devices sync edits, moves and deletions, and keep both versions on con
   assert.equal((await b.sync()).conflicts, 1, 'An edit wins over a deletion elsewhere');
   assert.equal(decode(b.files.get('notes/Archive/Shopping.cloud-conflict-r4.md')), 'Edited while deleted elsewhere');
   assert.equal(decode(a.files.get('notes/Archive/Shopping.md')), 'Edited while deleted elsewhere');
+});
+
+test('more than 500 files sync through the real server, and a quiet sync reads nothing', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'jotdrop-sync-many-'));
+  const enrollmentToken = randomToken(), app = await createCloudServer({ dataDir: directory, enrollmentToken });
+  t.after(async () => { await app.close(); await rm(directory, { recursive: true, force: true }); });
+  const owner = (await CloudClient.create({ url: `http://127.0.0.1:${app.port}`, enrollmentToken, deviceName: 'Laptop' })).client;
+  const other = await CloudClient.claim({ pairingCode: (await owner.makePairing('Desktop')).pairingCode });
+  const a = device(owner), b = device(other);
+  for (let n = 0; n < 600; n++) a.files.set(`notes/Note ${n}.md`, text(`Note ${n}`));
+  assert.equal((await a.sync()).uploaded, 600);
+  assert.equal((await b.sync()).downloaded, 600);
+  assert.equal(decode(b.files.get('notes/Note 599.md')), 'Note 599');
+  await b.sync();
+  b.local.reads = 0;
+  const reads = t.mock.method(other, 'read');
+  assert.deepEqual(await b.sync(), { uploaded: 0, downloaded: 0, deleted: 0, conflicts: 0, skipped: [] });
+  assert.equal(b.local.reads + reads.mock.callCount(), 0);
+});
+
+test('a file over 4 MiB stays on its device and the rest syncs; it is never deleted elsewhere', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'jotdrop-sync-big-'));
+  const enrollmentToken = randomToken(), app = await createCloudServer({ dataDir: directory, enrollmentToken });
+  t.after(async () => { await app.close(); await rm(directory, { recursive: true, force: true }); });
+  const owner = (await CloudClient.create({ url: `http://127.0.0.1:${app.port}`, enrollmentToken, deviceName: 'Laptop' })).client;
+  const other = await CloudClient.claim({ pairingCode: (await owner.makePairing('Desktop')).pairingCode });
+  const a = device(owner), b = device(other);
+  a.files.set('notes/Trip.md', text('![[photo.jpg]]'));
+  a.files.set('attachments/photo.jpg', new Uint8Array(1000));
+  a.files.set('attachments/big.jpg', new Uint8Array(5 * 1024 * 1024));
+  assert.deepEqual(await a.sync(), { uploaded: 2, downloaded: 0, deleted: 0, conflicts: 0, skipped: ['attachments/big.jpg'] });
+  assert.deepEqual(await b.sync(), { uploaded: 0, downloaded: 2, deleted: 0, conflicts: 0, skipped: [] });
+  // A synced photo that is replaced by a bigger one: the cloud keeps the old one, nothing is removed anywhere.
+  a.files.set('attachments/photo.jpg', new Uint8Array(5 * 1024 * 1024));
+  assert.deepEqual(await a.sync(), { uploaded: 0, downloaded: 0, deleted: 0, conflicts: 0, skipped: ['attachments/big.jpg', 'attachments/photo.jpg'] });
+  assert.equal((await b.sync()).deleted, 0);
+  assert.equal(b.files.get('attachments/photo.jpg').length, 1000);
+});
+
+test('5,000 files and 300 MB sync in bounded memory, and a cut-off sync goes on where it was', () => {
+  const output = execFileSync(process.execPath, ['--expose-gc', fileURLToPath(new URL('./sync-scale.check.mjs', import.meta.url))], { encoding: 'utf8' });
+  const result = JSON.parse(output.trim().split('\n').pop());
+  assert.equal(result.files, 5000);
+  assert.ok(result.mib >= 290);
 });
 
 test('paths follow the Android rules', () => {

@@ -41,6 +41,8 @@ tasks.register<JavaExec>("checkCloudSync") {
     classpath(cloudCryptoClasses)
     classpath(provider { project(":app").configurations.getByName("debugCompileClasspath") })
     mainClass.set("com.diexar.keepcapture.CloudSyncEngineCheckKt")
+    // The sync scale check moves 300 MB through this heap; holding them all at once would fail.
+    maxHeapSize = "160m"
 }
 
 val listEditorClasses = layout.buildDirectory.dir("list-editor-check")

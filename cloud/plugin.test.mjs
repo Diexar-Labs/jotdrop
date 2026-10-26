@@ -42,7 +42,15 @@ function vault() {
   const files = new Map(), folders = new Set(['']), trashed = [];
   const parentOf = (path) => path.split('/').slice(0, -1).join('/');
   const addParents = (path) => { for (let parent = parentOf(path); parent; parent = parentOf(parent)) folders.add(parent); };
-  const file = (path) => (files.has(path) ? { path, extension: path.split('.').pop(), isTestFile: true } : null);
+  // Like Obsidian's stat: each new content is a new array, so its identity stands in for a modification time.
+  const times = new WeakMap();
+  let clock = 0;
+  const stat = (path) => {
+    const bytes = files.get(path);
+    if (!times.has(bytes)) times.set(bytes, ++clock);
+    return { type: 'file', size: bytes.length, mtime: times.get(bytes) };
+  };
+  const file = (path) => (files.has(path) ? { path, extension: path.split('.').pop(), isTestFile: true, stat: stat(path) } : null);
   const plugin = {
     settings: { notesFolder: 'Mini Notes', archiveFolder: 'Mini Notes/Archive', cloudServer: '' },
     resolveAssetsFolder: () => 'Mini Notes/.attachments',
@@ -66,7 +74,7 @@ function vault() {
             const direct = (entry) => parentOf(entry) === path;
             return { files: [...files.keys()].filter(direct), folders: [...folders].filter((entry) => entry && direct(entry)) };
           },
-          async stat(path) { return files.has(path) ? { type: 'file', size: files.get(path).length } : folders.has(path) ? { type: 'folder' } : null; },
+          async stat(path) { return files.has(path) ? stat(path) : folders.has(path) ? { type: 'folder' } : null; },
           async readBinary(path) { return files.get(path).slice().buffer; },
           async writeBinary(path, data) { addParents(path); files.set(path, new Uint8Array(data)); },
           async mkdir(path) { addParents(`${path}/x`); },
@@ -117,6 +125,14 @@ test('the plugin signs in with an account, syncs the real JotDrop folders both w
     return Object.fromEntries(await Promise.all(ids.map(async (id) => { const entry = await phone.read(id); return [entry.file.path, entry.deleted ? null : decode(Buffer.from(entry.file.content, 'base64url'))]; })));
   };
   assert.deepEqual(await pathsInCloud(), { 'attachments/photo.jpg': '\x01\x02\x03', 'notes/Archive/Old.md': 'Archived', 'notes/Shopping.md': 'Milk' });
+
+  // A photo over 4 MiB stays in this vault and is named; the rest still syncs.
+  v.put('Mini Notes/.attachments/Big photo.jpg', new Uint8Array(5 * 1024 * 1024));
+  v.put('Mini Notes/Later.md', 'Still syncs');
+  await cloud.syncNow();
+  assert.match(cloud.status, /Synced\. 1 up, 0 down, 0 removed\. 1 file is larger than 4 MiB and stays only on this device: Big photo\.jpg\./);
+  assert.ok(!('attachments/Big photo.jpg' in await pathsInCloud()));
+  v.files.delete('Mini Notes/.attachments/Big photo.jpg');
 
   // A note made on the phone arrives; an edit here goes up.
   await phone.write('notes/From phone.md', text('Hello from Android'), 0);

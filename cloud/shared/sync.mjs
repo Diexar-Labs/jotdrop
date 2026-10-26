@@ -1,8 +1,11 @@
 import { base64ToBytes, bytesToBase64, MAX_FILE_BYTES, normalizePath } from './crypto.mjs';
 
 // Two-way sync of a local notes folder, the same rules as Android's CloudSyncEngine.
-export const MAX_SYNC_FILES = 500;
-export const MAX_SYNC_BYTES = 64 * 1024 * 1024;
+// No limit on the number of files or their total size: one file at a time is in memory; the cloud plan sets the storage.
+// Cloud files read while listing stay in memory up to this much, so a first sync does not download them twice.
+export const KEPT_BYTES = 16 * 1024 * 1024;
+// Progress is saved at least this often; a sync cut off in between redoes no upload or download twice.
+const SAVE_EVERY_MS = 1000;
 
 export const hash = async (bytes) => bytesToBase64(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)));
 export const isPreserved = (name) => name.includes('.cloud-conflict-') || name.includes('.cloud-recovery-');
@@ -23,31 +26,30 @@ export function copyName(path, suffix) {
 /**
  * Reconcile only against acknowledged baselines, never timestamps or missing remote entries.
  * remote.list() gives `{ path, revision, deleted, hash, bytes() }`; write/delete give the acknowledged object.
- * local.list() gives a Map of path to bytes; compareAndSet(path, expected, replacement) uses null for "no file".
+ * local.list() gives a Map of path to `{ size, modified }` without reading files; local.read(path) gives the bytes;
+ * compareAndSet(path, expected, replacement) uses null for "no file".
+ * `seen` keeps each local file's hash by size and modification time, so a sync reads only files that changed.
+ * Baselines are saved at least every second and at the end: every step is safe to repeat after a cut-off sync.
+ * Files over 4 MiB are left alone and come back in `skipped`.
  */
-export async function syncFolder(remote, local, tracked, persist, checkActive = () => {}) {
+export async function syncFolder(remote, local, tracked, persist, { checkActive = () => {}, seen = {}, progress = (done, total) => {} } = {}) {
   checkActive();
-  const result = { uploaded: 0, downloaded: 0, deleted: 0, conflicts: 0 };
+  const result = { uploaded: 0, downloaded: 0, deleted: 0, conflicts: 0, skipped: [] };
   const files = await local.list();
   const entries = await remote.list();
-  if (files.size > MAX_SYNC_FILES || entries.length > MAX_SYNC_FILES || Object.keys(tracked).length > MAX_SYNC_FILES) throw new Error(`Cloud sync supports at most ${MAX_SYNC_FILES} files`);
   const clouds = new Map();
   for (const entry of entries) {
     if (clouds.has(syncPath(entry.path))) throw new Error('Duplicate encrypted cloud paths');
     if (!Number.isSafeInteger(entry.revision) || entry.revision < 1) throw new Error('Invalid cloud file or revision');
     clouds.set(entry.path, entry);
   }
-  if (new Set([...files.keys(), ...clouds.keys()]).size > MAX_SYNC_FILES) throw new Error(`Cloud sync supports at most ${MAX_SYNC_FILES} distinct files`);
-  let total = 0;
-  const hashes = new Map();
-  for (const [name, bytes] of files) {
+  for (const [name, stat] of files) {
     syncPath(name);
-    if (bytes.length > MAX_FILE_BYTES) throw new Error('Cloud files must be 4 MiB or smaller');
-    total += bytes.length;
-    hashes.set(name, await hash(bytes));
+    // Too big for one cloud file: it stays on this device as it is, nothing about it changes anywhere, the rest syncs.
+    if (stat.size > MAX_FILE_BYTES) result.skipped.push(name);
   }
-  // ponytail: bounded snapshot sync; use a streaming indexed journal for larger vaults.
-  if (total > MAX_SYNC_BYTES) throw new Error('Cloud sync working set exceeds 64 MiB');
+  result.skipped.sort();
+  for (const name of Object.keys(seen)) if (!files.has(name)) delete seen[name];
   // A full free cloud clears notes that sat in the trash for 30 days; then the name can start over at revision 1.
   const cleared = Object.entries(tracked).filter(([name, base]) => base.deleted && (clouds.get(name)?.revision ?? 0) < base.revision).map(([name]) => name);
   for (const [name, base] of Object.entries(tracked)) {
@@ -57,13 +59,25 @@ export async function syncFolder(remote, local, tracked, persist, checkActive = 
     if (!clouds.has(name)) throw new Error('A tracked cloud object disappeared. Local files were kept');
     if (clouds.get(name).revision < base.revision) throw new Error('Cloud history moved backwards. Local files were kept');
   }
-  const save = async (next) => {
-    await persist(next);
+  // Decisions read `next`; `tracked` follows only once `next` is saved.
+  const next = { ...tracked };
+  let dirty = false, savedAt = Date.now();
+  const flush = async () => {
+    if (!dirty) return;
+    const saved = { ...next };
+    await persist(saved);
+    dirty = false;
+    savedAt = Date.now();
     for (const key of Object.keys(tracked)) delete tracked[key];
-    Object.assign(tracked, next);
+    Object.assign(tracked, saved);
   };
-  if (cleared.length) await save(Object.fromEntries(Object.entries(tracked).filter(([name]) => !cleared.includes(name))));
-  const remember = (entry) => save({ ...tracked, [entry.path]: { revision: entry.revision, hash: entry.hash, deleted: entry.deleted } });
+  const remember = async (entry) => {
+    next[entry.path] = { revision: entry.revision, hash: entry.hash, deleted: entry.deleted };
+    dirty = true;
+    if (Date.now() - savedAt >= SAVE_EVERY_MS) await flush();
+  };
+  for (const name of cleared) { delete next[name]; dirty = true; }
+  await flush();
   const conflict = async (entry) => {
     result.conflicts++;
     await local.conflict(entry.path, entry.revision, await entry.bytes());
@@ -72,94 +86,129 @@ export async function syncFolder(remote, local, tracked, persist, checkActive = 
     if (saved.path !== name || saved.deleted || saved.hash !== bytesHash || saved.revision !== revision) throw new Error('Invalid cloud write acknowledgment');
     return saved;
   };
+  const upload = async (name, bytes, baseRevision) => {
+    bytes ??= await local.read(name);
+    await remember(written(await remote.write(name, bytes, baseRevision), name, baseRevision + 1, await hash(bytes)));
+    result.uploaded++;
+  };
+  // The hash of a local file, read only when its size or time changed (or is unknown); the bytes come along only when just read.
+  const scan = async (name) => {
+    const stat = files.get(name), known = seen[name];
+    if (known && stat.size >= 0 && stat.modified > 0 && known.size === stat.size && known.modified === stat.modified) return { localHash: known.hash, bytes: null };
+    const bytes = await local.read(name);
+    const localHash = await hash(bytes);
+    seen[name] = { size: stat.size, modified: stat.modified, hash: localHash };
+    return { localHash, bytes };
+  };
+  // The file as the decision saw it, or null when it changed or went away since; then nothing local is replaced.
+  const unchanged = async (name, localHash, bytes) => {
+    if (bytes) return bytes;
+    try { bytes = await local.read(name); } catch { return null; }
+    return await hash(bytes) === localHash ? bytes : null;
+  };
+  const replace = async (entry, expected, replacement) => expected && await local.compareAndSet(entry.path, expected, replacement);
   const removals = [];
   // Upload/download destinations before removing sources of archive/trash moves.
-  const names = [...new Set([...files.keys(), ...clouds.keys()])].sort((a, b) => Number(!a.startsWith('attachments/')) - Number(!b.startsWith('attachments/')) || (a < b ? -1 : a > b ? 1 : 0));
-  for (const name of names) {
-    checkActive();
-    const bytes = files.get(name), localHash = hashes.get(name), entry = clouds.get(name), base = tracked[name];
-    if (!entry) {
-      if (base) throw new Error('A tracked cloud object disappeared. Local files were kept');
-      if (bytes) {
-        await remember(written(await remote.write(name, bytes, 0), name, 1, localHash));
-        result.uploaded++;
+  const names = [...new Set([...files.keys(), ...clouds.keys()])].filter((name) => !result.skipped.includes(name)).sort((a, b) => Number(!a.startsWith('attachments/')) - Number(!b.startsWith('attachments/')) || (a < b ? -1 : a > b ? 1 : 0));
+  try {
+    for (const [done, name] of names.entries()) {
+      checkActive();
+      progress(done, names.length);
+      const entry = clouds.get(name), base = next[name];
+      const { localHash, bytes } = files.has(name) ? await scan(name) : { localHash: null, bytes: null };
+      if (!entry) {
+        if (base) throw new Error('A tracked cloud object disappeared. Local files were kept');
+        if (localHash) await upload(name, bytes, 0);
+        continue;
       }
-      continue;
-    }
-    if (entry.deleted) {
-      if (!bytes) await remember(entry);
-      else if (base?.deleted) {
-        await remember(written(await remote.write(name, bytes, entry.revision), name, entry.revision + 1, localHash));
-        result.uploaded++;
-      } else if (base && base.hash === localHash) removals.push(async () => {
-        if (await local.compareAndSet(name, bytes, null)) { await remember(entry); result.deleted++; }
+      if (entry.deleted) {
+        if (!localHash) await remember(entry);
+        else if (base?.deleted) await upload(name, bytes, entry.revision);
+        else if (base && base.hash === localHash) removals.push(async () => {
+          if (await replace(entry, await unchanged(name, localHash), null)) { await remember(entry); result.deleted++; }
+          else await conflict(entry);
+        });
         else await conflict(entry);
-      });
-      else await conflict(entry);
-      continue;
-    }
-    if (!bytes) {
-      if (!base || base.deleted) {
-        if (await local.compareAndSet(name, null, await entry.bytes())) { await remember(entry); result.downloaded++; }
+        continue;
+      }
+      if (!localHash) {
+        if (!base || base.deleted) {
+          if (await local.compareAndSet(name, null, await entry.bytes())) { await remember(entry); result.downloaded++; }
+          else await conflict(entry);
+        } else if (base.revision === entry.revision && base.hash === entry.hash) removals.push(async () => {
+          if (!await local.compareAndSet(name, null, null)) { await conflict(entry); return; }
+          const saved = await remote.delete(name, entry.revision);
+          if (saved.path !== name || !saved.deleted || saved.revision !== entry.revision + 1) throw new Error('Invalid cloud delete acknowledgment');
+          await remember(saved);
+          result.deleted++;
+        });
         else await conflict(entry);
-      } else if (base.revision === entry.revision && base.hash === entry.hash) removals.push(async () => {
-        if (!await local.compareAndSet(name, null, null)) { await conflict(entry); return; }
-        const saved = await remote.delete(name, entry.revision);
-        if (saved.path !== name || !saved.deleted || saved.revision !== entry.revision + 1) throw new Error('Invalid cloud delete acknowledgment');
-        await remember(saved);
-        result.deleted++;
-      });
+        continue;
+      }
+      if (localHash === entry.hash) await remember(entry);
+      else if (base && !base.deleted && base.hash === localHash && base.revision !== entry.revision) {
+        if (await replace(entry, await unchanged(name, localHash, bytes), await entry.bytes())) { await remember(entry); result.downloaded++; }
+        else await conflict(entry);
+      } else if (base && !base.deleted && base.revision === entry.revision && base.hash === entry.hash) await upload(name, bytes, entry.revision);
       else await conflict(entry);
-      continue;
     }
-    if (localHash === entry.hash) await remember(entry);
-    else if (base && !base.deleted && base.hash === localHash && base.revision !== entry.revision) {
-      if (await local.compareAndSet(name, bytes, await entry.bytes())) { await remember(entry); result.downloaded++; }
-      else await conflict(entry);
-    } else if (base && !base.deleted && base.revision === entry.revision && base.hash === entry.hash) {
-      await remember(written(await remote.write(name, bytes, entry.revision), name, entry.revision + 1, localHash));
-      result.uploaded++;
-    } else await conflict(entry);
+    for (const removal of removals) { checkActive(); await removal(); }
+    progress(names.length, names.length);
+  } catch (error) {
+    // Keep what was done; the error that stopped the sync is the one to report.
+    await flush().catch(() => {});
+    throw error;
   }
-  for (const removal of removals) { checkActive(); await removal(); }
+  await flush();
   return result;
 }
 
 /**
  * The cloud side for syncFolder, kept up to date from the changes feed so a sync only reads what changed.
- * `index` is `{ cursor, objects: { [id]: { path, revision, deleted, hash } } }` and is updated in place.
+ * `index` is `{ cursor, objects: { [id]: { path, revision, deleted, hash } }, pending: { [id]: revision } }` and is
+ * updated in place; `save` keeps it, so a first sync cut off halfway goes on from where it was.
  */
-export async function remoteFiles(client, index, checkActive = () => {}) {
-  const changed = new Map();
+export async function remoteFiles(client, index, { checkActive = () => {}, save = async () => {}, progress = (done, total) => {} } = {}) {
+  index.pending ??= {};
   for (let more = true; more;) {
     checkActive();
     const page = await client.listChanges(index.cursor);
-    for (const change of page.changes) changed.set(change.id, change.revision);
+    for (const change of page.changes) {
+      if (index.objects[change.id]?.revision === change.revision) delete index.pending[change.id];
+      else index.pending[change.id] = change.revision;
+    }
     if (page.hasMore && page.cursor <= index.cursor) throw new Error('Invalid cloud changes cursor');
     index.cursor = page.cursor;
     more = page.hasMore;
-    if (changed.size > MAX_SYNC_FILES) throw new Error(`Cloud sync supports at most ${MAX_SYNC_FILES} files`);
   }
-  const loaded = new Map();
-  for (const [id, revision] of changed) {
-    if (index.objects[id]?.revision === revision) continue;
-    checkActive();
-    let entry;
-    // A file cleared from a full free cloud after 30 days in the trash stays in the feed but reads as 404.
-    try { entry = await client.read(id); }
-    catch (error) { if (error.status !== 404) throw error; delete index.objects[id]; continue; }
-    const bytes = base64ToBytes(entry.file.content);
-    index.objects[id] = { path: syncPath(entry.file.path), revision: entry.revision, deleted: Boolean(entry.deleted), hash: await hash(bytes) };
-    loaded.set(id, bytes);
+  await save();
+  const loaded = new Map(), waiting = Object.keys(index.pending);
+  let kept = 0, savedAt = Date.now();
+  try {
+    for (const [done, id] of waiting.entries()) {
+      checkActive();
+      progress(done, waiting.length);
+      let entry;
+      // A file cleared from a full free cloud after 30 days in the trash stays in the feed but reads as 404.
+      try { entry = await client.read(id); }
+      catch (error) { if (error.status !== 404) throw error; delete index.objects[id]; delete index.pending[id]; continue; }
+      const bytes = base64ToBytes(entry.file.content);
+      index.objects[id] = { path: syncPath(entry.file.path), revision: entry.revision, deleted: Boolean(entry.deleted), hash: await hash(bytes) };
+      delete index.pending[id];
+      if (kept + bytes.length <= KEPT_BYTES) { loaded.set(id, bytes); kept += bytes.length; }
+      if (Date.now() - savedAt >= SAVE_EVERY_MS) { await save(); savedAt = Date.now(); }
+    }
+  } catch (error) {
+    await save().catch(() => {});
+    throw error;
   }
-  if (Object.keys(index.objects).length > MAX_SYNC_FILES) throw new Error(`Cloud sync supports at most ${MAX_SYNC_FILES} files`);
+  if (waiting.length) await save();
   return Object.entries(index.objects).map(([id, object]) => ({ ...object, bytes: async () => {
-    if (loaded.has(id)) return loaded.get(id);
+    if (loaded.has(id)) { const bytes = loaded.get(id); loaded.delete(id); return bytes; }
     // The current version, not `?revision=`: the free plan locks older versions, never the newest.
     const entry = await client.read(id);
     const bytes = base64ToBytes(entry.file.content);
     if (entry.revision !== object.revision || entry.file.path !== object.path || await hash(bytes) !== object.hash) throw new Error('Cloud file changed during sync. Local files were kept');
-    loaded.set(id, bytes);
     return bytes;
   } }));
 }

@@ -38,23 +38,6 @@ class CloudVaultAdapter(
         validate()
     }
 
-    private fun children(parent: DocumentFile): List<DocumentFile> {
-        val uri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, DocumentsContract.getDocumentId(parent.uri))
-        val columns = arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME)
-        val result = mutableListOf<DocumentFile>()
-        val names = mutableSetOf<String>()
-        val cursor = context.contentResolver.query(uri, columns, null, null, null) ?: error("Could not read the local folder. No deletions were inferred")
-        cursor.use {
-            while (it.moveToNext()) {
-                val id = it.getString(0) ?: error("Invalid local document identity")
-                val name = it.getString(1) ?: error("Invalid local filename")
-                check(names.add(name)) { "Ambiguous duplicate local filenames" }
-                result += requireNotNull(DocumentFile.fromSingleUri(context, DocumentsContract.buildDocumentUriUsingTree(treeUri, id)))
-            }
-        }
-        return result
-    }
-
     fun validateBinding() {
         check(Storage.getVaultUri(context) == treeUri && Storage.getSubfolder(context) == notes && Storage.resolveAssetsFolder(context) == assets) { "Vault settings changed. Pause and re-enable cloud sync for the intended folder" }
     }
@@ -65,11 +48,11 @@ class CloudVaultAdapter(
             var current = tree
             for (segment in listOf("") + folder.split('/')) {
                 val entries = children(current)
-                check(allowOtherSync || entries.none { it.name?.lowercase() in setOf(".stfolder", ".stignore", ".stversions") }) { "Syncthing markers found. Never run two sync systems on the same vault" }
+                check(allowOtherSync || entries.none { it.name.lowercase() in setOf(".stfolder", ".stignore", ".stversions") }) { "Syncthing markers found. Never run two sync systems on the same vault" }
                 if (segment.isEmpty()) continue
                 val next = entries.firstOrNull { it.name == segment } ?: break
-                check(next.isDirectory) { "Local folder path is occupied by a file" }
-                current = next
+                check(next.directory) { "Local folder path is occupied by a file" }
+                current = next.file
             }
         }
     }
@@ -78,9 +61,9 @@ class CloudVaultAdapter(
         var current = tree
         for (segment in path.split('/')) {
             val entries = children(current)
-            check(allowOtherSync || entries.none { it.name?.lowercase() in setOf(".stfolder", ".stignore", ".stversions") }) { "Syncthing markers found. Cloud sync stopped" }
+            check(allowOtherSync || entries.none { it.name.lowercase() in setOf(".stfolder", ".stignore", ".stversions") }) { "Syncthing markers found. Cloud sync stopped" }
             val found = entries.firstOrNull { it.name == segment }
-            current = if (found != null) found.also { check(it.isDirectory) { "Local folder path is occupied" } }
+            current = if (found != null) found.also { check(it.directory) { "Local folder path is occupied" } }.file
                 else if (create) {
                     val uri = DocumentsContract.createDocument(context.contentResolver, current.uri, DocumentsContract.Document.MIME_TYPE_DIR, segment) ?: error("Could not create local folder")
                     requireNotNull(DocumentFile.fromSingleUri(context, uri))
@@ -97,7 +80,7 @@ class CloudVaultAdapter(
     private fun candidates(path: String): List<DocumentFile> {
         val mapped = localPath(path)
         val paths = if (path.startsWith("attachments/")) listOf(mapped, "$legacyAssets/${path.removePrefix("attachments/")}").distinct() else listOf(mapped)
-        return paths.mapNotNull { local -> folder(local.substringBeforeLast('/'), false)?.let { children(it).firstOrNull { child -> child.name == local.substringAfterLast('/') } } }
+        return paths.mapNotNull { local -> folder(local.substringBeforeLast('/'), false)?.let { children(it).firstOrNull { child -> child.name == local.substringAfterLast('/') }?.file } }
     }
 
     private fun find(path: String): DocumentFile? = candidates(path).firstOrNull()
@@ -127,41 +110,76 @@ class CloudVaultAdapter(
 
     private fun preserved(name: String): Boolean = name.contains(".cloud-conflict-") || name.contains(".cloud-recovery-")
 
-    override fun list(): Map<String, ByteArray> = runBlocking {
+    /**
+     * A folder's children with name, type, size and time from one provider query. Asking a DocumentFile for its name
+     * or type is a query per file, which made each sync step thousands of queries in a big folder.
+     */
+    private class Child(val file: DocumentFile, val name: String, val directory: Boolean, val size: Long, val modified: Long)
+    private fun children(parent: DocumentFile): List<Child> {
+        val uri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, DocumentsContract.getDocumentId(parent.uri))
+        val columns = arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE, DocumentsContract.Document.COLUMN_SIZE, DocumentsContract.Document.COLUMN_LAST_MODIFIED)
+        val result = mutableListOf<Child>()
+        val names = mutableSetOf<String>()
+        val cursor = context.contentResolver.query(uri, columns, null, null, null) ?: error("Could not read the local folder. No deletions were inferred")
+        cursor.use {
+            while (it.moveToNext()) {
+                val id = it.getString(0) ?: error("Invalid local document identity")
+                val name = it.getString(1) ?: error("Invalid local filename")
+                check(names.add(name)) { "Ambiguous duplicate local filenames" }
+                val directory = it.getString(2) == DocumentsContract.Document.MIME_TYPE_DIR
+                // A provider without a size or time: then the file counts as changed and is read.
+                val size = if (it.isNull(3)) -1L else it.getLong(3)
+                val modified = if (it.isNull(4)) -1L else it.getLong(4)
+                result += Child(requireNotNull(DocumentFile.fromSingleUri(context, DocumentsContract.buildDocumentUriUsingTree(treeUri, id))), name, directory, size, modified)
+            }
+        }
+        return result
+    }
+
+    // The files of the last list(), so reading one does not search its folder again.
+    private val listed = mutableMapOf<String, DocumentFile>()
+
+    override fun list(): Map<String, CloudLocalFile> = runBlocking {
         Storage.noteWriteMutex.withLock {
             synchronized(Storage.cloudFileLock) {
             validate()
             // Een tijdens deze sync mislukte notitie-write laat een halve notitie plus journaal achter; die niet uploaden.
             check(Storage.recoverInterruptedNoteWrite(context)) { "A note was not saved completely. Sync again; if this repeats, open that note in JotDrop to keep the change as a copy or discard it" }
-            val result = linkedMapOf<String, ByteArray>()
-            var total = 0L
+            val result = linkedMapOf<String, CloudLocalFile>()
+            listed.clear()
             fun walk(directory: DocumentFile, prefix: String, attachments: Boolean, depth: Int = 0) {
                 require(depth <= 16) { "Cloud folder nesting exceeds the sync limit" }
                 for (child in children(directory)) {
-                    val name = requireNotNull(child.name)
+                    val name = child.name
                     if (preserved(name)) continue
                     if (name.startsWith('.')) {
                         check(name.lowercase() !in setOf(".stfolder", ".stignore", ".stversions")) { "Syncthing markers found. Cloud sync stopped" }
                         continue
                     }
                     val path = "$prefix/$name"
-                    if (child.isDirectory) walk(child, path, attachments, depth + 1)
+                    if (child.directory) walk(child.file, path, attachments, depth + 1)
                     else if (attachments || name.endsWith(".md", true)) {
                         CloudSyncEngine.path(path)
-                        val bytes = read(child)
-                        val old = result[path]
-                        require(old == null || old.contentEquals(bytes)) { "Legacy and configured attachments differ. Resolve them before syncing" }
+                        val old = listed[path]
                         if (old == null) {
-                            total += bytes.size
-                            require(total <= 64 * 1024 * 1024 && result.size < 500) { "Local sync limit: 500 files and 64 MiB working set" }
-                            result[path] = bytes
-                        }
+                            listed[path] = child.file
+                            result[path] = CloudLocalFile(child.size, child.modified)
+                        } else require(read(old).contentEquals(read(child.file))) { "Legacy and configured attachments differ. Resolve them before syncing" }
                     }
                 }
             }
             folder(notes, false)?.let { walk(it, "notes", false) }
             for (path in listOf(assets, legacyAssets).distinct()) folder(path, false)?.let { walk(it, "attachments", true) }
             result
+            }
+        }
+    }
+
+    override fun read(path: String): ByteArray = runBlocking {
+        Storage.noteWriteMutex.withLock {
+            synchronized(Storage.cloudFileLock) {
+                read(listed[path] ?: find(path) ?: error("Expected a local file. No deletions were inferred"))
             }
         }
     }

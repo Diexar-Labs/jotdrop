@@ -6,7 +6,7 @@ import { availableProviders, checkApproval, completeApproval, confirmLogin, conf
 import { AuthenticatorModal, RecoveryCodeModal } from "./cloudAccount";
 import { ConflictReviewModal, TimeMachineModal } from "./cloudReview";
 import { base64ToBytes, decryptEnvelope, MAX_FILE_BYTES, objectId } from "../cloud/shared/crypto.mjs";
-import { cloudTimeline, conflictOriginal, copyName, hash, isPreserved, MAX_SYNC_BYTES, MAX_SYNC_FILES, remoteFiles, restorePlan, syncFolder, syncPath, unavailable } from "../cloud/shared/sync.mjs";
+import { cloudTimeline, conflictOriginal, copyName, hash, isPreserved, remoteFiles, restorePlan, syncFolder, syncPath, unavailable } from "../cloud/shared/sync.mjs";
 
 export const DEFAULT_CLOUD_SERVER = "https://app.jotdrop.net";
 const PROVIDER_NAMES: Record<string, string> = { google: "Google", github: "GitHub" };
@@ -36,10 +36,10 @@ const decoder = new TextDecoder("utf-8", { fatal: true });
 
 type Base = { revision: number; hash: string; deleted: boolean };
 type Prepared = { id: string; baseRevision: number; envelope: string };
-type RemoteIndex = { cursor: number; objects: Record<string, { path: string; revision: number; deleted: boolean; hash: string }> };
+type RemoteIndex = { cursor: number; objects: Record<string, { path: string; revision: number; deleted: boolean; hash: string }>; pending?: Record<string, number> };
 type SyncState = {
   vaultId: string; enabled: boolean; binding: string; tracked: Record<string, Base>; index: RemoteIndex;
-  upload?: Prepared; lastSynced?: string; message: string; conflicts: number;
+  seen?: Record<string, { size: number; modified: number; hash: string }>; upload?: Prepared; lastSynced?: string; message: string; conflicts: number;
 };
 type Session = { credentials: CloudClient["credentials"]; email: string };
 type ProviderSignIn = Awaited<ReturnType<typeof providerTicket>> & { provider: string; email: string; account: boolean };
@@ -164,17 +164,17 @@ class VaultFolder {
     return path.startsWith("attachments/") ? [...new Set([mapped, `${this.legacy}/${path.slice(12)}`])] : [mapped];
   }
 
-  private async read(path: string): Promise<Uint8Array> {
+  private async readFile(path: string): Promise<Uint8Array> {
     const stat = await this.adapter.stat(path);
     if (!stat || stat.type !== "file") throw new Error("Expected a local file. No deletions were inferred.");
     if (stat.size > MAX_FILE_BYTES) throw new Error(`${path} is larger than the 4 MiB cloud limit.`);
     return new Uint8Array(await this.adapter.readBinary(path));
   }
 
-  async list(): Promise<Map<string, Uint8Array>> {
+  /** Size and modification time of each file, without reading it: the sync reads only what changed. */
+  async list(): Promise<Map<string, { size: number; modified: number }>> {
     await this.guard();
-    const result = new Map<string, Uint8Array>();
-    let total = 0;
+    const result = new Map<string, { size: number; modified: number; file: string }>();
     const walk = async (folder: string, prefix: string, attachments: boolean, depth = 0): Promise<void> => {
       if (depth > 16) throw new Error("Cloud folder nesting exceeds the sync limit.");
       const listing = await this.adapter.list(folder);
@@ -188,12 +188,16 @@ class VaultFolder {
         if (SYNCTHING.includes(name.toLowerCase())) throw syncthing();
         if (name.startsWith(".") || isPreserved(name) || (!attachments && !/\.md$/i.test(name))) continue;
         const path = syncPath(`${prefix}/${name}`);
-        const bytes = await this.read(file);
+        // Obsidian keeps the size and time of the files it shows; hidden folders like ".attachments" are asked for.
+        const indexed = this.plugin.app.vault.getAbstractFileByPath(file);
+        const stat = indexed instanceof TFile ? indexed.stat : await this.adapter.stat(file);
+        if (!stat) throw new Error("Expected a local file. No deletions were inferred.");
         const old = result.get(path);
-        if (old) { if (!sameBytes(old, bytes)) throw new Error("The legacy and configured attachments folders hold different files with the same name. Resolve them before syncing."); continue; }
-        total += bytes.length;
-        if (total > MAX_SYNC_BYTES || result.size >= MAX_SYNC_FILES) throw new Error(`Cloud sync supports up to ${MAX_SYNC_FILES} files and 64 MiB for now.`);
-        result.set(path, bytes);
+        if (old) {
+          if (!sameBytes(await this.readFile(old.file), await this.readFile(file))) throw new Error("The legacy and configured attachments folders hold different files with the same name. Resolve them before syncing.");
+          continue;
+        }
+        result.set(path, { size: stat.size, modified: stat.mtime, file });
       }
     };
     if (await this.adapter.exists(this.notes)) await walk(this.notes, "notes", false);
@@ -223,7 +227,7 @@ class VaultFolder {
     if (file instanceof TFile) await vault.modifyBinary(file, data);
     else if (!expected && !path.split("/").some((part) => part.startsWith("."))) { await this.ensureParent(path); await vault.createBinary(path, data); }
     else { await this.ensureParent(path); await this.adapter.writeBinary(path, data); }
-    if (!sameBytes(await this.read(path), bytes)) throw new Error("A local write could not be verified. Your notes were kept.");
+    if (!sameBytes(await this.readFile(path), bytes)) throw new Error("A local write could not be verified. Your notes were kept.");
     return true;
   }
 
@@ -231,10 +235,10 @@ class VaultFolder {
     await this.guard();
     const files: string[] = [];
     for (const candidate of this.candidates(path)) if (await this.adapter.exists(candidate)) files.push(candidate);
-    const actual = files.length ? await this.read(files[0]) : null;
+    const actual = files.length ? await this.readFile(files[0]) : null;
     if ((actual === null) !== (expected === null) || (actual && expected && !sameBytes(actual, expected))) return false;
     for (const file of files) {
-      if (this.editing.has(file) || !sameBytes(await this.read(file), expected as Uint8Array)) return false;
+      if (this.editing.has(file) || !sameBytes(await this.readFile(file), expected as Uint8Array)) return false;
     }
     if (!replacement) {
       for (const file of files) await this.trash(file);
@@ -267,8 +271,15 @@ class VaultFolder {
 
   /** The file at a cloud path in this vault, or null. */
   async get(path: string): Promise<Uint8Array | null> {
-    for (const candidate of this.candidates(path)) if (await this.adapter.exists(candidate)) return this.read(candidate);
+    for (const candidate of this.candidates(path)) if (await this.adapter.exists(candidate)) return this.readFile(candidate);
     return null;
+  }
+
+  /** The file at a cloud path, for the sync. */
+  async read(path: string): Promise<Uint8Array> {
+    const bytes = await this.get(path);
+    if (!bytes) throw new Error("Expected a local file. No deletions were inferred.");
+    return bytes;
   }
 
   /** The ".cloud-conflict" copies in the JotDrop folders, by the cloud path of their original. */
@@ -298,7 +309,7 @@ class VaultFolder {
   private async preserve(path: string, bytes: Uint8Array, suffix: string): Promise<void> {
     let target = this.local(copyName(path, suffix));
     if (await this.adapter.exists(target)) {
-      if (sameBytes(await this.read(target), bytes)) return;
+      if (sameBytes(await this.readFile(target), bytes)) return;
       target = this.local(copyName(path, `${suffix}-${crypto.randomUUID()}`));
     }
     await this.write(target, bytes, null);
@@ -477,6 +488,14 @@ export class CloudController {
     const state = this.state!;
     const active = () => { abort.signal.throwIfAborted(); if (this.generation !== generation) throw new Error("Cloud sync stopped. Your notes were kept."); };
     const save = () => this.store.put("state", state);
+    // A big first sync takes a while: show how far it is, twice a second at most.
+    let shownAt = 0;
+    const progress = (label: string) => (done: number, total: number) => {
+      if (Date.now() - shownAt < 500) return;
+      shownAt = Date.now();
+      this.status = `${label} ${done} / ${total}`;
+      this.changed();
+    };
     this.status = "Syncing...";
     this.changed();
     try {
@@ -501,7 +520,7 @@ export class CloudController {
         await save();
       }
       const remote = {
-        list: () => remoteFiles(client, state.index, active),
+        list: () => remoteFiles(client, state.index, { checkActive: active, save, progress: progress("Reading the cloud...") }),
         write: (path: string, bytes: Uint8Array, baseRevision: number) => { active(); return this.upload(client, state, path, bytes, baseRevision, abort.signal); },
         delete: async (path: string, baseRevision: number) => {
           active();
@@ -512,12 +531,15 @@ export class CloudController {
           return object;
         },
       };
-      const report = await syncFolder(remote, folder, state.tracked, (next: Record<string, Base>) => this.store.put("state", { ...state, tracked: next }), active);
+      const report = await syncFolder(remote, folder, state.tracked, (next: Record<string, Base>) => this.store.put("state", { ...state, tracked: next }), { checkActive: active, seen: state.seen ??= {}, progress: progress("Syncing...") });
       state.lastSynced = new Date().toISOString();
       state.conflicts = report.conflicts;
-      state.message = report.conflicts
+      const big = report.skipped.length
+        ? ` ${report.skipped.length === 1 ? "1 file is" : `${report.skipped.length} files are`} larger than 4 MiB and ${report.skipped.length === 1 ? "stays" : "stay"} only on this device: ${report.skipped.slice(0, 3).map((path: string) => path.split("/").pop()).join(", ")}${report.skipped.length > 3 ? ` and ${report.skipped.length - 3} more` : ""}.`
+        : "";
+      state.message = (report.conflicts
         ? `${report.conflicts} ${report.conflicts === 1 ? "note was" : "notes were"} changed in two places. Both versions are kept: choose one with "Review conflicts".`
-        : `Synced. ${report.uploaded} up, ${report.downloaded} down, ${report.deleted} removed.`;
+        : `Synced. ${report.uploaded} up, ${report.downloaded} down, ${report.deleted} removed.`) + big;
       await save();
       this.status = state.message;
     } catch (error) {

@@ -33,7 +33,6 @@ data class CloudCredentials(val url: String, val vaultId: String, val deviceId: 
     }
 }
 
-data class CloudPreviewFile(val id: String, val revision: Int, val path: String, val bytes: ByteArray, val deleted: Boolean)
 /** [serverMessage] is the server's own short error text, shown by the account screens. */
 /** A device the server lists when a free cloud is at its device limit. */
 class CloudDeviceInfo(val id: String, val name: String, val lastSeenAt: String)
@@ -48,28 +47,35 @@ class CloudClient(val credentials: CloudCredentials) {
         require(CloudCrypto.decode(credentials.token).size == 32 && CloudCrypto.decode(credentials.vaultKey).size == 32) { "Invalid cloud credentials" }
     }
 
-    fun changesAndFiles(checkActive: () -> Unit = {}): List<CloudPreviewFile> {
+    /** One page of the changes feed after [after]. */
+    fun changes(after: Long): CloudChanges {
+        val page = request(credentials.url, "/changes?after=$after", "GET", null, credentials)
+        val changes = page.getJSONArray("changes")
+        return CloudChanges(List(changes.length()) { index ->
+            val change = changes.getJSONObject(index)
+            CloudChange(change.getString("id").also { require(it.matches(Regex("[0-9a-f]{64}"))) { "Invalid cloud object identity" } }, revision(change))
+        }, page.getLong("cursor"), page.getBoolean("hasMore"))
+    }
+
+    /** Every file's newest revision from the changes feed alone, without downloading any file. */
+    fun current(checkActive: () -> Unit = {}): List<CloudCurrentFile> {
         var cursor = 0L
-        val ids = linkedSetOf<String>()
+        val files = linkedMapOf<String, CloudCurrentFile>()
         do {
             checkActive()
             val page = request(credentials.url, "/changes?after=$cursor", "GET", null, credentials)
             val changes = page.getJSONArray("changes")
-            for (index in 0 until changes.length()) ids += changes.getJSONObject(index).getString("id")
-            require(ids.size <= 500) { "The local preview supports at most 500 files" }
+            for (index in 0 until changes.length()) changes.getJSONObject(index).let { files[it.getString("id")] = CloudCurrentFile(it.getString("id"), revision(it), it.getBoolean("deleted")) }
             val next = page.getLong("cursor")
             val more = page.getBoolean("hasMore")
             require(!more || next > cursor) { "Invalid cloud changes cursor" }
             cursor = next
         } while (more)
-        var total = 0L
-        // A file cleared from a full free cloud after 30 days in the trash stays in the feed but reads as 404.
-        return ids.mapNotNull { id ->
-            checkActive()
-            val file = try { read(id) } catch (error: CloudRequestException) { if (error.status == 404) return@mapNotNull null else throw error }
-            file.also { total += it.bytes.size; require(total <= 64 * 1024 * 1024) { "Cloud sync working set exceeds 64 MiB" } }
-        }
+        return files.values.toList()
     }
+
+    /** The newest version of a file, or null when a full free cloud cleared it after 30 days in the trash. */
+    fun readOrNull(id: String): CloudPreviewFile? = try { read(id) } catch (error: CloudRequestException) { if (error.status == 404) null else throw error }
 
     /** The steps of the time machine: the last change time of each minute with a change, oldest first. */
     fun moments(checkActive: () -> Unit = {}): List<String> {
@@ -383,7 +389,8 @@ class CloudPreviewStore(context: Context) {
     private fun draftName(vaultId: String): String { UUID.fromString(vaultId); return "draft-$vaultId" }
     fun saveDraft(vaultId: String, draft: JSONObject) = save(draftName(vaultId), draft)
     fun draft(vaultId: String): JSONObject? = load(draftName(vaultId))
-    fun syncState(scope: String): JSONObject? = load("sync-$scope")
+    // Large vaults keep large indexes; nothing else in a sync state grows with the number of files.
+    fun syncState(scope: String): JSONObject? = load("sync-$scope", 32 * 1024 * 1024)
     fun saveSyncState(scope: String, value: JSONObject) = save("sync-$scope", value)
     private fun uploadName(scope: String, deviceId: String): String {
         require(scope.matches(Regex("[A-Za-z0-9_-]{43}"))) { "Invalid sync scope" }
