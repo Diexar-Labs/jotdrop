@@ -253,7 +253,7 @@ def main(check=check_browser, history_limit=5, camera=False):
         process = subprocess.Popen(["node", "cloud/server.mjs"], cwd=root, env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         try:
             line = process.stdout.readline()
-            assert "Local cloud preview" in line, "Local test server did not start."
+            assert "JotDrop Cloud listening" in line, "Local test server did not start."
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(headless=True, channel=sys.argv[1] if len(sys.argv) > 1 else "msedge", args=["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"] if camera else [])
                 use_markdown_editor(browser)

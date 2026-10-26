@@ -8,7 +8,7 @@ import { ConflictReviewModal, TimeMachineModal } from "./cloudReview";
 import { base64ToBytes, decryptEnvelope, MAX_FILE_BYTES, objectId } from "../cloud/shared/crypto.mjs";
 import { cloudTimeline, conflictOriginal, copyName, hash, isPreserved, MAX_SYNC_BYTES, MAX_SYNC_FILES, remoteFiles, restorePlan, syncFolder, syncPath, unavailable } from "../cloud/shared/sync.mjs";
 
-export const DEFAULT_CLOUD_SERVER = "https://api.jotdrop.net";
+export const DEFAULT_CLOUD_SERVER = "https://app.jotdrop.net";
 const PROVIDER_NAMES: Record<string, string> = { google: "Google", github: "GitHub" };
 // The providers' own marks: Google's four-colour G and GitHub's Octocat.
 const PROVIDER_LOGOS: Record<string, { viewBox: string; paths: Array<[string, string]> }> = {

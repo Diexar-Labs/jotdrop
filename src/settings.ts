@@ -63,7 +63,7 @@ export const DEFAULT_SETTINGS: JotDropSettings = {
   clipServerEnabled: false,
   clipServerPort: 27124,
   clipServerToken: "",
-  cloudServer: "https://api.jotdrop.net",
+  cloudServer: DEFAULT_CLOUD_SERVER,
   sortMigratedToCreated: false,
   localLabels: [],
 };
@@ -355,8 +355,8 @@ export class JotDropSettingTab extends PluginSettingTab {
         .addButton((button) => button.setButtonText("Create account").onClick(() => cloud.showSignIn(true)))
         .addButton((button) => button.setButtonText("Log in").setCta().onClick(() => cloud.showSignIn(false)));
       new Setting(el).setName("Server").setDesc("Leave this as it is unless you run your own JotDrop Cloud server.")
-        .addText((text) => text.setPlaceholder("https://api.jotdrop.net").setValue(this.plugin.settings.cloudServer).onChange(async (value) => {
-          this.plugin.settings.cloudServer = value.trim() || "https://api.jotdrop.net";
+        .addText((text) => text.setPlaceholder(DEFAULT_CLOUD_SERVER).setValue(this.plugin.settings.cloudServer).onChange(async (value) => {
+          this.plugin.settings.cloudServer = value.trim() || DEFAULT_CLOUD_SERVER;
           await this.plugin.saveSettings();
         }));
       return;

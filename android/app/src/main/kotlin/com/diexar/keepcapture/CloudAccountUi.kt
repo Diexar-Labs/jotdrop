@@ -38,7 +38,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.FormatStyle
 
-private const val DEFAULT_SERVER = "https://api.jotdrop.net"
+private const val DEFAULT_SERVER = "https://app.jotdrop.net"
 private val PROVIDER_NAMES = mapOf("google" to "Google", "github" to "GitHub")
 
 /** Pending sign-in steps survive rotation for the life of the process. Passwords are never kept here. */

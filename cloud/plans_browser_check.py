@@ -162,7 +162,7 @@ def main():
                     codes.put((match.group(1), match.group(2)))
 
         try:
-            assert "Local cloud preview" in process.stdout.readline(), "Local test server did not start."
+            assert "JotDrop Cloud listening" in process.stdout.readline(), "Local test server did not start."
             threading.Thread(target=read_mail, daemon=True).start()
             with sync_playwright() as playwright:
                 browser = playwright.chromium.launch(headless=True, channel=sys.argv[1] if len(sys.argv) > 1 else "msedge")
