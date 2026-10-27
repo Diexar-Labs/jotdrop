@@ -1,4 +1,5 @@
-import { Notice, Platform, Plugin, TFile, WorkspaceLeaf, normalizePath } from "obsidian";
+import { Notice, Platform, Plugin, TFile, WorkspaceLeaf, addIcon, normalizePath } from "obsidian";
+import { LOGO_ICON, LOGO_ICON_SVG } from "./logo";
 import { DEFAULT_SETTINGS, JotDropSettings, JotDropSettingTab } from "./settings";
 import { JotDropView, VIEW_TYPE_JOTDROP } from "./view";
 import { QuickCaptureModal, createNoteInFolder } from "./capture";
@@ -48,7 +49,8 @@ export default class JotDropPlugin extends Plugin {
 
     this.registerView(VIEW_TYPE_JOTDROP, (leaf) => new JotDropView(leaf, this));
 
-    this.addRibbonIcon("sticky-note", t("open_jotdrop"), () => {
+    addIcon(LOGO_ICON, LOGO_ICON_SVG);
+    this.addRibbonIcon(LOGO_ICON, t("open_jotdrop"), () => {
       void this.activateView();
     });
 

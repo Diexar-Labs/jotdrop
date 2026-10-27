@@ -2,6 +2,7 @@ import { App, ItemView, Menu, Modal, Notice, TFile, WorkspaceLeaf, normalizePath
 import type JotDropPlugin from "./main";
 import { QuickCaptureModal, createNoteInFolder } from "./capture";
 import { AttachmentPreviewHint, EditNoteModal } from "./edit";
+import { LOGO_ICON } from "./logo";
 import { FolderPickerModal } from "./folderPicker";
 import { TagPickerModal, TagItem } from "./tagPicker";
 import { ConfirmModal } from "./confirmModal";
@@ -413,7 +414,7 @@ export class JotDropView extends ItemView {
   }
 
   getIcon(): string {
-    return "sticky-note";
+    return LOGO_ICON;
   }
 
   async onOpen(): Promise<void> {
