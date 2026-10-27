@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { noteSummary, updateMetadata, toggleTask, attachmentPath, plainPreviewText, splitNote, joinNote, noteFilename } from './note.mjs';
+import { noteSummary, updateMetadata, toggleTask, attachmentPath, plainPreviewText, splitNote, joinNote, noteFilename, manualRank, betweenRank } from './note.mjs';
 
 test('browser reads canonical plugin/Android labels without treating tags or body hashtags as labels', () => {
   const markdown = '---\ntags: [not-a-label]\njotdrop_labels:\n  - Work\n  - "Work: notes"\n  - work\ncolor: teal\npinned: true\nunknown_key: preserve\n---\n\n# Heading\n\nText #not-a-label';
@@ -87,4 +87,18 @@ test('new notes get the plugin and Android filename from their first words', () 
   assert.equal(noteFilename('---\npinned: true\n---\n# Shopping: list?\n\nmilk', date), '2026-10-24 090507 Shopping list.md');
   assert.equal(noteFilename('\n![[photo.png]]\n- [ ] Call *mum* about (dinner)', date), '2026-10-24 090507 Call mum about dinner.md');
   assert.equal(noteFilename('', date), '2026-10-24 090507.md');
+});
+
+test('manual order ranks and drops cards like the plugin and Android', () => {
+  // `order` first; else the filename's time stamp, newest first; else 0.
+  assert.equal(manualRank(2.5, 'notes/2026-10-27 083100 Shopping.md'), 2.5);
+  assert.equal(manualRank(undefined, 'notes/Archive/2026-10-27 083100 Shopping.md'), -20261027083100);
+  assert.equal(manualRank(undefined, 'notes/Plain.md'), 0);
+  // A dropped card takes the middle of its neighbours, or one step past an edge; with no room the group is renumbered.
+  assert.equal(betweenRank(null, null), 0);
+  assert.equal(betweenRank(null, 3), 2);
+  assert.equal(betweenRank(3, null), 4);
+  assert.equal(betweenRank(1, 2), 1.5);
+  assert.equal(betweenRank(1, 1), null);
+  assert.equal(betweenRank(1, 1 + Number.EPSILON), null);
 });

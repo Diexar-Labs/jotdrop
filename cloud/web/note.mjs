@@ -143,6 +143,21 @@ export function joinNote({ front, title, body }) {
 }
 
 /** The plugin's and Android's filename for a new note: `<yyyy-MM-dd HHmmss> <first words>.md`. */
+/** Manual card order, like the plugin and Android: `order`, else the filename's time stamp (newest first), else 0. */
+export function manualRank(order, path) {
+  if (order !== undefined) return order;
+  const stamp = /^(\d{4})-(\d{2})-(\d{2}) (\d{6})/.exec(path.split('/').pop());
+  return stamp ? -Number(stamp.slice(1).join('')) : 0;
+}
+
+/** The `order` for a card dropped between two ranks (null at an edge), like the plugin; null when no number fits between them. */
+export function betweenRank(prev, next) {
+  if (prev === null) return next === null ? 0 : next - 1;
+  if (next === null) return prev + 1;
+  const middle = prev + (next - prev) / 2;
+  return middle > prev && middle < next ? middle : null;
+}
+
 export function noteFilename(text, date = new Date()) {
   const pad = (value) => String(value).padStart(2, '0');
   const stamp = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;

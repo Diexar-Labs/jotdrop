@@ -44,7 +44,7 @@ Stand gemeten op `ee57d58` (feature-branch), bijgewerkt met elke afgeronde funct
 | Naar prullenbak | ja | ja (24 okt; map `Trash` zoals Android, bijlagen blijven) | ja |
 | Verplaatsen/kopiëren naar map (notitie gaat naar een gewone Obsidian-map) | n.v.t. (website ziet alleen JotDrop-notities, niet de rest van de vault; Erics besluit 24 okt) | ja | ja (24 okt; editor > Meer opties) |
 | Meerdere kaarten selecteren | ja (24 okt; vinkje op de kaart: kleur, labels, archiveren, prullenbak, terugzetten) | ja (archiveren, prullenbak, terugzetten; kleur + labels erbij 24 okt) | ja (archiveren, verwijderen, labels, kleur, terugzetten) |
-| Slepen om te ordenen | NEE (getal invullen) | ja | ja |
+| Slepen om te ordenen | ja (27 okt; handmatig is standaard, zelfde `order` en regels als plugin en Android; vinkje verplaatst geen kaart) | ja | ja |
 | Sorteeropties | 4 | 6 | 2 |
 | Downloaden van een bestand | ja | n.v.t. | NEE |
 

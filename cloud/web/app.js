@@ -2,7 +2,7 @@ import { CloudClient } from '/shared/client.mjs';
 import { accountInfo, approveDevice, attachAccount, availableProviders, changePassword, checkApproval, completeApproval, confirmLogin, confirmSignup, deleteAccount, disableTotp, enableTotp, listApprovals, logIn, newRecoveryCode, providerApproval, providerRecover, providerSignUp, providerTicket, rejectDevice, requestApproval, resetWithRecoveryCode, setupTotp, signUp, startOver, startProviderSignIn, startReset } from '/shared/account.mjs';
 import { base64ToBytes, bytesToBase64, decodeRecovery, decryptEnvelope, encryptEnvelope, objectId, sealLocal, unsealLocal } from '/shared/crypto.mjs';
 import { exportZip } from '/export.mjs';
-import { noteSummary, updateMetadata, toggleTask, attachmentPath, plainPreviewText, splitNote, joinNote, noteFilename } from '/note.mjs';
+import { noteSummary, updateMetadata, toggleTask, attachmentPath, plainPreviewText, splitNote, joinNote, noteFilename, manualRank, betweenRank } from '/note.mjs';
 
 const $ = (id) => document.getElementById(id);
 try {
@@ -315,21 +315,26 @@ function render() {
   }
   for (const key of selectedTags) if (!tagCounts.has(key)) selectedTags.delete(key);
   renderTagFilter(tagCounts);
-  const matching = [...source.values()].filter((entry) => {
-    if (!inView(entry)) return false;
-    if (selectedTags.size && !(isMarkdown(entry.file.path) && noteTags(entry).some((tag) => selectedTags.has(tag.toLowerCase())))) return false;
-    if (labelFilter && (!isMarkdown(entry.file.path) || !noteParts(noteText(entry.file), entry.file.path).labels.some((label) => label.toLowerCase() === labelFilter))) return false;
-    return !query || entry.file.path.toLowerCase().includes(query) || (isMarkdown(entry.file.path) && noteText(entry.file).toLowerCase().includes(query));
-  }).sort((a, b) => {
+  const compare = (a, b) => {
     const left = isMarkdown(a.file.path) ? noteParts(noteText(a.file), a.file.path) : {};
     const right = isMarkdown(b.file.path) ? noteParts(noteText(b.file), b.file.path) : {};
     const pinned = Number(Boolean(right.pinned)) - Number(Boolean(left.pinned));
     if (pinned) return pinned;
     if ($('sort').value === 'title') return (left.title || a.file.path).localeCompare(right.title || b.file.path);
-    if ($('sort').value === 'manual' && (left.order !== undefined || right.order !== undefined)) return (left.order ?? Infinity) - (right.order ?? Infinity);
+    // Like the plugin and Android: a card keeps its place until it is dragged; the filename settles a tie.
+    if ($('sort').value === 'manual') return manualRank(left.order, a.file.path) - manualRank(right.order, b.file.path) || a.file.path.split('/').pop().localeCompare(b.file.path.split('/').pop());
     const modified = String(b.file.modifiedAt).localeCompare(String(a.file.modifiedAt));
     return $('sort').value === 'oldest' ? -modified : modified;
-  });
+  };
+  const matching = [...source.values()].filter((entry) => {
+    if (!inView(entry)) return false;
+    if (selectedTags.size && !(isMarkdown(entry.file.path) && noteTags(entry).some((tag) => selectedTags.has(tag.toLowerCase())))) return false;
+    if (labelFilter && (!isMarkdown(entry.file.path) || !noteParts(noteText(entry.file), entry.file.path).labels.some((label) => label.toLowerCase() === labelFilter))) return false;
+    return !query || entry.file.path.toLowerCase().includes(query) || (isMarkdown(entry.file.path) && noteText(entry.file).toLowerCase().includes(query));
+  }).sort(compare);
+  // Dragging counts the notes a search or filter hides too, so clearing it never reshuffles them.
+  const draggable = $('sort').value === 'manual' && !moment && (view === 'notes' || view === 'archive');
+  const viewNotes = draggable ? [...source.values()].filter((entry) => inView(entry) && isMarkdown(entry.file.path)).sort(compare) : [];
   if (!matching.length) {
     const empty = document.createElement('div');
     empty.className = 'empty-state';
@@ -406,6 +411,32 @@ function render() {
         if (selectedIds.size && selectableIds.has(entry.id)) toggleSelected(entry.id);
         else if (!entry.deleted && !moment) openEditor(entry);
       });
+      // Like the plugin: in manual order a card moves by dragging, within its own group (pinned or not).
+      if (draggable && !entry.deleted && !entry.conflict) {
+        card.draggable = true;
+        card.addEventListener('dragstart', (event) => {
+          if (selectedIds.size || dragFromControl) { event.preventDefault(); return; }
+          dragging = { entry, pinned: Boolean(parts.pinned) };
+          card.classList.add('is-dragging');
+          event.dataTransfer.effectAllowed = 'move';
+          event.dataTransfer.setData('text/plain', entry.file.path);
+        });
+        card.addEventListener('dragend', () => { card.classList.remove('is-dragging'); showDrop(null); dragging = null; });
+        const before = (event) => event.clientY - card.getBoundingClientRect().top < card.offsetHeight / 2;
+        card.addEventListener('dragover', (event) => {
+          if (!dragging || dragging.entry === entry || dragging.pinned !== Boolean(parts.pinned)) return showDrop(null);
+          event.preventDefault();
+          showDrop(card, before(event));
+        });
+        card.addEventListener('drop', (event) => {
+          if (!dragging || dragging.entry === entry || dragging.pinned !== Boolean(parts.pinned)) return;
+          event.preventDefault();
+          const moved = dragging.entry;
+          showDrop(null);
+          dragging = null;
+          moveCard(moved, entry, before(event), viewNotes).catch((error) => message(errorText(error)));
+        });
+      }
       if (selectableIds.has(entry.id)) {
         card.dataset.id = entry.id;
         card.append(iconButton('check', 'Select note', () => toggleSelected(entry.id), 'card-select'));
@@ -463,6 +494,31 @@ function render() {
     $('items').append(card);
   }
   for (const child of $('items').children) gridSpans.observe(child);
+}
+
+// Manual order: the card being dragged, and whether the press began on a button or checkbox (that is no drag).
+let dragging = null, dragFromControl = false, dropCard = null;
+$('items').addEventListener('pointerdown', (event) => { dragFromControl = Boolean(event.target.closest('button, input, label, audio, video, a')); }, true);
+
+function showDrop(card, before) {
+  dropCard?.classList.remove('drop-before', 'drop-after');
+  dropCard = card;
+  card?.classList.add(before ? 'drop-before' : 'drop-after');
+}
+
+// Like the plugin: only the moved card gets a new `order`, unless no number fits between its neighbours; then its group is renumbered.
+async function moveCard(moved, target, before, viewNotes) {
+  const parts = (entry) => noteParts(noteText(entry.file), entry.file.path);
+  const pinned = Boolean(parts(moved).pinned);
+  const group = viewNotes.filter((entry) => entry !== moved && Boolean(parts(entry).pinned) === pinned);
+  let index = group.indexOf(target);
+  if (index < 0) return;
+  if (!before) index++;
+  const rank = (entry) => manualRank(parts(entry).order, entry.file.path);
+  const order = betweenRank(index > 0 ? rank(group[index - 1]) : null, index < group.length ? rank(group[index]) : null);
+  if (order !== null) return changeNote(moved, { order });
+  group.splice(index, 0, moved);
+  for (const [position, entry] of group.entries()) if (parts(entry).order !== position) await changeNote(entry, { order: position });
 }
 
 // Card actions write the same frontmatter as the editor, on the version shown.

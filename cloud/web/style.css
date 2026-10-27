@@ -96,6 +96,10 @@ main { min-width: 0; padding: 0 2rem 3rem; }
 #note-properties summary { cursor: pointer; padding-top: 1rem; font-weight: 600; }
 #note-properties p, #voice-message { color: var(--muted); font-size: .9rem; }
 .note-card.is-pending { border-style: dashed; }
+/* Manual order: the dragged card fades and a bar shows where it lands; no layout shift while dragging. */
+.note-card.is-dragging { opacity: .45; }
+.note-card.drop-before { box-shadow: 0 -6px 0 var(--accent); }
+.note-card.drop-after { box-shadow: 0 6px 0 var(--accent); }
 :is(.note-card, .swatch).note-red { --note: light-dark(#fbe5e4, #432d30); }
 :is(.note-card, .swatch).note-orange { --note: light-dark(#fcebd9, #433526); }
 :is(.note-card, .swatch).note-yellow { --note: light-dark(#fff4ca, #403b25); }
