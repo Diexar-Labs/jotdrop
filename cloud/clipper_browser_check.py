@@ -26,15 +26,17 @@ def check_clipper(browser, url, token):
       };
       const fetch = window.fetch;
       window.holdCommit = true;
+      // The step that saves the version: one PUT of the encrypted manifest (pieces, if any, went up before it).
+      const saving = (url, options) => options?.method === 'PUT' && /[/]objects[/][0-9a-f]{64}$/.test(String(url));
       window.fetch = async (url, options) => {
-        if (String(url).endsWith('/commit') && window.holdCommit) {
+        if (saving(url, options) && window.holdCommit) {
           await new Promise((resolve, reject) => {
             const abort = () => reject(options.signal.reason);
             if (options.signal.aborted) abort(); else options.signal.addEventListener('abort', abort, { once: true });
           });
         }
         const response = await fetch(url, options);
-        if (String(url).endsWith('/commit') && window.loseCommitResponse) {
+        if (saving(url, options) && window.loseCommitResponse) {
           await response.arrayBuffer();
           throw new TypeError('Synthetic lost commit response');
         }
