@@ -123,6 +123,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
@@ -2516,7 +2517,8 @@ internal fun noteBackground(color: NoteColor, darkTheme: Boolean): Color {
 
 internal fun contentColorOn(color: NoteColor, darkTheme: Boolean): Color {
     if (color == NoteColor.DEFAULT) {
-        return if (darkTheme) Color(0xFFE6E1D6) else Color(0xFF1F1F1F)
+        // Paper and ink, as on the website.
+        return if (darkTheme) Color(0xFFFBF8F1) else Color(0xFF14213D)
     }
     // Pastel achtergrond: gebruik bijna-zwart op licht, bijna-wit op donker.
     return if (darkTheme) Color(0xFFEFEFEF) else Color(0xFF1A1A1A)
@@ -2525,7 +2527,8 @@ internal fun contentColorOn(color: NoteColor, darkTheme: Boolean): Color {
 internal fun accentOn(color: NoteColor, foreground: Color): Color {
     // Voor wiki-links: gebruik een opvallende variant van de forground-kleur.
     return if (color == NoteColor.DEFAULT) {
-        Color(0xFFC2185B) // magenta-accent, matcht het nieuwe sunset-thema
+        // The house link colors: blue on paper, amber on ink.
+        if (foreground.luminance() > 0.5f) Color(0xFFF4C458) else Color(0xFF315FB4)
     } else {
         foreground
     }
