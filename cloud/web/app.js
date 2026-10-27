@@ -17,7 +17,11 @@ $('theme').addEventListener('change', () => {
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const files = new Map();
-const mediaUrls = new Set();
+// One photo or recording element per card and file, kept across renders: a photo never reloads, so its card never shrinks.
+const media = new Map();
+const shownMedia = new Set();
+// A change that syncs within this time never shows as waiting, so a tick does not reshape its card twice.
+const QUIET_PENDING_MS = 3000;
 let client;
 let view = 'notes';
 let labelFilter = '';
@@ -256,16 +260,29 @@ function mediaType(path) {
   return ({ png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', m4a: 'audio/mp4', mp3: 'audio/mpeg', ogg: 'audio/ogg', webm: 'audio/webm', wav: 'audio/wav' })[extension];
 }
 
-function appendMedia(card, entry, alt = '') {
+function appendMedia(card, entry, owner, alt = '') {
   const type = mediaType(entry.file.path);
   if (!type || entry.deleted) return;
-  const url = URL.createObjectURL(new Blob([base64ToBytes(entry.file.content)], { type }));
-  mediaUrls.add(url);
-  const media = document.createElement(type.startsWith('image/') ? 'img' : 'audio');
-  media.src = url;
-  if (media.tagName === 'IMG') { media.alt = alt || entry.file.path.split('/').pop(); media.loading = 'lazy'; }
-  else { media.controls = true; media.preload = 'none'; media.setAttribute('aria-label', alt || entry.file.path.split('/').pop()); }
-  card.append(media);
+  const key = `${owner}\n${entry.id}`;
+  let kept = media.get(key);
+  if (kept?.entry !== entry || kept.alt !== alt) {
+    if (kept) URL.revokeObjectURL(kept.url);
+    const url = URL.createObjectURL(new Blob([base64ToBytes(entry.file.content)], { type }));
+    const element = document.createElement(type.startsWith('image/') ? 'img' : 'audio');
+    element.src = url;
+    if (element.tagName === 'IMG') { element.alt = alt || entry.file.path.split('/').pop(); element.loading = 'lazy'; }
+    else { element.controls = true; element.preload = 'none'; element.setAttribute('aria-label', alt || entry.file.path.split('/').pop()); }
+    kept = { entry, alt, url, element };
+    media.set(key, kept);
+  }
+  shownMedia.add(key);
+  card.append(kept.element);
+}
+
+// Photos and recordings no card shows any more let go of their memory.
+function releaseMedia(all = false) {
+  for (const [key, kept] of media) if (all || !shownMedia.has(key)) { URL.revokeObjectURL(kept.url); media.delete(key); }
+  shownMedia.clear();
 }
 
 // Masonry like Keep: each grid child spans as many 8px rows as its height needs, so
@@ -278,8 +295,12 @@ function render() {
   closeMenu();
   // Notes changed in two places stay in sight until a version is chosen.
   $('resolve-now').hidden = ![...files.values()].some((entry) => entry.conflict);
-  for (const url of mediaUrls) URL.revokeObjectURL(url);
-  mediaUrls.clear();
+  // The rebuilt cards keep what the pointer, the keyboard and the grid had: a tick or a sync never blinks or reflows the screen.
+  const shownCards = [...$('items').querySelectorAll('.note-card')];
+  const hovered = shownCards.find((card) => card.matches(':hover, .is-hovered'))?.dataset.path;
+  const focusedCard = document.activeElement?.closest('#items .note-card');
+  const focused = focusedCard && { path: focusedCard.dataset.path, index: [...focusedCard.querySelectorAll('button, input, audio')].indexOf(document.activeElement) };
+  const spans = new Map(shownCards.map((card) => [card.dataset.path, card.style.gridRowEnd]));
   gridSpans.disconnect();
   $('items').replaceChildren();
   $('items').hidden = view === 'devices';
@@ -297,7 +318,7 @@ function render() {
   $('view-title').textContent = descriptions[view][0];
   $('view-description').textContent = descriptions[view][1];
   $('note-count').textContent = String([...files.values()].filter((entry) => !entry.deleted && isMarkdown(entry.file.path) && !/^notes\/(Archive|Trash)\//.test(entry.file.path)).length);
-  if (view === 'devices') return;
+  if (view === 'devices') return releaseMedia();
   const source = moment ? moment.files : files;
   const query = $('search').value.toLowerCase().trim();
   const inView = (entry) => {
@@ -352,7 +373,8 @@ function render() {
   let section;
   for (const entry of matching) {
     const card = document.createElement('article');
-    card.className = `note-card${entry.pending ? ' is-pending' : ''}`;
+    const waiting = entry.pending && !(Date.now() - entry.queuedAt < QUIET_PENDING_MS);
+    card.className = `note-card${waiting ? ' is-pending' : ''}`;
     const title = document.createElement('h3');
     const markdown = isMarkdown(entry.file.path);
     const parts = markdown ? noteParts(noteText(entry.file), entry.file.path) : { title: entry.file.path.split('/').pop() };
@@ -397,10 +419,14 @@ function render() {
         const row = document.createElement('label'); row.className = 'task-row';
         const input = document.createElement('input'); input.type = 'checkbox'; input.checked = task[1] !== ' ';
         input.disabled = entry.conflict || $('editor').open || Boolean(moment);
+        // Busy instead of disabled while saving: a disabled box loses keyboard focus.
+        let saving = false;
+        input.addEventListener('click', (event) => { if (saving) event.preventDefault(); });
         input.addEventListener('change', async () => {
-          input.disabled = true;
+          saving = true;
           try { const latest = files.get(entry.id); if (latest !== entry) throw new Error('This checklist changed. Sync and try again.'); await queueFile(entry.file.path, encoder.encode(toggleTask(noteText(entry.file), bodyOffset + bodyIndex, input.checked)), entry.revision); }
-          catch (error) { input.checked = !input.checked; input.disabled = false; message(errorText(error)); }
+          catch (error) { input.checked = !input.checked; message(errorText(error)); }
+          finally { saving = false; }
         });
         row.append(input, document.createTextNode(plainPreviewText(task[2]))); card.append(row);
       });
@@ -448,10 +474,10 @@ function render() {
       for (const target of targets) {
         const path = attachmentPath(target[1] || target[2], entry.file.path, available.map((item) => item.file.path));
         const attachment = available.find((item) => item.file.path === path);
-        if (attachment && !shown.has(path)) { appendMedia(card, attachment); shown.add(path); }
+        if (attachment && !shown.has(path)) { appendMedia(card, attachment, entry.id); shown.add(path); }
       }
-    } else appendMedia(card, entry);
-    if (entry.pending) card.append(paragraph('Encrypted draft on this browser. Waiting for cloud.', 'note-meta'));
+    } else appendMedia(card, entry, entry.id);
+    if (waiting) card.append(paragraph('Encrypted draft on this browser. Waiting for cloud.', 'note-meta'));
     if (entry.conflict) card.append(paragraph('Another device saved a different version. Review both before choosing.', 'message'));
     if (markdown) for (const label of parts.labels) card.append(button(label, () => showLabel(label.toLowerCase()), 'label-chip'));
     if (markdown) for (const tag of [...parts.tags, ...parts.inlineTags]) card.append(button(`#${tag}`, () => { selectedTags.add(tag.toLowerCase()); render(); }, 'label-chip'));
@@ -491,10 +517,19 @@ function render() {
     // Path and confirmed revision stay out of sight: the editor shows the filename and version history.
     card.dataset.path = entry.file.path;
     if (!entry.pending) card.dataset.revision = entry.revision;
+    // Only a card that was not on screen yet fades in; one that was stays as it is.
+    if (spans.has(card.dataset.path)) card.classList.add('is-kept');
+    if (spans.get(card.dataset.path)) card.style.gridRowEnd = spans.get(card.dataset.path);
+    // Until the pointer moves, the card it rests on shows its buttons as before; then real hover takes over.
+    if (card.dataset.path === hovered) card.classList.add('is-hovered');
     $('items').append(card);
+    if (card.dataset.path === focused?.path) [...card.querySelectorAll('button, input, audio')][focused.index]?.focus({ preventScroll: true });
   }
+  releaseMedia();
   for (const child of $('items').children) gridSpans.observe(child);
 }
+
+document.addEventListener('pointermove', () => { for (const card of $('items').querySelectorAll('.is-hovered')) card.classList.remove('is-hovered'); }, { passive: true });
 
 // Manual order: the card being dragged, and whether the press began on a button or checkbox (that is no drag).
 let dragging = null, dragFromControl = false, dropCard = null;
@@ -749,9 +784,10 @@ async function queueFile(path, bytes, expectedRevision, modifiedAt = new Date().
   const record = { prepared, local: (await sealFile(path, bytes, 0, modifiedAt)).envelope, deleted: false, queueId: crypto.randomUUID() };
   await store('queue', key, record);
   if (generation !== activeGeneration) return;
-  files.set(prepared.id, { id: prepared.id, revision: prepared.baseRevision, deleted: false, pending: true, file: { path, content: bytesToBase64(bytes), modifiedAt } });
+  files.set(prepared.id, { id: prepared.id, revision: prepared.baseRevision, deleted: false, pending: true, queuedAt: Date.now(), file: { path, content: bytesToBase64(bytes), modifiedAt } });
   render();
   void sync();
+  setTimeout(() => { if (generation === activeGeneration && files.get(prepared.id)?.pending) render(); }, QUIET_PENDING_MS);
 }
 
 async function deleteEntry(entry, ask = true) {
@@ -831,6 +867,8 @@ async function performSync(signal) {
     const uploading = await store('get', uploadKey) || pending;
     await store('put', uploadKey, uploading);
     let result;
+    // The bar pushes the notes down, so it appears only for an upload that takes a while, not for a tick.
+    const showBar = setTimeout(() => { if (activeGeneration === generation && !signal.aborted && !uploading.deleted) $('upload-progress').hidden = false; }, 1000);
     // The pieces the cloud does not have yet come from this browser's encrypted copy of the file.
     const source = !uploading.deleted && uploading.local ? base64ToBytes((await decryptEnvelope(activeClient.credentials.vaultKey, JSON.parse(uploading.local), aad(uploading.prepared.id))).content) : undefined;
     try { result = uploading.deleted ? await activeClient.remove(uploading.prepared.id, uploading.prepared.baseRevision) : await activeClient.commitWrite(uploading.prepared, {
@@ -838,7 +876,6 @@ async function performSync(signal) {
       onProgress: ({ phase, transferredBytes, totalBytes }) => {
         if (activeGeneration !== generation || signal.aborted) return;
         const progress = $('upload-progress');
-        progress.hidden = false;
         progress.max = totalBytes;
         progress.value = transferredBytes;
         $('sync-status').textContent = phase === 'committed' ? 'Cloud version confirmed.' : phase === 'committing' ? 'Encrypted bytes confirmed. Finalizing cloud version...' : `${Math.floor(transferredBytes / 1024)} / ${Math.ceil(totalBytes / 1024)} KiB encrypted bytes confirmed.`;
@@ -867,6 +904,7 @@ async function performSync(signal) {
         continue;
       }
     }
+    finally { clearTimeout(showBar); }
     if (activeGeneration !== generation) return;
     const latest = await store('get', key);
     if (latest?.queueId === uploading.queueId) {
@@ -1498,8 +1536,7 @@ function lock(notice = '') {
   labelFilter = '';
   $('labels-dialog').close();
   editing = undefined;
-  for (const url of mediaUrls) URL.revokeObjectURL(url);
-  mediaUrls.clear();
+  releaseMedia(true);
   $('items').replaceChildren();
   $('device-list').replaceChildren();
   $('note-content').value = '';

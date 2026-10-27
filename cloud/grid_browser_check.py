@@ -41,9 +41,11 @@ def check_grid(browser, url, token):
         assert pinned.locator("h3").inner_text() == "Pinned one"
 
         # A re-render briefly resets row spans until the ResizeObserver runs (before paint),
-        # so measure all cards in one go once every span matches its height.
+        # and a new card fades in from a few pixels lower, so measure all cards in one go
+        # once every span matches its height and no card is still appearing.
         settled = """() => {
           const children = [...document.getElementById('items').children];
+          if (children.some(el => el.getAnimations().length)) return false;
           if (!children.every(el => el.style.gridRowEnd === `span ${Math.ceil((el.getBoundingClientRect().height + 16) / 8)}`)) return false;
           return Object.fromEntries(children.filter(el => el.matches('.note-card')).map(el => [el.querySelector('h3').textContent, el.getBoundingClientRect().toJSON()]));
         }"""

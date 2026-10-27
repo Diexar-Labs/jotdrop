@@ -377,6 +377,7 @@ export class JotDropView extends ItemView {
   private selectionMode = false;
   private selectedPaths = new Set<string>();
   private lastCards: CardData[] = [];
+  private renderGeneration = 0;
   private lastFiltered: CardData[] = [];
   private micBtnEl: HTMLButtonElement | null = null;
   private recorder: VoiceMemoRecorder | null = null;
@@ -1263,15 +1264,22 @@ export class JotDropView extends ItemView {
 
   async render(): Promise<void> {
     if (!this.gridEl) return;
+    // Read the notes first and swap the grid in one go: a grid left empty while
+    // they are read drops the scroll position to the top (a tick, every sync).
+    // A newer render that started meanwhile wins, so cards are never doubled.
+    const generation = ++this.renderGeneration;
+    void this.renderConflictBar();
+    const cards = await this.collectCards();
+    await this.refreshLabels();
+    if (generation !== this.renderGeneration) return;
+    // Measuring the emptied grid (column count) also resets the scroll; it is put back below, before anything is drawn.
+    const scrollTop = this.contentEl.scrollTop;
     this.applyCardWidth();
     this.sentinelObserver?.disconnect();
     this.sentinelObserver = null;
     this.gridEl.empty();
 
-    void this.renderConflictBar();
-    const cards = await this.collectCards();
     this.lastCards = cards;
-    await this.refreshLabels();
     this.renderFilterBar(cards);
 
     // Drop selected tags that no longer exist after note mutations, so the
@@ -1383,6 +1391,7 @@ export class JotDropView extends ItemView {
     };
 
     renderUpTo(this.renderLimit);
+    this.contentEl.scrollTop = scrollTop;
 
     if (renderedCount < ordered.length) {
       const sentinel = this.gridEl.createDiv({ cls: "jotdrop-grid-sentinel" });
