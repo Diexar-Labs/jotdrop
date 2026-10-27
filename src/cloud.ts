@@ -497,6 +497,9 @@ export class CloudController {
     };
     this.status = "Syncing...";
     this.changed();
+    // A sync that only sent changes up leaves the cards as they are: no redraw, so closing a card or a tick never moves the view.
+    const conflictsBefore = state.conflicts;
+    let redraw = true;
     try {
       const folder = new VaultFolder(this.plugin, this.editing);
       if (folder.binding !== state.binding) throw new Error("The notes or attachments folder changed. Turn cloud sync off and on again for the new folder.");
@@ -551,6 +554,7 @@ export class CloudController {
         await client.convertLegacy({ signal: abort.signal, onProgress: ({ done, total }: { done: number, total: number }) => { active(); shrinking(done, total); } });
       }
       state.lastSynced = new Date().toISOString();
+      redraw = report.downloaded > 0 || report.deleted > 0 || report.conflicts !== conflictsBefore;
       state.conflicts = report.conflicts;
       const big = report.skipped.length
         ? ` ${report.skipped.length === 1 ? "1 file is" : `${report.skipped.length} files are`} larger than ${Math.round(maxFileBytes / 1048576)} MB, your plan's maximum per file, and ${report.skipped.length === 1 ? "stays" : "stay"} only on this device: ${report.skipped.slice(0, 3).map((path: string) => path.split("/").pop()).join(", ")}${report.skipped.length > 3 ? ` and ${report.skipped.length - 3} more` : ""}.`
@@ -574,7 +578,7 @@ export class CloudController {
     } finally {
       if (this.abort === abort) this.abort = undefined;
       this.changed();
-      this.plugin.refreshViews();
+      if (redraw) this.plugin.refreshViews();
     }
   }
 

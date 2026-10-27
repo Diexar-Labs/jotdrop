@@ -233,6 +233,48 @@ test('sync now during a sync waits for it and syncs again, so it sees what chang
   assert.equal((await phone.status()).pieces.legacy, 0);
 });
 
+test('a sync that only sends changes up leaves the cards alone; one that brings something in redraws them', async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'jotdrop-plugin-test-'));
+  const mails = [];
+  const app = await createCloudServer({ dataDir, enrollmentToken: randomToken(), mailer: async (mail) => { mails.push(mail); }, serverKey: randomToken(), freeDeviceLimit: 100 });
+  t.after(async () => { await app.close(); await rm(dataDir, { recursive: true, force: true }); });
+  const url = `http://127.0.0.1:${app.port}`;
+
+  const v = vault();
+  let redraws = 0;
+  v.plugin.refreshViews = () => { redraws++; };
+  v.put('Mini Notes/List.md', '- [ ] Milk');
+  const cloud = new CloudController(v.plugin, v.store);
+  cloud.request = () => {};
+  const pending = await signUp({ url, email: 'eric@example.com', password: 'correct horse battery', deviceName: 'Obsidian on Windows' });
+  const { client } = await confirmSignup(pending, mails.find((mail) => mail.kind === 'verify').code);
+  await cloud.finishSignIn(client, 'eric@example.com');
+  await cloud.setEnabled(true);
+  await cloud.syncNow();
+  const phone = await CloudClient.claim({ pairingCode: (await client.makePairing('Phone')).pairingCode });
+
+  // A ticked box or a closed card: the change goes up, Obsidian already shows it, so the view keeps its place.
+  redraws = 0;
+  v.put('Mini Notes/List.md', '- [x] Milk');
+  await cloud.syncNow();
+  assert.match(cloud.status, /Synced\. 1 up, 0 down/);
+  assert.equal(redraws, 0);
+
+  // A note from the phone, a deletion and a conflict each redraw the cards.
+  await phone.write('notes/From phone.md', text('Hello'), 0);
+  await cloud.syncNow();
+  assert.equal(redraws, 1);
+  await phone.remove(await objectId(client.credentials.vaultKey, 'notes/From phone.md'), 1);
+  await cloud.syncNow();
+  assert.equal(redraws, 2);
+  await phone.write('notes/List.md', text('- [ ] Bread'), 2);
+  cloud.beginEdit('Mini Notes/List.md');
+  await cloud.syncNow();
+  cloud.endEdit('Mini Notes/List.md');
+  assert.match(cloud.status, /changed in two places/);
+  assert.equal(redraws, 3);
+});
+
 test('the archive must sit inside the notes folder, like on the website and Android', async () => {
   const v = vault();
   v.plugin.settings.archiveFolder = 'Archive';
