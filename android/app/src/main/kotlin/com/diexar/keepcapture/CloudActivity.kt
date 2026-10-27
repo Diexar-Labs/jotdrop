@@ -85,6 +85,8 @@ private fun CloudScreen(onBack: () -> Unit, onSettings: () -> Unit) {
     var moment by remember { mutableStateOf<TimeMoment?>(null) }
     var confirmMoment by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
+    // The account this phone is in, at the top of the screen like on the website and in Obsidian.
+    var accountEmail by remember { mutableStateOf<String?>(null) }
 
     suspend fun refresh() {
         status = withContext(Dispatchers.IO) { CloudSyncManager.status(context) }
@@ -161,6 +163,11 @@ private fun CloudScreen(onBack: () -> Unit, onSettings: () -> Unit) {
     }
     LaunchedEffect(Unit) { try { refresh() } catch (_: Exception) { error = "Encrypted cloud settings could not be opened. Do not clear app data; your local notes remain in the vault." } }
     LaunchedEffect(Unit) { CloudSyncManager.changes.collect { runCatching { refresh() } } }
+    LaunchedEffect(status?.connected, status?.vaultId) {
+        accountEmail = if (status?.connected != true) null else try { val client = cloud(); withContext(Dispatchers.IO) { CloudAccount.accountInfo(client)?.email } }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { null }
+    }
     val list = rememberLazyListState()
     // Errors show at the top; a form further down would otherwise seem to do nothing.
     LaunchedEffect(error) { if (error != null) list.animateScrollToItem(0) }
@@ -198,6 +205,7 @@ private fun CloudScreen(onBack: () -> Unit, onSettings: () -> Unit) {
             } else {
                 item {
                     Text("Sync status", style = MaterialTheme.typography.titleLarge)
+                    accountEmail?.let { Text("Logged in as $it", style = MaterialTheme.typography.titleSmall) }
                     Text(status!!.message)
                     // A note changed in two places opens straight into its comparison.
                     status!!.conflictPaths.firstOrNull()?.let { path ->

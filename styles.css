@@ -1715,3 +1715,13 @@ button.jotdrop-provider-github:not(.clickable-icon) { background: #24292f; color
 button.jotdrop-provider-github:not(.clickable-icon):hover { background: #32383f; }
 .theme-dark button.jotdrop-provider-github:not(.clickable-icon) { border-color: #6e7681; }
 .jotdrop-provider-logo { width: 1.1em; height: 1.1em; flex: none; }
+
+/* JotDrop Cloud on the main view: which account this vault syncs with, and how it goes. */
+.jotdrop-cloud-line { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 2px 0 6px; color: var(--text-muted); font-size: var(--font-ui-small); }
+.jotdrop-cloud-line.is-hidden { display: none; }
+.jotdrop-cloud-line-icon { display: inline-flex; flex: none; }
+.jotdrop-cloud-line-icon svg { width: 14px; height: 14px; }
+.jotdrop-cloud-line-email { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-normal); font-weight: var(--font-semibold); }
+.jotdrop-cloud-line-status { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jotdrop-cloud-line-status::before { content: "· "; }
+.jotdrop-cloud-line-settings { flex: none; }

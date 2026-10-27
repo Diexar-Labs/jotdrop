@@ -367,6 +367,8 @@ export class JotDropView extends ItemView {
   private labelBtnEl!: HTMLButtonElement;
   private trashBarEl!: HTMLElement;
   private conflictBarEl!: HTMLElement;
+  private cloudLineEl: HTMLElement | null = null;
+  private offCloud: (() => void) | null = null;
   // Like the Android app: deleted notes go to <notes folder>/Trash and this
   // view can show that folder instead of the notes.
   private showTrash = false;
@@ -477,6 +479,10 @@ export class JotDropView extends ItemView {
       cls: "jotdrop-toolbar jotdrop-selection-toolbar is-hidden",
     });
     this.buildSelectionToolbar();
+
+    this.cloudLineEl = root.createDiv({ cls: "jotdrop-cloud-line is-hidden" });
+    this.offCloud = this.plugin.cloud?.onChange(() => this.renderCloudLine()) ?? null;
+    this.renderCloudLine();
 
     this.filterBarEl = root.createDiv({ cls: "jotdrop-filter-bar" });
     this.trashBarEl = root.createDiv({ cls: "jotdrop-trash-bar is-hidden" });
@@ -1242,7 +1248,29 @@ export class JotDropView extends ItemView {
     this.resizeObserver = null;
     if (this.resizeTimer != null) window.clearTimeout(this.resizeTimer);
     if (this.searchTimer != null) window.clearTimeout(this.searchTimer);
+    this.offCloud?.();
+    this.offCloud = null;
     this.contentEl.empty();
+  }
+
+  /** The account this vault syncs with stays in sight on the main view, not only in Settings. */
+  private renderCloudLine(): void {
+    const el = this.cloudLineEl, cloud = this.plugin.cloud;
+    if (!el) return;
+    el.empty();
+    const shown = !!cloud?.signedIn && !!cloud.email;
+    el.toggleClass("is-hidden", !shown);
+    if (!shown) return;
+    setIcon(el.createSpan({ cls: "jotdrop-cloud-line-icon" }), cloud.enabled ? "cloud" : "cloud-off");
+    el.createSpan({ cls: "jotdrop-cloud-line-email", text: cloud.email, attr: { title: `Logged in as ${cloud.email}` } });
+    el.createSpan({ cls: "jotdrop-cloud-line-status", text: cloud.enabled ? cloud.status : "Cloud sync is off." });
+    const open = el.createEl("button", { cls: "clickable-icon jotdrop-cloud-line-settings", attr: { "aria-label": "JotDrop Cloud settings" } });
+    setIcon(open, "settings");
+    open.addEventListener("click", () => {
+      const setting = (this.app as unknown as { setting: { open(): void; openTabById(id: string): void } }).setting;
+      setting.open();
+      setting.openTabById(this.plugin.manifest.id);
+    });
   }
 
   applyCardWidth(): void {

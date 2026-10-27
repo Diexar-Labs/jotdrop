@@ -26,6 +26,8 @@ h3 { font-size: 1.05rem; }
 /* Account actions sit top right, like the account menu in Keep, so they are always in view. */
 .account-actions { display: flex; gap: .5rem; margin-right: 1rem; }
 .account-actions button { padding: .45rem .8rem; font-size: .85rem; }
+.account-actions { align-items: center; min-width: 0; }
+.account-email { min-width: 0; max-width: 28ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: .85rem; }
 .appearance select { width: auto; }
 .wordmark { display: flex; align-items: center; gap: .55rem; font-size: 1.25rem; font-weight: 650; white-space: nowrap; }
 .wordmark > span:last-child { font-size: .8rem; color: var(--muted); font-weight: 500; }

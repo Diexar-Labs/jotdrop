@@ -1494,6 +1494,8 @@ async function openWorkspace(connected) {
   $('access').hidden = true;
   $('workspace').hidden = false;
   $('account-actions').hidden = false;
+  const opened = generation;
+  accountInfo(connected).then((account) => { if (generation === opened) showAccountEmail(account); }, () => { if (generation === opened) showAccountEmail(null); });
   $('access-code').value = '';
   $('new-password').value = '';
   $('confirm-password').value = '';
@@ -1551,6 +1553,7 @@ function lock(notice = '') {
   $('secure-dialog').close();
   $('workspace').hidden = true;
   $('account-actions').hidden = true;
+  showAccountEmail(null);
   $('access').hidden = false;
   void store('get', 'connection').then((saved) => (unlockable(saved) ? showUnlock() : showAccess('login-form')), () => showAccess('login-form'))
     .then(() => { if (notice) $('access-message').textContent = notice; });
@@ -1806,9 +1809,18 @@ async function renderApprovals() {
   return approvals.length;
 }
 
+// Which account this browser is in, next to Log out: a cloud without an account (pairing only) shows nothing.
+function showAccountEmail(account) {
+  const label = $('account-email');
+  label.textContent = account?.email ?? '';
+  label.title = account?.email ? `Logged in as ${account.email}` : '';
+  label.hidden = !account?.email;
+}
+
 async function renderAccount() {
   let account;
   try { account = await accountInfo(client); } catch (error) { if (error.status !== 404) throw error; }
+  showAccountEmail(account);
   const linked = (account?.providers ?? []).map((name) => PROVIDER_NAMES[name] ?? name);
   $('account-status').textContent = account ? `Logged in as ${account.email}.${linked.length ? ` You can also sign in with ${linked.join(' and ')}.` : ''}` : 'This cloud has no account yet. New devices connect with a pairing code or your recovery code.';
   // An account made with Google or GitHub gets a password through "Forgot password".

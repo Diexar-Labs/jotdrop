@@ -89,6 +89,13 @@ def check_authenticator(browser, url, codes):
     laptop.locator("#code-input").fill(totp(secret, 1))
     laptop.locator('#code-form button[type="submit"]').click()
     laptop.locator("#workspace").wait_for()
+    # Which account this browser is in shows next to Log out, also on a phone-sized screen.
+    laptop.locator("#account-email").filter(has_text="secure@example.com").wait_for()
+    laptop.set_viewport_size({"width": 400, "height": 800})
+    assert laptop.locator("#account-email").is_visible()
+    assert not laptop.evaluate("document.documentElement.scrollWidth > innerWidth")
+    laptop.get_by_role("button", name="Lock workspace", exact=True).click()
+    laptop.locator("#account-email").wait_for(state="hidden")
 
     later = open_page()
     sign_up(later, "later@example.com")
