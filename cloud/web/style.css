@@ -98,6 +98,8 @@ main { min-width: 0; padding: 0 2rem 3rem; }
 .note-card { background: var(--note); padding: 1.1rem; border: 1px solid var(--line); border-radius: 10px 10px 22px 10px; min-width: 0; }
 .note-card.opens { cursor: pointer; }
 .note-card h3 { margin: 0 0 .65rem; font-size: 1.12rem; font-weight: 700; letter-spacing: -.01em; overflow-wrap: anywhere; }
+/* A very long title (a clipped post without a heading) stops after three lines, like the plugin and the app; the note keeps it whole. */
+.note-card h3 { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; }
 .note-card .note-preview { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); margin: 0 0 1rem; max-height: 210px; overflow: hidden; }
 .note-card .note-meta { color: var(--muted); font-size: .8rem; overflow-wrap: anywhere; margin: .7rem 0; }
 .note-card button { font-size: .85rem; padding: .4rem .6rem; margin: .25rem .35rem 0 0; background: transparent; border-width: 1px; border-color: var(--line); }
@@ -271,6 +273,8 @@ dialog::backdrop { background: rgb(15 23 36 / .4); }
 /* Under the pointer the paper stays askew and lifts onto the hard amber shadow of design A (Eric's choice C, 27 Oct). */
 .note-card:is(:hover, .is-hovered, :has(:focus-visible)) :is(.card-paper, img.card-cover) { translate: -2px -2px; }
 .note-card:is(:hover, .is-hovered, :has(:focus-visible)) .card-paper { box-shadow: 5px 5px 0 var(--amber); }
+/* The shadow lies under the folded corner then, so the cut-off bit shows amber too, not the page. */
+.note-card:is(:hover, .is-hovered, :has(:focus-visible)) .card-paper::after { background: linear-gradient(to top left, var(--amber) 50%, color-mix(in oklab, var(--note) 78%, var(--ink)) 50%); }
 .card-paper::after { content: ""; position: absolute; right: -1px; bottom: -1px; width: 16px; height: 16px; border-top-left-radius: 5px;
   background: linear-gradient(to top left, var(--page) 50%, color-mix(in oklab, var(--note) 78%, var(--ink)) 50%);
   filter: drop-shadow(-1px -1px 0 color-mix(in oklab, var(--line) 70%, var(--ink))); }

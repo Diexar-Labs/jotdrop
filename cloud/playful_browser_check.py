@@ -90,6 +90,9 @@ def check_playful(browser, url, token):
         page.wait_for_timeout(300)
         lifted = paper.evaluate("(element) => { const style = getComputedStyle(element); return [style.rotate, style.translate, style.boxShadow]; }")
         assert lifted[0] == resting and lifted[1] == "-2px -2px" and "rgb(244, 196, 88) 5px 5px 0px" in lifted[2], lifted
+        # The cut-off bit of the folded corner shows the amber shadow under it, not the page.
+        corner = paper.evaluate("(element) => getComputedStyle(element, '::after').backgroundImage")
+        assert "rgb(244, 196, 88) 50%" in corner, corner
 
         # Ticking strikes the task through with a pen; the other task has no stroke.
         page.evaluate("window.added = []")
