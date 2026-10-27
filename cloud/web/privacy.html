@@ -27,11 +27,12 @@
       <li>Your encrypted notes and their earlier versions, with their size, the time they were saved and which of your devices saved them.</li>
       <li>Your plan: free or JotDrop Plus, whether you used the trial, and for a subscription the Stripe subscription ID, its status and the date it is paid until.</li>
       <li>If you tick "Email me news about JotDrop.": when you ticked it and when we added you to our mailing list.</li>
+      <li>For one day after an account is made: a keyed hash of the network (IP) address it was made from, so that one network cannot open many accounts. It is deleted after that day.</li>
       <li>Short-lived codes, only as keyed hashes. Email codes expire after 15 minutes and Google or GitHub sign-in links after 10 minutes. We count wrong codes per account or email address to stop guessing.</li>
     </ul>
 
     <h2>What we do not collect</h2>
-    <p>Your IP address is used only in memory to limit repeated attempts; it is not written to our database or to logs. JotDrop Cloud has no ads, no analytics and no tracking cookies, and this website loads nothing from other sites. The website keeps you signed in only if you choose "Stay signed in on this browser", and then stores that in your browser.</p>
+    <p>Your IP address is used in memory to limit repeated attempts; apart from the one-day hash above, it is not written to our database or to logs. JotDrop Cloud has no ads, no analytics and no tracking cookies, and this website loads nothing from other sites, except Cloudflare's person check on the form for a new account. The website keeps you signed in only if you choose "Stay signed in on this browser", and then stores that in your browser.</p>
 
     <h2>Services that process data for us</h2>
     <ul>
@@ -40,7 +41,7 @@
       <li><strong>Brevo</strong> (France) sends JotDrop news and welcome emails, only if you ticked "Email me news about JotDrop.". It receives your email address. Every email has an unsubscribe link.</li>
       <li><strong>Stripe</strong> handles JotDrop Plus. When you buy Plus we send Stripe your email address and an internal ID of your cloud. Stripe, through Link, sells the subscription to you as the merchant of record and handles your payment details and taxes under <a href="https://stripe.com/privacy">its own privacy policy</a>. We never see your card details; we only receive the subscription status.</li>
       <li><strong>Google</strong> and <strong>GitHub</strong>, only if you choose "Continue with Google" or "Continue with GitHub". They confirm who you are and learn that you signed in to JotDrop Cloud, under their own privacy policies.</li>
-      <li><strong>Cloudflare</strong> forwards email you send to hello@jotdrop.net to our mailbox.</li>
+      <li><strong>Cloudflare</strong> forwards email you send to hello@jotdrop.net to our mailbox. When you create an account with an email address, Cloudflare Turnstile checks that a person, not a script, does it; for that check Cloudflare sees your IP address and details about your browser.</li>
     </ul>
     <p>We do not sell your data or share it with anyone else, unless the law requires it.</p>
 

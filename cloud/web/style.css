@@ -98,6 +98,8 @@ main { min-width: 0; padding: 0 2rem 3rem; }
 /* A fixed width: a longer status wraps in its own column and never squeezes the page title onto a second line. */
 .sync-state { flex: 0 0 min(35ch, 40%); display: flex; flex-wrap: wrap; gap: .25rem .5rem; align-items: center; justify-content: end; }
 #sync-status { text-align: right; max-width: 35ch; }
+.human-check { margin: .8rem 0; min-height: 65px; }
+.human-page { max-width: 32rem; margin: 4rem auto; padding: 0 1rem; }
 /* The bar sits under the sync status, beside the page title and no taller than it: a slow save that shows it never pushes the cards down (Eric, 27 Oct). */
 #upload-progress { width: 100%; max-width: 35ch; height: .5rem; accent-color: var(--accent); }
 .message { color: var(--danger); min-height: 1.5em; margin: 0 0 1rem; }

@@ -1,5 +1,5 @@
 import { CloudClient } from '/shared/client.mjs';
-import { accountInfo, approveDevice, attachAccount, availableProviders, changePassword, checkApproval, completeApproval, confirmLogin, confirmSignup, deleteAccount, disableTotp, enableTotp, listApprovals, logIn, newRecoveryCode, providerApproval, providerRecover, providerSignUp, providerTicket, rejectDevice, requestApproval, resetWithRecoveryCode, setupTotp, signUp, startOver, startProviderSignIn, startReset } from '/shared/account.mjs';
+import { accountInfo, approveDevice, attachAccount, availableProviders, changePassword, checkApproval, completeApproval, confirmLogin, confirmSignup, deleteAccount, disableTotp, enableTotp, listApprovals, logIn, newRecoveryCode, personCheckKey, providerApproval, providerRecover, providerSignUp, providerTicket, rejectDevice, requestApproval, resetWithRecoveryCode, setupTotp, signUp, startOver, startProviderSignIn, startReset } from '/shared/account.mjs';
 import { base64ToBytes, bytesToBase64, decodeRecovery, decryptEnvelope, encryptEnvelope, objectId, sealLocal, unsealLocal } from '/shared/crypto.mjs';
 import { exportZip } from '/export.mjs';
 import { noteSummary, updateMetadata, toggleTask, attachmentPath, plainPreviewText, splitNote, joinNote, noteFilename, manualRank, betweenRank } from '/note.mjs';
@@ -1734,8 +1734,26 @@ const accessError = (error) => error?.message || 'Something went wrong. Try agai
 // Account forms report the server's own reason (wrong password, wrong code), except a revoked device.
 const accountError = (error) => (error?.message && error.message !== 'Device access denied' ? error.message : errorText(error));
 
+// Cloudflare Turnstile, only when the server asks for it and only on the form for a new account:
+// a person, not a script, makes a new account (Eric, 27 Oct). Nothing loads from Cloudflare anywhere else.
+let humanCheck;
+function loadHumanCheck() {
+  humanCheck ??= personCheckKey(location.origin).then((siteKey) => siteKey && new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+    script.onload = () => {
+      $('signup-human').hidden = false;
+      resolve(turnstile.render('#signup-human', { sitekey: siteKey, theme: 'auto' }));
+    };
+    script.onerror = () => { humanCheck = undefined; reject(new Error('The person check could not load. Check your connection and try again.')); };
+    document.head.append(script);
+  }));
+  return humanCheck;
+}
+
 function showAccess(id) {
   approvalRun++;
+  if (id === 'signup-form') loadHumanCheck().catch((error) => { $('access-message').textContent = error.message; });
   for (const element of document.querySelectorAll('[data-access]')) element.hidden = element.id !== id;
   $('provider-buttons').hidden = !providerList.length || !['login-form', 'signup-form'].includes(id);
   $('unlock-form').hidden = true;
@@ -1827,7 +1845,12 @@ accessForm('login-form', async () => {
 accessForm('signup-form', async () => {
   const password = $('signup-password').value;
   if (password !== $('signup-confirm').value) throw new Error('The passwords do not match.');
-  askCode('signup', await signUp({ url: location.origin, email: $('signup-email').value.trim(), password, deviceName: DEVICE_NAME, newsletter: $('signup-newsletter').checked }), password, $('signup-remember').checked);
+  const widget = await loadHumanCheck();
+  const human = widget === null ? undefined : turnstile.getResponse(widget);
+  if (widget !== null && !human) throw new Error('Confirm that you are a person first.');
+  // A token works once: the next try gets a fresh check.
+  try { askCode('signup', await signUp({ url: location.origin, email: $('signup-email').value.trim(), password, deviceName: DEVICE_NAME, newsletter: $('signup-newsletter').checked, human }), password, $('signup-remember').checked); }
+  finally { if (widget !== null) turnstile.reset(widget); }
 });
 accessForm('code-form', async () => {
   const step = codeStep, code = $('code-input').value.trim();

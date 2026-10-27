@@ -58,6 +58,9 @@ internal object CloudAccountFlow {
     /** Google or GitHub is open in the browser; `providerReturn` is the jotdrop-cloud://oauth link it comes back with. */
     var waitingFor by mutableStateOf<String?>(null)
     var providerReturn by mutableStateOf<Uri?>(null)
+    /** The person check is open in the browser; `personReturn` is the token it comes back with (jotdrop-cloud://human). */
+    var waitingForPerson by mutableStateOf(false)
+    var personReturn by mutableStateOf<String?>(null)
     var provider by mutableStateOf<CloudProviderSignIn?>(null)
     /** Signed up with a password: the authenticator offer follows the recovery code, then this is dropped. */
     var secureOffer by mutableStateOf<CloudSecureOffer?>(null)
@@ -65,7 +68,7 @@ internal object CloudAccountFlow {
     var totpSetup by mutableStateOf<CloudTotpSetup?>(null)
     /** Bumped when the offer changed the account, so the account section loads it again. */
     var accountChanged by mutableStateOf(0)
-    fun clear() { signup = null; login = null; reset = null; approval = null; deviceChoice = null; waitingFor = null; provider = null; totpSetup = null }
+    fun clear() { signup = null; login = null; reset = null; approval = null; deviceChoice = null; waitingFor = null; waitingForPerson = false; provider = null; totpSetup = null }
 }
 
 /** The free plan's device limit was reached: the person picks the device this phone replaces, and `retry` repeats the same sign-in. */
@@ -269,6 +272,14 @@ internal fun CloudSignIn(busy: Boolean, run: (suspend () -> Unit) -> Unit, showE
             flow.provider = io { CloudAccount.providerTicket(started.getString("url"), ticket, started.getString("verifier")) }
         }
     }
+    // Back from the person check: the new account is made with the token, once.
+    LaunchedEffect(flow.personReturn) {
+        val token = flow.personReturn ?: return@LaunchedEffect
+        flow.personReturn = null
+        if (!flow.waitingForPerson) return@LaunchedEffect
+        flow.waitingForPerson = false
+        run { flow.signup = io { CloudAccount.signUp(server, email, password, cloudDeviceName(), newsletter, token) }; password = ""; confirm = "" }
+    }
     val serverField: @Composable () -> Unit = {
         OutlinedTextField(server, { if (it.length <= 200) server = it.trim() }, label = { Text("Server") }, singleLine = true, enabled = !busy,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, autoCorrect = false), modifier = Modifier.fillMaxWidth())
@@ -401,8 +412,13 @@ internal fun CloudSignIn(busy: Boolean, run: (suspend () -> Unit) -> Unit, showE
                 if (password.isNotEmpty()) Problem(newPasswordProblem(password, confirm))
                 CheckRow(newsletter, { newsletter = it }, NEWSLETTER_LABEL, !busy)
                 serverField()
-                Button(onClick = { run { flow.signup = io { CloudAccount.signUp(server, email, password, cloudDeviceName(), newsletter) }; password = ""; confirm = "" } },
-                    enabled = !busy && email.contains('@') && newPasswordProblem(password, confirm) == null) { Text("Create account") }
+                if (flow.waitingForPerson) Text("Confirm in your browser that you are a person. JotDrop continues here.")
+                Button(onClick = { run {
+                    if (io { CloudAccount.needsPersonCheck(server) }) {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("${server.trimEnd('/')}/human?client=android")))
+                        flow.waitingForPerson = true
+                    } else { flow.signup = io { CloudAccount.signUp(server, email, password, cloudDeviceName(), newsletter) }; password = ""; confirm = "" }
+                } }, enabled = !busy && email.contains('@') && newPasswordProblem(password, confirm) == null) { Text("Create account") }
                 TextButton(onClick = { mode = "signin" }, enabled = !busy) { Text("I already have an account") }
             }
             mode == "forgot" -> {

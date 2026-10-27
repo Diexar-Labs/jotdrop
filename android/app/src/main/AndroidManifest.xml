@@ -61,6 +61,7 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="jotdrop-cloud" android:host="oauth" />
+                <data android:scheme="jotdrop-cloud" android:host="human" />
             </intent-filter>
         </activity>
 

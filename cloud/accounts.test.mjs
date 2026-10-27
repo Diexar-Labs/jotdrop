@@ -459,3 +459,62 @@ test('behind the proxy each visitor gets its own sign-in limit; the client IP he
   for (let attempt = 0; attempt < 30; attempt++) assert.equal(await prelogin(direct, host, `198.51.100.${attempt}`), 200);
   assert.equal(await prelogin(direct, host, '198.51.100.200'), 429);
 });
+
+// Against misuse of the free storage (Eric, 27 Oct): no throwaway mailboxes, a few new accounts per network a day,
+// and with Turnstile configured a person check before an email account is made.
+async function startSignup(app, email, extra = {}) {
+  const vaultKey = generateVaultKey();
+  return app.api('/accounts', { email, ...await credentials(PASSWORD, vaultKey), recoveryTokenHash: await hashToken(randomToken()), deviceName: 'Phone', deviceTokenHash: await hashToken(randomToken()), ...extra });
+}
+
+test('a throwaway mailbox cannot open an account, while ordinary and look-alike addresses can', async (t) => {
+  const app = await fixture(t);
+  for (const email of ['someone@mailinator.com', 'someone@eu.guerrillamail.com']) {
+    const refused = await startSignup(app, email);
+    assert.equal(refused.status, 400);
+    assert.equal(refused.body.code, 'disposable-email');
+    assert.equal(app.mails.length, 0, 'no code goes to a refused address');
+  }
+  assert.equal((await startSignup(app, 'someone@mailinator.com.example.org')).status, 202);
+  await signUp(app, 'Real.Person@Proton.me');
+});
+
+test('one network opens at most five accounts a day; the next day it can again', async (t) => {
+  const app = await fixture(t);
+  for (let index = 0; index < 5; index++) await signUp(app, `person${index}@example.com`);
+  const refused = await startSignup(app, 'person5@example.com');
+  assert.equal(refused.status, 429);
+  assert.equal(refused.body.code, 'signup-limit');
+  // Starting without finishing counts nothing; only accounts made count.
+  const stored = new DatabaseSync(join(app.dataDir, 'cloud.db'), { readOnly: true });
+  const rows = stored.prepare('SELECT addressHash FROM signup_addresses').all();
+  stored.close();
+  assert.equal(rows.length, 5);
+  assert.ok(!rows.some((row) => row.addressHash.includes('127.0.0.1')), 'only a hash of the address is kept');
+  app.advance(24 * 60 * 60 * 1000 + 1);
+  await signUp(app, 'person5@example.com');
+});
+
+test('with Turnstile on, an email account needs a passed person check, and the site key is public', async (t) => {
+  const checks = [];
+  const fetcher = async (url, init) => {
+    assert.equal(url, 'https://challenges.cloudflare.com/turnstile/v0/siteverify');
+    const sent = JSON.parse(init.body);
+    checks.push(sent);
+    return new Response(JSON.stringify({ success: sent.response === 'passed-token' }));
+  };
+  const app = await fixture(t, { turnstile: { siteKey: 'site-key', secret: 'secret-key' }, fetcher });
+  assert.equal((await app.api('/auth/providers')).body.turnstileSiteKey, 'site-key');
+  const missing = await startSignup(app, 'person@example.com');
+  assert.equal(missing.status, 400);
+  const failed = await startSignup(app, 'person@example.com', { human: 'failed-token' });
+  assert.equal(failed.status, 400);
+  assert.equal(failed.body.code, 'human-check');
+  assert.equal(app.mails.length, 0);
+  const passed = await startSignup(app, 'person@example.com', { human: 'passed-token' });
+  assert.equal(passed.status, 202);
+  assert.deepEqual(checks.map((check) => [check.secret, check.response]), [['secret-key', 'failed-token'], ['secret-key', 'passed-token']]);
+  // Without Turnstile there is no check and no key to show.
+  const plain = await fixture(t);
+  assert.equal((await plain.api('/auth/providers')).body.turnstileSiteKey, null);
+});

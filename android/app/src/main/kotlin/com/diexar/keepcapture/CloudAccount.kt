@@ -74,13 +74,14 @@ object CloudAccount {
         return requireNotNull(value) { "This recovery code is not valid." }
     }
 
-    /** Starts a new account and cloud; the server mails a code to confirm the address. */
-    fun signUp(url: String, email: String, password: String, deviceName: String, newsletter: Boolean = false): CloudSignup {
+    /** Starts a new account and cloud; the server mails a code to confirm the address. `human`: the Turnstile token, when asked for. */
+    fun signUp(url: String, email: String, password: String, deviceName: String, newsletter: Boolean = false, human: String? = null): CloudSignup {
         val vaultKey = CloudCrypto.token()
         val recoveryToken = CloudCrypto.token()
         val (deviceToken, fields) = device(deviceName)
         val keys = credentials(password, vaultKey)
         val body = JSONObject().put("email", email.trim()).with(keys).put("recoveryTokenHash", CloudCrypto.hashToken(recoveryToken)).with(fields).put("newsletter", newsletter)
+        if (human != null) body.put("human", human)
         val result = post(origin(url), "/accounts", body)
         return CloudSignup(origin(url), id(result.getString("signupId")), null, vaultKey, recoveryToken, deviceToken, keys.getString("authKey"))
     }
@@ -254,6 +255,10 @@ object CloudAccount {
     fun rejectDevice(client: CloudClient, approvalId: String) {
         client.call("/account/approvals/${id(approvalId)}", "DELETE", JSONObject())
     }
+
+    /** Whether a new email account needs Cloudflare's person check first, which runs in the browser on the server's /human page. */
+    fun needsPersonCheck(url: String): Boolean =
+        !CloudClient.request(origin(url), "/auth/providers", "GET", null, null).optString("turnstileSiteKey").let { it.isEmpty() || it == "null" }
 
     /** The sign-in buttons the server offers; empty when it has no Google or GitHub app. */
     fun providers(url: String): List<String> {

@@ -50,10 +50,11 @@ class CloudActivity : ComponentActivity() {
         takeProviderReturn(intent)
     }
 
-    /** Google or GitHub sends the browser back to jotdrop-cloud://oauth?oauth=<ticket>. */
+    /** Google or GitHub sends the browser back to jotdrop-cloud://oauth?oauth=<ticket>, the person check to jotdrop-cloud://human?token=<token>. */
     private fun takeProviderReturn(intent: Intent?) {
         val data = intent?.data ?: return
         if (data.scheme == "jotdrop-cloud" && data.host == "oauth") CloudAccountFlow.providerReturn = data
+        if (data.scheme == "jotdrop-cloud" && data.host == "human") CloudAccountFlow.personReturn = data.getQueryParameter("token")
     }
 }
 

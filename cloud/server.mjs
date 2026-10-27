@@ -91,6 +91,16 @@ function totpCode(secret, step) {
   return String((mac.readUInt32BE(offset) & 0x7fffffff) % 1000000).padStart(6, '0');
 }
 
+// Throwaway mailboxes (the public-domain list of github.com/disposable-email-domains): an account needs an address
+// that lasts, since sign-in codes and a lost password go there. Signing in with an existing account is not affected.
+const DISPOSABLE_DOMAINS = new Set(readFileSync(join(directory, 'disposable-email-domains.txt'), 'utf8').split('\n').map((line) => line.trim().toLowerCase()).filter(Boolean));
+function requirePermanentEmail(email) {
+  const parts = email.slice(email.lastIndexOf('@') + 1).split('.');
+  for (let index = 0; index < parts.length - 1; index++) {
+    if (DISPOSABLE_DOMAINS.has(parts.slice(index).join('.'))) fail(400, 'Use an email address you keep: JotDrop sends your sign-in codes there, and throwaway addresses are not accepted.', { code: 'disposable-email' });
+  }
+}
+
 function emailValue(value) {
   requireValue(typeof value === 'string' && value.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim()), 'Invalid email address');
   return value.trim().toLowerCase();
@@ -152,7 +162,7 @@ async function body(req, maximum = MAX_BODY) {
 }
 
 /** Loopback-only server behind a trusted HTTPS proxy. Accounts need a mailer; no billing or provider credentials. `quotaBytes` and `freeDeviceLimit` are the free plan's limits. */
-export async function createCloudServer({ dataDir, enrollmentToken, mailer, newsletter, serverKey, stripe, oauth = {}, fetcher = globalThis.fetch, quotaBytes = 250 * 1024 * 1024, plusQuotaBytes = 10 * 1024 * 1024 * 1024, maxFileBytes = 25 * 1024 * 1024, plusMaxFileBytes = 200 * 1024 * 1024, freeDeviceLimit = 2, maxHistoryEntries = 100000, maxDeviceEntries = 1000, maxPairingEntries = 128, maxConcurrentRequests = 16, webRoot = join(directory, 'web'), corsOrigins = [], publicOrigin, port = 0, enrollmentLimit = 1, clock = Date.now }) {
+export async function createCloudServer({ dataDir, enrollmentToken, mailer, newsletter, serverKey, stripe, oauth = {}, fetcher = globalThis.fetch, quotaBytes = 250 * 1024 * 1024, plusQuotaBytes = 10 * 1024 * 1024 * 1024, maxFileBytes = 25 * 1024 * 1024, plusMaxFileBytes = 200 * 1024 * 1024, freeDeviceLimit = 2, maxHistoryEntries = 100000, maxDeviceEntries = 1000, maxPairingEntries = 128, maxConcurrentRequests = 16, signupsPerAddress = 5, turnstile, webRoot = join(directory, 'web'), corsOrigins = [], publicOrigin, port = 0, enrollmentLimit = 1, clock = Date.now }) {
   if (!dataDir || (enrollmentToken !== undefined && !validToken(enrollmentToken)) || [quotaBytes, plusQuotaBytes, freeDeviceLimit].some((value) => !Number.isSafeInteger(value) || value < 1)) throw new Error('Provide a data directory, random 32-byte enrollment token and positive quota.');
   if (mailer !== undefined && typeof mailer !== 'function') throw new Error('Provide the mailer as a function.');
   // `newsletter(email)` adds someone who ticked "Email me news about JotDrop" to the mailing list (Brevo).
@@ -213,6 +223,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         CREATE TABLE IF NOT EXISTS resets(id TEXT PRIMARY KEY, accountId TEXT NOT NULL REFERENCES accounts(id), codeHash TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, expiresAt INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS device_approvals(id TEXT PRIMARY KEY, accountId TEXT NOT NULL REFERENCES accounts(id), publicKey TEXT NOT NULL, claimTokenHash TEXT NOT NULL, envelope TEXT, expiresAt INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS secrets(name TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS signup_addresses(addressHash TEXT NOT NULL, createdAt INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS plans(vaultId TEXT PRIMARY KEY, plusUntil INTEGER NOT NULL DEFAULT 0, trialUsed INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS subscriptions(subscriptionId TEXT PRIMARY KEY, vaultId TEXT NOT NULL, status TEXT NOT NULL, paidUntil INTEGER NOT NULL);
         CREATE INDEX IF NOT EXISTS subscriptions_by_vault ON subscriptions(vaultId);
@@ -264,6 +275,24 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     const state = rate.get(key);
     if (!state || state.until <= now) { rate.set(key, { count: 1, until: now + 60000 }); return; }
     if (++state.count > maximum) fail(429, 'Too many attempts. Try again later.');
+  }
+  // A few new accounts per network a day. Only a keyed hash of the address is kept, and only for that day.
+  const addressHash = (ip) => createHmac('sha256', fakeSaltKey).update(`signup-address:${ip}`).digest('base64url');
+  function requireSignupRoom(ip) {
+    run('DELETE FROM signup_addresses WHERE createdAt<=?', clock() - DAY);
+    if (one('SELECT COUNT(*) AS count FROM signup_addresses WHERE addressHash=?', addressHash(ip)).count >= signupsPerAddress) fail(429, 'Too many new accounts from this network today. Try again tomorrow.', { code: 'signup-limit' });
+  }
+  const countSignup = (ip) => run('INSERT INTO signup_addresses VALUES(?,?)', addressHash(ip), clock());
+  // Cloudflare Turnstile checks that a person, not a script, creates an email account. Off when not configured.
+  async function requireHuman(token, ip) {
+    if (!turnstile) return;
+    requireValue(typeof token === 'string' && token.length > 0 && token.length <= 2048, 'Confirm that you are a person first.');
+    let outcome;
+    try {
+      const response = await fetcher('https://challenges.cloudflare.com/turnstile/v0/siteverify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ secret: turnstile.secret, response: token, remoteip: ip }), signal: AbortSignal.timeout(10000) });
+      outcome = await response.json();
+    } catch { fail(503, 'The person check is not reachable right now. Try again in a moment.'); }
+    if (outcome?.success !== true) fail(400, 'The person check did not pass. Try again.', { code: 'human-check' });
   }
   // Plus runs until the latest of the trial or a manual grant (plans) and every paid subscription period.
   function planRow(vaultId) {
@@ -573,6 +602,8 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   const assets = new Map([['/', [join(webRoot, 'index.html'), 'text/html']], ['/app.js', [join(webRoot, 'app.js'), 'text/javascript']], ['/style.css', [join(webRoot, 'style.css'), 'text/css']], ['/export.mjs', [join(webRoot, 'export.mjs'), 'text/javascript']], ['/note.mjs', [join(webRoot, 'note.mjs'), 'text/javascript']], ['/shared/crypto.mjs', [join(directory, 'shared/crypto.mjs'), 'text/javascript']], ['/shared/client.mjs', [join(directory, 'shared/client.mjs'), 'text/javascript']]]);
   assets.set('/ocr-worker.js', [join(webRoot, 'ocr-worker.js'), 'text/javascript']);
   assets.set('/privacy', [join(webRoot, 'privacy.html'), 'text/html']);
+  assets.set('/human', [join(webRoot, 'human.html'), 'text/html']);
+  assets.set('/human.js', [join(webRoot, 'human.js'), 'text/javascript']);
   assets.set('/logo.svg', [join(webRoot, 'logo.svg'), 'image/svg+xml']);
   // The house fonts (SIL Open Font License), served from here like everything else the page loads.
   for (const name of ['instrument-sans.woff2', 'bricolage-grotesque.woff2', 'caveat.woff2']) assets.set(`/fonts/${name}`, [join(webRoot, 'fonts', name), 'font/woff2']);
@@ -588,12 +619,14 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     assets.set(`/ocr/${name}`, [join(directory, '../node_modules/tesseract.js-core', name), 'text/javascript']);
   }
   for (const lang of ['eng', 'nld']) assets.set(`/ocr/${lang}.traineddata.gz`, [join(directory, `../node_modules/@tesseract.js-data/${lang}/4.0.0_best_int/${lang}.traineddata.gz`), 'application/gzip']);
+  // Turnstile's widget is the one script and frame from elsewhere, and only when the person check is on.
+  const challenges = turnstile ? ' https://challenges.cloudflare.com' : '';
   let server, activeRequests = 0;
   server = http.createServer(async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
-    res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self' 'wasm-unsafe-eval'${importMapSource}; worker-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; img-src 'self' blob:; media-src 'self' blob:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`);
+    res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self' 'wasm-unsafe-eval'${importMapSource}${challenges}; worker-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; img-src 'self' blob:; media-src 'self' blob:;${challenges ? ` frame-src${challenges};` : ''} base-uri 'none'; frame-ancestors 'none'; form-action 'self'`);
     const reply = (status, value) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(value)); };
     try {
       const actualPort = server.address().port;
@@ -672,6 +705,9 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         const email = emailValue(value.email);
         deviceName(value.deviceName);
         requireValue(validHash(value.deviceTokenHash) && validHash(value.recoveryTokenHash), 'Invalid token hash');
+        requirePermanentEmail(email);
+        requireSignupRoom(ip);
+        await requireHuman(value.human, ip);
         const credentials = await credentialValue(value);
         limit(`signup-email:${email}`, 3);
         const signupId = await startSignup(email, { ...credentials, vaultId: null, recoveryHash: value.recoveryTokenHash, deviceName: value.deviceName.trim(), deviceTokenHash: value.deviceTokenHash, newsletter: value.newsletter === true });
@@ -696,6 +732,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           }
           const now = new Date(clock()).toISOString(), accountId = randomUUID();
           run('INSERT INTO accounts(id,email,vaultId,kdf,authHash,wrappedVaultKey,createdAt,passwordChangedAt) VALUES(?,?,?,?,?,?,?,?)', accountId, email, vaultId, signup.kdf, signup.authHash, signup.wrappedVaultKey, now, now);
+          if (!signup.vaultId) countSignup(ip);
           if (signup.newsletter) joined = joinNewsletter(accountId, email, now);
           return deviceId ? { vaultId, deviceId } : { vaultId };
         }));
@@ -833,7 +870,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           return addDevice(vaultId, value.deviceName, value.deviceTokenHash);
         })); return;
       }
-      if (method === 'GET' && route === '/auth/providers') { reply(200, { providers: Object.keys(providers) }); return; }
+      if (method === 'GET' && route === '/auth/providers') { reply(200, { providers: Object.keys(providers), turnstileSiteKey: turnstile?.siteKey ?? null }); return; }
       const oauthRoute = /^\/auth\/oauth\/([a-z]{1,20})\/(start|callback)$/.exec(route);
       if (method === 'GET' && oauthRoute) {
         requireAccounts();
@@ -888,6 +925,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         requireValue(validHash(value.deviceTokenHash) && validHash(value.recoveryTokenHash), 'Invalid token hash');
         let joined;
         reply(201, transaction(() => {
+          requireSignupRoom(ip);
           const ticket = oauthTicket(value);
           if (oauthAccount(ticket)) fail(409, 'This email address already has an account. Sign in to it instead.', { code: 'account-exists' });
           run('DELETE FROM oauth_tickets WHERE id=?', ticket.id);
@@ -896,6 +934,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           // No password: '' never matches a login key, and "Forgot password" can add one later.
           run("INSERT INTO accounts(id,email,vaultId,kdf,authHash,wrappedVaultKey,createdAt,passwordChangedAt) VALUES(?,?,?,'','','',?,?)", accountId, ticket.email, vaultId, now, now);
           run('INSERT INTO identities VALUES(?,?,?,?)', ticket.provider, ticket.subject, accountId, now);
+          countSignup(ip);
           if (value.newsletter === true) joined = joinNewsletter(accountId, ticket.email, now);
           return addDevice(vaultId, value.deviceName, value.deviceTokenHash);
         }));
@@ -1002,6 +1041,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         limit(`signup:${ip}`, 10);
         const value = await body(req, MAX_METADATA_BODY);
         const email = emailValue(value.email);
+        requirePermanentEmail(email);
         const credentials = await credentialValue(value);
         limit(`signup-email:${email}`, 3);
         const signupId = await startSignup(email, { ...credentials, vaultId, recoveryHash: null, deviceName: null, deviceTokenHash: null, newsletter: value.newsletter === true });
@@ -1405,7 +1445,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   const provider = (name) => process.env[`JOTDROP_CLOUD_${name}_CLIENT_ID`] ? { clientId: process.env[`JOTDROP_CLOUD_${name}_CLIENT_ID`], clientSecret: process.env[`JOTDROP_CLOUD_${name}_CLIENT_SECRET`] } : undefined;
   // Without Brevo settings the tick is still recorded, and nobody is added to a list.
   const newsletter = process.env.JOTDROP_CLOUD_BREVO_API_KEY ? createBrevoList({ apiKey: process.env.JOTDROP_CLOUD_BREVO_API_KEY, listId: Number(process.env.JOTDROP_CLOUD_BREVO_LIST_ID) }) : undefined;
-  const app = await createCloudServer({ dataDir: process.env.JOTDROP_CLOUD_DATA_DIR, enrollmentToken, mailer, newsletter, serverKey, stripe, oauth: { google: provider('GOOGLE'), github: provider('GITHUB') }, maxHistoryEntries: Number(process.env.JOTDROP_CLOUD_MAX_HISTORY_ENTRIES ?? 100000), maxDeviceEntries: Number(process.env.JOTDROP_CLOUD_MAX_DEVICE_ENTRIES ?? 1000), maxPairingEntries: Number(process.env.JOTDROP_CLOUD_MAX_PAIRING_ENTRIES ?? 128), maxConcurrentRequests: Number(process.env.JOTDROP_CLOUD_MAX_CONCURRENT_REQUESTS ?? 16), publicOrigin: process.env.JOTDROP_CLOUD_PUBLIC_ORIGIN, port: Number(process.env.JOTDROP_CLOUD_PORT || 8787), corsOrigins: (process.env.JOTDROP_CLOUD_CORS_ORIGINS || '').split(',').map((entry) => entry.trim()).filter(Boolean) });
+  // With a Turnstile key pair, new email accounts need the person check; without one there is none.
+  const turnstile = process.env.JOTDROP_CLOUD_TURNSTILE_SECRET ? { siteKey: process.env.JOTDROP_CLOUD_TURNSTILE_SITE_KEY, secret: process.env.JOTDROP_CLOUD_TURNSTILE_SECRET } : undefined;
+  const app = await createCloudServer({ dataDir: process.env.JOTDROP_CLOUD_DATA_DIR, enrollmentToken, mailer, newsletter, serverKey, stripe, oauth: { google: provider('GOOGLE'), github: provider('GITHUB') }, maxHistoryEntries: Number(process.env.JOTDROP_CLOUD_MAX_HISTORY_ENTRIES ?? 100000), maxDeviceEntries: Number(process.env.JOTDROP_CLOUD_MAX_DEVICE_ENTRIES ?? 1000), maxPairingEntries: Number(process.env.JOTDROP_CLOUD_MAX_PAIRING_ENTRIES ?? 128), maxConcurrentRequests: Number(process.env.JOTDROP_CLOUD_MAX_CONCURRENT_REQUESTS ?? 16), signupsPerAddress: Number(process.env.JOTDROP_CLOUD_SIGNUPS_PER_ADDRESS ?? 5), turnstile, publicOrigin: process.env.JOTDROP_CLOUD_PUBLIC_ORIGIN, port: Number(process.env.JOTDROP_CLOUD_PORT || 8787), corsOrigins: (process.env.JOTDROP_CLOUD_CORS_ORIGINS || '').split(',').map((entry) => entry.trim()).filter(Boolean) });
   console.log(`JotDrop Cloud listening on http://127.0.0.1:${app.port}.`);
   if (!process.env.JOTDROP_CLOUD_ENROLLMENT_TOKEN) console.log(`Single-use local enrollment token: ${enrollmentToken}`);
   for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { void app.close().then(() => process.exit(0)); });

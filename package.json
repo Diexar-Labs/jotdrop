@@ -44,6 +44,7 @@
     "check:cloud-reload": "python cloud/reload_browser_check.py",
     "check:cloud-tick-scroll": "python cloud/tick_scroll_browser_check.py",
     "check:cloud-open-card-scroll": "python cloud/open_card_scroll_browser_check.py",
+    "check:cloud-human": "python cloud/human_browser_check.py",
     "check:cloud-long-card": "python cloud/long_card_browser_check.py",
     "check:cloud-photo-view": "python cloud/photo_view_browser_check.py",
     "check:cloud-tags": "python cloud/tags_browser_check.py",

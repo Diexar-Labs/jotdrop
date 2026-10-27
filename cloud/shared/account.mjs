@@ -49,10 +49,11 @@ async function newDevice(deviceName) {
 
 const connect = (url, result, deviceToken, vaultKey, fetcher) => new CloudClient({ url, vaultId: result.vaultId, deviceId: result.deviceId, token: deviceToken, vaultKey, fetcher });
 
-/** Starts a new account and cloud; the server mails a code to confirm the address. `newsletter`: the person ticked "Email me news". */
-export async function signUp({ url, email, password: value, deviceName, newsletter = false, fetcher }) {
+/** Starts a new account and cloud; the server mails a code to confirm the address. `newsletter`: the person ticked "Email me news".
+ * `human`: the Turnstile token, when the server asks for a person check (personCheckKey). */
+export async function signUp({ url, email, password: value, deviceName, newsletter = false, human, fetcher }) {
   const vaultKey = generateVaultKey(), recoveryToken = randomToken(), device = await newDevice(deviceName);
-  const { signupId } = await post(url, '/accounts', { email, ...await newCredentials(value, vaultKey), recoveryTokenHash: await hashToken(recoveryToken), ...device.fields, newsletter }, fetcher);
+  const { signupId } = await post(url, '/accounts', { email, ...await newCredentials(value, vaultKey), recoveryTokenHash: await hashToken(recoveryToken), ...device.fields, newsletter, human }, fetcher);
   return { url, signupId, vaultKey, recoveryToken, deviceToken: device.deviceToken };
 }
 
@@ -168,6 +169,8 @@ export async function startProviderSignIn({ url, provider, client }) {
 }
 
 export const availableProviders = async (url, { fetcher } = {}) => (await request(url, '/auth/providers', { fetcher })).providers;
+/** The Turnstile site key when a new email account needs a person check, otherwise null. */
+export const personCheckKey = async (url, { fetcher } = {}) => (await request(url, '/auth/providers', { fetcher })).turnstileSiteKey ?? null;
 
 /** Step 2: who signed in, and whether that address has an account (`account`) with a password (`password`). */
 export async function providerTicket({ url, ticket, verifier, fetcher }) {

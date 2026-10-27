@@ -2,7 +2,7 @@ import { FileSystemAdapter, Modal, Notice, Platform, Setting, TFile, normalizePa
 import type JotDropPlugin from "./main";
 import { ConfirmModal } from "./confirmModal";
 import { CloudClient } from "../cloud/shared/client.mjs";
-import { availableProviders, checkApproval, completeApproval, confirmLogin, confirmSignup, logIn, providerApproval, providerRecover, providerSignUp, providerTicket, requestApproval, resetWithRecoveryCode, signUp, startOver, startProviderSignIn, startReset } from "../cloud/shared/account.mjs";
+import { availableProviders, checkApproval, completeApproval, confirmLogin, confirmSignup, logIn, personCheckKey, providerApproval, providerRecover, providerSignUp, providerTicket, requestApproval, resetWithRecoveryCode, signUp, startOver, startProviderSignIn, startReset } from "../cloud/shared/account.mjs";
 import { AuthenticatorModal, RecoveryCodeModal } from "./cloudAccount";
 import { ConflictReviewModal, TimeMachineModal } from "./cloudReview";
 import { base64ToBytes, decryptEnvelope, MAX_CHUNKED_BYTES, MAX_FILE_BYTES, objectId, sha256Hex } from "../cloud/shared/crypto.mjs";
@@ -345,6 +345,7 @@ export class CloudController {
   private ready: Promise<void>;
   /** The open sign-in window, so the way back from Google or GitHub continues in it. */
   signInWindow?: CloudSignInModal;
+  private personWaiting?: (token: string) => void;
   /** Vault paths the current or last sync stored in the cloud, for the "Sealed" stamp on a new card. */
   readonly lastUploaded = new Set<string>();
 
@@ -383,7 +384,20 @@ export class CloudController {
     plugin.app.workspace.onLayoutReady(() => { void this.ready.then(() => this.request(0)); });
     // Google or GitHub sends the browser back here: obsidian://jotdrop-cloud?oauth=<ticket>
     plugin.registerObsidianProtocolHandler("jotdrop-cloud", (params) => {
+      // The person check comes back as obsidian://jotdrop-cloud?human=<token>.
+      if (params.human) { this.personWaiting?.(params.human); this.personWaiting = undefined; return; }
       void this.providerReturn(params).then((signIn) => this.showSignIn(false, signIn), (error) => new Notice(error instanceof Error ? error.message : String(error), 10000));
+    });
+  }
+
+  /** Cloudflare Turnstile for a new email account, when the server asks for it: it runs in the browser and its token comes back here. */
+  async personCheck(url: string): Promise<string | undefined> {
+    if (!await personCheckKey(url, { fetcher: cloudFetch })) return undefined;
+    window.open(`${url}/human?client=obsidian`);
+    // A token stays valid for five minutes; after that a new check is needed anyway.
+    return new Promise((resolve, reject) => {
+      const expired = window.setTimeout(() => { this.personWaiting = undefined; reject(new Error("The person check did not come back. Try again.")); }, 5 * 60_000);
+      this.personWaiting = (token) => { window.clearTimeout(expired); resolve(token); };
     });
   }
 
@@ -925,8 +939,10 @@ class CloudSignInModal extends Modal {
       .addButton((button) => button.setButtonText(this.signup ? "I have an account" : "Create an account").onClick(() => { this.signup = !this.signup; this.form(); }))
       .addButton((button) => button.setButtonText(this.signup ? "Create account" : "Log in").setCta().onClick(() => this.busy(button.buttonEl, async () => {
         if (this.signup && password !== confirm) throw new Error("The passwords do not match.");
+        if (this.signup) this.message?.setText("Confirm in your browser that you are a person. Obsidian continues here.");
+        const human = this.signup ? await this.cloud.personCheck(this.url) : undefined;
         const pending = this.signup
-          ? await signUp({ url: this.url, email, password, deviceName: deviceName(), newsletter, fetcher: cloudFetch })
+          ? await signUp({ url: this.url, email, password, deviceName: deviceName(), newsletter, human, fetcher: cloudFetch })
           : await logIn({ url: this.url, email, password, deviceName: deviceName(), fetcher: cloudFetch });
         this.code(pending as Pending, email, password);
       })));
