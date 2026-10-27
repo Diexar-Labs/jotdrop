@@ -403,6 +403,12 @@ object CloudSyncManager {
                     phase = CloudDiagnostics.Phase.RECONCILE
                     return deleted
                 }
+                // The version both devices last shared, to merge a note changed on both; a locked or cleared one gives null.
+                override fun base(path: String, revision: Int): ByteArray? {
+                    checkActive()
+                    return try { client.read(CloudCrypto.objectId(client.credentials.vaultKey, path), revision).bytes }
+                    catch (error: CloudRequestException) { if (error.status in 400..499) null else throw error }
+                }
             }
             phase = CloudDiagnostics.Phase.RECONCILE
             val report = try {

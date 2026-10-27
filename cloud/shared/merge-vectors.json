@@ -1,0 +1,107 @@
+[
+  {
+    "name": "a daily reminder advanced on both devices, one also set the card order",
+    "base": "---\ncolor: red\ntags:\n  - Claude\n  - sol6.1\nreminder: 2026-10-27T14:00\nreminder_repeat: daily\nreminder_done: 9\n---\n# GPT-6 Astra\n\n[video](https://www.youtube.com/watch?v=o3IEkKXXXvo)\n",
+    "local": "---\ncolor: red\ntags: [Claude, sol6.1]\nreminder: \"2026-10-28T14:00\"\nreminder_repeat: daily\nreminder_done: 10\n---\n# GPT-6 Astra\n\n[video](https://www.youtube.com/watch?v=o3IEkKXXXvo)\n",
+    "cloud": "---\ncolor: red\ntags:\n  - Claude\n  - sol6.1\nreminder: 2026-10-28T14:00\nreminder_repeat: daily\nreminder_done: 10\norder: -20260911950944.75\n---\n# GPT-6 Astra\n\n[video](https://www.youtube.com/watch?v=o3IEkKXXXvo)\n",
+    "merged": "---\ncolor: red\ntags:\n  - Claude\n  - sol6.1\nreminder: 2026-10-28T14:00\nreminder_repeat: daily\nreminder_done: 10\norder: -20260911950944.75\n---\n# GPT-6 Astra\n\n[video](https://www.youtube.com/watch?v=o3IEkKXXXvo)\n"
+  },
+  {
+    "name": "the same values written differently need no history",
+    "base": null,
+    "local": "---\ntags: [a, \"b c\"]\npinned: true\norder: -20261006196204\n---\nText\n",
+    "cloud": "---\ntags:\n  - a\n  - b c\npinned: \"true\"\norder: -20261006196204.0\n---\nText\n",
+    "merged": "---\ntags:\n  - a\n  - b c\npinned: \"true\"\norder: -20261006196204.0\n---\nText\n"
+  },
+  {
+    "name": "a field added on each side keeps both, in the cloud's order first",
+    "base": "Body\n",
+    "local": "---\npinned: true\n---\nBody\n",
+    "cloud": "---\norder: -5\n---\nBody\n",
+    "merged": "---\norder: -5\npinned: true\n---\nBody\n"
+  },
+  {
+    "name": "a field removed on one side stays removed",
+    "base": "---\nreminder: 2026-10-27T09:00\ncolor: blue\n---\nBody\n",
+    "local": "---\ncolor: blue\n---\nBody\n",
+    "cloud": "---\nreminder: 2026-10-27T09:00\ncolor: blue\norder: -3\n---\nBody\n",
+    "merged": "---\ncolor: blue\norder: -3\n---\nBody\n"
+  },
+  {
+    "name": "the text changed on one side and a field on the other",
+    "base": "---\nreminder: 2026-10-27T14:00\nreminder_done: 1\n---\nOld text\n",
+    "local": "---\nreminder: \"2026-10-28T14:00\"\nreminder_done: 2\n---\nOld text\n",
+    "cloud": "---\nreminder: 2026-10-27T14:00\nreminder_done: 1\n---\nNew text from the desktop\n",
+    "merged": "---\nreminder: \"2026-10-28T14:00\"\nreminder_done: 2\n---\nNew text from the desktop\n"
+  },
+  {
+    "name": "all fields removed leaves the text alone",
+    "base": "---\npinned: true\n---\nBody\n",
+    "local": "Body\n",
+    "cloud": "---\npinned: true\n---\nBody, edited\n",
+    "merged": "Body, edited\n"
+  },
+  {
+    "name": "the same field changed to different values keeps both versions",
+    "base": "---\ncolor: red\n---\nBody\n",
+    "local": "---\ncolor: blue\n---\nBody\n",
+    "cloud": "---\ncolor: green\n---\nBody\n",
+    "merged": null
+  },
+  {
+    "name": "the text changed on both sides keeps both versions",
+    "base": "Body\n",
+    "local": "Body from the phone\n",
+    "cloud": "Body from the desktop\n",
+    "merged": null
+  },
+  {
+    "name": "without the shared version a field on one side only cannot be told from a removal",
+    "base": null,
+    "local": "Body\n",
+    "cloud": "---\norder: -5\n---\nBody\n",
+    "merged": null
+  },
+  {
+    "name": "a nested field is beyond the simple reading",
+    "base": "Body\n",
+    "local": "---\nmeta:\n  author: Eric\n---\nBody\n",
+    "cloud": "---\norder: -5\n---\nBody\n",
+    "merged": null
+  },
+  {
+    "name": "Windows line ends are left to the user",
+    "base": "Body\r\n",
+    "local": "---\npinned: true\r\n---\r\nBody\r\n",
+    "cloud": "---\norder: -5\r\n---\r\nBody\r\n",
+    "merged": null
+  },
+  {
+    "name": "a frontmatter without its closing line is not read",
+    "base": "Body\n",
+    "local": "---\npinned: true\nBody\n",
+    "cloud": "---\norder: -5\n---\nBody\n",
+    "merged": null
+  },
+  {
+    "name": "an apostrophe inside a plain value is fine, a comment is not",
+    "base": "---\ntitle: Eric's list\n---\nBody\n",
+    "local": "---\ntitle: Eric's list\npinned: true\n---\nBody\n",
+    "cloud": "---\ntitle: Eric's list # kept\n---\nBody\n",
+    "merged": null
+  },
+  {
+    "name": "an apostrophe inside a plain value merges",
+    "base": "---\ntitle: Eric's list\n---\nBody\n",
+    "local": "---\ntitle: Eric's list\npinned: true\n---\nBody\n",
+    "cloud": "---\ntitle: Eric's list\norder: -1\n---\nBody\n",
+    "merged": "---\ntitle: Eric's list\norder: -1\npinned: true\n---\nBody\n"
+  },
+  {
+    "name": "a horizontal rule at the top is text, not frontmatter, when nothing closes it",
+    "base": "---\nText under a rule\n",
+    "local": "---\nText under a rule, edited\n",
+    "cloud": "---\nText under a rule\n",
+    "merged": null
+  }
+]

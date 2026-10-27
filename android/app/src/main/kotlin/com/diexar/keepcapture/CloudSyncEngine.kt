@@ -35,6 +35,8 @@ interface CloudSyncRemote {
     fun list(): List<CloudSyncEntry>
     fun write(path: String, bytes: ByteArray, baseRevision: Int): CloudSyncObject
     fun delete(path: String, baseRevision: Int): CloudSyncObject
+    /** That older version's bytes, to merge a note changed on two devices; null when the cloud no longer has it. */
+    fun base(path: String, revision: Int): ByteArray? = null
 }
 
 interface CloudSyncLocal {
@@ -54,6 +56,8 @@ object CloudSyncEngine {
     const val KEPT_BYTES = 16 * 1024 * 1024
     /** Progress is saved at least this often; a sync cut off in between redoes no upload or download twice. */
     private const val SAVE_EVERY_MS = 1000L
+    /** Notes up to this size merge when two devices changed different parts; bigger ones keep both versions. */
+    const val MERGE_BYTES = 1024 * 1024
 
     fun hash(bytes: ByteArray): String = CloudCrypto.encode(MessageDigest.getInstance("SHA-256").digest(bytes))
     fun path(value: String, allowPreserved: Boolean = false): String {
@@ -111,10 +115,10 @@ object CloudSyncEngine {
         fun remember(entry: CloudSyncEntry) = remember(entry.path, CloudSyncBase(entry.revision, entry.hash, entry.deleted))
         fun remember(saved: CloudSyncObject) = remember(saved.path, CloudSyncBase(saved.revision, saved.hash, saved.deleted))
         if (cleared.isNotEmpty()) { next -= cleared; dirty = true; flush() }
-        fun conflict(entry: CloudSyncEntry) {
+        fun conflict(entry: CloudSyncEntry, bytes: ByteArray? = null) {
             result.conflicts++
             result.conflictPaths += entry.path
-            local.conflict(entry.path, entry.revision, entry.bytes())
+            local.conflict(entry.path, entry.revision, bytes ?: entry.bytes())
         }
         fun upload(name: String, read: ByteArray?, baseRevision: Int) {
             val bytes = read ?: local.read(name)
@@ -137,6 +141,24 @@ object CloudSyncEngine {
         fun unchanged(name: String, localHash: String, read: ByteArray? = null): ByteArray? =
             read ?: runCatching { local.read(name) }.getOrNull()?.takeIf { hash(it) == localHash }
         fun replace(name: String, expected: ByteArray?, replacement: ByteArray?): Boolean = expected != null && local.compareAndSet(name, expected, replacement)
+        // Both sides changed a note. When the changes do not overlap, measured against the version both last shared
+        // (from the cloud's history, when it can still be read), one merged note goes both ways instead of a copy.
+        fun merge(entry: CloudSyncEntry, base: CloudSyncBase?, localHash: String, read: ByteArray?, theirs: ByteArray): Boolean {
+            val mine = unchanged(entry.path, localHash, read) ?: return false
+            if (mine.size > MERGE_BYTES || theirs.size > MERGE_BYTES) return false
+            val old = if (base != null && !base.deleted) remote.base(entry.path, base.revision)?.takeIf { hash(it) == base.hash } else null
+            val note = CloudNoteMerge.merge(old, mine, theirs) ?: return false
+            val noteHash = hash(note)
+            if (noteHash == entry.hash) {
+                if (!local.compareAndSet(entry.path, mine, note)) return false
+                remember(entry)
+                result.downloaded++
+                return true
+            }
+            if (noteHash != localHash && !local.compareAndSet(entry.path, mine, note)) return false
+            upload(entry.path, note, entry.revision)
+            return true
+        }
         val removals = mutableListOf<() -> Unit>()
         // Upload/download destinations before removing sources of archive/trash moves.
         val names = (files.keys + clouds.keys - result.skipped.toSet()).sortedWith(compareBy<String> { !it.startsWith("attachments/") }.thenBy { it })
@@ -186,7 +208,10 @@ object CloudSyncEngine {
                         else conflict(entry)
                     }
                     base != null && !base.deleted && base.revision == entry.revision && base.hash == entry.hash -> upload(name, bytes, entry.revision)
-                    else -> conflict(entry)
+                    else -> {
+                        val theirs = if (name.startsWith("notes/")) entry.bytes() else null
+                        if (theirs == null || !merge(entry, base, localHash, bytes, theirs)) conflict(entry, theirs)
+                    }
                 }
             }
             removals.forEach { checkActive(); it() }

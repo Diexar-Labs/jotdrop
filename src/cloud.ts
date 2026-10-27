@@ -565,6 +565,19 @@ export class CloudController {
           state.index.objects[id] = object;
           return object;
         },
+        // The version both devices last shared, to merge a note changed on both; a locked or cleared one gives null.
+        base: async (path: string, revision: number) => {
+          active();
+          const id = await objectId(vaultKey, path);
+          try {
+            const { manifest } = await client.readManifest(id, revision);
+            return await client.readPieces(id, manifest);
+          } catch (error) {
+            const status = (error as { status?: number }).status;
+            if (status !== undefined && status >= 400 && status < 500) return null;
+            throw error;
+          }
+        },
       };
       // The plan's maximum per file; a server without encrypted pieces takes 4 MiB.
       const pieces = (await client.status()).pieces;

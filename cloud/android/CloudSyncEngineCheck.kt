@@ -5,11 +5,15 @@ private class CheckRemote : CloudSyncRemote {
     var loseWrite = false
     var loseDelete = false
     var downloads = 0
+    // Every version written, so a merge can read the one both devices last shared.
+    val history = mutableMapOf<Pair<String, Int>, ByteArray>()
+    override fun base(path: String, revision: Int): ByteArray? = history[path to revision]?.copyOf()
     override fun list(): List<CloudSyncEntry> = files.values.map { file -> CloudSyncEntry(file.path, file.revision, file.deleted, CloudSyncEngine.hash(file.bytes)) { downloads++; file.bytes.copyOf() } }
     override fun write(path: String, bytes: ByteArray, baseRevision: Int): CloudSyncObject {
         check((files[path]?.revision ?: 0) == baseRevision) { "409" }
         val entry = CloudSyncObject(path, bytes.copyOf(), baseRevision + 1)
         files[path] = entry
+        history[path to entry.revision] = bytes.copyOf()
         if (loseWrite) { loseWrite = false; error("Lost successful write response") }
         return entry
     }
@@ -122,6 +126,63 @@ private class ScaleDevice(val cloud: ScaleCloud) {
 }
 
 /** 5,000 files and about 300 MB; checkCloudSync runs in a 160 MiB heap, so a sync that held them all would fail. */
+/** The shared cases of cloud/shared/merge-vectors.json (as base64 lines from the check script), then two devices. */
+private fun checkMerge() {
+    val input = requireNotNull(System.getenv("JOTDROP_MERGE_INPUT")) { "JOTDROP_MERGE_INPUT is missing" }
+    val decode = CloudCrypto::decode
+    var cases = 0
+    for (line in java.io.File(input).readLines().filter { it.isNotBlank() }) {
+        val (name, base, local, cloud, merged) = line.split('\t')
+        val result = CloudNoteMerge.merge(if (base == "-") null else decode(base), decode(local), decode(cloud))
+        check(if (merged == "-") result == null else result != null && result.contentEquals(decode(merged))) { "Merge case failed: ${String(decode(name))}" }
+        cases++
+    }
+    check(cases >= 15) { "Too few merge cases" }
+
+    val remote = CheckRemote()
+    val desktop = CheckLocal()
+    val phone = CheckLocal()
+    val td = mutableMapOf<String, CloudSyncBase>()
+    val tp = mutableMapOf<String, CloudSyncBase>()
+    fun syncDesktop() = CloudSyncEngine.sync(remote, desktop, td) {}
+    fun syncPhone() = CloudSyncEngine.sync(remote, phone, tp) {}
+    val note = "notes/daily.md"
+    val body = "# Daily\n\nStretch.\n"
+    desktop.files[note] = "---\ntags:\n  - health\nreminder: 2026-10-27T14:00\nreminder_repeat: daily\nreminder_done: 9\n---\n$body".toByteArray()
+    syncDesktop()
+    syncPhone()
+    // 14:00: the reminder goes off on both, each writes the next one its own way; the desktop also sets the card order.
+    desktop.files[note] = "---\ntags:\n  - health\nreminder: 2026-10-28T14:00\nreminder_repeat: daily\nreminder_done: 10\norder: -5\n---\n$body".toByteArray()
+    phone.files[note] = "---\ntags: [health]\nreminder: \"2026-10-28T14:00\"\nreminder_repeat: daily\nreminder_done: 10\n---\n$body".toByteArray()
+    check(syncDesktop().uploaded == 1)
+    check(syncPhone().let { it.downloaded == 1 && it.uploaded == 0 && it.conflicts == 0 })
+    check(phone.files.getValue(note).contentEquals(desktop.files.getValue(note)) && phone.copies.isEmpty())
+    // The phone pins the card while the desktop edits the text: one merged note, both ways.
+    val pinned = "---\ntags:\n  - health\nreminder: 2026-10-28T14:00\nreminder_repeat: daily\nreminder_done: 10\norder: -5\npinned: true\n---\n"
+    phone.files[note] = "$pinned$body".toByteArray()
+    desktop.files[note] = "---\ntags:\n  - health\nreminder: 2026-10-28T14:00\nreminder_repeat: daily\nreminder_done: 10\norder: -5\n---\n# Daily\n\nStretch and walk.\n".toByteArray()
+    syncDesktop()
+    check(syncPhone().let { it.uploaded == 1 && it.conflicts == 0 })
+    val merged = "$pinned# Daily\n\nStretch and walk.\n"
+    check(String(phone.files.getValue(note)) == merged && String(remote.files.getValue(note).bytes) == merged)
+    check(syncDesktop().downloaded == 1 && String(desktop.files.getValue(note)) == merged)
+    check(phone.copies.isEmpty() && desktop.copies.isEmpty())
+    // Both change the text: still both versions, as before.
+    phone.files[note] = merged.replace("walk", "run").toByteArray()
+    desktop.files[note] = merged.replace("walk", "swim").toByteArray()
+    syncDesktop()
+    check(syncPhone().conflicts == 1 && String(phone.files.getValue(note)) == merged.replace("walk", "run"))
+    // Without the shared version (locked or cleared), a field on one side only is not merged.
+    phone.files[note] = remote.files.getValue(note).bytes.copyOf()
+    syncPhone()
+    remote.history.clear()
+    phone.files[note] = String(remote.files.getValue(note).bytes).replace("pinned: true\n", "").toByteArray()
+    desktop.files[note] = String(remote.files.getValue(note).bytes).replace("order: -5", "order: -6").toByteArray()
+    syncDesktop()
+    check(syncPhone().conflicts == 1)
+    println("Native merge checks passed: $cases shared cases, a daily reminder on two devices, text and fields from different devices, overlaps keep both versions")
+}
+
 private fun checkScale() {
     val started = System.currentTimeMillis()
     val cloud = ScaleCloud()
@@ -425,5 +486,6 @@ fun main() {
     quietRemote.downloads = 0
     check(CloudSyncEngine.sync(quietRemote, quiet, quietTracked, seen = quietSeen) {} == CloudSyncReport() && quiet.reads == 0 && quietRemote.downloads == 0)
     println("Native sync checks passed: two devices, binary attachments, offline conflicts, CAS races, delete/recreate/restore, lost responses, persisted baselines and fail-closed limits")
+    checkMerge()
     checkScale()
 }

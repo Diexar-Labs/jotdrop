@@ -1,4 +1,5 @@
 import { bytesToBase64, MAX_FILE_BYTES, normalizePath } from './crypto.mjs';
+import { mergeNote } from './merge.mjs';
 
 // Two-way sync of a local notes folder, the same rules as Android's CloudSyncEngine.
 // No limit on the number of files or their total size: one file at a time is in memory; the cloud plan sets the storage.
@@ -6,6 +7,8 @@ import { bytesToBase64, MAX_FILE_BYTES, normalizePath } from './crypto.mjs';
 export const KEPT_BYTES = 16 * 1024 * 1024;
 // Progress is saved at least this often; a sync cut off in between redoes no upload or download twice.
 const SAVE_EVERY_MS = 1000;
+// Notes up to this size merge when two devices changed different parts; bigger ones keep both versions.
+export const MERGE_BYTES = 1024 * 1024;
 
 export const hash = async (bytes) => bytesToBase64(new Uint8Array(await crypto.subtle.digest('SHA-256', bytes)));
 // A manifest's fingerprint is hex; saved baselines keep the base64 form.
@@ -27,7 +30,8 @@ export function copyName(path, suffix) {
 
 /**
  * Reconcile only against acknowledged baselines, never timestamps or missing remote entries.
- * remote.list() gives `{ path, revision, deleted, hash, bytes() }`; write/delete give the acknowledged object.
+ * remote.list() gives `{ path, revision, deleted, hash, bytes() }`; write/delete give the acknowledged object;
+ * the optional remote.base(path, revision) gives that older version's bytes, or null when the cloud no longer has it.
  * local.list() gives a Map of path to `{ size, modified }` without reading files; local.read(path) gives the bytes;
  * compareAndSet(path, expected, replacement) uses null for "no file".
  * `seen` keeps each local file's hash by size and modification time, so a sync reads only files that changed.
@@ -80,9 +84,9 @@ export async function syncFolder(remote, local, tracked, persist, { checkActive 
   };
   for (const name of cleared) { delete next[name]; dirty = true; }
   await flush();
-  const conflict = async (entry) => {
+  const conflict = async (entry, bytes) => {
     result.conflicts++;
-    await local.conflict(entry.path, entry.revision, await entry.bytes());
+    await local.conflict(entry.path, entry.revision, bytes ?? await entry.bytes());
   };
   const written = (saved, name, revision, bytesHash) => {
     if (saved.path !== name || saved.deleted || saved.hash !== bytesHash || saved.revision !== revision) throw new Error('Invalid cloud write acknowledgment');
@@ -109,6 +113,26 @@ export async function syncFolder(remote, local, tracked, persist, { checkActive 
     return await hash(bytes) === localHash ? bytes : null;
   };
   const replace = async (entry, expected, replacement) => expected && await local.compareAndSet(entry.path, expected, replacement);
+  // Both sides changed a note. When the changes do not overlap, measured against the version both last shared
+  // (from the cloud's history, when it can still be read), one merged note goes both ways instead of a copy.
+  const merge = async (entry, base, localHash, bytes, theirs) => {
+    const mine = await unchanged(entry.path, localHash, bytes);
+    if (!mine || mine.length > MERGE_BYTES || theirs.length > MERGE_BYTES) return false;
+    let old = base && !base.deleted && remote.base ? await remote.base(entry.path, base.revision) : null;
+    if (old && await hash(old) !== base.hash) old = null;
+    const note = mergeNote(old, mine, theirs);
+    if (!note) return false;
+    const noteHash = await hash(note);
+    if (noteHash === entry.hash) {
+      if (!await local.compareAndSet(entry.path, mine, note)) return false;
+      await remember(entry);
+      result.downloaded++;
+      return true;
+    }
+    if (noteHash !== localHash && !await local.compareAndSet(entry.path, mine, note)) return false;
+    await upload(entry.path, note, entry.revision);
+    return true;
+  };
   const removals = [];
   // Upload/download destinations before removing sources of archive/trash moves.
   const names = [...new Set([...files.keys(), ...clouds.keys()])].filter((name) => !result.skipped.includes(name)).sort((a, b) => Number(!a.startsWith('attachments/')) - Number(!b.startsWith('attachments/')) || (a < b ? -1 : a > b ? 1 : 0));
@@ -152,7 +176,10 @@ export async function syncFolder(remote, local, tracked, persist, { checkActive 
         if (await replace(entry, await unchanged(name, localHash, bytes), await entry.bytes())) { await remember(entry); result.downloaded++; }
         else await conflict(entry);
       } else if (base && !base.deleted && base.revision === entry.revision && base.hash === entry.hash) await upload(name, bytes, entry.revision);
-      else await conflict(entry);
+      else {
+        const theirs = name.startsWith('notes/') ? await entry.bytes() : null;
+        if (!theirs || !await merge(entry, base, localHash, bytes, theirs)) await conflict(entry, theirs);
+      }
     }
     for (const removal of removals) { checkActive(); await removal(); }
     progress(names.length, names.length);

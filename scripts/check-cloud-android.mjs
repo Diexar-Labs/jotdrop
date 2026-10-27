@@ -39,10 +39,14 @@ try {
   }
   const input = path.join(temporary, 'input.tsv'), output = path.join(temporary, 'output.tsv');
   writeFileSync(input, [...vectors, ...pieces].map((vector) => vector.line).join('\n'));
+  // The merge cases the JavaScript tests use; Android must merge each note to the same bytes, or not at all.
+  const merges = path.join(temporary, 'merge.tsv'), field = (value) => value === null ? '-' : encodeText(value);
+  writeFileSync(merges, JSON.parse(readFileSync(path.join(root, 'cloud/shared/merge-vectors.json'), 'utf8'))
+    .map((vector) => [vector.name, vector.base, vector.local, vector.cloud, vector.merged].map(field).join('\t')).join('\n'));
   const windows = process.platform === 'win32';
   execFileSync(windows ? process.env.ComSpec || 'cmd.exe' : './gradlew', windows ? ['/d', '/c', 'gradlew.bat checkCloudCrypto checkCloudSync --no-daemon --console=plain'] : ['checkCloudCrypto', 'checkCloudSync', '--no-daemon', '--console=plain'], {
     cwd: path.join(root, 'android'), stdio: 'inherit',
-    env: { ...process.env, JOTDROP_CRYPTO_INPUT: input, JOTDROP_CRYPTO_OUTPUT: output },
+    env: { ...process.env, JOTDROP_CRYPTO_INPUT: input, JOTDROP_CRYPTO_OUTPUT: output, JOTDROP_MERGE_INPUT: merges },
   });
   const results = readFileSync(output, 'utf8').split('\n');
   assert.equal(results.length, vectors.length + pieces.length);

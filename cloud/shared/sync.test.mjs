@@ -42,6 +42,10 @@ function device(client) {
     list: () => remoteFiles(client, index),
     async write(path, bytes, baseRevision) { const saved = await client.write(path, bytes, baseRevision); return { path, revision: saved.revision, deleted: false, hash: await hash(bytes) }; },
     async delete(path, baseRevision) { const saved = await client.remove(await objectId(client.credentials.vaultKey, path), baseRevision); return { path, revision: saved.revision, deleted: true, hash: '' }; },
+    async base(path, revision) {
+      try { return (await client.read(await objectId(client.credentials.vaultKey, path), revision)).file.bytes; }
+      catch (error) { if (error.status >= 400 && error.status < 500) return null; throw error; }
+    },
   };
   return { files, tracked, index, local, sync: () => syncFolder(remote, local, tracked, async () => {}, { seen }) };
 }
@@ -113,6 +117,46 @@ test('two devices sync edits, moves and deletions, and keep both versions on con
   assert.equal((await b.sync()).conflicts, 1, 'An edit wins over a deletion elsewhere');
   assert.equal(decode(b.files.get('notes/Archive/Shopping.cloud-conflict-r4.md')), 'Edited while deleted elsewhere');
   assert.equal(decode(a.files.get('notes/Archive/Shopping.md')), 'Edited while deleted elsewhere');
+});
+
+test('a note changed in different places on two devices merges without a copy', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'jotdrop-sync-merge-'));
+  const enrollmentToken = randomToken(), app = await createCloudServer({ dataDir: directory, enrollmentToken });
+  t.after(async () => { await app.close(); await rm(directory, { recursive: true, force: true }); });
+  const owner = (await CloudClient.create({ url: `http://127.0.0.1:${app.port}`, enrollmentToken, deviceName: 'Desktop' })).client;
+  const other = await CloudClient.claim({ pairingCode: (await owner.makePairing('Phone')).pairingCode });
+  const desktop = device(owner), phone = device(other);
+  const note = 'notes/Daily.md', body = '# Daily\n\nStretch.\n';
+  desktop.files.set(note, text(`---\ntags:\n  - health\nreminder: 2026-10-27T14:00\nreminder_repeat: daily\nreminder_done: 9\n---\n${body}`));
+  await desktop.sync();
+  await phone.sync();
+
+  // 14:00: the reminder goes off on both, each writes the next one its own way; the desktop also sets the card order.
+  desktop.files.set(note, text(`---\ntags:\n  - health\nreminder: 2026-10-28T14:00\nreminder_repeat: daily\nreminder_done: 10\norder: -5\n---\n${body}`));
+  phone.files.set(note, text(`---\ntags: [health]\nreminder: "2026-10-28T14:00"\nreminder_repeat: daily\nreminder_done: 10\n---\n${body}`));
+  assert.equal((await desktop.sync()).uploaded, 1);
+  assert.deepEqual(await phone.sync(), { uploaded: 0, downloaded: 1, deleted: 0, conflicts: 0, skipped: [] });
+  assert.equal(decode(phone.files.get(note)), decode(desktop.files.get(note)), 'The phone takes the cloud version: nothing of its own was lost');
+
+  // The phone pins the card while the desktop edits the text: one merged note, both ways.
+  const pinned = `---\ntags:\n  - health\nreminder: 2026-10-28T14:00\nreminder_repeat: daily\nreminder_done: 10\norder: -5\npinned: true\n---\n`;
+  phone.files.set(note, text(`${pinned}${body}`));
+  desktop.files.set(note, text(`---\ntags:\n  - health\nreminder: 2026-10-28T14:00\nreminder_repeat: daily\nreminder_done: 10\norder: -5\n---\n# Daily\n\nStretch and walk.\n`));
+  await desktop.sync();
+  assert.deepEqual(await phone.sync(), { uploaded: 1, downloaded: 0, deleted: 0, conflicts: 0, skipped: [] });
+  const merged = `${pinned}# Daily\n\nStretch and walk.\n`;
+  assert.equal(decode(phone.files.get(note)), merged);
+  assert.equal((await desktop.sync()).downloaded, 1);
+  assert.equal(decode(desktop.files.get(note)), merged);
+  assert.ok(![...phone.files.keys(), ...desktop.files.keys()].some(isPreserved), 'No copies on either device');
+
+  // Both change the text: still both versions, as before.
+  phone.files.set(note, text(merged.replace('walk', 'run')));
+  desktop.files.set(note, text(merged.replace('walk', 'swim')));
+  await desktop.sync();
+  assert.equal((await phone.sync()).conflicts, 1);
+  assert.equal(decode(phone.files.get(note)), merged.replace('walk', 'run'));
+  assert.equal(decode(phone.files.get('notes/Daily.cloud-conflict-r5.md')), merged.replace('walk', 'swim'));
 });
 
 test('more than 500 files sync through the real server, and a quiet sync reads nothing', async (t) => {
