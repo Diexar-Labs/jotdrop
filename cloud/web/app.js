@@ -22,6 +22,15 @@ const media = new Map();
 const shownMedia = new Set();
 // A change that syncs within this time never shows as waiting, so a tick does not reshape its card twice.
 const QUIET_PENDING_MS = 3000;
+// Playful details from design A (Eric, 27 Oct). A note you just created drops onto the board and gets a "Sealed" stamp
+// once the cloud holds it; a pin you just pressed wiggles and a task you just ticked is struck through with a pen.
+// Cards are rebuilt on every render, so these remember what just happened until the rebuilt card shows it.
+const FRESH_MS = 60_000;
+const STAMP_MS = 1800;
+const freshNotes = new Map();
+const stamps = new Map();
+let justPinned;
+let justStruck;
 let client;
 let view = 'notes';
 let labelFilter = '';
@@ -130,7 +139,27 @@ const icons = {
   pencil: '<path d="M21.17 6.81a1 1 0 0 0-3.99-3.99L3.84 16.17a2 2 0 0 0-.5.83l-1.32 4.35a.5.5 0 0 0 .62.62l4.35-1.32a2 2 0 0 0 .83-.5z"/><path d="m15 5 4 4"/>',
   more: '<circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/>',
   check: '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+  lock: '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
 };
+
+// A paper card sits a little askew, always at the same angle for the same note.
+const tiltAngles = [-0.6, -0.35, 0.3, 0.5, -0.15, 0.2];
+function tiltFor(path) {
+  let hash = 0;
+  for (const char of path) hash = (hash * 31 + char.codePointAt(0)) | 0;
+  return `${tiltAngles[Math.abs(hash) % tiltAngles.length]}deg`;
+}
+const strikeLine = '<svg class="strike" viewBox="0 0 100 10" preserveAspectRatio="none" aria-hidden="true"><path pathLength="1" d="M1 6 C 18 2, 30 8, 50 5 S 82 3, 99 6"/></svg>';
+
+function sealedStamp(elapsed) {
+  const stamp = document.createElement('span');
+  stamp.className = 'card-stamp';
+  stamp.setAttribute('aria-hidden', 'true');
+  stamp.innerHTML = `<svg viewBox="0 0 24 24">${icons.lock}</svg>Sealed`;
+  stamp.style.animationDelay = `-${elapsed}ms`;
+  stamp.addEventListener('animationend', () => stamp.remove());
+  return stamp;
+}
 
 function iconButton(icon, label, action, className = '') {
   const element = button('', action, `icon-button ${className}`.trim());
@@ -363,7 +392,8 @@ function renderNoteMedia(entry) {
 // Masonry like Keep: each grid child spans as many 8px rows as its height needs, so
 // short cards pack under each other while the DOM (and reading) order stays row-wise.
 const gridSpans = new ResizeObserver((entries) => {
-  for (const { target } of entries) target.style.gridRowEnd = `span ${Math.ceil((target.getBoundingClientRect().height + 16) / 8)}`;
+  // offsetHeight, not the bounding box: a tilted card is not taller, and straightening it on hover must not move it.
+  for (const { target } of entries) target.style.gridRowEnd = `span ${Math.ceil((target.offsetHeight + 16) / 8)}`;
 });
 
 function render() {
@@ -437,6 +467,14 @@ function render() {
     const heading = document.createElement('h2');
     heading.textContent = query ? 'No matching files' : labelFilter ? 'No notes with this label yet' : view === 'trash' ? 'Nothing in the trash' : view === 'files' ? 'A place for your attachments' : 'Room for your next thought';
     empty.append(heading, paragraph(query ? 'Try a different word or filename.' : labelFilter ? 'Give a note this label with the label button on its card or in the editor.' : view === 'notes' ? 'Create a note or upload a Markdown file. Existing notes on your computer are never imported automatically.' : view === 'files' ? `Upload an image, recording, or document, up to ${maxFileText()} each.` : 'Files you move to trash will appear here.'));
+    if (view === 'notes' && !query && !labelFilter) {
+      const hint = document.createElement('p');
+      hint.className = 'empty-hint';
+      // A drawn arrow up to the New note button.
+      hint.innerHTML = '<svg viewBox="0 0 64 44" aria-hidden="true"><path d="M58 38C40 40 20 32 12 8"/><path d="M5 17l7-9 8 8"/></svg>';
+      hint.append('jot the first one with New note');
+      empty.append(hint);
+    }
     $('items').append(empty);
   }
   navOrder = matching.filter((entry) => !entry.deleted && isMarkdown(entry.file.path)).map((entry) => entry.id);
@@ -454,6 +492,8 @@ function render() {
     const markdown = isMarkdown(entry.file.path);
     const parts = markdown ? noteParts(noteText(entry.file), entry.file.path) : { title: entry.file.path.split('/').pop() };
     if (markdown) card.classList.add(`note-${parts.color}`);
+    if (markdown && parts.pinned) card.classList.add('is-pinned');
+    card.style.setProperty('--tilt', tiltFor(entry.file.path));
     if (sections && section !== Boolean(parts.pinned)) {
       section = Boolean(parts.pinned);
       const heading = document.createElement('h2');
@@ -499,11 +539,15 @@ function render() {
         input.addEventListener('click', (event) => { if (saving) event.preventDefault(); });
         input.addEventListener('change', async () => {
           saving = true;
+          justStruck = input.checked ? `${entry.file.path}:${bodyIndex}` : undefined;
           try { const latest = files.get(entry.id); if (latest !== entry) throw new Error('This checklist changed. Sync and try again.'); await queueFile(entry.file.path, encoder.encode(toggleTask(noteText(entry.file), bodyOffset + bodyIndex, input.checked)), entry.revision); }
           catch (error) { input.checked = !input.checked; message(errorText(error)); }
           finally { saving = false; }
         });
-        row.append(input, document.createTextNode(plainPreviewText(task[2]))); card.append(row);
+        const label = document.createElement('span'); label.className = 'task-text';
+        label.append(plainPreviewText(task[2])); label.insertAdjacentHTML('beforeend', strikeLine);
+        if (input.checked && justStruck === `${entry.file.path}:${bodyIndex}`) { row.classList.add('just-struck'); justStruck = undefined; }
+        row.append(input, label); card.append(row);
       });
       flush();
       if (!entry.deleted && !moment) card.classList.add('opens');
@@ -563,8 +607,16 @@ function render() {
     else if (markdown && view !== 'trash') {
       // The plugin's card bar: edit, color, labels, archive and a menu with the rest.
       if (view === 'notes' && !moment) {
-        const pin = iconButton('pin', parts.pinned ? 'Unpin' : 'Pin', () => changeNote(entry, { pinned: parts.pinned ? null : true }), 'card-pin');
+        const pin = iconButton('pin', parts.pinned ? 'Unpin' : 'Pin', () => {
+          justPinned = { path: entry.file.path, pinned: !parts.pinned };
+          return changeNote(entry, { pinned: parts.pinned ? null : true });
+        }, 'card-pin');
         pin.setAttribute('aria-pressed', String(Boolean(parts.pinned)));
+        if (justPinned?.path === entry.file.path && justPinned.pinned === Boolean(parts.pinned)) {
+          pin.classList.add('wiggling');
+          if (parts.pinned) card.classList.add('just-pinned');
+          justPinned = undefined;
+        }
         card.append(pin);
       }
       const color = iconButton('palette', 'Color', () => showMenu(color, colorNames.map(([value, label]) => ({
@@ -591,6 +643,13 @@ function render() {
     if (!entry.pending) card.dataset.revision = entry.revision;
     // Only a card that was not on screen yet fades in; one that was stays as it is.
     if (spans.has(card.dataset.path)) card.classList.add('is-kept');
+    const fresh = Date.now() - (freshNotes.get(card.dataset.path) ?? -Infinity) < FRESH_MS;
+    if (fresh && !card.classList.contains('is-kept')) card.classList.add('is-dropped');
+    // Never before the cloud has it: the stamp says the encrypted note is stored.
+    if (fresh && !entry.pending) { freshNotes.delete(card.dataset.path); stamps.set(card.dataset.path, Date.now()); }
+    const stamped = Date.now() - (stamps.get(card.dataset.path) ?? -Infinity);
+    if (stamped < STAMP_MS) card.append(sealedStamp(stamped));
+    else stamps.delete(card.dataset.path);
     if (spans.get(card.dataset.path)) card.style.gridRowEnd = spans.get(card.dataset.path);
     // Until the pointer moves, the card it rests on shows its buttons as before; then real hover takes over.
     if (card.dataset.path === hovered) card.classList.add('is-hovered');
@@ -2218,9 +2277,10 @@ async function saveEditor() {
       $('note-path').value = path;
     }
     if (!isMarkdown($('note-path').value)) throw new Error('Notes must use a .md filename.');
+    if (editingRevision === undefined) freshNotes.set($('note-path').value, Date.now());
     await queueFile($('note-path').value, encoder.encode($('note-content').value), editingRevision);
     return true;
-  } catch (error) { $('editor-message').textContent = errorText(error); return false; }
+  } catch (error) { freshNotes.delete($('note-path').value); $('editor-message').textContent = errorText(error); return false; }
 }
 $('editor-form').addEventListener('submit', async (event) => {
   event.preventDefault();

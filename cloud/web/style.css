@@ -258,3 +258,52 @@ dialog::backdrop { background: rgb(15 23 36 / .4); }
 .provider-logo { width: 1.15rem; height: 1.15rem; flex: none; }
 .provider-or { margin: .5rem 0 0; text-align: center; color: var(--muted); font-size: .9rem; }
 #provider-step textarea { width: 100%; }
+
+/* Playful details from design A (Eric, 27 Oct): paper cards a little askew, a folded corner like the logo, tape on pinned notes,
+   a pen stroke through done tasks, a new note dropped onto the board and stamped once the cloud holds it.
+   Only rotate, translate and opacity move: no card changes place in the grid. With less motion, confirmations fade instead. */
+.note-card { rotate: var(--tilt, 0deg); transition: rotate .2s ease; border-bottom-right-radius: 10px; }
+.note-card:is(:hover, .is-hovered, :focus-within, .is-dragging) { rotate: 0deg; }
+.note-card::after { content: ""; position: absolute; right: -1px; bottom: -1px; width: 16px; height: 16px; border-top-left-radius: 5px; pointer-events: none;
+  background: linear-gradient(to top left, var(--page) 50%, color-mix(in oklab, var(--note) 78%, var(--ink)) 50%);
+  filter: drop-shadow(-1px -1px 0 color-mix(in oklab, var(--line) 70%, var(--ink))); }
+.note-card.is-pinned::before { content: ""; position: absolute; top: -9px; left: 50%; width: 78px; height: 20px; translate: -50% 0; rotate: -4deg; pointer-events: none;
+  background: color-mix(in srgb, var(--amber) 62%, transparent);
+  clip-path: polygon(0 0, 100% 0, 94% 50%, 100% 100%, 0 100%, 6% 50%); }
+.task-text { position: relative; }
+.task-row input:checked + .task-text { color: var(--muted); }
+.task-text .strike { position: absolute; left: -2px; top: 50%; width: calc(100% + 4px); height: 10px; translate: 0 -45%; overflow: visible; pointer-events: none; }
+.task-row input:not(:checked) + .task-text .strike { display: none; }
+.strike path { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-dasharray: 1; }
+.card-stamp { position: absolute; right: 1.6rem; bottom: .7rem; display: inline-flex; align-items: center; gap: .3rem; padding: .15rem .5rem; border: 2px solid var(--ink); border-radius: 6px; background: var(--note); color: var(--ink); font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; rotate: -7deg; pointer-events: none; opacity: 0; }
+.card-stamp svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+:is(#new-note, button.primary):not(:disabled) { box-shadow: 3px 3px 0 var(--edge); transition: translate .08s ease, box-shadow .08s ease; }
+:is(#new-note, button.primary):not(:disabled):hover { box-shadow: 4px 4px 0 var(--edge); }
+:is(#new-note, button.primary):not(:disabled):active { box-shadow: 0 0 0 var(--edge); }
+.empty-state .empty-hint { display: flex; align-items: center; gap: .3rem; margin: .4rem 0 0; font-family: "Caveat", "Instrument Sans", cursive; font-weight: 600; font-size: 1.4rem; line-height: 1.1; color: var(--hand); }
+.empty-state .empty-hint svg { width: 52px; height: 36px; flex: none; overflow: visible; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+/* The browser's own parts in the house colours. */
+::selection { background: var(--amber); color: #14213d; }
+input, textarea { caret-color: var(--accent); }
+html { scrollbar-color: color-mix(in srgb, var(--ink) 35%, transparent) transparent; }
+@keyframes drop { 0% { opacity: 0; translate: 0 -30px; rotate: -2.5deg; } 40% { opacity: 1; } 100% { translate: 0 0; rotate: var(--tilt, 0deg); } }
+@keyframes stick { from { opacity: 0; scale: 1.5; rotate: -12deg; } to { opacity: 1; scale: 1; rotate: -4deg; } }
+@keyframes wiggle { 0% { rotate: 0deg; } 25% { rotate: -16deg; } 50% { rotate: 11deg; } 75% { rotate: -6deg; } 100% { rotate: 0deg; } }
+@keyframes draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+@keyframes stamp { 0% { opacity: 0; scale: 1.6; } 18% { opacity: 1; scale: .96; } 26% { scale: 1; } 80% { opacity: 1; } 100% { opacity: 0; } }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes stamp-fade { 0% { opacity: 0; } 15% { opacity: 1; } 80% { opacity: 1; } 100% { opacity: 0; } }
+@media (prefers-reduced-motion: no-preference) {
+  .note-card.is-dropped { animation: drop .42s cubic-bezier(.16, 1, .3, 1); }
+  .note-card.just-pinned::before { animation: stick .28s ease-out; }
+  .card-pin.wiggling svg { animation: wiggle .45s ease-in-out; }
+  .task-row.just-struck .strike path { animation: draw .35s ease-out; }
+  .card-stamp { animation: stamp 1.8s ease-out forwards; }
+  :is(#new-note, button.primary):not(:disabled):hover { translate: -1px -1px; }
+  :is(#new-note, button.primary):not(:disabled):active { translate: 3px 3px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .note-card { transition: none; }
+  .note-card.is-dropped, .note-card.just-pinned::before { animation: fade-in .2s ease-out; }
+  .card-stamp { animation: stamp-fade 1.8s ease-out forwards; }
+}

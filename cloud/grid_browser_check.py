@@ -43,11 +43,12 @@ def check_grid(browser, url, token):
         # A re-render briefly resets row spans until the ResizeObserver runs (before paint),
         # and a new card fades in from a few pixels lower, so measure all cards in one go
         # once every span matches its height and no card is still appearing.
+        # Cards sit a little askew (rotate), so measure the layout box, not the turned bounding box.
         settled = """() => {
           const children = [...document.getElementById('items').children];
           if (children.some(el => el.getAnimations().length)) return false;
-          if (!children.every(el => el.style.gridRowEnd === `span ${Math.ceil((el.getBoundingClientRect().height + 16) / 8)}`)) return false;
-          return Object.fromEntries(children.filter(el => el.matches('.note-card')).map(el => [el.querySelector('h3').textContent, el.getBoundingClientRect().toJSON()]));
+          if (!children.every(el => el.style.gridRowEnd === `span ${Math.ceil((el.offsetHeight + 16) / 8)}`)) return false;
+          return Object.fromEntries(children.filter(el => el.matches('.note-card')).map(el => [el.querySelector('h3').textContent, { x: el.offsetLeft, y: el.offsetTop, width: el.offsetWidth, height: el.offsetHeight }]));
         }"""
         layout = page.wait_for_function(settled).json_value()
         tall, b, c, d = layout["Tall A"], layout["Short B"], layout["Short C"], layout["Short D"]
