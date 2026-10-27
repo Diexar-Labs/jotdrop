@@ -16,7 +16,10 @@ data class CloudSyncObject(val path: String, val bytes: ByteArray, val revision:
 class CloudSyncEntry(val path: String, val revision: Int, val deleted: Boolean, val hash: String, val bytes: () -> ByteArray)
 data class CloudSyncBase(val revision: Int, val hash: String, val deleted: Boolean = false)
 /** [skipped]: files over the maximum per file, left alone on this device. */
-data class CloudSyncReport(var uploaded: Int = 0, var downloaded: Int = 0, var deleted: Int = 0, var conflicts: Int = 0, val skipped: MutableList<String> = mutableListOf(), val conflictPaths: MutableList<String> = mutableListOf())
+data class CloudSyncReport(var uploaded: Int = 0, var downloaded: Int = 0, var deleted: Int = 0, var conflicts: Int = 0, val skipped: MutableList<String> = mutableListOf(), val conflictPaths: MutableList<String> = mutableListOf()) {
+    /** The paths this sync stored in the cloud, for the "Sealed" stamp on a new card; not part of comparing reports. */
+    val uploadedPaths: MutableList<String> = mutableListOf()
+}
 /** A local file without reading it. */
 data class CloudLocalFile(val size: Long, val modified: Long)
 /** The hash of a local file as it was at this size and modification time. */
@@ -119,6 +122,7 @@ object CloudSyncEngine {
             require(saved.path == name && !saved.deleted && saved.bytes.contentEquals(bytes) && saved.revision == baseRevision + 1) { "Invalid cloud write acknowledgment" }
             remember(saved)
             result.uploaded++
+            result.uploadedPaths += name
         }
         // The hash of a local file, read only when its size or time changed (or is unknown); the bytes come along only when just read.
         fun scan(name: String): Pair<String, ByteArray?> {

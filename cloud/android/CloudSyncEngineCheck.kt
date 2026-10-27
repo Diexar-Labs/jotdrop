@@ -399,7 +399,10 @@ fun main() {
     val bigRemote = CheckRemote()
     val oversized = CheckLocal().also { it.files[note] = ByteArray(CloudCrypto.MAX_FILE_BYTES + 1); it.files["attachments/small.bin"] = ByteArray(10) }
     val bigTracked = mutableMapOf<String, CloudSyncBase>()
-    check(CloudSyncEngine.sync(bigRemote, oversized, bigTracked) {} == CloudSyncReport(uploaded = 1, skipped = mutableListOf(note)))
+    val bigReport = CloudSyncEngine.sync(bigRemote, oversized, bigTracked) {}
+    check(bigReport == CloudSyncReport(uploaded = 1, skipped = mutableListOf(note)))
+    // The report names what went up, for the "Sealed" stamp; never a file that stayed on the device.
+    check(bigReport.uploadedPaths == listOf("attachments/small.bin"))
     check(note !in bigRemote.files)
     oversized.files["attachments/small.bin"] = ByteArray(CloudCrypto.MAX_FILE_BYTES + 1)
     check(CloudSyncEngine.sync(bigRemote, oversized, bigTracked) {} == CloudSyncReport(skipped = mutableListOf("attachments/small.bin", note)))

@@ -285,4 +285,6 @@
     <string name="md_help_tag">a tag you can filter on</string>
     <string name="md_help_divider">a dividing line</string>
     <string name="md_help_table">a table with columns A and B</string>
+    <string name="empty_hint_new_note">jot the first one with +</string>
+    <string name="stamp_sealed">Sealed</string>
 </resources>

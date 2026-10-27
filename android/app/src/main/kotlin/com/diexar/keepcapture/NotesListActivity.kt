@@ -152,6 +152,43 @@ import java.util.Locale
 import com.diexar.keepcapture.ui.JotDropTheme
 import com.diexar.keepcapture.ui.noteCardBrush
 import com.diexar.keepcapture.ui.screenBackgroundBrush
+import com.diexar.keepcapture.ui.DROP_DELAY_MS
+import com.diexar.keepcapture.ui.DROP_MS
+import com.diexar.keepcapture.ui.FRESH_MS
+import com.diexar.keepcapture.ui.Handwriting
+import com.diexar.keepcapture.ui.PIN_MS
+import com.diexar.keepcapture.ui.PlayfulAmber
+import com.diexar.keepcapture.ui.PlayfulInk
+import com.diexar.keepcapture.ui.SealedStamp
+import com.diexar.keepcapture.ui.drawPaper
+import com.diexar.keepcapture.ui.drawPenLines
+import com.diexar.keepcapture.ui.drawTape
+import com.diexar.keepcapture.ui.tickedTasks
+import com.diexar.keepcapture.ui.tiltFor
+import com.diexar.keepcapture.ui.wiggle
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.material3.FloatingActionButtonDefaults
+import androidx.compose.material3.LocalContentColor
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.translate
+import androidx.compose.ui.graphics.drawOutline
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -1128,7 +1165,25 @@ private fun NotesListScreen(
                     }
                 }
                 Spacer(Modifier.height(12.dp))
-                FloatingActionButton(onClick = { onNewNote(selectedLabel) }) {
+                // The main button of design A: amber with an ink edge and a hard shadow, and it presses in.
+                val newNoteSource = remember { MutableInteractionSource() }
+                val newNotePressed by newNoteSource.collectIsPressedAsState()
+                val edge = MaterialTheme.colorScheme.onBackground
+                val newNoteShape = RoundedCornerShape(10.dp, 10.dp, 18.dp, 10.dp)
+                FloatingActionButton(
+                    onClick = { onNewNote(selectedLabel) },
+                    interactionSource = newNoteSource,
+                    shape = newNoteShape,
+                    containerColor = PlayfulAmber,
+                    contentColor = PlayfulInk,
+                    elevation = FloatingActionButtonDefaults.elevation(0.dp, 0.dp, 0.dp, 0.dp),
+                    modifier = Modifier
+                        .offset { if (newNotePressed) IntOffset(3.dp.roundToPx(), 3.dp.roundToPx()) else IntOffset.Zero }
+                        .drawBehind {
+                            if (!newNotePressed) translate(3.dp.toPx(), 3.dp.toPx()) { drawOutline(newNoteShape.createOutline(size, layoutDirection, this), edge) }
+                        }
+                        .border(1.5.dp, edge, newNoteShape),
+                ) {
                     Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.action_new_note))
                 }
             }
@@ -1154,7 +1209,8 @@ private fun NotesListScreen(
                 )
                 is NotesUiState.Loaded -> {
                     if (s.notes.isEmpty()) {
-                        CenteredText(stringResource(if (folder == NoteFolder.NOTES && !remindersOnly && selectedLabel == null && selectedTags.isEmpty()) R.string.empty_no_notes else R.string.empty_collection))
+                        if (folder == NoteFolder.NOTES && !remindersOnly && selectedLabel == null && selectedTags.isEmpty()) EmptyNotesHint()
+                        else CenteredText(stringResource(R.string.empty_collection))
                     } else {
                         Column(modifier = Modifier.fillMaxSize()) {
                             updateInfo?.let { info ->
@@ -1439,6 +1495,30 @@ private fun NotesGrid(
     val gridState = rememberLazyStaggeredGridState()
     val scope = rememberCoroutineScope()
 
+    // A note that turns up while the list is open (just made, or arrived from the cloud) drops onto the board.
+    // Once the cloud has stored one that dropped in the last minute, it gets the "Sealed" stamp, never before.
+    val arrivals = remember { object { val known = HashSet<String>(); var primed = false } }
+    val droppedAt = remember { mutableMapOf<String, Long>() }
+    remember(notes) {
+        val now = System.currentTimeMillis()
+        for (note in notes) {
+            val key = noteKey(note)
+            if (arrivals.primed && key !in arrivals.known && now - note.lastModified < FRESH_MS) droppedAt[key] = now
+        }
+        arrivals.known += notes.map(::noteKey)
+        arrivals.primed = true
+    }
+    val uploaded by CloudSyncManager.lastUploaded.collectAsState()
+    val sealedAt = remember { mutableStateMapOf<String, Long>() }
+    LaunchedEffect(uploaded) {
+        val now = System.currentTimeMillis()
+        for (note in notes) {
+            val key = noteKey(note)
+            val at = droppedAt[key] ?: continue
+            if (now - at < FRESH_MS && key !in sealedAt && "notes/${note.filename}" in uploaded) sealedAt[key] = now
+        }
+    }
+
     // Laat de grid staan tijdens de gesture: anders kan Compose de gesleepte
     // pointerInput afbreken terwijl de tekst tussen vaste kaartvakken wisselt.
     var ordered by remember(notes) { mutableStateOf(notes) }
@@ -1588,6 +1668,8 @@ private fun NotesGrid(
                     onPinClick = { onTogglePin(note) },
                     onChecklistClick = { index -> onToggleChecklist(note, index) },
                     onUrlClick = onUrlClick,
+                    droppedAt = droppedAt[noteKey(note)],
+                    sealedAt = sealedAt[noteKey(note)],
                 )
             }
             item(span = StaggeredGridItemSpan.FullLine, key = "label-other") {
@@ -1611,6 +1693,8 @@ private fun NotesGrid(
                 onPinClick = { onTogglePin(note) },
                 onChecklistClick = { index -> onToggleChecklist(note, index) },
                 onUrlClick = onUrlClick,
+                droppedAt = droppedAt[noteKey(note)],
+                sealedAt = sealedAt[noteKey(note)],
             )
         }
     }
@@ -2012,7 +2096,8 @@ private fun SectionLabel(text: String) {
     )
 }
 
-private val CARD_SHAPE = RoundedCornerShape(16.dp)
+// As on the website: 10 dp corners, the bottom-right one folded over by the paper.
+private val CARD_SHAPE = RoundedCornerShape(10.dp)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -2110,19 +2195,36 @@ private fun NoteCard(
     isDropTarget: Boolean = false,
     dragPreview: Boolean = false,
     manualMode: Boolean = false,
+    droppedAt: Long? = null,
+    sealedAt: Long? = null,
     modifier: Modifier = Modifier,
 ) {
     val bg = noteBackground(note.meta.color, darkTheme)
     val fg = contentColorOn(note.meta.color, darkTheme)
-    // Brush + BorderStroke memoizen — Brush.linearGradient maakt anders bij elke
+    // Brush memoizen — Brush.linearGradient maakt anders bij elke
     // recomposition een nieuw object aan en dat zorgt voor GC-druk tijdens scroll.
-    // CardDefaults.cardColors/cardElevation zijn @Composable en kunnen niet in
-    // remember-blokken; die laten we Compose zelf afhandelen.
     val brush = remember(bg, darkTheme) { noteCardBrush(bg, darkTheme) }
     val primaryColor = MaterialTheme.colorScheme.primary
-    val border = remember(fg, isSelected, isDropTarget, primaryColor) {
-        if (isSelected || isDropTarget) androidx.compose.foundation.BorderStroke(2.dp, primaryColor)
-        else androidx.compose.foundation.BorderStroke(0.7.dp, fg.copy(alpha = 0.08f))
+    val edgeColor = if (isSelected || isDropTarget) primaryColor else fg.copy(alpha = 0.08f)
+    val edgeWidth = with(LocalDensity.current) { (if (isSelected || isDropTarget) 2.dp else 0.7.dp).toPx() }
+    // Playful details (design A): only the paper is askew, so the text on it stays sharp.
+    val tilt = remember(note.filename) { tiltFor(note.filename) }
+    val page = MaterialTheme.colorScheme.background
+    val fold = remember(bg, fg) { lerp(bg, fg, 0.22f) }
+    // A pin pressed here wiggles, and pinning sticks the tape on.
+    val pinHolder = remember { arrayOfNulls<Boolean>(1) }
+    val pinMoment = remember(note.meta.pinned) {
+        val before = pinHolder[0]
+        pinHolder[0] = note.meta.pinned
+        if (before != null && before != note.meta.pinned) Animatable(0f) else null
+    }
+    LaunchedEffect(pinMoment) { pinMoment?.animateTo(1f, tween(PIN_MS, easing = LinearEasing)) }
+    // A note that just arrived drops onto the board.
+    val drop = remember { droppedAt?.let { Animatable(((System.currentTimeMillis() - it - DROP_DELAY_MS).toFloat() / DROP_MS).coerceIn(0f, 1f)) } }
+    LaunchedEffect(drop) {
+        if (drop == null) return@LaunchedEffect
+        delay((DROP_DELAY_MS - (System.currentTimeMillis() - droppedAt!!)).coerceAtLeast(0L))
+        drop.animateTo(1f, tween((DROP_MS * (1f - drop.value)).toInt(), easing = CubicBezierEasing(0.16f, 1f, 0.3f, 1f)))
     }
     val accent = remember(note.meta.color, fg) { accentOn(note.meta.color, fg) }
     val timestampText = remember(note.lastModified) { formatTimestamp(note.lastModified) }
@@ -2150,21 +2252,28 @@ private fun NoteCard(
             )
     }
 
-    Card(
-        // Geen onClick op de Card: in Manual handelt de grid de gesture af,
-        // anders combinedClickable hieronder.
-        colors = CardDefaults.cardColors(containerColor = Color.Transparent, contentColor = fg),
-        elevation = CardDefaults.cardElevation(defaultElevation = if (isDragging) 10.dp else 0.dp),
-        shape = CARD_SHAPE,
-        border = border,
-        // graphicsLayer promoot de kaart naar een eigen render-layer; tijdens
-        // scroll wordt de rasterized output gehergebruikt i.p.v. de gradient +
-        // text+border opnieuw te tekenen per frame. Voorkomt frame drops.
+    // Geen Card: the paper is drawn behind the content, askew, and may reach past the card (tape), so only the
+    // content is clipped to the card's shape. In Manual handelt de grid de gesture af, anders combinedClickable.
+    Box(
         modifier = modifier
+            .then(if (isDragging) Modifier.shadow(10.dp, CARD_SHAPE, clip = false) else Modifier)
+            .graphicsLayer {
+                val p = drop?.value ?: return@graphicsLayer
+                translationY = -44.dp.toPx() * (1f - p)
+                alpha = (p / 0.4f).coerceAtMost(1f)
+                rotationZ = -3f * (1f - p)
+            }
+            .drawBehind { drawPaper(brush, edgeColor, edgeWidth, page, fold, tilt) }
+            // Tape lies on top of the card, a photo included (Eric, 27 Oct).
+            .drawWithContent {
+                drawContent()
+                if (note.meta.pinned) drawTape(tilt, pinMoment?.let { (it.value * PIN_MS / 280f).coerceAtMost(1f) } ?: 1f)
+            }
+            .clip(CARD_SHAPE)
             .then(gestureModifier)
             .zIndex(if (isDragging) 1f else 0f),
     ) {
-        Box(modifier = Modifier.fillMaxSize().background(brush = brush)) {
+        CompositionLocalProvider(LocalContentColor provides fg) {
             Column {
                 if (thumbnailUri != null) {
                     // De thumbnail hoort bij de kaart: een tap opent eerst de editor.
@@ -2199,12 +2308,24 @@ private fun NoteCard(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                         color = fg,
+                        // Room for the pin in the corner.
+                        modifier = Modifier.padding(end = 22.dp),
                     )
                     if (note.snippet.isNotBlank()) {
                         Spacer(Modifier.height(6.dp))
                         val annotated = remember(note.snippet, accent) {
                             renderPreviewAnnotated(note.snippet, accent)
                         }
+                        // Ticked tasks get a pen line; the one just ticked here is drawn by the pen.
+                        val ticked = remember(annotated) { tickedTasks(annotated) }
+                        val tickHolder = remember { arrayOfNulls<Set<Int>>(1) }
+                        val pen = remember(ticked.keys) {
+                            val before = tickHolder[0]
+                            tickHolder[0] = ticked.keys
+                            before?.let { (ticked.keys - it).firstOrNull() }?.let { it to Animatable(0f) }
+                        }
+                        LaunchedEffect(pen) { pen?.second?.animateTo(1f, tween(350)) }
+                        var textLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
                         // ClickableText is duurder dan Text. maxLines van 8 naar 5
                         // verlaagt de text-layout-cost merkbaar voor lange snippets.
                         ClickableText(
@@ -2212,6 +2333,12 @@ private fun NoteCard(
                             style = snippetStyle,
                             maxLines = 5,
                             overflow = TextOverflow.Ellipsis,
+                            onTextLayout = { textLayout = it },
+                            modifier = Modifier.drawWithContent {
+                                drawContent()
+                                val layout = textLayout ?: return@drawWithContent
+                                if (ticked.isNotEmpty()) drawPenLines(layout, ticked, fg) { index -> if (pen?.first == index) pen.second.value else 1f }
+                            },
                             onClick = { offset ->
                                 if (selectionMode) { onClick(); return@ClickableText }
                                 val urlAnn = annotated
@@ -2310,8 +2437,19 @@ private fun NoteCard(
                             if (note.meta.pinned) R.string.action_unpin else R.string.action_pin
                         ),
                         tint = fg,
+                        modifier = Modifier.graphicsLayer { rotationZ = pinMoment?.let { wiggle(it.value) } ?: 0f },
                     )
                 }
+            }
+            // Never before the cloud has it: the stamp says the encrypted note is stored.
+            if (sealedAt != null) {
+                SealedStamp(
+                    sealedAt = sealedAt,
+                    ink = fg,
+                    paper = bg,
+                    label = stringResource(R.string.stamp_sealed),
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(end = 24.dp, bottom = 10.dp),
+                )
             }
         }
     }
@@ -2467,6 +2605,43 @@ private fun CenteredText(text: String) {
             color = MaterialTheme.colorScheme.onBackground,
             textAlign = TextAlign.Center,
         )
+    }
+}
+
+/** No notes yet: the usual line, and a handwritten one with a drawn arrow down to the + button. */
+@Composable
+private fun EmptyNotesHint() {
+    val hand = if (isSystemInDarkTheme()) PlayfulAmber else Color(0xFF8A5A00)
+    Box(modifier = Modifier.fillMaxSize().padding(24.dp)) {
+        Column(modifier = Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = stringResource(R.string.empty_no_notes),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onBackground,
+                textAlign = TextAlign.Center,
+            )
+        }
+        Row(
+            verticalAlignment = Alignment.Bottom,
+            modifier = Modifier.align(Alignment.BottomEnd).padding(end = 52.dp, bottom = 40.dp),
+        ) {
+            Text(
+                text = stringResource(R.string.empty_hint_new_note),
+                fontFamily = Handwriting,
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 24.sp,
+                color = hand,
+                modifier = Modifier.graphicsLayer { rotationZ = -3f },
+            )
+            // The website's arrow, turned to point down to the button (viewBox 64 x 44).
+            Canvas(modifier = Modifier.size(52.dp, 36.dp)) {
+                val sx = size.width / 64f
+                val sy = size.height / 44f
+                val stroke = Stroke(2.2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                drawPath(Path().apply { moveTo(6 * sx, 6 * sy); cubicTo(24 * sx, 4 * sy, 44 * sx, 12 * sy, 52 * sx, 36 * sy) }, hand, style = stroke)
+                drawPath(Path().apply { moveTo(59 * sx, 27 * sy); lineTo(52 * sx, 36 * sy); lineTo(44 * sx, 28 * sy) }, hand, style = stroke)
+            }
+        }
     }
 }
 

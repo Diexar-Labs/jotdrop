@@ -40,6 +40,9 @@ object CloudSyncManager {
     private val editors = mutableMapOf<String, Int>()
     private val changed = MutableStateFlow(0L)
     val changes = changed.asStateFlow()
+    private val uploaded = MutableStateFlow(emptySet<String>())
+    /** Cloud paths the last sync stored, for the "Sealed" stamp on a new card. */
+    val lastUploaded = uploaded.asStateFlow()
     private val network = Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build()
     private const val PERIODIC = "jotdrop-cloud-periodic"
     private const val IMMEDIATE = "jotdrop-cloud-now"
@@ -426,6 +429,7 @@ object CloudSyncManager {
                             big.take(3).joinToString(", ") { it.substringAfterLast('/') } + (if (big.size > 3) " and ${big.size - 3} more." else ".")
                     }.orEmpty())
             store.saveSettings(settings)
+            uploaded.value = report.uploadedPaths.toSet()
             changed.value++
         } catch (error: Exception) {
             if (error is CancellationException) throw error
