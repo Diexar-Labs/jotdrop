@@ -77,16 +77,19 @@ def check_playful(browser, url, token):
         # The folded corner, like the logo.
         assert page.evaluate("getComputedStyle(document.querySelector('.card-paper'), '::after').content") == '""'
 
-        # A card keeps its own small angle across renders, and stands straight under the pointer.
+        # A card keeps its own small angle across renders, also under the pointer, where it lifts onto an amber shadow.
         page.mouse.move(5, 5)
         page.wait_for_timeout(300)
         angle = page.evaluate("getComputedStyle(document.querySelector('.card-paper')).rotate")
         assert angle not in ("none", "0deg"), angle
         # Only the paper turns: the card with the text stays straight, so the text stays sharp.
         assert page.evaluate("getComputedStyle(document.querySelector('.note-card')).rotate") == "none"
+        paper = card("Groceries").locator(".card-paper")
+        resting = paper.evaluate("(element) => getComputedStyle(element).rotate")
         card("Groceries").hover()
         page.wait_for_timeout(300)
-        assert page.evaluate("getComputedStyle(document.querySelector('.card-paper')).rotate") == "0deg"
+        lifted = paper.evaluate("(element) => { const style = getComputedStyle(element); return [style.rotate, style.translate, style.boxShadow]; }")
+        assert lifted[0] == resting and lifted[1] == "-2px -2px" and "rgb(244, 196, 88) 5px 5px 0px" in lifted[2], lifted
 
         # Ticking strikes the task through with a pen; the other task has no stroke.
         page.evaluate("window.added = []")

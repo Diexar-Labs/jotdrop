@@ -43,6 +43,7 @@ h3 { font-size: 1.05rem; }
 .wordmark { display: flex; align-items: center; gap: .55rem; font-size: 1.35rem; font-weight: 800; letter-spacing: -.02em; white-space: nowrap; }
 .wordmark > span:last-child { font-family: "Instrument Sans", sans-serif; font-size: .8rem; color: var(--muted); font-weight: 500; letter-spacing: 0; }
 .brand-mark { width: 34px; height: 34px; }
+.opening { margin: 30vh auto 0; text-align: center; color: var(--muted); }
 .access { max-width: 490px; margin: 6vh auto; padding: 1.5rem 1.75rem; background: var(--surface); border: 1.5px solid var(--edge); border-radius: 14px 14px 30px 14px; box-shadow: 10px 10px 0 var(--amber); }
 .access h1 { margin-top: 2.2rem; }
 .access p { color: var(--muted); }
@@ -264,10 +265,12 @@ dialog::backdrop { background: rgb(15 23 36 / .4); }
    Only rotate, translate and opacity move: no card changes place in the grid. With less motion, confirmations fade instead. */
 /* Only the paper is askew, not the words on it: turned text goes soft, so the text stays straight and sharp (Eric, 27 Oct). */
 .note-card { isolation: isolate; background: transparent; border-color: transparent; border-bottom-right-radius: 10px; }
-.card-paper { position: absolute; inset: -1px; z-index: -1; border: 1px solid var(--line); border-radius: inherit; background: var(--note); rotate: var(--tilt, 0deg); transition: rotate .2s ease; pointer-events: none; }
+.card-paper { position: absolute; inset: -1px; z-index: -1; border: 1px solid var(--line); border-radius: inherit; background: var(--note); rotate: var(--tilt, 0deg); transition: translate .15s ease, box-shadow .15s ease; pointer-events: none; }
 .note-card.is-pending .card-paper { border-style: dashed; }
-.note-card > img.card-cover { rotate: var(--tilt, 0deg); transition: rotate .2s ease; }
-.note-card:is(:hover, .is-hovered, :focus-within, .is-dragging) :is(.card-paper, img.card-cover) { rotate: 0deg; }
+.note-card > img.card-cover { rotate: var(--tilt, 0deg); transition: translate .15s ease; }
+/* Under the pointer the paper stays askew and lifts onto the hard amber shadow of design A (Eric's choice C, 27 Oct). */
+.note-card:is(:hover, .is-hovered, :has(:focus-visible)) :is(.card-paper, img.card-cover) { translate: -2px -2px; }
+.note-card:is(:hover, .is-hovered, :has(:focus-visible)) .card-paper { box-shadow: 5px 5px 0 var(--amber); }
 .card-paper::after { content: ""; position: absolute; right: -1px; bottom: -1px; width: 16px; height: 16px; border-top-left-radius: 5px;
   background: linear-gradient(to top left, var(--page) 50%, color-mix(in oklab, var(--note) 78%, var(--ink)) 50%);
   filter: drop-shadow(-1px -1px 0 color-mix(in oklab, var(--line) 70%, var(--ink))); }

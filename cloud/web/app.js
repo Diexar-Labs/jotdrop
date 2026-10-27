@@ -406,6 +406,7 @@ function render() {
   const focusedCard = document.activeElement?.closest('#items .note-card');
   const focused = focusedCard && { path: focusedCard.dataset.path, index: [...focusedCard.querySelectorAll('button, input, audio')].indexOf(document.activeElement) };
   const spans = new Map(shownCards.map((card) => [card.dataset.path, card.style.gridRowEnd]));
+  let refocus;
   gridSpans.disconnect();
   $('items').replaceChildren();
   $('items').hidden = view === 'devices';
@@ -658,8 +659,10 @@ function render() {
     // Until the pointer moves, the card it rests on shows its buttons as before; then real hover takes over.
     if (card.dataset.path === hovered) card.classList.add('is-hovered');
     $('items').append(card);
-    if (card.dataset.path === focused?.path) [...card.querySelectorAll('button, input, audio')][focused.index]?.focus({ preventScroll: true });
+    if (card.dataset.path === focused?.path) refocus = [...card.querySelectorAll('button, input, audio')][focused.index];
   }
+  // Only once every card is back: focusing lays out the page, and a half-built list is shorter, so the browser would scroll up.
+  refocus?.focus({ preventScroll: true });
   releaseMedia();
   for (const child of $('items').children) gridSpans.observe(child);
 }
@@ -1643,6 +1646,7 @@ async function openWorkspace(connected) {
   files.clear();
   moments.clear();
   closeMoment();
+  $('opening').hidden = true;
   $('access').hidden = true;
   $('workspace').hidden = false;
   $('account-actions').hidden = false;
@@ -2561,3 +2565,5 @@ try {
   if (credentials) await openWorkspace(new CloudClient(credentials)).catch((error) => lock(`This browser could not open your notes by itself: ${errorText(error)} Unlock with your password.`));
   else if ($('provider-step').hidden && unlockable(await store('get', 'connection'))) showUnlock();
 } catch (error) { $('access-message').textContent = errorText(error); $('connect-form').querySelector('button[type="submit"]').disabled = true; }
+// Not signed in after all: now the login shows, never before (a refresh would otherwise flash it).
+finally { $('opening').hidden = true; if ($('workspace').hidden) $('access').hidden = false; }

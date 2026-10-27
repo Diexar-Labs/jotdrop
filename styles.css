@@ -1761,17 +1761,18 @@ button.jotdrop-provider-github:not(.clickable-icon):hover { background: #32383f;
   background: var(--kc-bg);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   rotate: var(--jotdrop-tilt, 0deg);
-  transition: rotate 0.2s ease, box-shadow 0.15s ease;
+  transition: translate 0.15s ease, box-shadow 0.15s ease;
   pointer-events: none;
 }
-.jotdrop-card:hover .jotdrop-card-paper { box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12); }
 .jotdrop-card :is(.jotdrop-card-thumbnail, .jotdrop-card-voice-banner) {
   rotate: var(--jotdrop-tilt, 0deg);
-  transition: rotate 0.2s ease;
+  transition: translate 0.15s ease;
 }
-.jotdrop-card:is(:hover, :focus-within, .is-dragging) :is(.jotdrop-card-paper, .jotdrop-card-thumbnail, .jotdrop-card-voice-banner) {
-  rotate: 0deg;
+/* Under the pointer the paper stays askew and lifts onto the hard amber shadow of design A (Eric's choice C, 27 Oct). */
+.jotdrop-card:is(:hover, :has(:focus-visible)) :is(.jotdrop-card-paper, .jotdrop-card-thumbnail, .jotdrop-card-voice-banner) {
+  translate: -2px -2px;
 }
+.jotdrop-card:is(:hover, :has(:focus-visible)) .jotdrop-card-paper { box-shadow: 5px 5px 0 #f4c458; }
 .jotdrop-card-paper::after {
   content: "";
   position: absolute;
