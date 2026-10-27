@@ -35,6 +35,30 @@ export function mailText({ kind, code, provider }) {
   return { subject, body: body + footer };
 }
 
+const escapeHtml = (value) => value.replace(/[&<>"']/g, (character) => `&#${character.charCodeAt(0)};`);
+const FONT = "'Instrument Sans', -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
+
+/** The same mail dressed in the house style "paper and ink" (Eric, 27 Oct): the code large in an amber box, easy to copy.
+ * Tables and inline styles only, since mail apps ignore style sheets; the plain text goes along for apps that show no HTML. */
+export function mailHtml({ kind, code, provider }) {
+  const { subject, body } = mailText({ kind, code, provider });
+  const paragraphs = body.split('\n\n');
+  const closing = paragraphs.pop();
+  const content = paragraphs.map((paragraph) => paragraph === code
+    ? `<div style="margin:22px 0;padding:16px 8px 16px 18px;background:#F4C458;border:2px solid #14213D;border-radius:10px 10px 22px 10px;text-align:center;font-family:'JetBrains Mono',Consolas,'Courier New',monospace;font-size:38px;line-height:1.1;font-weight:700;letter-spacing:10px;color:#14213D;">${escapeHtml(code)}</div>`
+    : `<p style="margin:0 0 14px;font-size:16px;line-height:1.55;color:#14213D;">${escapeHtml(paragraph).replace(/\n/g, '<br>')}</p>`).join('');
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light only"><title>${escapeHtml(subject)}</title></head>`
+    + `<body style="margin:0;padding:0;background:#FBF8F1;font-family:${FONT};">`
+    + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background:#FBF8F1;"><tr><td align="center" style="padding:32px 16px;">'
+    + '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:480px;background:#FFFFFF;border:2px solid #14213D;border-radius:12px 12px 28px 12px;box-shadow:6px 6px 0 #F4C458;">'
+    // The logo as type, not an image: many mail apps block images at first.
+    + `<tr><td style="padding:26px 28px 6px;font-family:${FONT};"><span style="display:inline-block;width:34px;height:34px;line-height:34px;text-align:center;background:#F4C458;border:2px solid #14213D;border-radius:7px 7px 14px 7px;font-size:20px;font-weight:800;color:#14213D;">J</span>`
+    + '<span style="padding-left:10px;font-size:21px;font-weight:800;letter-spacing:-0.02em;color:#14213D;vertical-align:middle;">JotDrop</span></td></tr>'
+    + `<tr><td style="padding:16px 28px 22px;font-family:${FONT};">${content}</td></tr></table>`
+    + `<p style="max-width:480px;margin:18px auto 0;font-family:${FONT};font-size:13px;line-height:1.5;color:#56607A;">${escapeHtml(closing)}</p>`
+    + '</td></tr></table></body></html>';
+}
+
 /** Adds someone who ticked "Email me news about JotDrop" to a Brevo contact list; Brevo handles unsubscribing. `remove` forgets a deleted account. */
 export function createBrevoList({ apiKey, listId, fetcher = globalThis.fetch }) {
   if (typeof apiKey !== 'string' || !apiKey || !Number.isSafeInteger(listId) || listId < 1) throw new Error('Provide the Brevo API key and list ID.');
@@ -60,7 +84,8 @@ export function createSesMailer({ region, accessKeyId, secretAccessKey, from, fe
   const url = `https://email.${region}.amazonaws.com/v2/email/outbound-emails`;
   return async ({ to, kind, code, provider }) => {
     const { subject, body: text } = mailText({ kind, code, provider });
-    const body = JSON.stringify({ FromEmailAddress: from, Destination: { ToAddresses: [to] }, Content: { Simple: { Subject: { Data: subject, Charset: 'UTF-8' }, Body: { Text: { Data: text, Charset: 'UTF-8' } } } } });
+    const html = mailHtml({ kind, code, provider });
+    const body = JSON.stringify({ FromEmailAddress: from, Destination: { ToAddresses: [to] }, Content: { Simple: { Subject: { Data: subject, Charset: 'UTF-8' }, Body: { Text: { Data: text, Charset: 'UTF-8' }, Html: { Data: html, Charset: 'UTF-8' } } } } });
     const headers = signRequest({ method: 'POST', url, headers: { 'content-type': 'application/json', 'x-amz-content-sha256': sha256(body) }, body, service: 'ses', region, accessKeyId, secretAccessKey, date: new Date(clock()) });
     const response = await fetcher(url, { method: 'POST', headers, body, signal: AbortSignal.timeout(10000) });
     // The reason stays out of the error: it can repeat the address.
