@@ -1124,13 +1124,16 @@ async function sync() {
   const controller = new AbortController();
   syncController = controller;
   $('sync').disabled = true;
-  $('pause-sync').hidden = false;
+  // Only a sync that takes a while can be paused: a quick check every 30 seconds that showed the button
+  // and hid it again added a toolbar row on some widths and moved the whole page (Eric, 27 Oct).
+  const showPause = setTimeout(() => { if (syncController === controller) $('pause-sync').hidden = false; }, 1000);
   syncing = performSync(controller.signal).catch((error) => {
     if (activeGeneration !== generation) return;
     $('sync-status').textContent = syncPaused ? 'Sync paused. Encrypted drafts stay on this browser. Select Resume sync to continue.' : 'Cloud unavailable. Encrypted drafts stay on this browser.';
     if (!syncPaused) message(errorText(error));
     render();
   }).finally(() => {
+    clearTimeout(showPause);
     if (syncController !== controller) return;
     syncing = undefined;
     syncController = undefined;

@@ -40,6 +40,7 @@
     "check:cloud-order": "python cloud/order_browser_check.py",
     "check:cloud-steady": "python cloud/steady_browser_check.py",
     "check:cloud-playful": "python cloud/playful_browser_check.py",
+    "check:cloud-quiet-sync": "python cloud/quiet_sync_browser_check.py",
     "check:cloud-photo-view": "python cloud/photo_view_browser_check.py",
     "check:cloud-tags": "python cloud/tags_browser_check.py",
     "check:cloud-labels": "python cloud/labels_browser_check.py",
