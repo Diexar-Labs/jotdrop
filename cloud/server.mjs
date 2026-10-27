@@ -574,6 +574,8 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   assets.set('/ocr-worker.js', [join(webRoot, 'ocr-worker.js'), 'text/javascript']);
   assets.set('/privacy', [join(webRoot, 'privacy.html'), 'text/html']);
   assets.set('/logo.svg', [join(webRoot, 'logo.svg'), 'image/svg+xml']);
+  // The house fonts (SIL Open Font License), served from here like everything else the page loads.
+  for (const name of ['instrument-sans.woff2', 'bricolage-grotesque.woff2', 'caveat.woff2']) assets.set(`/fonts/${name}`, [join(webRoot, 'fonts', name), 'font/woff2']);
   assets.set('/import.mjs', [join(webRoot, 'import.mjs'), 'text/javascript']);
   for (const name of ['account.mjs', 'words.mjs']) assets.set(`/shared/${name}`, [join(directory, 'shared', name), 'text/javascript']);
   assets.set('/vendor/hash-wasm.mjs', [join(directory, '../node_modules/hash-wasm/dist/index.esm.min.js'), 'text/javascript']);
@@ -591,7 +593,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
-    res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self' 'wasm-unsafe-eval'${importMapSource}; worker-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' blob:; media-src 'self' blob:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`);
+    res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self' 'wasm-unsafe-eval'${importMapSource}; worker-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; img-src 'self' blob:; media-src 'self' blob:; base-uri 'none'; frame-ancestors 'none'; form-action 'self'`);
     const reply = (status, value) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(value)); };
     try {
       const actualPort = server.address().port;

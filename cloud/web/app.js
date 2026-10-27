@@ -545,6 +545,9 @@ function render() {
       }
       if (parts.reminder) card.append(paragraph(`Reminder: ${parts.reminder}${parts.repeat ? ` (${parts.repeat})` : ''}. Scheduled by Android after sync.`, 'note-meta'));
       for (const attachment of noteAttachments(entry, parts, available)) appendMedia(card, attachment, entry.id);
+      // Like Keep: a note's first photo is the cover, edge to edge on top of the card.
+      const cover = card.querySelector(':scope > img');
+      if (cover) { cover.classList.add('card-cover'); card.prepend(cover); }
     } else appendMedia(card, entry, entry.id);
     if (waiting) card.append(paragraph('Encrypted draft on this browser. Waiting for cloud.', 'note-meta'));
     if (entry.conflict) card.append(paragraph('Another device saved a different version. Review both before choosing.', 'message'));

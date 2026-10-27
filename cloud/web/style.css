@@ -1,23 +1,34 @@
-:root { color-scheme: light dark; --page: light-dark(#fbf8f1, #191c21); --surface: light-dark(#fff, #23272e); --ink: light-dark(#14213d, #eef1f5); --muted: light-dark(#515d6d, #b4becc); --line: light-dark(#d8dee6, #444c58); --accent: light-dark(#315fb4, #9abaff); --accent-hover: light-dark(#264b91, #b6cdff); --on-accent: light-dark(#fff, #172b50); --selected: light-dark(#e7eefb, #2b3950); --danger: light-dark(#a32929, #ffa7a7); --note: light-dark(#fff, #23272e); --focus: light-dark(#315fb4, #aecaff); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+/* House style "Paper and ink" (website design A): paper, ink, amber and sky; Bricolage Grotesque for headings, Instrument Sans for text.
+   Dark is the ink side: deep ink with amber as the main color. Fonts are served from this server (OFL, see fonts/OFL.txt). */
+@font-face { font-family: "Instrument Sans"; font-style: normal; font-weight: 400 700; font-display: swap; src: url("/fonts/instrument-sans.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Caveat"; font-style: normal; font-weight: 600; font-display: swap; src: url("/fonts/caveat.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Bricolage Grotesque"; font-style: normal; font-weight: 200 800; font-display: swap; src: url("/fonts/bricolage-grotesque.woff2") format("woff2"); unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+:root { color-scheme: light dark; --page: light-dark(#fbf8f1, #0e1626); --surface: light-dark(#fff, #16213a); --ink: light-dark(#14213d, #fbf8f1); --muted: light-dark(#56607a, #b7bfd0); --line: light-dark(#e2d9c3, #2b3a5c); --accent: light-dark(#315fb4, #f4c458); --accent-hover: light-dark(#264b91, #ffd57a); --on-accent: light-dark(#fff, #14213d); --selected: light-dark(#dce6f7, #22325a); --danger: light-dark(#a32929, #ffa7a7); --note: light-dark(#fff, #16213a); --focus: light-dark(#315fb4, #f4c458); --amber: #f4c458; --edge: light-dark(#14213d, #d3d9e6); --field: light-dark(#fbf8f1, #0e1626); --field-line: light-dark(#c9c1ae, #3a4a70); --hand: light-dark(#8a5a00, #f4c458); --heading: "Bricolage Grotesque", "Instrument Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-family: "Instrument Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 :root[data-theme="light"] { color-scheme: light; }
 :root[data-theme="dark"] { color-scheme: dark; }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
-body { margin: 0; color: var(--ink); background: var(--page); font-size: 15px; line-height: 1.55; }
+body { margin: 0; color: var(--ink); background: var(--page); font-size: 16px; line-height: 1.55; }
 button, input, select, textarea { font: inherit; color: inherit; }
-button, .upload-button { cursor: pointer; padding: .65rem .9rem; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); font-weight: 600; }
+button, .upload-button { cursor: pointer; padding: .65rem .9rem; border: 1.5px solid var(--edge); border-radius: 10px 10px 18px 10px; background: var(--surface); font-weight: 600; }
 button:hover, .upload-button:hover { background: var(--selected); }
 button:disabled { opacity: .55; cursor: not-allowed; }
 button.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
 button.primary:hover { background: var(--accent-hover); }
 button.danger { color: var(--danger); }
 :focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
-input, select, textarea { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: .7rem; background: var(--surface); }
+input, select, textarea { width: 100%; min-width: 0; border: 1.5px solid var(--field-line); border-radius: 10px; padding: .7rem; background: var(--field); }
 textarea { resize: vertical; }
 label { display: block; margin: 1rem 0 .35rem; font-weight: 600; }
 p { max-width: 72ch; }
 h1, h2, h3 { line-height: 1.2; }
-h1 { font-size: 1.8rem; font-weight: 650; letter-spacing: -.025em; margin: 0; }
+h1, h2, .wordmark, .note-card h3 { font-family: var(--heading); }
+h1 { font-size: 2.4rem; font-weight: 800; line-height: 1.02; letter-spacing: -.04em; margin: 0; }
+/* New note is design A's "Drop it": amber with ink. */
+#new-note { background: var(--amber); color: #14213d; border-color: var(--amber); }
+#new-note:hover { background: #ffd57a; border-color: #ffd57a; }
+/* The line under a page title is handwritten, like the notes in the margin of design A. */
+#view-description { font-family: "Caveat", "Instrument Sans", cursive; font-weight: 600; font-size: 1.5rem; line-height: 1.2; color: var(--hand); margin: .35rem 0 0; transform: rotate(-1.5deg); transform-origin: left; }
 h2 { font-size: 1.25rem; margin-top: 2rem; }
 h3 { font-size: 1.05rem; }
 .local-banner { padding: .5rem 1.2rem; text-align: center; background: light-dark(#fff1c7, #3b3219); color: light-dark(#654d0a, #f1d995); font-size: .8rem; }
@@ -29,10 +40,10 @@ h3 { font-size: 1.05rem; }
 .account-actions { align-items: center; min-width: 0; }
 .account-email { min-width: 0; max-width: 28ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: .85rem; }
 .appearance select { width: auto; }
-.wordmark { display: flex; align-items: center; gap: .55rem; font-size: 1.25rem; font-weight: 650; white-space: nowrap; }
-.wordmark > span:last-child { font-size: .8rem; color: var(--muted); font-weight: 500; }
+.wordmark { display: flex; align-items: center; gap: .55rem; font-size: 1.35rem; font-weight: 800; letter-spacing: -.02em; white-space: nowrap; }
+.wordmark > span:last-child { font-family: "Instrument Sans", sans-serif; font-size: .8rem; color: var(--muted); font-weight: 500; letter-spacing: 0; }
 .brand-mark { width: 34px; height: 34px; }
-.access { max-width: 490px; margin: 6vh auto; padding: 1.5rem; }
+.access { max-width: 490px; margin: 6vh auto; padding: 1.5rem 1.75rem; background: var(--surface); border: 1.5px solid var(--edge); border-radius: 14px 14px 30px 14px; box-shadow: 10px 10px 0 var(--amber); }
 .access h1 { margin-top: 2.2rem; }
 .access p { color: var(--muted); }
 .access form button { margin-top: 1.2rem; }
@@ -83,16 +94,18 @@ main { min-width: 0; padding: 0 2rem 3rem; }
 .message { color: var(--danger); min-height: 1.5em; margin: 0 0 1rem; }
 .note-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr)); grid-auto-rows: 8px; gap: 0 1rem; align-items: start; }
 .grid-section { grid-column: 1 / -1; margin: 0; padding-top: .5rem; color: var(--muted); font-size: .75rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
-.note-card { background: var(--note); padding: 1.1rem; border: 1px solid var(--line); border-radius: 12px; min-width: 0; }
+.note-card { background: var(--note); padding: 1.1rem; border: 1px solid var(--line); border-radius: 10px 10px 22px 10px; min-width: 0; }
 .note-card.opens { cursor: pointer; }
-.note-card h3 { margin: 0 0 .65rem; font-size: 1.05rem; overflow-wrap: anywhere; }
+.note-card h3 { margin: 0 0 .65rem; font-size: 1.12rem; font-weight: 700; letter-spacing: -.01em; overflow-wrap: anywhere; }
 .note-card .note-preview { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); margin: 0 0 1rem; max-height: 210px; overflow: hidden; }
 .note-card .note-meta { color: var(--muted); font-size: .8rem; overflow-wrap: anywhere; margin: .7rem 0; }
-.note-card button { font-size: .85rem; padding: .4rem .6rem; margin: .25rem .35rem 0 0; background: transparent; }
+.note-card button { font-size: .85rem; padding: .4rem .6rem; margin: .25rem .35rem 0 0; background: transparent; border-width: 1px; border-color: var(--line); }
 .note-card img { width: 100%; max-height: 220px; object-fit: contain; border-radius: 6px; }
 .note-card audio { width: 100%; }
 /* A photo opens large with what you can do with it; the editor shows the note's photos and recordings above the text. */
 .note-card img { cursor: zoom-in; }
+.note-card > img.card-cover { display: block; width: calc(100% + 2.2rem); max-width: none; max-height: 240px; margin: -1.1rem -1.1rem .9rem; object-fit: cover; border-radius: 9px 9px 0 0; }
+input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .note-media { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; margin: 0 0 1rem; }
 .note-media-photo { padding: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--surface); cursor: zoom-in; }
 .note-media-photo img { display: block; height: 96px; width: auto; max-width: 160px; object-fit: cover; }
@@ -148,7 +161,7 @@ main { min-width: 0; padding: 0 2rem 3rem; }
 .card-menu .menu-check { margin-left: auto; font-weight: 700; }
 .note-card button.label-chip { display: inline-block; border-radius: 20px; font-size: .75rem; font-weight: 500; }
 .tag-filter { display: flex; flex-wrap: wrap; gap: .4rem; padding-bottom: 1rem; }
-.tag-filter button { padding: .3rem .75rem; border-radius: 20px; font-size: .85rem; font-weight: 500; }
+.tag-filter button { padding: .3rem .75rem; border: 1px solid var(--line); border-radius: 20px; font-size: .85rem; font-weight: 500; }
 .tag-filter button[aria-pressed="true"] { background: var(--selected); border: 2px solid var(--accent); padding: calc(.3rem - 1px) calc(.75rem - 1px); font-weight: 700; }
 .tag-filter .filter-clear { border-color: transparent; background: transparent; text-decoration: underline; }
 .empty-state { grid-column: 1 / -1; padding: 3rem 0; max-width: 480px; }
@@ -168,7 +181,7 @@ main { min-width: 0; padding: 0 2rem 3rem; }
 #plus-manage summary { cursor: pointer; }
 #pair-form { margin-top: 2rem; }
 #pair-form button { margin-top: 1rem; }
-dialog { background: var(--surface); color: var(--ink); border: 1px solid var(--line); border-radius: 14px; padding: 1.5rem; width: min(760px, calc(100% - 2rem)); max-height: calc(100dvh - 2rem); overflow: auto; }
+dialog { background: var(--surface); color: var(--ink); border: 1.5px solid var(--edge); box-shadow: 10px 10px 0 var(--amber); border-radius: 14px 14px 30px 14px; padding: 1.5rem; width: min(760px, calc(100% - 2rem)); max-height: calc(100dvh - 2rem); overflow: auto; }
 dialog::backdrop { background: rgb(15 23 36 / .4); }
 .dialog-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .dialog-heading h2 { margin: 0; }

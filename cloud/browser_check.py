@@ -31,7 +31,7 @@ def check_browser(browser, url, enrollment_token):
         assert first.locator("#theme").input_value() == "system"
         check_theme(first, "rgb(251, 248, 241)")
         first.emulate_media(color_scheme="dark")
-        check_theme(first, "rgb(25, 28, 33)")
+        check_theme(first, "rgb(14, 22, 38)")
         first.locator("#theme").select_option("light")
         check_theme(first, "rgb(251, 248, 241)")
         first.reload(wait_until="networkidle")
@@ -39,16 +39,16 @@ def check_browser(browser, url, enrollment_token):
         check_theme(first, "rgb(251, 248, 241)")
         first.locator("#theme").select_option("dark")
         first.emulate_media(color_scheme="light")
-        check_theme(first, "rgb(25, 28, 33)")
+        check_theme(first, "rgb(14, 22, 38)")
         first.reload(wait_until="networkidle")
         assert first.locator("#theme").input_value() == "dark"
-        check_theme(first, "rgb(25, 28, 33)")
+        check_theme(first, "rgb(14, 22, 38)")
         first.locator("#theme").select_option("system")
         check_theme(first, "rgb(251, 248, 241)")
         first.reload(wait_until="networkidle")
         assert first.locator("#theme").input_value() == "system"
         first.emulate_media(color_scheme="dark")
-        check_theme(first, "rgb(25, 28, 33)")
+        check_theme(first, "rgb(14, 22, 38)")
         first.emulate_media(color_scheme="light")
         check_theme(first, "rgb(251, 248, 241)")
         blocked_context = browser.new_context()
@@ -57,7 +57,7 @@ def check_browser(browser, url, enrollment_token):
             blocked = blocked_context.new_page()
             blocked.goto(url, wait_until="networkidle")
             blocked.locator("#theme").select_option("dark")
-            check_theme(blocked, "rgb(25, 28, 33)")
+            check_theme(blocked, "rgb(14, 22, 38)")
             blocked.locator("#theme").select_option("light")
             check_theme(blocked, "rgb(251, 248, 241)")
         finally:
