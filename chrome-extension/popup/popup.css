@@ -223,3 +223,39 @@ textarea { resize: vertical; }
   background: transparent;
   color: var(--fg);
 }
+
+/* Playful details from design A, as in the web app: the main button presses in, and a saved page drops onto the board and gets a stamp.
+   With less motion the stamp fades in and nothing moves. */
+.preview { position: relative; }
+.btn-primary:not(:disabled) { box-shadow: 3px 3px 0 var(--edge); transition: translate 0.08s ease, box-shadow 0.08s ease; }
+.btn-primary:not(:disabled):hover { box-shadow: 4px 4px 0 var(--edge); }
+.btn-primary:not(:disabled):active { box-shadow: 0 0 0 var(--edge); }
+.preview-stamp {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  translate: 0 -50%;
+  padding: 1px 7px;
+  border: 2px solid var(--fg);
+  border-radius: 6px;
+  background: var(--field);
+  color: var(--fg);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  rotate: -7deg;
+  pointer-events: none;
+}
+@keyframes drop { from { opacity: 0; translate: 0 -14px; } to { opacity: 1; translate: 0 0; } }
+@keyframes stamp { 0% { opacity: 0; scale: 1.6; } 60% { opacity: 1; scale: 0.96; } 100% { opacity: 1; scale: 1; } }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: no-preference) {
+  .preview.is-saved { animation: drop 0.4s cubic-bezier(0.16, 1, 0.3, 1); }
+  .preview-stamp { animation: stamp 0.45s ease-out 0.15s both; }
+  .btn-primary:not(:disabled):hover { translate: -1px -1px; }
+  .btn-primary:not(:disabled):active { translate: 3px 3px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .preview-stamp { animation: fade-in 0.2s ease-out; }
+}

@@ -1789,8 +1789,16 @@ button.jotdrop-provider-github:not(.clickable-icon):hover { background: #32383f;
   rotate: var(--jotdrop-tilt, 0deg);
   transition: translate 0.15s ease;
 }
+.jotdrop-card-tape {
+  position: absolute;
+  inset: -1px;
+  z-index: 1;
+  rotate: var(--jotdrop-tilt, 0deg);
+  transition: translate 0.15s ease;
+  pointer-events: none;
+}
 /* Under the pointer the paper stays askew and lifts onto the hard amber shadow of design A (Eric's choice C, 27 Oct). */
-.jotdrop-card:is(:hover, :has(:focus-visible)) :is(.jotdrop-card-paper, .jotdrop-card-thumbnail, .jotdrop-card-voice-banner) {
+.jotdrop-card:is(:hover, :has(:focus-visible)) :is(.jotdrop-card-paper, .jotdrop-card-tape, .jotdrop-card-thumbnail, .jotdrop-card-voice-banner) {
   translate: -2px -2px;
 }
 .jotdrop-card:is(:hover, :has(:focus-visible)) .jotdrop-card-paper { box-shadow: 5px 5px 0 #f4c458; }
@@ -1798,18 +1806,19 @@ button.jotdrop-provider-github:not(.clickable-icon):hover { background: #32383f;
 .jotdrop-card:is(:hover, :has(:focus-visible)) .jotdrop-card-paper::after {
   background: linear-gradient(to top left, #f4c458 50%, color-mix(in oklab, var(--kc-bg) 78%, var(--text-normal)) 50%);
 }
+/* One pixel past the paper's edge, so the turned paper's border does not shine through the cut-off bit as a thin line (Eric, 27 Oct). */
 .jotdrop-card-paper::after {
   content: "";
   position: absolute;
-  right: -1px;
-  bottom: -1px;
-  width: 16px;
-  height: 16px;
+  right: -2px;
+  bottom: -2px;
+  width: 17px;
+  height: 17px;
   border-top-left-radius: 5px;
   background: linear-gradient(to top left, var(--background-primary) 50%, color-mix(in oklab, var(--kc-bg) 78%, var(--text-normal)) 50%);
   filter: drop-shadow(-1px -1px 0 var(--kc-border));
 }
-.jotdrop-card.is-pinned .jotdrop-card-paper::before {
+.jotdrop-card.is-pinned .jotdrop-card-tape::before {
   content: "";
   position: absolute;
   top: -9px;
@@ -1885,7 +1894,7 @@ button.jotdrop-provider-github:not(.clickable-icon):hover { background: #32383f;
 /* A moment that a render interrupted plays on from where it was (--jotdrop-since is negative). */
 @media (prefers-reduced-motion: no-preference) {
   .jotdrop-card.is-dropped { animation: jotdrop-drop 0.42s cubic-bezier(0.16, 1, 0.3, 1) var(--jotdrop-since, 0ms); }
-  .jotdrop-card.just-pinned.is-pinned .jotdrop-card-paper::before { animation: jotdrop-stick 0.28s ease-out var(--jotdrop-since, 0ms); }
+  .jotdrop-card.just-pinned.is-pinned .jotdrop-card-tape::before { animation: jotdrop-stick 0.28s ease-out var(--jotdrop-since, 0ms); }
   .jotdrop-card.just-pinned .jotdrop-card-quick-pin svg { animation: jotdrop-wiggle 0.45s ease-in-out var(--jotdrop-since, 0ms); }
   .jotdrop-task-text.just-struck .jotdrop-strike path { animation: jotdrop-draw 0.35s ease-out; }
   .jotdrop-card-stamp { animation: jotdrop-stamp 1.8s ease-out var(--jotdrop-since, 0ms) forwards; }
@@ -1893,7 +1902,7 @@ button.jotdrop-provider-github:not(.clickable-icon):hover { background: #32383f;
   .jotdrop-view .jotdrop-new-btn:active { translate: 3px 3px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .jotdrop-card :is(.jotdrop-card-paper, .jotdrop-card-thumbnail, .jotdrop-card-voice-banner) { transition: none; }
-  .jotdrop-card.is-dropped, .jotdrop-card.just-pinned.is-pinned .jotdrop-card-paper::before { animation: jotdrop-fade-in 0.2s ease-out var(--jotdrop-since, 0ms); }
+  .jotdrop-card :is(.jotdrop-card-paper, .jotdrop-card-tape, .jotdrop-card-thumbnail, .jotdrop-card-voice-banner) { transition: none; }
+  .jotdrop-card.is-dropped, .jotdrop-card.just-pinned.is-pinned .jotdrop-card-tape::before { animation: jotdrop-fade-in 0.2s ease-out var(--jotdrop-since, 0ms); }
   .jotdrop-card-stamp { animation: jotdrop-stamp-fade 1.8s ease-out var(--jotdrop-since, 0ms) forwards; }
 }

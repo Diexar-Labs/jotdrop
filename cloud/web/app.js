@@ -498,7 +498,10 @@ function render() {
     // Only the paper is askew: turned text goes soft, so the words on it stay straight and sharp.
     const paper = document.createElement('span');
     paper.className = 'card-paper';
-    card.append(paper);
+    // The tape of a pinned note lies on top of everything, also over a cover photo, and turns with the paper.
+    const tape = document.createElement('span');
+    tape.className = 'card-tape';
+    card.append(paper, tape);
     if (sections && section !== Boolean(parts.pinned)) {
       section = Boolean(parts.pinned);
       const heading = document.createElement('h2');
@@ -1016,7 +1019,7 @@ async function performSync(signal) {
     const uploading = await store('get', uploadKey) || pending;
     await store('put', uploadKey, uploading);
     let result;
-    // The bar pushes the notes down, so it appears only for an upload that takes a while, not for a tick.
+    // The bar shows only for an upload that takes a while, not for a quick tick.
     const showBar = setTimeout(() => { if (activeGeneration === generation && !signal.aborted && !uploading.deleted) $('upload-progress').hidden = false; }, 1000);
     // The pieces the cloud does not have yet come from this browser's encrypted copy of the file.
     const source = !uploading.deleted && uploading.local ? base64ToBytes((await decryptEnvelope(activeClient.credentials.vaultKey, JSON.parse(uploading.local), aad(uploading.prepared.id))).content) : undefined;

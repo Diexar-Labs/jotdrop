@@ -1,6 +1,7 @@
 """Run: python cloud/tick_scroll_browser_check.py. Synthetic check: far down a long list, ticking a box keeps the page
 where it is, frame by frame (Eric, 27 Oct: each tick jumped the page up twice)."""
 import sys
+import time
 sys.dont_write_bytecode = True
 from browser_check import main
 
@@ -44,7 +45,10 @@ def check_tick_scroll(browser, url, token):
             synced()
         page.wait_for_timeout(2500)
         result = {}
-        for attempt in ("tick", "untick"):
+        # On the real cloud a save takes over a second, long enough to offer Pause sync: that may not move the page either.
+        for attempt in ("tick", "untick", "slow tick"):
+            if attempt == "slow tick":
+                page.route("**/api/v1/**", lambda route: (time.sleep(0.6), route.continue_()))
             # A card in the middle of the screen, far down the page.
             page.evaluate("window.scrollTo(0, 1400)")
             page.wait_for_timeout(400)
@@ -63,7 +67,8 @@ def check_tick_scroll(browser, url, token):
             scrolls = sorted({frame[0] for frame in frames})
             tops = sorted({frame[1] for frame in frames})
             changes = [(index, frame) for index, frame in enumerate(frames) if index == 0 or frame != frames[index - 1]]
-            assert len(scrolls) == 1 and len(tops) == 1, {attempt: {"scrollY": scrolls, "card_top": tops, "frames": len(frames), "changes": changes[:12]}}
+            heights = sorted({frame[2] for frame in frames})
+            assert len(scrolls) == 1 and len(tops) == 1 and len(heights) == 1, {attempt: {"scrollY": scrolls, "card_top": tops, "page_height": heights, "frames": len(frames), "changes": changes[:12]}}
             result[attempt] = len(frames)
         assert not errors, errors
         return {"frames_checked": result, "tick_keeps_scroll": True}

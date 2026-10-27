@@ -1961,6 +1961,8 @@ export class JotDropView extends ItemView {
     cardEl.style.setProperty("--jotdrop-tilt", tiltFor(file.path));
     // Only the paper is askew: turned text goes soft, so the words on it stay straight and sharp.
     cardEl.createSpan({ cls: "jotdrop-card-paper" });
+    // The tape of a pinned note lies on top of everything, also over a cover photo, and turns with the paper.
+    cardEl.createSpan({ cls: "jotdrop-card-tape" });
     const now = Date.now();
     if (this.hasRendered && !this.seenPaths.has(file.path) && now - file.stat.ctime < FRESH_MS) this.freshAt.set(file.path, now);
     this.seenPaths.add(file.path);

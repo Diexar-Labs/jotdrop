@@ -19,7 +19,7 @@ WATCH = """() => {
           path: card.dataset.path, revision: card.dataset.revision || null, classes: element.className.baseVal ?? element.className,
           checked: element.matches('.task-row') ? element.querySelector('input').checked : null,
           animation: getComputedStyle(element).animationName,
-          tape: getComputedStyle(card.querySelector('.card-paper'), '::before').content,
+          tape: getComputedStyle(card.querySelector('.card-tape'), '::before').content,
         });
       }
     }
@@ -116,6 +116,8 @@ def check_playful(browser, url, token):
         assert any("wiggling" in item["classes"] for item in pins), pins
         assert any("just-pinned" in item["classes"] and item["tape"] == '""' for item in added("card", path)), added("card", path)
         assert not added("stamp", path)
+        # The tape lies on top of the card's content, also over a cover photo.
+        assert card("Groceries").locator(".card-tape").evaluate("(element) => getComputedStyle(element).zIndex") == "1"
 
         # With less motion nothing moves, but a new note and its stamp still show, as a fade.
         page.emulate_media(reduced_motion="reduce")

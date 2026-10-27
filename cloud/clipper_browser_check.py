@@ -110,6 +110,8 @@ def check_clipper(browser, url, token):
         page.locator("#cloudUnlock").fill("synthetic clipper browser passphrase")
         page.locator("#saveBtn").click()
         page.locator("#status").filter(has_text="Encrypted clip saved to cloud").wait_for()
+        # Like the web app: the saved page drops in and is stamped as sealed.
+        assert page.locator(".preview.is-saved .preview-stamp").text_content() == "Sealed"
         captures = page.evaluate("""async () => {
           const { CloudClient } = await import('/cloud/shared/client.mjs');
           const { unsealLocal } = await import('/cloud/shared/crypto.mjs');
@@ -122,7 +124,7 @@ def check_clipper(browser, url, token):
         assert captures["revisions"] == [1, 1, 1]
         assert page.evaluate("Object.keys(JSON.parse(localStorage.getItem('synthetic-chrome-storage'))).filter(k => k.startsWith('cloudDraft:')).length") == 0
         assert not errors, errors
-        return {"popup_pause_resume_after_reopen": True, "lost_ack_same_capture": True, "new_capture_after_resume": True, "encrypted_storage": True, "unlock_cleared": True, "no_local_fallback": True}
+        return {"popup_pause_resume_after_reopen": True, "lost_ack_same_capture": True, "new_capture_after_resume": True, "encrypted_storage": True, "unlock_cleared": True, "no_local_fallback": True, "saved_stamp": True}
     finally:
         context.close()
 

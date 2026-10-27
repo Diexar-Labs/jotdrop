@@ -83,15 +83,23 @@ main { min-width: 0; padding: 0 2rem 3rem; }
 .toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: .7rem; padding: 1.3rem 0; border-bottom: 1px solid var(--line); }
 .toolbar input[type="search"] { flex: 1 1 220px; width: auto; margin-right: auto; background: var(--surface); }
 .toolbar select { width: auto; max-width: 180px; }
+/* Pause sync takes the place of Sync now, in room the toolbar always keeps: a slow save that shows it never adds a toolbar row
+   and moves the cards (Eric, 27 Oct: a tick still jumped twice on the real cloud). */
+.sync-slot { display: inline-grid; }
+.sync-slot > button { grid-area: 1 / 1; }
+.sync-slot > #pause-sync[hidden] { display: block !important; visibility: hidden; }
+.sync-slot:has(> #pause-sync:not([hidden])) > #sync { visibility: hidden; }
 .search-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .upload-button { margin: 0; font-size: .9rem; }
 .upload-button input { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .upload-button:focus-within { outline: 3px solid var(--focus); outline-offset: 3px; }
 .workspace-heading { display: flex; gap: 1rem; align-items: start; justify-content: space-between; margin: 2.5rem 0 1rem; }
 .workspace-heading p { color: var(--muted); margin: .5rem 0; font-size: .9rem; }
-.sync-state { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; justify-content: end; }
+/* A fixed width: a longer status wraps in its own column and never squeezes the page title onto a second line. */
+.sync-state { flex: 0 0 min(35ch, 40%); display: flex; flex-wrap: wrap; gap: .25rem .5rem; align-items: center; justify-content: end; }
 #sync-status { text-align: right; max-width: 35ch; }
-#upload-progress { width: 100%; accent-color: var(--accent); }
+/* The bar sits under the sync status, beside the page title and no taller than it: a slow save that shows it never pushes the cards down (Eric, 27 Oct). */
+#upload-progress { width: 100%; max-width: 35ch; height: .5rem; accent-color: var(--accent); }
 .message { color: var(--danger); min-height: 1.5em; margin: 0 0 1rem; }
 .note-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr)); grid-auto-rows: 8px; gap: 0 1rem; align-items: start; }
 .grid-section { grid-column: 1 / -1; margin: 0; padding-top: .5rem; color: var(--muted); font-size: .75rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
@@ -186,6 +194,11 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 #pair-form button { margin-top: 1rem; }
 dialog { background: var(--surface); color: var(--ink); border: 1.5px solid var(--edge); box-shadow: 10px 10px 0 var(--amber); border-radius: 14px 14px 30px 14px; padding: 1.5rem; width: min(760px, calc(100% - 2rem)); max-height: calc(100dvh - 2rem); overflow: auto; }
 dialog::backdrop { background: rgb(15 23 36 / .4); }
+/* While a card or another window is open, the page behind it holds still: scrolling past the end of the window, or on the
+   dimmed page around it, no longer scrolls the cards (Eric, 27 Oct). The scrollbar keeps its room, so nothing shifts sideways. */
+html { scrollbar-gutter: stable; }
+html:has(dialog[open]) { overflow: hidden; }
+dialog { overscroll-behavior: contain; }
 .dialog-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .dialog-heading h2 { margin: 0; }
 .dialog-actions { display: flex; flex-wrap: wrap; gap: .6rem; justify-content: flex-end; margin-top: 1rem; }
@@ -270,15 +283,17 @@ dialog::backdrop { background: rgb(15 23 36 / .4); }
 .card-paper { position: absolute; inset: -1px; z-index: -1; border: 1px solid var(--line); border-radius: inherit; background: var(--note); rotate: var(--tilt, 0deg); transition: translate .15s ease, box-shadow .15s ease; pointer-events: none; }
 .note-card.is-pending .card-paper { border-style: dashed; }
 .note-card > img.card-cover { rotate: var(--tilt, 0deg); transition: translate .15s ease; }
+.card-tape { position: absolute; inset: -1px; z-index: 1; rotate: var(--tilt, 0deg); transition: translate .15s ease; pointer-events: none; }
 /* Under the pointer the paper stays askew and lifts onto the hard amber shadow of design A (Eric's choice C, 27 Oct). */
-.note-card:is(:hover, .is-hovered, :has(:focus-visible)) :is(.card-paper, img.card-cover) { translate: -2px -2px; }
+.note-card:is(:hover, .is-hovered, :has(:focus-visible)) :is(.card-paper, .card-tape, img.card-cover) { translate: -2px -2px; }
 .note-card:is(:hover, .is-hovered, :has(:focus-visible)) .card-paper { box-shadow: 5px 5px 0 var(--amber); }
 /* The shadow lies under the folded corner then, so the cut-off bit shows amber too, not the page. */
 .note-card:is(:hover, .is-hovered, :has(:focus-visible)) .card-paper::after { background: linear-gradient(to top left, var(--amber) 50%, color-mix(in oklab, var(--note) 78%, var(--ink)) 50%); }
-.card-paper::after { content: ""; position: absolute; right: -1px; bottom: -1px; width: 16px; height: 16px; border-top-left-radius: 5px;
+/* One pixel past the paper's edge, so the turned paper's border does not shine through the cut-off bit as a thin line (Eric, 27 Oct). */
+.card-paper::after { content: ""; position: absolute; right: -2px; bottom: -2px; width: 17px; height: 17px; border-top-left-radius: 5px;
   background: linear-gradient(to top left, var(--page) 50%, color-mix(in oklab, var(--note) 78%, var(--ink)) 50%);
   filter: drop-shadow(-1px -1px 0 color-mix(in oklab, var(--line) 70%, var(--ink))); }
-.note-card.is-pinned .card-paper::before { content: ""; position: absolute; top: -9px; left: 50%; width: 78px; height: 20px; translate: -50% 0; rotate: -4deg;
+.note-card.is-pinned .card-tape::before { content: ""; position: absolute; top: -9px; left: 50%; width: 78px; height: 20px; translate: -50% 0; rotate: -4deg;
   background: color-mix(in srgb, var(--amber) 62%, transparent);
   clip-path: polygon(0 0, 100% 0, 94% 50%, 100% 100%, 0 100%, 6% 50%); }
 .task-text { position: relative; }
@@ -306,7 +321,7 @@ html { scrollbar-color: color-mix(in srgb, var(--ink) 35%, transparent) transpar
 @keyframes stamp-fade { 0% { opacity: 0; } 15% { opacity: 1; } 80% { opacity: 1; } 100% { opacity: 0; } }
 @media (prefers-reduced-motion: no-preference) {
   .note-card.is-dropped { animation: drop .42s cubic-bezier(.16, 1, .3, 1); }
-  .note-card.just-pinned .card-paper::before { animation: stick .28s ease-out; }
+  .note-card.just-pinned .card-tape::before { animation: stick .28s ease-out; }
   .card-pin.wiggling svg { animation: wiggle .45s ease-in-out; }
   .task-row.just-struck .strike path { animation: draw .35s ease-out; }
   .card-stamp { animation: stamp 1.8s ease-out forwards; }
@@ -314,7 +329,7 @@ html { scrollbar-color: color-mix(in srgb, var(--ink) 35%, transparent) transpar
   :is(#new-note, button.primary):not(:disabled):active { translate: 3px 3px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  :is(.card-paper, img.card-cover) { transition: none; }
-  .note-card.is-dropped, .note-card.just-pinned .card-paper::before { animation: fade-in .2s ease-out; }
+  :is(.card-paper, .card-tape, img.card-cover) { transition: none; }
+  .note-card.is-dropped, .note-card.just-pinned .card-tape::before { animation: fade-in .2s ease-out; }
   .card-stamp { animation: stamp-fade 1.8s ease-out forwards; }
 }

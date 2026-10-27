@@ -166,6 +166,17 @@ function openObsidianUri(payload, onOk) {
   }
 }
 
+// Design A's moment after a save, as in the web app: the page card drops onto the board and gets a stamp.
+function stampPreview(text) {
+  const preview = document.querySelector(".preview");
+  const stamp = document.createElement("span");
+  stamp.className = "preview-stamp";
+  stamp.setAttribute("aria-hidden", "true");
+  stamp.textContent = text;
+  preview.append(stamp);
+  preview.classList.add("is-saved");
+}
+
 async function save() {
   if (!activeTab || els.saveBtn.disabled) return;
   els.saveBtn.disabled = true;
@@ -209,7 +220,8 @@ async function save() {
   try {
     await postClip(payload, settings);
     setStatus("Saved ✓", "ok");
-    setTimeout(() => window.close(), 600);
+    stampPreview("Saved");
+    setTimeout(() => window.close(), 900);
   } catch (e) {
     console.warn("JotDrop: clip-server unreachable, falling back to obsidian:// URI", e);
     // Fallback opens Obsidian via the protocol handler. We cannot be certain the
@@ -253,7 +265,8 @@ async function saveCloud(payload) {
     }
     password.value = "";
     setStatus("Encrypted clip saved to cloud", "ok");
-    setTimeout(() => window.close(), 800);
+    stampPreview("Sealed");
+    setTimeout(() => window.close(), 900);
   } catch (error) {
     setStatus(controller.signal.aborted ? "Upload paused. Encrypted drafts are kept; select Resume saved drafts to continue." : `${error.message || "Cloud save failed."} Any queued encrypted draft is kept unchanged.`, "error");
   } finally {
