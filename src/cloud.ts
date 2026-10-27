@@ -336,7 +336,7 @@ export class CloudController {
   private state?: SyncState;
   private store: KeyValues;
   private running?: Promise<void>;
-  private again = false;
+  private next?: Promise<void>;
   private timer?: number;
   private abort?: AbortController;
   private generation = 0;
@@ -476,11 +476,9 @@ export class CloudController {
     await this.ready;
     if (!this.client) throw new Error("Log in to JotDrop Cloud first.");
     if (!this.state?.enabled) throw new Error("Turn on cloud sync first.");
-    if (this.running) { this.again = true; return this.running; }
-    this.running = this.run().finally(() => {
-      this.running = undefined;
-      if (this.again) { this.again = false; this.request(500); }
-    });
+    // A sync under way may have read the cloud before this was asked: the next one starts after it, shared by everyone who asks meanwhile.
+    if (this.running) return this.next ??= this.running.catch(() => {}).then(() => { this.next = undefined; return this.syncNow(); });
+    this.running = this.run().finally(() => { this.running = undefined; });
     return this.running;
   }
 
@@ -596,10 +594,7 @@ export class CloudController {
     await this.ready;
     while (this.running) await this.running.catch(() => {});
     const result = action();
-    this.running = result.then(() => {}, () => {}).finally(() => {
-      this.running = undefined;
-      if (this.again) { this.again = false; this.request(500); }
-    });
+    this.running = result.then(() => {}, () => {}).finally(() => { this.running = undefined; });
     return result;
   }
 

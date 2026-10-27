@@ -12,7 +12,7 @@ import { accountInfo, confirmSignup, providerSignUp, signUp } from './shared/acc
 import { bytesToBase64, encryptEnvelope, objectId, randomToken } from './shared/crypto.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
-// Obsidian's requestUrl answers every status without throwing, like `throw: false`.
+// Obsidian's requestUrl answers every status without throwing, like `throw: false`. A test can hold an answer with `afterRequest`.
 const obsidian = `
 export class Modal {}; export class Notice {}; export class Setting {}; export class ButtonComponent {}; export class FileSystemAdapter {};
 export class TFile { static [Symbol.hasInstance](value) { return value?.isTestFile === true; } };
@@ -22,6 +22,7 @@ export const getLanguage = () => 'en';
 export async function requestUrl({ url, method, headers, body }) {
   const response = await fetch(url, { method, headers, body });
   const arrayBuffer = await response.arrayBuffer();
+  await globalThis.afterRequest?.(url);
   return { status: response.status, headers: Object.fromEntries(response.headers), arrayBuffer };
 }`;
 const bundle = await build({ entryPoints: [join(root, 'src/cloud.ts')], bundle: true, platform: 'node', format: 'cjs', write: false, plugins: [{ name: 'mock-obsidian', setup(builder) {
@@ -198,6 +199,38 @@ test('the plugin signs in with an account, syncs the real JotDrop folders both w
   await assert.rejects(new CloudController(v.plugin, v.store).syncNow(), /Log in/, 'A restart after logging out stays logged out');
   assert.ok(v.files.has('Mini Notes/Shopping.md'), 'Logging out keeps the notes');
   assert.ok(v.files.has('Other/Private.md') && !(await pathsInCloud())['notes/Private.md'], 'Only the JotDrop folders sync');
+});
+
+test('sync now during a sync waits for it and syncs again, so it sees what changed meanwhile', async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'jotdrop-plugin-test-'));
+  const mails = [];
+  const app = await createCloudServer({ dataDir, enrollmentToken: randomToken(), mailer: async (mail) => { mails.push(mail); }, serverKey: randomToken(), freeDeviceLimit: 100 });
+  t.after(async () => { globalThis.afterRequest = undefined; await app.close(); await rm(dataDir, { recursive: true, force: true }); });
+  const url = `http://127.0.0.1:${app.port}`;
+
+  const v = vault();
+  const cloud = new CloudController(v.plugin, v.store);
+  // Only the syncs this test asks for.
+  cloud.request = () => {};
+  const pending = await signUp({ url, email: 'eric@example.com', password: 'correct horse battery', deviceName: 'Obsidian on Windows' });
+  const { client } = await confirmSignup(pending, mails.find((mail) => mail.kind === 'verify').code);
+  await cloud.finishSignIn(client, 'eric@example.com');
+  await cloud.setEnabled(true);
+  await cloud.syncNow();
+  const phone = await CloudClient.claim({ pairingCode: (await client.makePairing('Phone')).pairingCode });
+
+  // A sync is under way and already asked the cloud what it holds; then the phone saves a file from before pieces.
+  let reached, release;
+  const asked = new Promise((resolve) => { reached = resolve; }), held = new Promise((resolve) => { release = resolve; });
+  globalThis.afterRequest = async (requested) => { if (requested.endsWith('/status')) { globalThis.afterRequest = undefined; reached(); await held; } };
+  const first = cloud.syncNow();
+  await asked;
+  const { vaultKey, vaultId } = phone.credentials, path = 'attachments/Old scan.png', id = await objectId(vaultKey, path);
+  await phone.commitWrite({ id, baseRevision: 0, envelope: JSON.stringify(await encryptEnvelope(vaultKey, { path, content: bytesToBase64(new Uint8Array(2 * 1024 * 1024).fill(9)), modifiedAt: new Date().toISOString() }, `jotdrop:object:v1:${vaultId}:${id}`)) });
+  const second = cloud.syncNow();
+  release();
+  await Promise.all([first, second]);
+  assert.equal((await phone.status()).pieces.legacy, 0);
 });
 
 test('the archive must sit inside the notes folder, like on the website and Android', async () => {
