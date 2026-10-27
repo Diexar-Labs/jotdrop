@@ -19,7 +19,7 @@ WATCH = """() => {
           path: card.dataset.path, revision: card.dataset.revision || null, classes: element.className.baseVal ?? element.className,
           checked: element.matches('.task-row') ? element.querySelector('input').checked : null,
           animation: getComputedStyle(element).animationName,
-          tape: getComputedStyle(card, '::before').content,
+          tape: getComputedStyle(card.querySelector('.card-paper'), '::before').content,
         });
       }
     }
@@ -75,16 +75,18 @@ def check_playful(browser, url, token):
         assert stamps and all(item["revision"] for item in stamps), (stamps, cards)
         assert not card("Groceries").locator(".card-stamp").count()
         # The folded corner, like the logo.
-        assert page.evaluate("getComputedStyle(document.querySelector('.note-card'), '::after').content") == '""'
+        assert page.evaluate("getComputedStyle(document.querySelector('.card-paper'), '::after').content") == '""'
 
         # A card keeps its own small angle across renders, and stands straight under the pointer.
         page.mouse.move(5, 5)
         page.wait_for_timeout(300)
-        angle = page.evaluate("getComputedStyle(document.querySelector('.note-card')).rotate")
+        angle = page.evaluate("getComputedStyle(document.querySelector('.card-paper')).rotate")
         assert angle not in ("none", "0deg"), angle
+        # Only the paper turns: the card with the text stays straight, so the text stays sharp.
+        assert page.evaluate("getComputedStyle(document.querySelector('.note-card')).rotate") == "none"
         card("Groceries").hover()
         page.wait_for_timeout(300)
-        assert page.evaluate("getComputedStyle(document.querySelector('.note-card')).rotate") == "0deg"
+        assert page.evaluate("getComputedStyle(document.querySelector('.card-paper')).rotate") == "0deg"
 
         # Ticking strikes the task through with a pen; the other task has no stroke.
         page.evaluate("window.added = []")
@@ -98,7 +100,7 @@ def check_playful(browser, url, token):
         page.locator("#search").focus()
         page.mouse.move(5, 5)
         page.wait_for_timeout(300)
-        assert page.evaluate("getComputedStyle(document.querySelector('.note-card')).rotate") == angle, "a re-render changed the card's angle"
+        assert page.evaluate("getComputedStyle(document.querySelector('.card-paper')).rotate") == angle, "a re-render changed the card's angle"
 
         # Pinning wiggles the pin and sticks tape on the card; no stamp, since the note is not new.
         page.evaluate("window.added = []")

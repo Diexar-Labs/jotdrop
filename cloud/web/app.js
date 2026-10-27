@@ -414,7 +414,7 @@ function render() {
   $('selection-bar').hidden = true;
   const labelName = renderLabelList();
   const descriptions = {
-    notes: labelFilter ? [labelName, 'Notes with this label.'] : ['Notes', 'Plain Markdown. Your files, your workspace.'],
+    notes: labelFilter ? [labelName, 'Notes with this label.'] : ['Notes', 'psst, only you can read these'],
     archive: ['Archive', 'Kept notes, out of your everyday list.'],
     files: ['Files', 'Images, recordings, and the files you choose to keep.'],
     trash: ['Trash', 'Deleted files stay recoverable. Restoring adds a new cloud version.'],
@@ -494,6 +494,10 @@ function render() {
     if (markdown) card.classList.add(`note-${parts.color}`);
     if (markdown && parts.pinned) card.classList.add('is-pinned');
     card.style.setProperty('--tilt', tiltFor(entry.file.path));
+    // Only the paper is askew: turned text goes soft, so the words on it stay straight and sharp.
+    const paper = document.createElement('span');
+    paper.className = 'card-paper';
+    card.append(paper);
     if (sections && section !== Boolean(parts.pinned)) {
       section = Boolean(parts.pinned);
       const heading = document.createElement('h2');
