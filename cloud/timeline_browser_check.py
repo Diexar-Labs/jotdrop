@@ -100,7 +100,8 @@ def check_timeline(browser, url, codes, database):
     assert "2 file(s) from then changed more than 30 days ago" in laptop.locator("#timeline-moment").inner_text()
     assert laptop.locator("#timeline-restore").is_disabled()
 
-    laptop.locator("#start-trial").click()
+    # The offer appears right at that limit (Eric, 27 Oct).
+    laptop.locator("#plus-nudge").filter(has_text="keeps every version").get_by_role("button", name="Try JotDrop Plus free for 14 days").click()
     laptop.locator("#plan-status").filter(has_text="JotDrop Plus until").wait_for()
     pick(laptop, 1)
     assert "30 days" not in laptop.locator("#timeline-moment").inner_text()

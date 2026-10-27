@@ -118,7 +118,31 @@ async function sealFile(path, bytes, revision, modifiedAt = new Date().toISOStri
   const id = await objectId(client.credentials.vaultKey, path);
   return { id, baseRevision: revision, envelope: JSON.stringify(await encryptEnvelope(client.credentials.vaultKey, { path, content: bytesToBase64(bytes), modifiedAt }, aad(id))) };
 }
-const errorText = (error) => error?.status === 401 ? 'This device no longer has access. Lock the workspace and reconnect using another device or your recovery code.' : error?.message || 'The operation failed. Your local files have not been changed.';
+// Plus is offered where a free limit is in the way, not as a standing button: at the start nobody notices
+// the difference, and the trial works once per account (Eric, 27 Oct). The error says what happened, the offer what helps.
+const filePlus = 'JotDrop Plus takes files up to 200 MB.';
+let currentPlan, storageShare = 0, plusReason = '', plusQuiet = false;
+function plusChoice() {
+  if (!currentPlan || currentPlan.name === 'plus') return undefined;
+  if (currentPlan.trialAvailable) return 'trial';
+  return currentPlan.checkout && !currentPlan.subscribed ? 'buy' : undefined;
+}
+function showPlusNudge() {
+  const nearlyFull = !plusQuiet && storageShare >= .8 ? `Your cloud storage is ${Math.round(storageShare * 100)}% full. JotDrop Plus has 10 GB.` : '';
+  const reason = plusReason || nearlyFull, choice = plusChoice();
+  $('plus-nudge').hidden = !reason || !choice;
+  $('plus-reason').textContent = reason;
+  $('start-trial').hidden = choice !== 'trial';
+  $('get-plus').hidden = choice !== 'buy';
+}
+function offerPlus(reason) { plusReason = reason; showPlusNudge(); }
+function fileTooLarge(text) { offerPlus(filePlus); return new Error(text); }
+const errorText = (error) => {
+  if (error?.code === 'storage-full') offerPlus('JotDrop Plus has 10 GB of cloud storage.');
+  else if (error?.code === 'plus-required') offerPlus(error.status === 413 ? filePlus : 'JotDrop Plus keeps every version and deleted note.');
+  return errorMessage(error);
+};
+const errorMessage = (error) => error?.status === 401 ?'This device no longer has access. Lock the workspace and reconnect using another device or your recovery code.' : error?.message || 'The operation failed. Your local files have not been changed.';
 const message = (text = '') => { $('workspace-message').textContent = text; };
 
 function button(text, action, className) {
@@ -991,7 +1015,9 @@ async function showPlan(activeClient, activeGeneration) {
   if (status.pieces?.maxFileBytes) maxFileBytes = status.pieces.maxFileBytes;
   const plan = status.plan;
   $('plan-status').textContent = plan.name === 'plus' ? `JotDrop Plus until ${new Date(plan.plusUntil).toLocaleDateString()}` : `Free plan: ${plan.deviceLimit} devices, ${plan.historyDays} days of history`;
-  $('start-trial').hidden = !plan.trialAvailable;
+  currentPlan = plan;
+  storageShare = plan.name === 'plus' ? 0 : status.usedBytes / status.quotaBytes;
+  showPlusNudge();
   $('plus-offer').hidden = !plan.checkout || plan.subscribed;
   $('buy-year').textContent = plan.founderPrice ? '€29 per year (founder price)' : '€39 per year';
   $('plus-manage').hidden = !plan.subscribed;
@@ -1443,7 +1469,7 @@ async function keepVoice() {
   if (!job?.blob || job.saving) return;
   job.saving = true;
   try {
-    if (job.blob.size > maxFileBytes) throw new Error(`This recording is larger than ${maxFileText()}, your plan's maximum per file. Download it before closing this note.`);
+    if (job.blob.size > maxFileBytes) throw fileTooLarge(`This recording is larger than ${maxFileText()}, your plan's maximum per file. Download it before closing this note.`);
     await queueFile(job.path, new Uint8Array(await job.blob.arrayBuffer()));
     if (voiceJob !== job || job.generation !== generation || !$('editor').open) return;
     appendToNote(`\n\n[Voice memo](${'../'.repeat($('note-path').value.split('/').length - 1)}${job.path})\n`);
@@ -1551,6 +1577,7 @@ async function showMoment() {
   $('timeline-moment').textContent = `${new Date(at).toLocaleString()}. Read-only.${locked ? ` ${locked} file(s) from then changed more than 30 days ago. JotDrop Plus shows and restores them.` : ''}${cleared ? ` ${cleared} file(s) from then were cleared to make room in the free storage, so this moment cannot be restored.` : ''}`;
   $('timeline-restore').hidden = false;
   $('timeline-restore').disabled = locked + cleared > 0;
+  if (locked) offerPlus('JotDrop Plus keeps every version.');
   render();
 }
 
@@ -1705,6 +1732,11 @@ function lock(notice = '') {
   $('recovery-code').value = '';
   $('editor').close();
   message();
+  currentPlan = undefined;
+  storageShare = 0;
+  plusReason = '';
+  plusQuiet = false;
+  showPlusNudge();
   attaching = undefined;
   $('totp-enable').hidden = true;
   $('totp-secret').value = '';
@@ -1821,7 +1853,7 @@ async function withDeviceChoice(connect) {
     for (const device of error.devices) {
       const choice = button(`Sign out ${device.name} (last used ${new Date(device.lastSeenAt).toLocaleDateString()})`, async () => {
         choice.disabled = true;
-        try { await connect(device.id); box.hidden = true; }
+        try { await connect(device.id); box.hidden = true; offerPlus('JotDrop Plus has no device limit.'); }
         catch (failure) { $('access-message').textContent = accessError(failure); }
         finally { choice.disabled = false; }
       });
@@ -2157,13 +2189,24 @@ $('log-out').addEventListener('click', async () => {
     lock();
   } catch (error) { message(errorText(error)); }
 });
-$('start-trial').addEventListener('click', async () => {
+async function startTrial() {
   try {
     await client.call('/account/trial', 'POST', {});
+    plusReason = '';
     message('JotDrop Plus is on for 14 days. No payment details needed.');
     await sync();
   } catch (error) { message(errorText(error)); }
-});
+}
+// The buy buttons stay in the menu; this brings them into view.
+function showPlusOffer() {
+  if ($('editor').open) closeEditor();
+  if ($('editor').open) return;
+  showSidebar(true);
+  $('buy-month').focus();
+}
+$('start-trial').addEventListener('click', startTrial);
+$('get-plus').addEventListener('click', showPlusOffer);
+$('plus-not-now').addEventListener('click', () => { plusReason = ''; plusQuiet = true; showPlusNudge(); });
 // Stripe shows the payment page and is the seller; Plus turns on when Stripe confirms the payment to the server.
 for (const [id, interval] of [['buy-month', 'month'], ['buy-year', 'year']]) $(id).addEventListener('click', async () => {
   try { location.assign((await client.call('/account/checkout', 'POST', { interval })).url); }
@@ -2214,7 +2257,7 @@ async function recognizePhoto(photo) {
   $('editor-form').querySelector('button[type="submit"]').disabled = true;
   const current = () => photoJob === job && job.generation === generation && $('editor').open;
   try {
-    if (photo.size > maxFileBytes) throw new Error(`This photo is larger than ${maxFileText()}, your plan's maximum per file. Choose a smaller photo; the original has not been uploaded.`);
+    if (photo.size > maxFileBytes) throw fileTooLarge(`This photo is larger than ${maxFileText()}, your plan's maximum per file. Choose a smaller photo; the original has not been uploaded.`);
     const bytes = new Uint8Array(await photo.arrayBuffer());
     const extension = bytes[0] === 0x89 && decoder.decode(bytes.slice(1, 4)) === 'PNG' ? 'png' : bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff ? 'jpg' : decoder.decode(bytes.slice(0, 4)) === 'RIFF' && decoder.decode(bytes.slice(8, 12)) === 'WEBP' ? 'webp' : undefined;
     if (!extension) throw new Error('Choose a valid PNG, JPEG or WebP photo.');
@@ -2359,6 +2402,13 @@ $('note-history').addEventListener('click', async () => {
       }));
       $('history-list').append(row);
     }
+    const choice = plusChoice();
+    if (choice && result.versions.some((version) => version.locked)) {
+      const offer = document.createElement('div');
+      offer.className = 'history-plus';
+      offer.append(paragraph('JotDrop Plus keeps every version.'), choice === 'trial' ? button('Try JotDrop Plus free for 14 days', startTrial, 'primary') : button('Get JotDrop Plus', showPlusOffer, 'primary'));
+      $('history-list').append(offer);
+    }
     $('history').hidden = false;
   } catch (error) { $('editor-message').textContent = errorText(error); }
 });
@@ -2387,7 +2437,7 @@ $('resolve-now').addEventListener('click', () => {
 $('upload').addEventListener('change', async () => {
   try {
     for (const file of $('upload').files) {
-      if (file.size > maxFileBytes) throw new Error(`"${file.name}" is larger than ${maxFileText()}, your plan's maximum per file.`);
+      if (file.size > maxFileBytes) throw fileTooLarge(`"${file.name}" is larger than ${maxFileText()}, your plan's maximum per file.`);
       const path = `${isMarkdown(file.name) ? 'notes' : 'attachments'}/${file.name}`;
       if ([...files.values()].some((entry) => entry.file.path === path)) throw new Error(`"${path}" already exists. Rename the upload to avoid overwriting it.`);
       await queueFile(path, new Uint8Array(await file.arrayBuffer()));
@@ -2454,6 +2504,7 @@ async function writeImport({ items, files: sources, failed: unreadable }) {
   }
   message(`Import: ${imported} imported, ${existing} already there, ${failed} could not be imported.`
     + (broken.size ? ` ${broken.size} attachments could not be added${tooLarge ? ` (${tooLarge} over ${maxFileText()})` : ''}.` : ''));
+  if (tooLarge) offerPlus(filePlus);
   await sync();
   void sync();
 }

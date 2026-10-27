@@ -1,4 +1,4 @@
-"""Run: python cloud/plans_browser_check.py. Synthetic JotDrop Plus limit checks: device limit at login, locked versions, trial."""
+"""Run: python cloud/plans_browser_check.py. Synthetic JotDrop Plus limit checks: the trial only at a limit (storage, file size, full cloud, old versions, device limit), then the trial itself."""
 import os
 import queue
 import re
@@ -20,6 +20,7 @@ from browser_check import use_markdown_editor  # noqa: E402
 
 EMAIL = "plans@example.com"
 PASSWORD = "synthetic plans passphrase"
+TRIAL = "Try JotDrop Plus free for 14 days"
 
 
 def check_plans(browser, url, codes, database):
@@ -55,11 +56,66 @@ def check_plans(browser, url, codes, database):
     phone.locator("#finish-recovery").click()
     phone.locator("#secure-later").click()  # The authenticator offer after signing up.
     phone.locator("#plan-status").filter(has_text="Free plan: 2 devices, 30 days of history").wait_for()
-    assert phone.locator("#start-trial").is_visible()
+    # The trial shows only where a free limit is in the way, never as a standing button (Eric, 27 Oct).
+    nudge = phone.locator("#plus-nudge")
+    assert nudge.is_hidden() and phone.get_by_role("button", name=TRIAL).count() == 0
     # Buy buttons only; a click would contact Stripe with the synthetic settings below.
     phone.locator("#plus-offer").filter(has_text="€3.99 per month").wait_for()
     assert phone.locator("#buy-year").inner_text() == "€29 per year (founder price)"
     assert phone.locator("#plus-manage").is_hidden()
+
+    def synced(page):
+        page.locator("#sync").click()
+        page.locator("#sync-status").filter(has_text="Cloud copy up to date").wait_for()
+
+    def status_with(change):
+        def handle(route):
+            response = route.fetch()
+            body = response.json()
+            change(body)
+            route.fulfill(response=response, json=body)
+        return handle
+
+    # 1. Storage 85% full.
+    phone.route("**/status", status_with(lambda body: body.update(usedBytes=int(body["quotaBytes"] * 0.85))))
+    synced(phone)
+    nudge.filter(has_text="85% full").wait_for()
+    assert "10 GB" in nudge.inner_text() and nudge.get_by_role("button", name=TRIAL).is_visible()
+    nudge.get_by_role("button", name="Not now").click()
+    assert nudge.is_hidden()
+    synced(phone)
+    assert nudge.is_hidden(), "Not now keeps the storage offer away for this visit."
+    phone.unroute("**/status")
+
+    # 2. A file larger than the free maximum; this time the trial was used, so it says Get JotDrop Plus.
+    def small_files(body):
+        body["pieces"]["maxFileBytes"] = 1024 * 1024
+        body["plan"]["trialAvailable"] = False
+    phone.route("**/status", status_with(small_files))
+    synced(phone)
+    assert nudge.is_hidden()
+    phone.locator("#upload").set_input_files({"name": "big.bin", "mimeType": "application/octet-stream", "buffer": b"x" * (2 * 1024 * 1024)})
+    phone.locator("#workspace-message").filter(has_text="larger than 1 MB").wait_for()
+    nudge.filter(has_text="200 MB").wait_for()
+    assert nudge.get_by_role("button", name=TRIAL).count() == 0
+    nudge.get_by_role("button", name="Get JotDrop Plus").click()
+    assert phone.evaluate("document.activeElement.id") == "buy-month"
+    nudge.get_by_role("button", name="Not now").click()
+    phone.unroute("**/status")
+
+    # 3. Cloud storage full while saving a note.
+    full = re.compile(r".*/objects/[^/?]+$")
+    phone.route(full, lambda route: route.fulfill(status=507, json={"error": "Cloud storage is full. Your local files remain available.", "code": "storage-full"}) if route.request.method == "PUT" else route.fallback())
+    phone.locator("#new-note").click()
+    phone.locator("#note-path").fill("notes/full.md")
+    phone.locator("#note-content").fill("# Full\n\nwaiting")
+    phone.locator('#editor-form button[type="submit"]').click()
+    phone.locator("#workspace-message").filter(has_text="Cloud storage is full").wait_for()
+    nudge.filter(has_text="10 GB").wait_for()
+    assert nudge.get_by_role("button", name=TRIAL).is_visible()
+    nudge.get_by_role("button", name="Not now").click()
+    phone.unroute(full)
+    synced(phone)
 
     for content in ["# List\n\nmilk", "# List\n\nmilk, eggs", "# List\n\nmilk, eggs, bread"]:
         card = phone.locator('.note-card[data-path="notes/list.md"]')
@@ -89,6 +145,8 @@ def check_plans(browser, url, codes, database):
     assert locked.count() == 2
     assert "JotDrop Plus restores it" in locked.first.inner_text()
     assert locked.get_by_role("button").count() == 0
+    # 4. One offer under the list, not one per locked version.
+    assert phone.locator("#history-list").get_by_role("button", name=TRIAL).count() == 1
     assert rows.first.get_by_role("button", name="Download version").count() == 1
     phone.keyboard.press("Escape")
 
@@ -108,9 +166,12 @@ def check_plans(browser, url, codes, database):
         assert db.execute("SELECT COUNT(*) FROM devices WHERE revoked=0").fetchone()[0] == 2
         assert db.execute("SELECT COUNT(*) FROM devices WHERE revoked=1").fetchone()[0] == 1
 
-    tablet.locator("#start-trial").click()
+    # 5. The third device: the offer waits in the workspace after the choice.
+    tablet_nudge = tablet.locator("#plus-nudge")
+    tablet_nudge.filter(has_text="no device limit").wait_for()
+    tablet_nudge.get_by_role("button", name=TRIAL).click()
     tablet.locator("#plan-status").filter(has_text="JotDrop Plus until").wait_for()
-    assert tablet.locator("#start-trial").is_hidden()
+    assert tablet_nudge.is_hidden() and tablet.get_by_role("button", name=TRIAL).count() == 0
     rows = history(tablet)
     assert rows.count() == 3 and tablet.locator("#history-list .history-row.locked").count() == 0
     assert rows.nth(2).get_by_role("button", name="Restore version").count() == 1

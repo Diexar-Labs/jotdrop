@@ -583,7 +583,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           total += piece.size;
         }
         if (pieces && total - 28 * pieces.length > maxFileFor(vaultId)) fail(413, `Files can be at most ${Math.round(maxFileFor(vaultId) / 1048576)} MB on your plan.`, { code: isPlus(vaultId) ? 'file-too-large' : 'plus-required' });
-        if (!fits(vaultId, size, deviceId, id)) fail(507, 'Cloud storage is full. Your local files remain available.');
+        if (!fits(vaultId, size, deviceId, id)) fail(507, 'Cloud storage is full. Your local files remain available.', { code: 'storage-full' });
         run('INSERT INTO envelopes(vaultId,id,envelopeHash,envelope,size,pieces) VALUES(?,?,?,?,?,?)', vaultId, id, envelopeHash, envelope, size, pieces ? 1 : 0);
         for (const name of new Set(pieces ?? [])) {
           run('INSERT INTO envelope_chunks VALUES(?,?,?,?)', vaultId, id, envelopeHash, name);
@@ -1234,7 +1234,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           if (one('SELECT 1 FROM chunks WHERE vaultId=? AND name=?', vaultId, piece[1])) return;
           // Enough for the largest file twice over; a piece no version uses is cleared after a day.
           if (one('SELECT COUNT(*) AS count FROM chunks WHERE vaultId=? AND claimed=0', vaultId).count >= 2 * MAX_PIECES) fail(507, 'Cloud pending upload limit reached');
-          if (!fits(vaultId, bytes.length, deviceId, '')) fail(507, 'Cloud storage is full. Your local files remain available.');
+          if (!fits(vaultId, bytes.length, deviceId, '')) fail(507, 'Cloud storage is full. Your local files remain available.', { code: 'storage-full' });
           run('INSERT INTO chunks(vaultId,name,size,data,createdAt) VALUES(?,?,?,?,?)', vaultId, piece[1], bytes.length, bytes, clock());
         });
         reply(200, { ok: true }); return;
@@ -1284,7 +1284,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
             const revision = latest(vaultId, id)?.revision || 0;
             if (revision !== baseRevision) fail(409, 'Another version was saved. Review both versions.', { currentRevision: revision });
             if (one('SELECT COUNT(*) AS count FROM uploads WHERE vaultId=?', vaultId).count >= 4) fail(507, 'Cloud pending upload limit reached');
-            if (!fits(vaultId, reservedBytes, deviceId, id)) fail(507, 'Cloud storage is full. Your local files remain available.');
+            if (!fits(vaultId, reservedBytes, deviceId, id)) fail(507, 'Cloud storage is full. Your local files remain available.', { code: 'storage-full' });
             run('INSERT INTO uploads VALUES(?,?,?,?,?,?,?,?,?)', ...key, value.size, reservedBytes, clock() + TRANSFER_LIFETIME, Buffer.alloc(0));
             return { offset: 0, size: value.size };
           });
