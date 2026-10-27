@@ -47,6 +47,43 @@ const RENDER_CHUNK = 60;
 // Must match the flex gap of .jotdrop-grid-inner / .jotdrop-grid-col in styles.css.
 const GRID_GAP = 12;
 const SEARCH_DEBOUNCE_MS = 120;
+// Playful details from design A (Eric, 27 Oct), as on the website. A note made in the last
+// minute drops onto the board the first time it shows up, and gets a "Sealed" stamp once the
+// cloud holds it. Each moment lasts this long; a render meanwhile plays the rest of it.
+const FRESH_MS = 60_000;
+const DROP_MS = 420;
+const PIN_MS = 450;
+const STAMP_MS = 1800;
+
+// A paper card sits a little askew, always at the same angle for the same note.
+const TILT_ANGLES = [-0.6, -0.35, 0.3, 0.5, -0.15, 0.2];
+function tiltFor(path: string): string {
+  let hash = 0;
+  for (const char of path) hash = (hash * 31 + (char.codePointAt(0) ?? 0)) | 0;
+  return `${TILT_ANGLES[Math.abs(hash) % TILT_ANGLES.length]}deg`;
+}
+
+/** Puts the text after each checkbox in a span with a pen line, shown once the task is done. */
+function wrapTaskText(preview: HTMLElement): void {
+  for (const toggle of Array.from(preview.querySelectorAll(".jotdrop-checklist-toggle"))) {
+    const text = createSpan({ cls: "jotdrop-task-text" });
+    toggle.after(text);
+    let node = text.nextSibling;
+    while (node && !(node instanceof HTMLElement && node.hasClass("jotdrop-checklist-toggle"))) {
+      if (node instanceof Text && node.data.includes("\n")) {
+        // The task ends at its line end; the rest stays outside.
+        node.splitText(node.data.indexOf("\n"));
+        text.appendChild(node);
+        break;
+      }
+      const next = node.nextSibling;
+      text.appendChild(node);
+      node = next;
+    }
+    const strike = text.createSvg("svg", { cls: "jotdrop-strike", attr: { viewBox: "0 0 100 10", preserveAspectRatio: "none", "aria-hidden": "true" } });
+    strike.createSvg("path", { attr: { pathLength: "1", d: "M1 6 C 18 2, 30 8, 50 5 S 82 3, 99 6" } });
+  }
+}
 
 // Mirrors Storage.findEmbeddedImageBasenames / findEmbeddedAudioBasenames in
 // the Android app. Covers both Obsidian-style `![[name.ext]]` and standard
@@ -398,6 +435,13 @@ export class JotDropView extends ItemView {
   // dragged; `dropIndicatorCard` is the card showing the insertion indicator.
   private dragInfo: { path: string; pinned: boolean } | null = null;
   private dropIndicatorCard: HTMLElement | null = null;
+  // Playful moments: every path shown so far, notes that just dropped in (until the cloud
+  // seals them), notes the cloud just sealed, and the pin pressed last.
+  private seenPaths = new Set<string>();
+  private hasRendered = false;
+  private freshAt = new Map<string, number>();
+  private sealedAt = new Map<string, number>();
+  private pinnedAt: { path: string; at: number } | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: JotDropPlugin) {
     super(leaf);
@@ -482,7 +526,7 @@ export class JotDropView extends ItemView {
     this.buildSelectionToolbar();
 
     this.cloudLineEl = root.createDiv({ cls: "jotdrop-cloud-line is-hidden" });
-    this.offCloud = this.plugin.cloud?.onChange(() => this.renderCloudLine()) ?? null;
+    this.offCloud = this.plugin.cloud?.onChange(() => { this.renderCloudLine(); this.sealFresh(); }) ?? null;
     this.renderCloudLine();
 
     this.filterBarEl = root.createDiv({ cls: "jotdrop-filter-bar" });
@@ -1338,6 +1382,12 @@ export class JotDropView extends ItemView {
       } else if (cards.length === 0) {
         empty.createEl("h3", { text: t("empty_no_notes_title") });
         empty.createEl("p", { text: t("empty_no_notes_desc") });
+        const hint = empty.createEl("p", { cls: "jotdrop-empty-hint" });
+        // A drawn arrow up to the New note button.
+        const arrow = hint.createSvg("svg", { attr: { viewBox: "0 0 64 44", "aria-hidden": "true" } });
+        arrow.createSvg("path", { attr: { d: "M58 38C40 40 20 32 12 8" } });
+        arrow.createSvg("path", { attr: { d: "M5 17l7-9 8 8" } });
+        hint.appendText(t("empty_hint_new_note", t("action_new_note")));
         const appHint = empty.createEl("p", { cls: "jotdrop-empty-app-hint" });
         appHint.appendText(t("empty_no_notes_app_hint") + " ");
         appHint.createEl("a", {
@@ -1357,6 +1407,7 @@ export class JotDropView extends ItemView {
         });
         clearBtn.addEventListener("click", () => this.clearAllFilters());
       }
+      this.hasRendered = true;
       return;
     }
 
@@ -1421,6 +1472,7 @@ export class JotDropView extends ItemView {
 
     renderUpTo(this.renderLimit);
     this.contentEl.scrollTop = scrollTop;
+    this.hasRendered = true;
 
     if (renderedCount < ordered.length) {
       const sentinel = this.gridEl.createDiv({ cls: "jotdrop-grid-sentinel" });
@@ -1906,6 +1958,17 @@ export class JotDropView extends ItemView {
     if (meta.color !== "default") {
       cardEl.dataset.color = meta.color;
     }
+    cardEl.style.setProperty("--jotdrop-tilt", tiltFor(file.path));
+    // Only the paper is askew: turned text goes soft, so the words on it stay straight and sharp.
+    cardEl.createSpan({ cls: "jotdrop-card-paper" });
+    const now = Date.now();
+    if (this.hasRendered && !this.seenPaths.has(file.path) && now - file.stat.ctime < FRESH_MS) this.freshAt.set(file.path, now);
+    this.seenPaths.add(file.path);
+    this.playMoment(cardEl, "is-dropped", this.freshAt.get(file.path), DROP_MS);
+    if (this.pinnedAt?.path === file.path) this.playMoment(cardEl, "just-pinned", this.pinnedAt.at, PIN_MS);
+    const sealed = now - (this.sealedAt.get(file.path) ?? -Infinity);
+    if (sealed < STAMP_MS) cardEl.appendChild(this.sealedStamp(sealed));
+    else this.sealedAt.delete(file.path);
 
     // Cards are draggable only in manual sort mode. This is the "clearly
     // require manual" path: drag/reorder is unavailable until the user selects
@@ -1937,6 +2000,7 @@ export class JotDropView extends ItemView {
       setIcon(quickPinBtn, meta.pinned ? "pin-off" : "pin");
       quickPinBtn.addEventListener("click", voidAsync(async (e) => {
         e.stopPropagation();
+        this.pinnedAt = { path: file.path, at: Date.now() };
         await updateMeta(this.app, file, { pinned: !meta.pinned });
         this.plugin.refreshViews();
       }));
@@ -2040,6 +2104,7 @@ export class JotDropView extends ItemView {
     if (previewText) {
       const preview = body.createDiv({ cls: "jotdrop-card-preview" });
       renderInlinePreview(preview, previewText);
+      wrapTaskText(preview);
       preview.addEventListener("click", (e) => {
         if (this.selectionMode) {
           e.stopPropagation();
@@ -2233,6 +2298,37 @@ export class JotDropView extends ItemView {
     });
   }
 
+  /** Plays a moment that began at `at`, or the rest of it when the card was rebuilt meanwhile. */
+  private playMoment(el: HTMLElement, cls: string, at: number | undefined, ms: number): void {
+    const elapsed = Date.now() - (at ?? -Infinity);
+    if (elapsed >= ms) return;
+    el.addClass(cls);
+    el.style.setProperty("--jotdrop-since", `-${elapsed}ms`);
+  }
+
+  private sealedStamp(elapsed: number): HTMLElement {
+    const stamp = createSpan({ cls: "jotdrop-card-stamp", attr: { "aria-hidden": "true" } });
+    setIcon(stamp.createSpan({ cls: "jotdrop-card-stamp-icon" }), "lock");
+    stamp.appendText(t("stamp_sealed"));
+    stamp.style.setProperty("--jotdrop-since", `-${elapsed}ms`);
+    stamp.addEventListener("animationend", () => stamp.remove());
+    return stamp;
+  }
+
+  /** The "Sealed" stamp, never before the cloud holds a note made here just now. */
+  private sealFresh(): void {
+    const uploaded = this.plugin.cloud?.lastUploaded;
+    if (!uploaded?.size || !this.gridEl) return;
+    const now = Date.now();
+    for (const [path, at] of this.freshAt) {
+      if (now - at > FRESH_MS) this.freshAt.delete(path);
+      if (!uploaded.has(path) || !this.freshAt.delete(path)) continue;
+      this.sealedAt.set(path, now);
+      const card = Array.from(this.gridEl.querySelectorAll<HTMLElement>(".jotdrop-card")).find((el) => el.dataset.path === path);
+      card?.appendChild(this.sealedStamp(0));
+    }
+  }
+
   private async toggleChecklist(file: TFile, index: number, toggle: HTMLElement): Promise<void> {
     if (!Number.isInteger(index) || index < 0) return;
     try {
@@ -2240,6 +2336,9 @@ export class JotDropView extends ItemView {
       this.plugin.suppressModifyOnce(file.path);
       await this.app.vault.process(file, (content) => toggleChecklistItem(content, index));
       toggle.setText(wasChecked ? "☐" : "☑");
+      toggle.setAttribute("aria-checked", String(!wasChecked));
+      // The pen draws its line through a task just ticked.
+      toggle.nextElementSibling?.toggleClass("just-struck", !wasChecked);
       toggle.setAttribute(
         "aria-label",
         t(wasChecked ? "checklist_mark_checked" : "checklist_mark_unchecked"),

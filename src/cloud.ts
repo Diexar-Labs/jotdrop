@@ -345,6 +345,8 @@ export class CloudController {
   private ready: Promise<void>;
   /** The open sign-in window, so the way back from Google or GitHub continues in it. */
   signInWindow?: CloudSignInModal;
+  /** Vault paths the current or last sync stored in the cloud, for the "Sealed" stamp on a new card. */
+  readonly lastUploaded = new Set<string>();
 
   constructor(private plugin: JotDropPlugin, store?: KeyValues) {
     const app = plugin.app as unknown as { appId?: string };
@@ -496,6 +498,7 @@ export class CloudController {
       this.changed();
     };
     this.status = "Syncing...";
+    this.lastUploaded.clear();
     this.changed();
     // A sync that only sent changes up leaves the cards as they are: no redraw, so closing a card or a tick never moves the view.
     const conflictsBefore = state.conflicts;
@@ -534,7 +537,12 @@ export class CloudController {
       }
       const remote = {
         list: () => remoteFiles(client, state.index, { checkActive: active, save, progress: progress("Reading the cloud...") }),
-        write: (path: string, bytes: Uint8Array, baseRevision: number) => { active(); return this.upload(client, state, path, bytes, baseRevision, abort.signal); },
+        write: async (path: string, bytes: Uint8Array, baseRevision: number) => {
+          active();
+          const object = await this.upload(client, state, path, bytes, baseRevision, abort.signal);
+          this.lastUploaded.add(folder.local(path));
+          return object;
+        },
         delete: async (path: string, baseRevision: number) => {
           active();
           const id = await objectId(vaultKey, path);

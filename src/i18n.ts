@@ -217,6 +217,8 @@ const EN: Record<string, string> = {
   empty_no_notes_app_hint:
     "Don't forget the Android app and the Chrome web clipper — together they give JotDrop that true Google Keep feeling.",
   empty_no_notes_app_link: "Get them →",
+  empty_hint_new_note: "jot the first one with {0}",
+  stamp_sealed: "Sealed",
   section_pinned: "Pinned",
   section_other: "Other",
 
@@ -548,6 +550,8 @@ const NL: Record<string, string> = {
   empty_no_notes_app_hint:
     "Vergeet de Android-app en de Chrome-webclipper niet — samen geven ze JotDrop dat échte Google Keep-gevoel.",
   empty_no_notes_app_link: "Download ze →",
+  empty_hint_new_note: "schrijf de eerste met {0}",
+  stamp_sealed: "Verzegeld",
   section_pinned: "Vastgezet",
   section_other: "Overige",
 
