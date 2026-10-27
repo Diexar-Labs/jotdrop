@@ -206,17 +206,18 @@ class CloudVaultAdapter(
         return if (extension != null) path.substring(0, extension) + suffix + path.substring(extension) else path + suffix
     }
 
-    private fun preserve(path: String, bytes: ByteArray, suffix: String) {
+    /** The copy written now, or null when the same copy was already there (that one is never ours to remove). */
+    private fun preserve(path: String, bytes: ByteArray, suffix: String): DocumentFile? {
         var name = copyName(path, suffix)
         val old = find(name)
         if (old != null) {
-            if (read(old).contentEquals(bytes)) return
+            if (read(old).contentEquals(bytes)) return null
             name = copyName(path, "$suffix-${UUID.randomUUID()}")
         }
-        writeNew(name, bytes)
+        return writeNew(name, bytes)
     }
 
-    fun recoverUpload(path: String, bytes: ByteArray) = runBlocking {
+    fun recoverUpload(path: String, bytes: ByteArray): Unit = runBlocking {
         Storage.noteWriteMutex.withLock {
             synchronized(Storage.cloudFileLock) {
                 validate()
@@ -235,21 +236,21 @@ class CloudVaultAdapter(
             if ((actual == null) != (expected == null) || (actual != null && !actual.contentEquals(expected!!))) return@withLock false
             if (files.any { CloudSyncManager.isEditing(it.uri) || !read(it).contentEquals(expected!!) }) return@withLock false
             if (replacement == null && files.isEmpty()) return@withLock true
-            if (actual != null) {
-                // SAF has no universal atomic replacement. Verify a visible recovery copy first.
-                preserve(path, actual, ".cloud-recovery-${CloudSyncEngine.hash(actual).take(12)}")
-            }
+            // SAF has no universal atomic replacement. Verify a visible recovery copy first.
+            val copy = actual?.let { preserve(path, it, ".cloud-recovery-${CloudSyncEngine.hash(it).take(12)}") }
             beforeMutation(path, actual?.let(CloudSyncEngine::hash), replacement?.let(CloudSyncEngine::hash))
             if (replacement == null) files.forEach { check(it.delete()) { "Local deletion failed. Recovery copy was kept" } }
             else if (files.isEmpty()) writeNew(path, replacement)
             else files.forEach { write(it, replacement) }
             afterMutation()
+            // The change is verified and no longer pending, so the copy has nothing left to guard; left behind, it shows as a duplicate note.
+            copy?.delete()
             true
             }
         }
     }
 
-    override fun conflict(path: String, remoteRevision: Int, remoteBytes: ByteArray) = runBlocking {
+    override fun conflict(path: String, remoteRevision: Int, remoteBytes: ByteArray): Unit = runBlocking {
         Storage.noteWriteMutex.withLock {
             synchronized(Storage.cloudFileLock) {
             validate()
