@@ -270,6 +270,7 @@ function appendMedia(card, entry, owner, alt = '') {
     const url = URL.createObjectURL(new Blob([base64ToBytes(entry.file.content)], { type }));
     const element = document.createElement(type.startsWith('image/') ? 'img' : 'audio');
     element.src = url;
+    element.dataset.id = entry.id;
     if (element.tagName === 'IMG') { element.alt = alt || entry.file.path.split('/').pop(); element.loading = 'lazy'; }
     else { element.controls = true; element.preload = 'none'; element.setAttribute('aria-label', alt || entry.file.path.split('/').pop()); }
     kept = { entry, alt, url, element };
@@ -283,6 +284,80 @@ function appendMedia(card, entry, owner, alt = '') {
 function releaseMedia(all = false) {
   for (const [key, kept] of media) if (all || !shownMedia.has(key)) { URL.revokeObjectURL(kept.url); media.delete(key); }
   shownMedia.clear();
+}
+
+// The files a note links to that this cloud holds, once each, in the note's own order.
+function noteAttachments(entry, parts, available) {
+  const paths = available.map((item) => item.file.path), found = [];
+  for (const target of parts.body.matchAll(/!\[\[([^\]]+)\]\]|!?\[[^\]]*\]\(([^)]+)\)/g)) {
+    const path = attachmentPath(target[1] || target[2], entry.file.path, paths);
+    const attachment = available.find((item) => item.file.path === path);
+    if (attachment && !found.includes(attachment)) found.push(attachment);
+  }
+  return found;
+}
+
+// Like the plugin's lightbox: a photo opens large, with its note and a download.
+let photoShown;
+function showPhoto(attachment, note) {
+  if (photoShown) URL.revokeObjectURL(photoShown.url);
+  const url = URL.createObjectURL(new Blob([base64ToBytes(attachment.file.content)], { type: mediaType(attachment.file.path) }));
+  photoShown = { attachment, note, url };
+  const name = attachment.file.path.split('/').pop();
+  $('photo-title').textContent = name;
+  $('photo-large').src = url;
+  $('photo-large').alt = name;
+  $('photo-open-note').hidden = !note || note.deleted || Boolean(moment) || $('editor').open;
+  if (!$('photo-viewer').open) $('photo-viewer').showModal();
+}
+$('close-photo').addEventListener('click', () => $('photo-viewer').close());
+$('photo-download').addEventListener('click', () => download(base64ToBytes(photoShown.attachment.file.content), photoShown.attachment.file.path));
+$('photo-open-note').addEventListener('click', () => {
+  const note = files.get(photoShown.note.id);
+  $('photo-viewer').close();
+  if (note && !note.deleted) openEditor(note);
+});
+$('photo-viewer').addEventListener('close', () => {
+  $('photo-large').removeAttribute('src');
+  if (photoShown) URL.revokeObjectURL(photoShown.url);
+  photoShown = undefined;
+});
+
+// The editor shows the note's photos and recordings above the text, like the plugin; a photo opens large.
+let editorMediaUrls = [];
+function renderNoteMedia(entry) {
+  for (const url of editorMediaUrls) URL.revokeObjectURL(url);
+  editorMediaUrls = [];
+  const strip = $('note-media');
+  strip.replaceChildren();
+  const markdown = Boolean(entry) && isMarkdown(entry.file.path);
+  const available = markdown ? [...files.values()].filter((item) => !item.deleted && !isMarkdown(item.file.path)) : [];
+  const shown = markdown ? noteAttachments(entry, noteParts(noteText(entry.file), entry.file.path), available).filter((item) => mediaType(item.file.path)) : [];
+  for (const attachment of shown) {
+    const type = mediaType(attachment.file.path), name = attachment.file.path.split('/').pop();
+    const url = URL.createObjectURL(new Blob([base64ToBytes(attachment.file.content)], { type }));
+    editorMediaUrls.push(url);
+    if (type.startsWith('image/')) {
+      const open = document.createElement('button');
+      open.type = 'button';
+      open.className = 'note-media-photo';
+      open.setAttribute('aria-label', `Show photo ${name}`);
+      const image = document.createElement('img');
+      image.src = url;
+      image.alt = '';
+      open.append(image);
+      open.addEventListener('click', () => showPhoto(attachment));
+      strip.append(open);
+    } else {
+      const audio = document.createElement('audio');
+      audio.controls = true;
+      audio.preload = 'none';
+      audio.src = url;
+      audio.setAttribute('aria-label', name);
+      strip.append(audio);
+    }
+  }
+  strip.hidden = !shown.length;
 }
 
 // Masonry like Keep: each grid child spans as many 8px rows as its height needs, so
@@ -469,13 +544,7 @@ function render() {
         markSelected(card, selectedIds.has(entry.id));
       }
       if (parts.reminder) card.append(paragraph(`Reminder: ${parts.reminder}${parts.repeat ? ` (${parts.repeat})` : ''}. Scheduled by Android after sync.`, 'note-meta'));
-      const targets =[...parts.body.matchAll(/!\[\[([^\]]+)\]\]|!?\[[^\]]*\]\(([^)]+)\)/g)];
-      const shown = new Set();
-      for (const target of targets) {
-        const path = attachmentPath(target[1] || target[2], entry.file.path, available.map((item) => item.file.path));
-        const attachment = available.find((item) => item.file.path === path);
-        if (attachment && !shown.has(path)) { appendMedia(card, attachment, entry.id); shown.add(path); }
-      }
+      for (const attachment of noteAttachments(entry, parts, available)) appendMedia(card, attachment, entry.id);
     } else appendMedia(card, entry, entry.id);
     if (waiting) card.append(paragraph('Encrypted draft on this browser. Waiting for cloud.', 'note-meta'));
     if (entry.conflict) card.append(paragraph('Another device saved a different version. Review both before choosing.', 'message'));
@@ -530,6 +599,17 @@ function render() {
 }
 
 document.addEventListener('pointermove', () => { for (const card of $('items').querySelectorAll('.is-hovered')) card.classList.remove('is-hovered'); }, { passive: true });
+
+$('items').addEventListener('click', (event) => {
+  const image = event.target.closest('.note-card img');
+  if (!image || selectedIds.size) return;
+  const source = moment ? moment.files : files;
+  const attachment = source.get(image.dataset.id);
+  if (!attachment) return;
+  event.stopPropagation();
+  const path = image.closest('.note-card').dataset.path;
+  showPhoto(attachment, isMarkdown(path) ? [...source.values()].find((entry) => entry.file.path === path) : undefined);
+}, true);
 
 // Manual order: the card being dragged, and whether the press began on a button or checkbox (that is no drag).
 let dragging = null, dragFromControl = false, dropCard = null;
@@ -1007,6 +1087,7 @@ function openEditor(entry) {
   $('note-path').readOnly = Boolean(entry);
   pathTyped = false;
   $('note-content').value = entry ? noteText(entry.file) : '';
+  renderNoteMedia(entry);
   syncSimple();
   refreshProperties();
   $('editor-message').textContent = 'Changes are saved only when you select Save note.';
@@ -1020,6 +1101,8 @@ function openEditor(entry) {
   if (!$('editor').open) $('editor').showModal();
   (markdownMode ? $('note-content') : entry ? $('note-body') : $('note-title')).focus();
 }
+
+$('editor').addEventListener('close', () => renderNoteMedia());
 
 // The Markdown file in #note-content is the single source; title, text and the controls edit it.
 let markdownMode = false;

@@ -248,6 +248,8 @@
     <form id="editor-form">
       <div class="dialog-heading"><h2 id="editor-title">Edit note</h2>
         <div class="editor-heading-actions"><button id="note-prev" type="button">Previous</button><button id="note-next" type="button">Next</button><button id="markdown-mode" type="button" aria-pressed="false">Markdown</button><button id="close-editor" type="button" aria-label="Close editor">Close</button></div></div>
+      <!-- Like the plugin editor: the note's photos and recordings on top; a photo opens large. -->
+      <div id="note-media" class="note-media" hidden></div>
       <!-- Like the plugin editor: title and text. The Markdown view shows the whole file. -->
       <div id="simple-editor">
         <label for="note-title">Title</label><input id="note-title" maxlength="300" placeholder="Title (optional)" autocomplete="off">
@@ -304,6 +306,11 @@
       <div class="dialog-actions"><button id="note-history" type="button">Version history</button><button id="note-download" type="button">Download</button><button id="note-delete" class="danger" type="button">Move to trash</button><button class="primary" type="submit">Save note</button></div>
       <section id="history" hidden><h3>Saved cloud versions</h3><p>Restoring creates a new version. It does not erase history.</p><div id="history-list"></div></section>
     </form>
+  </dialog>
+  <dialog id="photo-viewer" class="photo-viewer" aria-labelledby="photo-title">
+    <div class="dialog-heading"><h2 id="photo-title">Photo</h2><button id="close-photo" type="button">Close</button></div>
+    <img id="photo-large" alt="">
+    <div class="dialog-actions"><button id="photo-open-note" type="button">Open note</button><button id="photo-download" type="button">Download</button></div>
   </dialog>
   <dialog id="labels-dialog" aria-labelledby="labels-title">
     <div class="dialog-heading"><h2 id="labels-title">Edit labels</h2><button id="close-labels" type="button">Done</button></div>
