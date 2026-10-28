@@ -155,5 +155,10 @@ dependencies {
     implementation("com.google.mlkit:text-recognition:16.0.1")
     // Argon2id for cloud accounts (docs/cloud-accounts-design.md); used directly, not as a JCA provider.
     implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
+    // Android's own Google account picker for "Continue with Google"; the browser stays the fallback.
+    // 1.3.0: the newest that builds against compileSdk 34.
+    implementation("androidx.credentials:credentials:1.3.0")
+    implementation("androidx.credentials:credentials-play-services-auth:1.3.0")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

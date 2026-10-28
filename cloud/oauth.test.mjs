@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { generateKeyPairSync, sign } from 'node:crypto';
 import { createCloudServer } from './server.mjs';
 import { approveDevice, availableProviders, checkApproval, completeApproval, confirmLogin, confirmSignup, logIn, providerApproval, providerRecover, providerSignUp, providerTicket, resetWithRecoveryCode, signUp, startProviderSignIn, startReset, listApprovals, accountInfo, changePassword } from './shared/account.mjs';
 import { randomToken } from './shared/crypto.mjs';
@@ -18,8 +19,17 @@ const people = {
   bob: { google: { sub: 'g-bob', email: 'bob@example.com', email_verified: false }, github: { id: 8, emails: [{ email: 'bob@example.com', primary: true, verified: false }] } },
   eve: { google: { sub: 'g-eve', email: 'eve@example.com', email_verified: true } },
 };
+// Google's signing key for the ID tokens Android's own account picker hands the app.
+const googleKey = generateKeyPairSync('rsa', { modulusLength: 2048 });
+const googleCerts = { keys: [{ ...googleKey.publicKey.export({ format: 'jwk' }), kid: 'key-1', alg: 'RS256', use: 'sig' }] };
+const part = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
+function idToken(claims, { kid = 'key-1', key = googleKey.privateKey } = {}) {
+  const signed = `${part({ alg: 'RS256', kid, typ: 'JWT' })}.${part({ iss: 'https://accounts.google.com', aud: 'google-id', exp: Date.parse('2026-10-24T09:00:00Z') / 1000, ...claims })}`;
+  return `${signed}.${sign('RSA-SHA256', Buffer.from(signed), key).toString('base64url')}`;
+}
 async function providers(url, init = {}) {
   const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
+  if (url === 'https://www.googleapis.com/oauth2/v3/certs') return json(googleCerts);
   if (url === 'https://oauth2.googleapis.com/token' || url === 'https://github.com/login/oauth/access_token') {
     const form = new URLSearchParams(init.body);
     assert.equal(form.get('client_secret'), url.includes('google') ? 'google-secret' : 'github-secret');
@@ -160,4 +170,30 @@ test('provider sign-in refuses unverified addresses, stolen tickets, old tickets
   assert.match(decodeURIComponent(cancelled.headers.get('location')), /cancelled/);
   // Unknown provider or a server without provider settings.
   assert.equal((await fetch(`${cloud.url}/api/v1/auth/oauth/apple/start?client=web`)).status, 404);
+});
+
+test("Android's own account picker: a Google ID token for this server becomes a ticket for this device only", async (t) => {
+  const cloud = await fixture(t);
+  // The app asks Google for a token for the server's client ID, with the device's challenge as nonce.
+  assert.equal((await (await fetch(`${cloud.url}/api/v1/auth/providers`)).json()).googleClientId, 'google-id');
+  const { verifier, href } = await startProviderSignIn({ url: cloud.url, provider: 'google', client: 'android' });
+  const challenge = new URL(href).searchParams.get('challenge');
+  const exchange = (token, nonce = challenge) => fetch(`${cloud.url}/api/v1/auth/oauth/google/idtoken`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ idToken: token, challenge: nonce }) });
+  const ann = { sub: 'g-ann', email: 'ann@example.com', email_verified: true, nonce: challenge };
+
+  // Refused: another app's token, another issuer, expired, another nonce, an unverified address, a forged or unknown key.
+  for (const token of [idToken({ ...ann, aud: 'other-app' }), idToken({ ...ann, iss: 'https://evil.example' }), idToken({ ...ann, exp: Date.parse('2026-10-24T07:00:00Z') / 1000 }),
+    idToken({ ...ann, nonce: 'f'.repeat(64) }), idToken({ ...ann, email_verified: false }), idToken(ann, { key: generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey }),
+    idToken(ann, { kid: 'key-2' }), 'not.a-token', `${idToken(ann).split('.').slice(0, 2).join('.')}.`]) {
+    assert.equal((await exchange(token)).status, 401, token.slice(0, 40));
+  }
+  assert.equal((await exchange(idToken(ann), 'not-a-hash')).status, 400);
+
+  // Accepted: the same ticket as the browser route, useless without this device's verifier.
+  const { ticket } = await (await exchange(idToken(ann))).json();
+  await assert.rejects(providerTicket({ url: cloud.url, ticket, verifier: randomToken() }), (error) => error.status === 401);
+  const info = await providerTicket({ url: cloud.url, ticket, verifier });
+  assert.deepEqual([info.provider, info.email, info.account], ['google', 'ann@example.com', false]);
+  const { client } = await providerSignUp(info, { deviceName: 'Phone' });
+  assert.deepEqual(await accountInfo(client), { email: 'ann@example.com', totp: false, password: false, providers: ['google'] });
 });

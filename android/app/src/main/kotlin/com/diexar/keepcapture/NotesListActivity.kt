@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
+import android.provider.DocumentsContract
 import android.util.Log
 import android.text.format.DateUtils
 import android.widget.Toast
@@ -32,6 +33,8 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -81,6 +84,7 @@ import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -277,10 +281,34 @@ class NotesListActivity : ComponentActivity() {
         if (uri != null) saveCapturedImage(uri, deleteSourceAfter = null, withOcr = ocr)
     }
 
+    // Welcome: the notes folder first; with Google, the cloud sign-in follows straight away.
+    private var welcomeGoogle = false
+    private val pickVaultLauncher = registerForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri ->
+        if (uri == null) return@registerForActivityResult
+        Storage.persistUriPermission(this, uri)
+        Storage.saveVaultUri(this, uri)
+        reload(rescheduleReminders = true)
+        if (welcomeGoogle) startActivity(Intent(this, CloudActivity::class.java).putExtra(CloudActivity.EXTRA_WELCOME, true))
+    }
+
+    private fun startWelcome(google: Boolean) {
+        welcomeGoogle = google
+        // Opens in Documents, where "New folder" makes the suggested JotDrop folder.
+        pickVaultLauncher.launch(DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", "primary:Documents"))
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean("welcomeGoogle", welcomeGoogle)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        welcomeGoogle = savedInstanceState?.getBoolean("welcomeGoogle") ?: false
         VoiceMemoRecordingService.restorePending(this)
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -323,6 +351,7 @@ class NotesListActivity : ComponentActivity() {
                     onOpenSettings = {
                         startActivity(Intent(this, MainActivity::class.java))
                     },
+                    onWelcome = ::startWelcome,
                     onNewNote = { label ->
                         if (requireVaultOrPromptSettings()) {
                             startActivity(EditorActivity.newNoteIntent(this, label))
@@ -739,6 +768,7 @@ private fun NotesListScreen(
     sortModeFlow: StateFlow<NoteSortMode>,
     onRefresh: () -> Unit,
     onOpenSettings: () -> Unit,
+    onWelcome: (google: Boolean) -> Unit,
     onNewNote: (String?) -> Unit,
     onTakePhoto: () -> Unit,
     onPickPhoto: () -> Unit,
@@ -1197,11 +1227,7 @@ private fun NotesListScreen(
         ) {
             when (val s = state) {
                 NotesUiState.Loading -> LoadingSpinner()
-                NotesUiState.NoVault -> EmptyState(
-                    text = stringResource(R.string.empty_no_vault),
-                    actionLabel = stringResource(R.string.open_settings),
-                    onAction = onOpenSettings,
-                )
+                NotesUiState.NoVault -> WelcomeState(onGoogle = { onWelcome(true) }, onLocal = { onWelcome(false) })
                 is NotesUiState.Error -> EmptyState(
                     text = stringResource(R.string.error_with_message, s.message),
                     actionLabel = stringResource(R.string.retry),
@@ -2669,6 +2695,25 @@ private fun EmptyState(text: String, actionLabel: String, onAction: () -> Unit) 
             )
             Spacer(Modifier.height(16.dp))
             Button(onClick = onAction) { Text(actionLabel) }
+        }
+    }
+}
+
+/** First start: a folder for the notes, and with Google a free cloud in the same few taps (Eric: Play Store, Google, free account). */
+@Composable
+private fun WelcomeState(onGoogle: () -> Unit, onLocal: () -> Unit) {
+    Box(modifier = Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.widthIn(max = 420.dp).verticalScroll(rememberScrollState()),
+        ) {
+            Text(stringResource(R.string.welcome_title), style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onBackground, textAlign = TextAlign.Center)
+            Text(stringResource(R.string.welcome_text), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onBackground, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(4.dp))
+            ProviderButton("google", stringResource(R.string.welcome_google), enabled = true, onClick = onGoogle)
+            OutlinedButton(onClick = onLocal, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(stringResource(R.string.welcome_local)) }
+            Text(stringResource(R.string.welcome_folder_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onBackground, textAlign = TextAlign.Center)
         }
     }
 }

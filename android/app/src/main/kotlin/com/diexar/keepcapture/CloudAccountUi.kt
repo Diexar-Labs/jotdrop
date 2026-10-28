@@ -31,6 +31,13 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.credentials.CredentialManager
+import androidx.credentials.CustomCredential
+import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.GetCredentialException
+import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -62,6 +69,8 @@ internal object CloudAccountFlow {
     var waitingForPerson by mutableStateOf(false)
     var personReturn by mutableStateOf<String?>(null)
     var provider by mutableStateOf<CloudProviderSignIn?>(null)
+    /** Opened from the welcome screen: Google sign-in starts without another tap. */
+    var startGoogle by mutableStateOf(false)
     /** Signed up with a password: the authenticator offer follows the recovery code, then this is dropped. */
     var secureOffer by mutableStateOf<CloudSecureOffer?>(null)
     /** An authenticator being set up, in settings or in the offer, until it is turned on or cancelled. */
@@ -165,28 +174,49 @@ private fun CheckRow(checked: Boolean, onChange: (Boolean) -> Unit, label: Strin
     }
 }
 
+/** Google first offers Android's own account picker; without it (no Play services, or not set up for this build) the browser signs in. */
+private suspend fun startProviderSignIn(context: Context, server: String, name: String) {
+    val clientId = if (name == "google") io { CloudAccount.googleClientId(server) } else null
+    if (clientId != null) {
+        val verifier = CloudCrypto.token()
+        val option = GetSignInWithGoogleOption.Builder(clientId).setNonce(CloudCrypto.hashToken(verifier)).build()
+        val credential = try { CredentialManager.create(context).getCredential(context, GetCredentialRequest(listOf(option))).credential }
+            catch (_: GetCredentialCancellationException) { return }
+            catch (_: GetCredentialException) { null }
+        if (credential is CustomCredential && credential.type == GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+            val token = GoogleIdTokenCredential.createFrom(credential.data).idToken
+            CloudAccountFlow.provider = io { CloudAccount.googleIdTicket(server, token, verifier) }
+            return
+        }
+    }
+    val start = io { CloudAccount.startProviderSignIn(server, name) }
+    io { CloudPreviewStore(context).saveProviderStart(JSONObject().put("url", start.url).put("verifier", start.verifier)) }
+    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(start.href)))
+    CloudAccountFlow.waitingFor = name
+}
+
+/** Each provider's own colours and mark, with its name: Google light or dark neutral, GitHub near black. */
+@Composable
+internal fun ProviderButton(name: String, label: String, enabled: Boolean, onClick: () -> Unit) {
+    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val google = name == "google"
+    val container = if (google) (if (dark) Color(0xFF131314) else Color.White) else Color(0xFF24292F)
+    val content = if (google && !dark) Color(0xFF1F1F1F) else if (google) Color(0xFFE3E3E3) else Color.White
+    val edge = if (google) (if (dark) Color(0xFF8E918F) else Color(0xFF747775)) else if (dark) Color(0xFF6E7681) else Color(0xFF24292F)
+    OutlinedButton(onClick = onClick, enabled = enabled, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), border = BorderStroke(1.dp, edge),
+        colors = ButtonDefaults.outlinedButtonColors(containerColor = container, contentColor = content)) {
+        Image(painterResource(if (google) R.drawable.ic_provider_google else R.drawable.ic_provider_github), contentDescription = null, modifier = Modifier.size(20.dp))
+        Text(label, modifier = Modifier.padding(start = 12.dp))
+    }
+}
+
 /** Google or GitHub only say who you are; the key to the notes still comes from your own devices. */
 @Composable
 private fun ProviderButtons(providers: List<String>, server: String, busy: Boolean, run: (suspend () -> Unit) -> Unit) {
     if (providers.isEmpty()) return
     val context = LocalContext.current
-    val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     providers.forEach { name ->
-        // Each provider's own colours and mark, with its name: Google light or dark neutral, GitHub near black.
-        val google = name == "google"
-        val container = if (google) (if (dark) Color(0xFF131314) else Color.White) else Color(0xFF24292F)
-        val content = if (google && !dark) Color(0xFF1F1F1F) else if (google) Color(0xFFE3E3E3) else Color.White
-        val edge = if (google) (if (dark) Color(0xFF8E918F) else Color(0xFF747775)) else if (dark) Color(0xFF6E7681) else Color(0xFF24292F)
-        OutlinedButton(onClick = { run {
-            val start = io { CloudAccount.startProviderSignIn(server, name) }
-            io { CloudPreviewStore(context).saveProviderStart(JSONObject().put("url", start.url).put("verifier", start.verifier)) }
-            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(start.href)))
-            CloudAccountFlow.waitingFor = name
-        } }, enabled = !busy, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), border = BorderStroke(1.dp, edge),
-            colors = ButtonDefaults.outlinedButtonColors(containerColor = container, contentColor = content)) {
-            Image(painterResource(if (google) R.drawable.ic_provider_google else R.drawable.ic_provider_github), contentDescription = null, modifier = Modifier.size(20.dp))
-            Text("Continue with ${PROVIDER_NAMES.getValue(name)}", modifier = Modifier.padding(start = 12.dp))
-        }
+        ProviderButton(name, "Continue with ${PROVIDER_NAMES.getValue(name)}", !busy) { run { startProviderSignIn(context, server, name) } }
     }
     Text("Or with email and password:", style = MaterialTheme.typography.bodySmall)
 }
@@ -259,6 +289,12 @@ internal fun CloudSignIn(busy: Boolean, run: (suspend () -> Unit) -> Unit, showE
         delay(500)
         providers = runCatching { io { CloudAccount.providers(server) } }.getOrDefault(emptyList()).filter { it in PROVIDER_NAMES }
     }
+    // From the welcome screen: straight to Google.
+    LaunchedEffect(Unit) {
+        if (!flow.startGoogle) return@LaunchedEffect
+        flow.startGoogle = false
+        run { startProviderSignIn(context, server, "google") }
+    }
     // Back from the browser: the ticket only works with the verifier this phone kept, and only once.
     LaunchedEffect(flow.providerReturn) {
         val back = flow.providerReturn ?: return@LaunchedEffect
@@ -325,14 +361,14 @@ internal fun CloudSignIn(busy: Boolean, run: (suspend () -> Unit) -> Unit, showE
                 Text(if (provider.account) "Open your notes on this phone" else "Create your JotDrop cloud", style = MaterialTheme.typography.titleLarge)
                 Text("Signed in with $name as ${provider.email}.")
                 if (!provider.account) {
-                    Text("Your notes are encrypted on this phone before they leave it. You get a recovery code: keep it safe, it opens your notes if you lose your devices.")
+                    Text("Free, with 250 MB of storage. Your notes are encrypted on this phone before they leave it. You get a recovery code: keep it safe, it opens your notes if you lose your devices.")
                     CheckRow(newsletter, { newsletter = it }, NEWSLETTER_LABEL, !busy)
                     Button(onClick = { run { committed {
                         val result = io { CloudAccount.providerSignUp(provider, cloudDeviceName(), newsletter) }
                         keepRecoveryCode(context, result.recoveryCode)
                         CloudSyncManager.connectAccount(context, result.client)
                         startAgain()
-                    } } }, enabled = !busy) { Text("Create my JotDrop cloud") }
+                    } } }, enabled = !busy) { Text("Create my cloud and start syncing") }
                 } else {
                     Text("Only your own devices hold the key to your notes. Get it from a device that is signed in, or with your recovery code.")
                     Button(onClick = { run { flow.approval = io { CloudAccount.providerApproval(provider) }; flow.provider = null } }, enabled = !busy) { Text("Approve on a signed-in device") }

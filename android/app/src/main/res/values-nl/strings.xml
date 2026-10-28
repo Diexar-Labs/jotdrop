@@ -53,9 +53,12 @@
     <string name="parked_nothing_to_keep">Er was niets meer te bewaren. De notitie is weer beschikbaar.</string>
 
     <string name="loading">Laden…</string>
-    <string name="empty_no_vault">Nog geen vault gekozen. Open instellingen om aan de slag te gaan.</string>
+    <string name="welcome_title">Welkom bij JotDrop</string>
+    <string name="welcome_text">Je notities, foto\'s en spraakmemo\'s, als gewone bestanden op deze telefoon. Ga verder met Google voor een gratis versleutelde cloud met 250 MB, zodat je ze op al je apparaten hebt.</string>
+    <string name="welcome_google">Doorgaan met Google</string>
+    <string name="welcome_local">Gebruiken zonder cloud</string>
+    <string name="welcome_folder_hint">Eerst kies je een map voor je notities. Tip: maak een nieuwe map met de naam JotDrop. Gebruik je Obsidian al? Kies dan je vault.</string>
     <string name="empty_no_notes">Nog geen notities. Tik op + om te beginnen.</string>
-    <string name="open_settings">Open instellingen</string>
     <string name="retry">Opnieuw proberen</string>
 
     <string name="action_settings">Instellingen</string>

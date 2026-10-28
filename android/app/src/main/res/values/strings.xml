@@ -55,9 +55,12 @@
     <string name="parked_nothing_to_keep">There was nothing left to keep. The note is available again.</string>
 
     <string name="loading">Loading…</string>
-    <string name="empty_no_vault">No vault chosen yet. Open settings to get started.</string>
+    <string name="welcome_title">Welcome to JotDrop</string>
+    <string name="welcome_text">Your notes, photos and voice memos, saved as plain files on this phone. Continue with Google for a free encrypted cloud with 250 MB, to have them on all your devices.</string>
+    <string name="welcome_google">Continue with Google</string>
+    <string name="welcome_local">Use without cloud</string>
+    <string name="welcome_folder_hint">First you pick a folder for your notes. Tip: make a new folder called JotDrop. Already using Obsidian? Pick your vault.</string>
     <string name="empty_no_notes">No notes yet. Tap + to start.</string>
-    <string name="open_settings">Open settings</string>
     <string name="retry">Try again</string>
 
     <string name="action_settings">Settings</string>

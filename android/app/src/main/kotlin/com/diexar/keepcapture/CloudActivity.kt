@@ -27,6 +27,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -41,8 +42,17 @@ class CloudActivity : ComponentActivity() {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
-        if (savedInstanceState == null) takeProviderReturn(intent)
-        setContent { JotDropTheme { CloudScreen(onBack = { finish() }, onSettings = { startActivity(Intent(this, MainActivity::class.java)) }) } }
+        if (savedInstanceState == null) {
+            CloudAccountFlow.startGoogle = intent.getBooleanExtra(EXTRA_WELCOME, false)
+            takeProviderReturn(intent)
+        }
+        val welcome = intent.getBooleanExtra(EXTRA_WELCOME, false)
+        setContent { JotDropTheme { CloudScreen(welcome, onBack = { finish() }, onSettings = { startActivity(Intent(this, MainActivity::class.java)) }) } }
+    }
+
+    companion object {
+        /** From the welcome screen: Google sign-in opens at once, and the screen closes once sync runs. */
+        const val EXTRA_WELCOME = "welcome"
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -60,7 +70,7 @@ class CloudActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun CloudScreen(onBack: () -> Unit, onSettings: () -> Unit) {
+private fun CloudScreen(welcome: Boolean, onBack: () -> Unit, onSettings: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
     var status by remember { mutableStateOf<CloudSyncStatus?>(null) }
@@ -168,6 +178,20 @@ private fun CloudScreen(onBack: () -> Unit, onSettings: () -> Unit) {
         accountEmail = if (status?.connected != true) null else try { val client = cloud(); withContext(Dispatchers.IO) { CloudAccount.accountInfo(client)?.email } }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { null }
+    }
+    // Just signed in here: an empty notes folder starts syncing at once, a folder with files asks first (Eric).
+    var wasConnected by remember { mutableStateOf<Boolean?>(null) }
+    LaunchedEffect(status?.connected) {
+        val connected = status?.connected ?: return@LaunchedEffect
+        if (wasConnected == false && connected && status?.enabled == false && Storage.getVaultUri(context) != null) {
+            snapshotFlow { busy }.first { !it }
+            if (CloudSyncManager.localFolderEmpty(context)) run { CloudSyncManager.setEnabled(context, true) } else confirmEnable = true
+        }
+        wasConnected = connected
+    }
+    // From the welcome screen: back to the notes once sync runs and the recovery code is saved.
+    if (welcome) LaunchedEffect(status?.enabled, CloudAccountFlow.recoveryCode, CloudAccountFlow.secureOffer) {
+        if (status?.enabled == true && CloudAccountFlow.recoveryCode == null && CloudAccountFlow.secureOffer == null) onBack()
     }
     val list = rememberLazyListState()
     // Errors show at the top; a form further down would otherwise seem to do nothing.

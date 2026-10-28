@@ -115,6 +115,9 @@ object CloudSyncManager {
         changed.value++
     }
 
+    /** True when the synced note and attachment folders hold no files yet, so turning sync on can only bring files in. */
+    suspend fun localFolderEmpty(context: Context): Boolean = serialized { runCatching { CloudVaultAdapter(context).list().isEmpty() }.getOrDefault(false) }
+
     suspend fun setEnabled(context: Context, enabled: Boolean) {
         if (!enabled) { pauseRequested.set(true); cancel(context) }
         serialized {

@@ -1,6 +1,6 @@
 import http from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
-import { argon2, createCipheriv, createDecipheriv, createHash, createHmac, hkdfSync, randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto';
+import { argon2, createCipheriv, createDecipheriv, createHash, createHmac, createPublicKey, hkdfSync, randomBytes, randomInt, randomUUID, timingSafeEqual, verify } from 'node:crypto';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { isIP } from 'node:net';
 import { dirname, join, resolve } from 'node:path';
@@ -40,7 +40,8 @@ const PAID = ['active', 'trialing'], RUNNING = ['active', 'trialing', 'past_due'
 const DEFAULT_KDF = { memory: 65536, passes: 3, parallelism: 1 };
 // Sign in with Google or GitHub: the provider only proves who someone is; the vault key never goes there.
 const OAUTH_PROVIDERS = {
-  google: { name: 'Google', authorize: 'https://accounts.google.com/o/oauth2/v2/auth', token: 'https://oauth2.googleapis.com/token', api: 'https://openidconnect.googleapis.com/v1/userinfo', scope: 'openid email', extra: { prompt: 'select_account' } },
+  google: { name: 'Google', authorize: 'https://accounts.google.com/o/oauth2/v2/auth', token: 'https://oauth2.googleapis.com/token', api: 'https://openidconnect.googleapis.com/v1/userinfo', scope: 'openid email', extra: { prompt: 'select_account' },
+    certs: 'https://www.googleapis.com/oauth2/v3/certs', issuers: ['accounts.google.com', 'https://accounts.google.com'] },
   github: { name: 'GitHub', authorize: 'https://github.com/login/oauth/authorize', token: 'https://github.com/login/oauth/access_token', api: 'https://api.github.com', scope: 'user:email', extra: {} },
 };
 // Where the browser goes back to after the provider; the ticket only works with the secret the app made before.
@@ -416,6 +417,43 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     const user = await call(`${provider.api}/user`, auth), emails = await call(`${provider.api}/user/emails`, auth);
     const primary = Array.isArray(emails) ? emails.find((entry) => entry.primary && entry.verified) : undefined;
     return { subject: String(user.id), email: primary?.email ?? null };
+  }
+  // Android's own account picker hands the app a token Google signed for this server, with the device's challenge as nonce.
+  let googleCerts = { keys: [], fetchedAt: -Infinity };
+  async function googleIdentity(idToken, challenge) {
+    const provider = requireProvider('google'), refused = () => fail(401, 'Could not sign in with Google. Try again.');
+    const parts = typeof idToken === 'string' && idToken.length <= 8192 ? idToken.split('.') : [];
+    if (parts.length !== 3) refused();
+    let header, claims;
+    try { [header, claims] = parts.slice(0, 2).map((part) => JSON.parse(Buffer.from(part, 'base64url'))); } catch { refused(); }
+    if (header?.alg !== 'RS256') refused();
+    // Google rotates its keys: fetch them again for an unknown key, at most every five minutes.
+    if (!googleCerts.keys.some((key) => key.kid === header.kid) && googleCerts.fetchedAt + 5 * 60 * 1000 <= clock()) {
+      const response = await fetcher(provider.certs, { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(10000) }).catch(() => undefined);
+      const certs = await response?.json().catch(() => undefined);
+      if (!response?.ok || !Array.isArray(certs?.keys)) fail(503, 'Google did not answer. Try again.');
+      googleCerts = { keys: certs.keys, fetchedAt: clock() };
+    }
+    const key = googleCerts.keys.find((entry) => entry.kid === header.kid);
+    let valid = false;
+    try { valid = Boolean(key) && verify('RSA-SHA256', Buffer.from(`${parts[0]}.${parts[1]}`), createPublicKey({ key, format: 'jwk' }), Buffer.from(parts[2], 'base64url')); } catch { valid = false; }
+    if (!valid || !provider.issuers.includes(claims?.iss) || claims.aud !== provider.clientId || !(claims.exp * 1000 > clock()) || claims.nonce !== challenge) refused();
+    return { subject: String(claims.sub ?? ''), email: claims.email_verified === true ? claims.email : null };
+  }
+  // The provider's verified address as JotDrop stores it, or null.
+  function verifiedEmail(identity) {
+    let email = null;
+    try { email = identity.email && emailValue(identity.email); } catch { email = null; }
+    return email && identity.subject && identity.subject.length <= 200 ? email : null;
+  }
+  // Ten minutes to finish signing in, only with the verifier behind `challenge`.
+  function newTicket(provider, subject, email, challenge) {
+    const ticket = randomBytes(32).toString('base64url');
+    transaction(() => {
+      run('DELETE FROM oauth_tickets WHERE expiresAt<=?', clock());
+      run('INSERT INTO oauth_tickets VALUES(?,?,?,?,?,?)', hash(ticket), provider, subject, email, challenge, clock() + OAUTH_LIFETIME);
+    });
+    return ticket;
   }
   function oauthTicket(value) {
     requireValue(validToken(value.ticket) && validToken(value.verifier), 'Invalid sign-in');
@@ -870,7 +908,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           return addDevice(vaultId, value.deviceName, value.deviceTokenHash);
         })); return;
       }
-      if (method === 'GET' && route === '/auth/providers') { reply(200, { providers: Object.keys(providers), turnstileSiteKey: turnstile?.siteKey ?? null }); return; }
+      if (method === 'GET' && route === '/auth/providers') { reply(200, { providers: Object.keys(providers), googleClientId: providers.google?.clientId ?? null, turnstileSiteKey: turnstile?.siteKey ?? null }); return; }
       const oauthRoute = /^\/auth\/oauth\/([a-z]{1,20})\/(start|callback)$/.exec(route);
       if (method === 'GET' && oauthRoute) {
         requireAccounts();
@@ -901,15 +939,18 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         let identity;
         try { identity = await providerIdentity(provider, code, redirectUri); }
         catch { back(new URLSearchParams({ 'oauth-error': `Could not sign in with ${provider.name}. Try again.` })); return; }
-        let email = null;
-        try { email = identity.email && emailValue(identity.email); } catch { email = null; }
-        if (!email || !identity.subject || identity.subject.length > 200) { back(new URLSearchParams({ 'oauth-error': `Your ${provider.name} account has no verified email address. Add one there, or use email and password.` })); return; }
-        const ticket = randomBytes(32).toString('base64url');
-        transaction(() => {
-          run('DELETE FROM oauth_tickets WHERE expiresAt<=?', clock());
-          run('INSERT INTO oauth_tickets VALUES(?,?,?,?,?,?)', hash(ticket), oauthRoute[1], identity.subject, email, state.challenge, clock() + OAUTH_LIFETIME);
-        });
-        back(new URLSearchParams({ oauth: ticket })); return;
+        const email = verifiedEmail(identity);
+        if (!email) { back(new URLSearchParams({ 'oauth-error': `Your ${provider.name} account has no verified email address. Add one there, or use email and password.` })); return; }
+        back(new URLSearchParams({ oauth: newTicket(oauthRoute[1], identity.subject, email, state.challenge) })); return;
+      }
+      if (method === 'POST' && route === '/auth/oauth/google/idtoken') {
+        requireAccounts();
+        limit(`oauth:${ip}`, 20);
+        const value = await body(req, MAX_METADATA_BODY);
+        requireValue(validHash(value.challenge), 'Invalid sign-in request');
+        const identity = await googleIdentity(value.idToken, value.challenge), email = verifiedEmail(identity);
+        if (!email) fail(401, 'Your Google account has no verified email address. Add one there, or use email and password.');
+        reply(201, { ticket: newTicket('google', identity.subject, email, value.challenge) }); return;
       }
       if (method === 'POST' && route === '/auth/oauth/ticket') {
         requireAccounts();

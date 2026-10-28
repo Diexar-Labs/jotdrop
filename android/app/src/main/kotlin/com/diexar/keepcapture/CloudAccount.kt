@@ -274,6 +274,17 @@ object CloudAccount {
         return CloudProviderStart(origin, verifier, "$origin/api/v1/auth/oauth/$provider/start?client=android&challenge=${CloudCrypto.hashToken(verifier)}")
     }
 
+    /** The Google client the server accepts Android sign-in tokens for, or null when it does not offer Google. */
+    fun googleClientId(url: String): String? =
+        CloudClient.request(origin(url), "/auth/providers", "GET", null, null).optString("googleClientId").takeIf { it.isNotBlank() && it != "null" }
+
+    /** Android's own account picker: Google's token for this server, bound to this device's verifier through its nonce, becomes a ticket. */
+    fun googleIdTicket(url: String, idToken: String, verifier: String): CloudProviderSignIn {
+        val origin = origin(url)
+        val ticket = post(origin, "/auth/oauth/google/idtoken", JSONObject().put("idToken", idToken).put("challenge", CloudCrypto.hashToken(verifier))).getString("ticket")
+        return providerTicket(origin, ticket, verifier)
+    }
+
     /** Step 2: who signed in, and whether that address already has an account. */
     fun providerTicket(url: String, ticket: String, verifier: String): CloudProviderSignIn {
         val origin = origin(url)
