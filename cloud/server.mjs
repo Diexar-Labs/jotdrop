@@ -162,7 +162,7 @@ async function body(req, maximum = MAX_BODY) {
 }
 
 /** Loopback-only server behind a trusted HTTPS proxy. Accounts need a mailer; no billing or provider credentials. `quotaBytes` and `freeDeviceLimit` are the free plan's limits. */
-export async function createCloudServer({ dataDir, enrollmentToken, mailer, newsletter, serverKey, stripe, oauth = {}, fetcher = globalThis.fetch, quotaBytes = 250 * 1024 * 1024, plusQuotaBytes = 10 * 1024 * 1024 * 1024, maxFileBytes = 25 * 1024 * 1024, plusMaxFileBytes = 200 * 1024 * 1024, freeDeviceLimit = 2, maxHistoryEntries = 100000, maxDeviceEntries = 1000, maxPairingEntries = 128, maxConcurrentRequests = 16, signupsPerAddress = 5, turnstile, webRoot = join(directory, 'web'), corsOrigins = [], publicOrigin, port = 0, enrollmentLimit = 1, clock = Date.now }) {
+export async function createCloudServer({ dataDir, enrollmentToken, mailer, newsletter, serverKey, stripe, oauth = {}, fetcher = globalThis.fetch, quotaBytes = 250 * 1024 * 1024, plusQuotaBytes = 10 * 1024 * 1024 * 1024, maxFileBytes = 25 * 1024 * 1024, plusMaxFileBytes = 200 * 1024 * 1024, freeDeviceLimit = 2, maxHistoryEntries = 100000, maxDeviceEntries = 1000, maxPairingEntries = 128, maxConcurrentRequests = 16, signupsPerAddress = 5, turnstile, webRoot = join(directory, 'web'), corsOrigins = [], publicOrigin, port = 0, enrollmentLimit = 1, sweepEvery = 60 * 60 * 1000, clock = Date.now }) {
   if (!dataDir || (enrollmentToken !== undefined && !validToken(enrollmentToken)) || [quotaBytes, plusQuotaBytes, freeDeviceLimit].some((value) => !Number.isSafeInteger(value) || value < 1)) throw new Error('Provide a data directory, random 32-byte enrollment token and positive quota.');
   if (mailer !== undefined && typeof mailer !== 'function') throw new Error('Provide the mailer as a function.');
   // `newsletter(email)` adds someone who ticked "Email me news about JotDrop" to the mailing list (Brevo).
@@ -1423,8 +1423,15 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   server.requestTimeout = 30000;
   server.headersTimeout = 10000;
   await new Promise((done, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', done); });
+  // The privacy policy promises these are gone on time, so do not wait for the next sign-up to remove them.
+  const sweep = setInterval(() => {
+    run('DELETE FROM signup_addresses WHERE createdAt<=?', clock() - DAY);
+    run('DELETE FROM signups WHERE expiresAt<=?', clock());
+  }, sweepEvery);
+  sweep.unref();
   let closing;
   return { server, port: server.address().port, dbPath: join(dataDir, 'cloud.db'), close() {
+    clearInterval(sweep);
     if (!closing) closing = new Promise((done, reject) => { server.close((error) => { db.close(); error ? reject(error) : done(); }); server.closeAllConnections(); });
     return closing;
   } };

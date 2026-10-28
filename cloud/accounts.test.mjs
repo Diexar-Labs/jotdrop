@@ -495,6 +495,22 @@ test('one network opens at most five accounts a day; the next day it can again',
   await signUp(app, 'person5@example.com');
 });
 
+test('the network hash and an unconfirmed sign-up are removed on time, also when nobody signs up', async (t) => {
+  const app = await fixture(t, { sweepEvery: 20 });
+  await signUp(app, 'person@example.com');
+  assert.equal((await startSignup(app, 'waiting@example.com')).status, 202);
+  const count = (table) => {
+    const stored = new DatabaseSync(join(app.dataDir, 'cloud.db'), { readOnly: true });
+    try { return stored.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count; } finally { stored.close(); }
+  };
+  assert.equal(count('signup_addresses'), 1);
+  assert.equal(count('signups'), 1);
+  app.advance(24 * 60 * 60 * 1000 + 1);
+  await new Promise((done) => setTimeout(done, 100));
+  assert.equal(count('signup_addresses'), 0);
+  assert.equal(count('signups'), 0);
+});
+
 test('with Turnstile on, an email account needs a passed person check, and the site key is public', async (t) => {
   const checks = [];
   const fetcher = async (url, init) => {
