@@ -314,7 +314,7 @@ function mediaType(path) {
 }
 
 // Like the plugin and Android: up to three links as chips with the site's name, the rest as "+N".
-const LINK_CHIPS_VISIBLE = 3;
+const LINK_CHIPS_VISIBLE = 3, CARD_CHIPS_VISIBLE = 4;
 function appendLinkChips(card, urls, owner) {
   if (!urls.length) return;
   const row = document.createElement('div');
@@ -691,8 +691,17 @@ function render() {
     if (waiting) card.append(paragraph('Encrypted draft on this browser. Waiting for cloud.', 'note-meta'));
     if (entry.conflict) card.append(paragraph('Another device saved a different version. Review both before choosing.', 'message'));
     if (markdown) appendLinkChips(card, noteUrls(noteText(entry.file)), entry.id);
-    if (markdown) for (const label of parts.labels) card.append(button(label, () => showLabel(label.toLowerCase()), 'label-chip is-label'));
-    if (markdown) for (const tag of [...parts.tags, ...parts.inlineTags]) card.append(button(`#${tag}`, () => { selectedTags.add(tag.toLowerCase()); render(); }, 'label-chip'));
+    if (markdown) {
+      // Labels first, then #tags; at most four on a card and the rest as "+N", which opens the note (Eric, 29 Oct).
+      const chips = [...parts.labels.map((label) => button(label, () => showLabel(label.toLowerCase()), 'label-chip is-label')),
+        ...[...parts.tags, ...parts.inlineTags].map((tag) => button(`#${tag}`, () => { selectedTags.add(tag.toLowerCase()); render(); }, 'label-chip'))];
+      card.append(...chips.slice(0, CARD_CHIPS_VISIBLE));
+      if (chips.length > CARD_CHIPS_VISIBLE) {
+        const more = paragraph(`+${chips.length - CARD_CHIPS_VISIBLE}`, 'chip-more');
+        more.title = 'More labels and tags in this note';
+        card.append(more);
+      }
+    }
     // Like Android: when the note last changed.
     if (markdown && entry.file.modifiedAt) {
       const changed = paragraph(changedAgo(entry.file.modifiedAt), 'card-date');

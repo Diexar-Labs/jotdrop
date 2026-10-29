@@ -23,6 +23,7 @@ def check_link_chips(browser, url, token):
             ("many", "# Reading list\n\nStart with https://www.example.com/a and [the docs](https://docs.example.org/guide).\n"
                      "Then https://github.com/Diexar-Labs/jotdrop, https://news.example.net/x and https://www.example.com/a/ again."),
             ("plain", "# Plain\n\nNo links in this one."),
+            ("busy", '---\njotdrop_labels: ["Home", "Work"]\ntags: [one, two]\n---\n# Busy\n\nText #three #four'),
         ]
         for name, content in notes:
             page.locator("#new-note").click()
@@ -40,6 +41,10 @@ def check_link_chips(browser, url, token):
         preview = card.locator(".note-preview").inner_text()
         assert "https://" not in preview and "the docs" in preview, preview
         assert page.locator(".note-card").filter(has_text="Plain").locator(".link-chips").count() == 0
+        # Labels first, then tags; at most four chips and the rest as "+N" (Eric, 29 Oct).
+        busy = page.locator(".note-card").filter(has_text="Busy")
+        assert busy.locator(".label-chip").all_text_contents() == ["Home", "Work", "#one", "#two"], busy.locator(".label-chip").all_text_contents()
+        assert busy.locator(".chip-more").inner_text() == "+2"
         # A chip opens its link in a new tab, not the note.
         with context.expect_page() as popup:
             chips.nth(2).click()
@@ -53,7 +58,7 @@ def check_link_chips(browser, url, token):
             page.wait_for_timeout(400)
             card.screenshot(path=os.environ["JOTDROP_SHOT"])
         assert not errors, errors
-        return {"link_chips": True, "urls_out_of_text": True, "chip_opens_link": True, "card_opens_note": True}
+        return {"link_chips": True, "urls_out_of_text": True, "chip_opens_link": True, "card_opens_note": True, "four_chips_then_more": True}
     finally:
         if sys.exc_info()[0]:
             print({"sync": page.locator("#sync-status").text_content(), "message": page.locator("#workspace-message").text_content(), "errors": errors})
