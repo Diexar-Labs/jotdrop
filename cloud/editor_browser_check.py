@@ -137,17 +137,18 @@ def check_editor(browser, url, token):
         page.locator("#close-editor").click()
         synced()
 
-        # A note without a heading shows its text on the card, not its filename.
+        # Like the plugin and Android: a note without a heading has its first line as title, not its filename, and not twice.
         page.locator("#new-note").click()
         page.locator("#note-body").fill("Just a quick thought")
         page.locator('#editor-form button[type="submit"]').click()
         synced()
         thought = page.locator(".note-card").filter(has_text="Just a quick thought")
-        assert thought.locator("h3").count() == 0
+        assert thought.locator("h3").inner_text() == "Just a quick thought"
+        assert thought.locator(".note-preview").count() == 0
         assert thought.get_attribute("data-path").endswith(" Just a quick thought.md")
 
         page.set_viewport_size({"width": 390, "height": 844})
-        thought.locator(".note-preview").click()
+        thought.locator("h3").click()
         assert not page.evaluate("document.documentElement.scrollWidth > innerWidth")
         assert page.evaluate("(() => { const d = document.getElementById('editor'); return d.scrollWidth <= d.clientWidth; })()")
         page.locator("#close-editor").click()

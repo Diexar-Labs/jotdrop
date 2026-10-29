@@ -45,7 +45,9 @@ def check_parity(browser, url, token):
         assert card.locator(".task-row input").count() == 1
         assert "note-teal" in card.get_attribute("class")
         assert page.locator("#items > h2").all_text_contents() == ["Pinned"]
-        assert "2028-10-16T14:30 (daily)" in card.inner_text()
+        # The plugin's badges: "Due" in words, and the repeat beside it.
+        assert card.locator(".card-reminder").inner_text().startswith("⏰ Due")
+        assert card.locator(".card-repeat").inner_text() == "🔁 Daily"
         assert card.locator("img").count() == 1
         card.locator(".task-row input").check()
         page.locator('.note-card[data-revision="2"]').filter(has_text="Parity note").wait_for()

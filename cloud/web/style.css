@@ -177,9 +177,14 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .link-chips { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .5rem; }
 .link-chip, .link-more { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; border-radius: 999px; padding: .15rem .6rem; font-size: .75rem; font-weight: 500; }
 .link-chip { color: inherit; text-decoration: none; background: color-mix(in srgb, currentColor 10%, transparent); border: 1px solid transparent; }
-.link-chip::before { content: "🔗 "; opacity: .7; }
+.link-chip::before { content: "🔗 " / ""; opacity: .7; }
 .link-chip:hover { border-color: var(--accent); background: color-mix(in srgb, currentColor 16%, transparent); }
 .link-more { color: var(--muted); border: 1px dashed var(--line); }
+.note-card button.label-chip.is-label::before { content: "🏷 " / ""; opacity: .7; }
+.card-reminder, .card-repeat { display: inline-block; width: fit-content; margin: .35rem .3rem 0 0; padding: .1rem .55rem; border: 1px solid var(--line); border-radius: 999px; font-size: .75rem; font-weight: 500; }
+.card-reminder.is-overdue { border-style: dashed; border-color: currentColor; font-weight: 700; }
+.card-date { margin: .5rem 0 0; color: var(--muted); font-size: .78rem; }
+.note-card.is-archived > :not(.card-paper, .card-tape, .card-actions) { opacity: .7; }
 .tag-filter { display: flex; flex-wrap: wrap; gap: .4rem; padding-bottom: 1rem; }
 .tag-filter button { padding: .3rem .75rem; border: 1px solid var(--line); border-radius: 20px; font-size: .85rem; font-weight: 500; }
 .tag-filter button[aria-pressed="true"] { background: var(--selected); border: 2px solid var(--accent); padding: calc(.3rem - 1px) calc(.75rem - 1px); font-weight: 700; }

@@ -2,7 +2,7 @@ import { CloudClient } from '/shared/client.mjs';
 import { accountInfo, approveDevice, attachAccount, availableProviders, changePassword, checkApproval, completeApproval, confirmLogin, confirmSignup, deleteAccount, disableTotp, enableTotp, listApprovals, logIn, newRecoveryCode, personCheckKey, providerApproval, providerRecover, providerSignUp, providerTicket, rejectDevice, requestApproval, resetWithRecoveryCode, setupTotp, signUp, startOver, startProviderSignIn, startReset } from '/shared/account.mjs';
 import { base64ToBytes, bytesToBase64, decodeRecovery, decryptEnvelope, encryptEnvelope, objectId, sealLocal, unsealLocal } from '/shared/crypto.mjs';
 import { exportZip } from '/export.mjs';
-import { noteSummary, updateMetadata, toggleTask, attachmentPath, plainPreviewText, splitNote, joinNote, noteFilename, manualRank, betweenRank, noteUrls, urlHost } from '/note.mjs';
+import { noteSummary, updateMetadata, toggleTask, attachmentPath, plainPreviewText, splitNote, joinNote, noteFilename, manualRank, betweenRank, noteUrls, urlHost, reminderBadge, repeatLabel, changedAgo } from '/note.mjs';
 
 const $ = (id) => document.getElementById(id);
 try {
@@ -565,13 +565,20 @@ function render() {
       $('items').append(heading);
     }
     title.textContent = markdown ? plainPreviewText(parts.title) : parts.title;
-    // Like the plugin: a note without a heading shows its text, not its filename.
-    if (!markdown || /^#\s+.+$/m.test(parts.body) || !parts.body.trim()) card.append(title);
+    // Like the plugin and Android: without a heading the first line is the title, and a list item also stays in the text.
+    const bodyLines = markdown ? parts.body.split('\n') : [];
+    const firstLine = bodyLines.findIndex((line) => line.trim() && !/^\s*(?:!\[\[[^\]]*\]\]|!\[[^\]]*\]\([^)]*\)|<!--.*-->)\s*$/.test(line));
+    const headed = markdown && /^#\s+.+$/m.test(parts.body);
+    if (markdown && !headed && firstLine >= 0) {
+      title.textContent = plainPreviewText(bodyLines[firstLine].trim().replace(/^[-*+][ \t]+(?:\[[ xX]\][ \t]*)?/, '').replace(/https?:\/\/[^\s)<>"']+/g, '').trim()) || parts.title;
+    }
+    card.append(title);
     if (markdown) {
       const fullText = noteText(entry.file);
       const bodyOffset = fullText.slice(0, fullText.length - parts.body.length).split('\n').length - 1;
       // Show the body in its own order: text as text, checklist lines only as checkboxes.
-      const titleLine = /^\s*#\s+/.test(parts.body) ? parts.body.split('\n').findIndex((line) => line.trim()) : -1;
+      const titleLine = /^\s*#\s+/.test(parts.body) ? bodyLines.findIndex((line) => line.trim())
+        : !headed && firstLine >= 0 && !/^\s*[-*+][ \t]/.test(bodyLines[firstLine]) ? firstLine : -1;
       let text = [], budget = 600, fence;
       const available = [...source.values()].filter((item) => !item.deleted && !isMarkdown(item.file.path));
       const shownAsMedia = (target) => {
@@ -584,7 +591,7 @@ function render() {
           .replace(/\[([^\]\n]+)\]\(([^)\n]+)\)/g, (_link, label, target) => (!/^https?:/i.test(target) && shownAsMedia(target) ? '' : label))
           .replace(/\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\]/g, (_link, name, alias) => alias || name.replace(/#.*$/, ''))
           // A bare web address shows as a link chip below the text, like the plugin and Android.
-          .replace(/https?:\/\/[^\s)<>"']+/g, ''))
+          .replace(/https?:\/\/[^\s)<>"']+/g, '').replace(/[ \t]{2,}/g, ' ').replace(/[ \t]+([.,;:!?])/g, '$1'))
           .replace(/\n{3,}/g, '\n\n').trim().slice(0, budget);
         if (value) { card.append(paragraph(value, 'note-preview')); budget -= value.length; }
         text = [];
@@ -616,7 +623,17 @@ function render() {
       });
       flush();
       if (!entry.deleted && !moment) card.classList.add('opens');
+      // Like the plugin and Android: pressing a card for half a second selects it.
+      let press, pressed = false;
+      card.addEventListener('pointerdown', (event) => {
+        pressed = false;
+        if (!selectableIds.has(entry.id) || event.button || event.target.closest('button, input, label, audio, a')) return;
+        press = setTimeout(() => { pressed = true; toggleSelected(entry.id); }, 500);
+      });
+      for (const end of ['pointerup', 'pointerleave', 'pointercancel', 'dragstart']) card.addEventListener(end, () => clearTimeout(press));
+      card.addEventListener('contextmenu', (event) => { if (pressed) event.preventDefault(); });
       card.addEventListener('click', (event) => {
+        if (pressed) { pressed = false; return; }
         if (event.target.closest('button, input, label, audio')) return;
         if (selectedIds.size && selectableIds.has(entry.id)) toggleSelected(entry.id);
         else if (!entry.deleted && !moment) openEditor(entry);
@@ -652,8 +669,21 @@ function render() {
         card.append(iconButton('check', 'Select note', () => toggleSelected(entry.id), 'card-select'));
         markSelected(card, selectedIds.has(entry.id));
       }
-      if (parts.reminder) card.append(paragraph(`Reminder: ${parts.reminder}${parts.repeat ? ` (${parts.repeat})` : ''}. Scheduled by Android after sync.`, 'note-meta'));
-      for (const attachment of noteAttachments(entry, parts, available)) appendMedia(card, attachment, entry.id);
+      // Like the plugin: "Due" or "Overdue" in words with how far off it is, and the repeat beside it.
+      const due = reminderBadge(parts.reminder);
+      if (due) {
+        const badge = paragraph(`${due.label} · ${due.relative}`, `card-reminder${due.overdue ? ' is-overdue' : ''}`);
+        badge.title = 'Android sends the reminder after sync.';
+        card.append(badge);
+        const repeat = parts.reminder && repeatLabel(parts.repeat);
+        if (repeat) card.append(paragraph(`🔁 ${repeat}`, 'card-repeat'));
+      }
+      // Like the plugin and Android: only the first photo shows, as the cover; a voice memo plays on the card.
+      let photo = false;
+      for (const attachment of noteAttachments(entry, parts, available)) {
+        if (mediaType(attachment.file.path)?.startsWith('image/')) { if (photo) continue; photo = true; }
+        appendMedia(card, attachment, entry.id);
+      }
       // Like Keep: a note's first photo is the cover, edge to edge on top of the card.
       const cover = card.querySelector(':scope > img');
       if (cover) { cover.classList.add('card-cover'); card.prepend(cover); }
@@ -661,8 +691,16 @@ function render() {
     if (waiting) card.append(paragraph('Encrypted draft on this browser. Waiting for cloud.', 'note-meta'));
     if (entry.conflict) card.append(paragraph('Another device saved a different version. Review both before choosing.', 'message'));
     if (markdown) appendLinkChips(card, noteUrls(noteText(entry.file)), entry.id);
-    if (markdown) for (const label of parts.labels) card.append(button(label, () => showLabel(label.toLowerCase()), 'label-chip'));
+    if (markdown) for (const label of parts.labels) card.append(button(label, () => showLabel(label.toLowerCase()), 'label-chip is-label'));
     if (markdown) for (const tag of [...parts.tags, ...parts.inlineTags]) card.append(button(`#${tag}`, () => { selectedTags.add(tag.toLowerCase()); render(); }, 'label-chip'));
+    // Like Android: when the note last changed.
+    if (markdown && entry.file.modifiedAt) {
+      const changed = paragraph(changedAgo(entry.file.modifiedAt), 'card-date');
+      changed.title = new Date(entry.file.modifiedAt).toLocaleString();
+      card.append(changed);
+    }
+    // Like the plugin: an archived note is a little paler.
+    if (view === 'archive') card.classList.add('is-archived');
     if (entry.conflict) card.append(button('Resolve now', () => reviewConflict(entry)));
     // Like Keep and the plugin: actions and file details show on hover or focus (always on touch).
     // An earlier moment is read-only; the time machine restores it as a whole.

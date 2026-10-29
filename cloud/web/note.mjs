@@ -12,8 +12,8 @@ function listField(header, key, words = false) {
   let items = [];
   if (match?.[1].trim().startsWith('[')) {
     try { items = JSON.parse(match[1]); } catch {
-      // Unquoted flow lists such as [a, b], as Obsidian writes tags.
-      items = words ? match[1].trim().replace(/^\[|\]$/g, '').split(',').map((item) => item.trim().replace(/^(["'])(.*)\1$/, '$2')) : [];
+      // Unquoted flow lists such as [a, b], as Obsidian writes tags and as the plugin reads labels.
+      items = match[1].trim().replace(/^\[|\]$/g, '').split(',').map((item) => item.trim().replace(/^(["'])(.*)\1$/, '$2'));
     }
   } else if (match?.[1].trim()) {
     if (words) items = match[1].trim().replace(/^(["'])(.*)\1$/, '$2').split(/[\s,]+/);
@@ -140,6 +140,48 @@ export function urlHost(url) {
   } catch {
     return url;
   }
+}
+
+/** The plugin's reminder badge: "Due" or "Overdue" in words, not only colour, and how far off it is. Null without a valid reminder. */
+export function reminderBadge(reminder, now = Date.now()) {
+  const at = Date.parse(reminder || '');
+  if (!Number.isFinite(at)) return null;
+  const overdue = at < now, minutes = Math.abs(at - now) / 60000;
+  const amount = (value, unit) => (overdue ? `${value} ${unit} overdue` : `in ${value} ${unit}`);
+  let relative;
+  if (minutes < 1) relative = overdue ? 'just overdue' : 'now';
+  else if (minutes < 60) relative = amount(Math.round(minutes), 'min');
+  else if (minutes < 60 * 24) relative = amount(Math.round(minutes / 60), 'h');
+  else if (minutes < 60 * 24 * 30) relative = amount(Math.round(minutes / 60 / 24), 'd');
+  else relative = new Date(at).toISOString().slice(0, 10);
+  return { overdue, label: overdue ? '⚠ Overdue' : '⏰ Due', relative };
+}
+
+const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const ORDINALS = ['1st', '2nd', '3rd', '4th', 'Last'];
+/** The plugin's short repeat label for a `reminder_repeat` value; '' when there is none or it is not valid. */
+export function repeatLabel(repeat) {
+  const value = String(repeat || '').trim();
+  if (value === 'daily') return 'Daily';
+  if (value === 'monthly') return 'Monthly';
+  if (value === 'yearly') return 'Yearly';
+  if (/^weekly:[1-7](?:,[1-7])*$/.test(value)) return 'Weekly';
+  let match = /^every:(\d+):(days|weeks|months)$/.exec(value);
+  if (match && Number(match[1]) >= 1 && Number(match[1]) <= 10000) return `Every ${Number(match[1])} ${match[2]}`;
+  match = /^ordinal:([1-5]):([1-7])$/.exec(value);
+  return match ? `${ORDINALS[match[1] - 1]} ${WEEKDAYS[match[2] - 1]}` : '';
+}
+
+/** Android's card footer: when the note last changed, "5 sec. ago" up to a date. */
+export function changedAgo(iso, now = Date.now()) {
+  const at = Date.parse(iso || '');
+  if (!Number.isFinite(at)) return '';
+  const seconds = Math.max(0, Math.round((now - at) / 1000));
+  if (seconds < 60) return `${seconds} sec. ago`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} min. ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)} hr. ago`;
+  if (seconds < 7 * 86400) { const days = Math.floor(seconds / 86400); return `${days} ${days === 1 ? 'day' : 'days'} ago`; }
+  return new Date(at).toLocaleDateString('en', { month: 'long', day: 'numeric', ...(new Date(at).getFullYear() !== new Date(now).getFullYear() ? { year: 'numeric' } : {}) });
 }
 
 export function toggleTask(text, lineIndex, checked) {

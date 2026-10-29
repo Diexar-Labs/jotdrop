@@ -1,6 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { noteSummary, updateMetadata, toggleTask, attachmentPath, plainPreviewText, splitNote, joinNote, noteFilename, manualRank, betweenRank, noteUrls, urlHost } from './note.mjs';
+import { noteSummary, updateMetadata, toggleTask, attachmentPath, plainPreviewText, splitNote, joinNote, noteFilename, manualRank, betweenRank, noteUrls, urlHost, reminderBadge, repeatLabel, changedAgo } from './note.mjs';
+
+test('cards show the plugin reminder badge, its repeat and when the note changed', () => {
+  const now = Date.parse('2026-10-29T10:00:00Z');
+  assert.deepEqual(reminderBadge('2026-10-29T12:00:00Z', now), { overdue: false, label: '⏰ Due', relative: 'in 2 h' });
+  assert.deepEqual(reminderBadge('2026-10-27T10:00:00Z', now), { overdue: true, label: '⚠ Overdue', relative: '2 d overdue' });
+  assert.equal(reminderBadge('not a date', now), null);
+  assert.deepEqual(['daily', 'weekly:1,3', 'every:2:weeks', 'ordinal:5:7', 'weekly:9'].map(repeatLabel), ['Daily', 'Weekly', 'Every 2 weeks', 'Last Sun', '']);
+  assert.deepEqual(['2026-10-29T09:59:55Z', '2026-10-29T09:30:00Z', '2026-10-28T09:00:00Z', ''].map((iso) => changedAgo(iso, now)), ['5 sec. ago', '30 min. ago', '1 day ago', '']);
+});
 
 test('browser reads canonical plugin/Android labels without treating tags or body hashtags as labels', () => {
   const markdown = '---\ntags: [not-a-label]\njotdrop_labels:\n  - Work\n  - "Work: notes"\n  - work\ncolor: teal\npinned: true\nunknown_key: preserve\n---\n\n# Heading\n\nText #not-a-label';
