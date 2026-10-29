@@ -559,7 +559,7 @@ private fun EditorScreen(
                 attachmentUris = attachments
                 attachmentIndexLoaded = indexReady
                 val parsed = FrontmatterParser.parse(raw)
-                loadedBodyHash = CloudSyncEngine.hash(parsed.body.toByteArray(Charsets.UTF_8))
+                loadedBodyHash = editorBodyHash(parsed.body)
                 val cleanBody = parsed.body.removePrefix("\n")
                 val (textPart, embeds) = splitBodyAndEmbeds(cleanBody)
                 val (loadedTitle, loadedBody, loadedLevel) = splitHeadingTitle(textPart)
@@ -1921,7 +1921,7 @@ private fun attemptSaveAndClose(
                     val rawCurrent = Storage.readNote(context, Uri.parse(currentUri))
                         .getOrElse { return@withContext Result.failure(it) }
                     val parsed = FrontmatterParser.parse(rawCurrent)
-                    if (expectedBodyHash == null || CloudSyncEngine.hash(parsed.body.toByteArray(Charsets.UTF_8)) != expectedBodyHash) {
+                    if (expectedBodyHash == null || editorBodyHash(parsed.body) != expectedBodyHash) {
                         return@withContext Result.failure(IllegalStateException("This note changed since it was opened. Your draft was kept; compare the current note before saving."))
                     }
                     val fmBlock = parsed.frontmatter
@@ -1942,6 +1942,14 @@ private fun attemptSaveAndClose(
             }
     }
 }
+
+/**
+ * De body zoals de editor hem vergelijkt voor opslaan. Pin, kleur, tags en
+ * herinnering schrijven direct de frontmatter en laten daarbij de witregel na
+ * de frontmatter vallen; dat is geen wijziging van de notitie zelf.
+ */
+internal fun editorBodyHash(body: String): String =
+    CloudSyncEngine.hash(body.trimStart('\r', '\n').toByteArray(Charsets.UTF_8))
 
 /**
  * Scheidt een body in twee delen: tekst (zonder embed-only regels) en de
