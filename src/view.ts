@@ -2700,7 +2700,7 @@ function extractTitle(content: string, fallback: string): string {
 }
 
 /**
- * Body for the card: without frontmatter, embeds, heading lines, URLs,
+ * Body for the card: without frontmatter, embeds, heading signs, URLs,
  * preview-comment markers and Markdown formatting marks. Leading list
  * indentation is preserved. Truncated to
  * `PREVIEW_MAX_WORDS` with "…".
@@ -2708,19 +2708,20 @@ function extractTitle(content: string, fallback: string): string {
  */
 function extractPreview(content: string): string {
   const all = stripFrontmatter(content).split("\n");
-  // Like Android: a plain first line is the card title, so the text does not repeat it; a list item stays.
+  // Like Android: the first line, a heading too, is the card title, so the text does not repeat it; a list item stays.
   const first = all.findIndex((line) => {
     const trimmed = line.trim();
     return trimmed.length > 0 && !/^!\[\[[^\]]+\]\]$|^!\[[^\]]*\]\([^)]+\)$|^<!--/.test(trimmed);
   });
-  const body = first >= 0 && !/^\s*(?:#|[-*+][ \t]|\d{1,9}[.)][ \t])/.test(all[first])
+  const body = first >= 0 && !/^\s*(?:[-*+][ \t]|\d{1,9}[.)][ \t])/.test(all[first])
     ? all.filter((_line, index) => index !== first).join("\n")
     : all.join("\n");
   const stripped = body
     .replace(/!\[\[[^\]]+\]\]/g, "")
     .replace(/!\[[^\]]*\]\([^)]+\)/g, "")
     .replace(/<!--\s*(?:jotdrop|diexar)-preview:.*?-->/g, "")
-    .replace(/^\s{0,3}#+\s+.*$/gm, "")
+    // A heading further down keeps its words without the # signs, like on Android and the website.
+    .replace(/^\s{0,3}#{1,6}[ \t]+/gm, "")
     // A card shows no Markdown signs (Eric): any link keeps only its label.
     .replace(/\[([^\]\n]+)\]\(([^)\n]+)\)/g, "$1")
     .replace(/\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\]/g, (_link: string, name: string, alias?: string) => alias || name.replace(/#.*$/, ""))

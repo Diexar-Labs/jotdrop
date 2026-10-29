@@ -587,7 +587,8 @@ function render() {
       };
       const flush = () => {
         // Media show below the text, so their links go; any other link shows only its label (Eric: no Markdown signs on a card).
-        const value = plainPreviewText(text.join('\n').replace(/!\[\[[^\]]+\]\]|!\[[^\]]*\]\([^)]+\)/g, '')
+        // A heading keeps its words without the # signs, like in Obsidian and on Android.
+        const value = plainPreviewText(text.join('\n').replace(/^\s{0,3}#{1,6}[ \t]+/gm, '').replace(/!\[\[[^\]]+\]\]|!\[[^\]]*\]\([^)]+\)/g, '')
           .replace(/\[([^\]\n]+)\]\(([^)\n]+)\)/g, (_link, label, target) => (!/^https?:/i.test(target) && shownAsMedia(target) ? '' : label))
           .replace(/\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\]/g, (_link, name, alias) => alias || name.replace(/#.*$/, ''))
           // A bare web address shows as a link chip below the text, like the plugin and Android.
