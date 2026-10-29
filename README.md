@@ -221,7 +221,7 @@ Open [app.jotdrop.net](https://app.jotdrop.net/) and sign in. The web app has ev
 ### Chrome web clipper
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/Diexar-Labs/jotdrop/main/docs/screenshots/clipper-popup-cnn.webp" alt="JotDrop Web Clipper popup on a news article, with tags, color, pin and Save" width="760" />
+  <img src="https://raw.githubusercontent.com/Diexar-Labs/jotdrop/main/docs/store/screenshots/1-clip-any-page.png" alt="JotDrop Web Clipper popup on an article, with the selection, tags, color, pin and Save" width="760" />
 </p>
 
 1. Install the JotDrop plugin in Obsidian desktop.
