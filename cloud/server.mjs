@@ -689,7 +689,8 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         res.setHeader('Access-Control-Allow-Headers', 'Authorization,Content-Type,X-JotDrop-Vault,X-JotDrop-Device');
         res.writeHead(204); res.end(); return;
       }
-      if (method === 'GET' && assets.has(pathname)) {
+      // HEAD too: link checkers such as Google Play's test a page with HEAD before they open it.
+      if ((method === 'GET' || method === 'HEAD') && assets.has(pathname)) {
         const [filename, type] = assets.get(pathname);
         res.setHeader('Content-Type', type); res.end(readFileSync(filename)); return;
       }

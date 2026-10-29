@@ -69,6 +69,10 @@ test('the website links to a privacy policy that names every processor', async (
   assert.match(page.headers.get('content-type'), /^text\/html/);
   const body = await page.text();
   for (const name of ['Amazon SES', 'Brevo', 'Stripe', 'Google', 'GitHub', 'Cloudflare', 'hello@jotdrop.net']) assert.ok(body.includes(name), name);
+  const head = await fetch(`${app.url}/privacy`, { method: 'HEAD' });
+  assert.equal(head.status, 200);
+  assert.match(head.headers.get('content-type'), /^text\/html/);
+  assert.equal(await head.text(), '');
 });
 
 test('authorization, tenant isolation, origin and host checks fail closed', async (t) => {
