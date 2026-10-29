@@ -6,13 +6,13 @@
 
 **Google Keep, on your own files.**
 
-JotDrop is a free, open-source **Google Keep alternative** for [Obsidian](https://obsidian.md/). It's a **trio**: the plugin (the card grid in your vault), a companion **Android app** (share-sheet capture, OCR, voice memos), and a **Chrome web clipper**. Sync them with [Syncthing](https://syncthing.net/) and you have Google Keep, fully offline, fully yours.
+JotDrop is a free, open-source **Google Keep alternative** for [Obsidian](https://obsidian.md/). It's a **trio**: the plugin (the card grid in your vault), a companion **Android app** (share-sheet capture, OCR, voice memos), and a **Chrome web clipper**. Sync them with the optional, end-to-end encrypted **JotDrop Cloud**, or with [Syncthing](https://syncthing.net/) or any folder sync you already use, and you have Google Keep on your own files.
 
-> **For the full Google Keep experience, install all three.** Install the plugin from Obsidian Community plugins, download the [Android APK](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.13/jotdrop.apk) or [join the Google Play test](#help-test-jotdrop-on-google-play), and install the [Web Clipper from the Chrome Web Store](https://chromewebstore.google.com/detail/jotdrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo) - one click, automatic updates, works without any configuration.
+> **For the full Google Keep experience, install all three.** Install the plugin from Obsidian Community plugins, download the [Android APK](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.25/jotdrop.apk), and install the [Web Clipper from the Chrome Web Store](https://chromewebstore.google.com/detail/jotdrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo) - one click, automatic updates, works without any configuration.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Obsidian plugin](https://img.shields.io/badge/Obsidian-plugin-7c3aed)](https://github.com/Diexar-Labs/jotdrop/releases)
-[![Android APK](https://img.shields.io/badge/Android-APK-3ddc84)](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.13/jotdrop.apk)
+[![Android APK](https://img.shields.io/badge/Android-APK-3ddc84)](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.25/jotdrop.apk)
 [![Build APK](https://github.com/Diexar-Labs/jotdrop/actions/workflows/android-build.yml/badge.svg)](https://github.com/Diexar-Labs/jotdrop/actions/workflows/android-build.yml)
 
 [Download](#install) · [Screenshots](#screenshots) · [How it works](#how-it-works) · [Roadmap](#roadmap)
@@ -23,13 +23,13 @@ JotDrop is a free, open-source **Google Keep alternative** for [Obsidian](https:
 
 ## Why JotDrop?
 
-JotDrop is a private, open-source **Google Keep alternative**. Google Keep is great - until you remember Google reads everything you put in there. JotDrop gives you the same fast, friction-free "dump a thought" experience, but every note is a plain Markdown file in your own Obsidian vault. No JotDrop cloud account, no ads, no lock-in. Sync between phone and laptop with Syncthing (free) or any folder-sync you already use. Android OCR processes your images locally; its ML Kit SDK sends technical diagnostics to Google, as explained in the [Android privacy policy](docs/android-privacy-policy.md).
+JotDrop is a private, open-source **Google Keep alternative**. Google Keep is great - until you remember Google reads everything you put in there. JotDrop gives you the same fast, friction-free "dump a thought" experience, but every note is a plain Markdown file in your own Obsidian vault. No ads, no lock-in, and no account needed. Sync between phone and desktop with the optional [JotDrop Cloud](#jotdrop-cloud-optional), Syncthing (free) or any folder-sync you already use. Android OCR processes your images locally; its ML Kit SDK sends technical diagnostics to Google, as explained in the [Android privacy policy](docs/android-privacy-policy.md).
 
 - **Quick capture, anywhere.** Share a link from any Android app → JotDrop turns it into a note with a preview card. Open the app, tap once, type, done.
 - **Card grid in Obsidian.** A dedicated view shows your notes as Keep-style cards: titles, colors, tags, archived, pinned-on-top. Filter, sort, search.
 - **Plain Markdown, always.** Notes are `.md` files with YAML frontmatter. They live in your vault. You can edit them anywhere - Obsidian, VS Code, Vim, mobile.
-- **Offline by default.** No server. No account. Works on a plane.
-- **Open source, free, no premium tier.** MIT-licensed.
+- **Offline by default.** Without the optional cloud there is no server and no account. Works on a plane.
+- **Open source and free.** MIT-licensed. Only the optional JotDrop Cloud has a paid plan, JotDrop Plus, next to its free plan.
 
 ## Screenshots
 
@@ -90,6 +90,7 @@ JotDrop is a private, open-source **Google Keep alternative**. Google Keep is gr
 - Files written as `<date>-<slug>.md` with YAML frontmatter (color, tags, archived, pinned)
 - Designed to coexist peacefully with [Syncthing](https://syncthing.net/) - placeholder + finalize handshake avoids edit-conflicts
 - Works with the official Obsidian Sync, iCloud, Dropbox, or any folder sync
+- **Optional [JotDrop Cloud](#jotdrop-cloud-optional)**: end-to-end encrypted sync between the plugin, the Android app and the web app, with a free plan
 
 ## Install
 
@@ -115,23 +116,32 @@ Install [JotDrop Web Clipper from the Chrome Web Store](https://chromewebstore.g
 
 **Manual install (for offline / pre-release versions):**
 
-1. Go to the [current plugin release](https://github.com/Diexar-Labs/jotdrop/releases/tag/0.21.1).
+1. Go to the [current plugin release](https://github.com/Diexar-Labs/jotdrop/releases/tag/0.22.0).
 2. Download `manifest.json`, `main.js`, and `styles.css`.
 3. Put them in `<your-vault>/.obsidian/plugins/jotdrop/` (create the folder if it doesn't exist).
 4. Open Obsidian → Settings → Community plugins → enable **JotDrop**.
 
 ### Android app
 
-1. Download [`jotdrop.apk` for Android 0.28.24](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.24/jotdrop.apk).
+1. Download [`jotdrop.apk` for Android 0.28.25](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.25/jotdrop.apk).
 2. Open the file on your phone → Android will ask permission to install from unknown sources → grant it.
-3. Open JotDrop → first screen lets you pick the vault folder (the same one you sync to your laptop).
+3. Open JotDrop → the first screen lets you continue with Google to create a free JotDrop Cloud, or use JotDrop without the cloud and pick your vault folder (the same one you sync to your desktop).
 4. From now on, the share-sheet in any app includes JotDrop.
 
 > **Signing note:** GitHub APKs currently use the repository's published compatibility key so they can update existing sideloaded installations. Because that key is public, it is not proof of authenticity. Download APKs only from the versioned `Diexar-Labs/jotdrop` release URL above and verify the linked Actions build.
 
+### JotDrop Cloud (optional)
+
+JotDrop Cloud syncs your notes and attachments between the Obsidian plugin, the Android app and the web app at [app.jotdrop.net](https://app.jotdrop.net/). Everything is encrypted on your device before upload; the server stores it encrypted and cannot read it. Sign in with Google, GitHub or an email address. Keep the recovery code you get when you create your cloud: JotDrop cannot show it again.
+
+- **Free plan:** 250 MB of encrypted storage on two devices, no payment details needed.
+- **JotDrop Plus:** a paid plan with more storage, no device limit from the plan and longer history. See [jotdrop.net](https://jotdrop.net/) for current prices.
+
+In Obsidian, go to Settings → JotDrop → JotDrop Cloud; on Android, use the welcome screen or the app settings. What the server keeps and why is in the [JotDrop Cloud privacy policy](https://app.jotdrop.net/privacy).
+
 ### Syncing the two
 
-Install [Syncthing](https://syncthing.net/) on phone + laptop, point both at your vault folder. Within 30 seconds of capturing on your phone, the note shows up in Obsidian. That's the entire setup.
+Prefer to sync yourself? Install [Syncthing](https://syncthing.net/) on phone + laptop, point both at your vault folder. Within 30 seconds of capturing on your phone, the note shows up in Obsidian. That's the entire setup.
 
 > **Recommended Syncthing setting:** enable **File Versioning** on the shared folder (Simple Versioning is fine), on both devices. Deleted and overwritten files are kept in `.stversions/` so an accidental delete (or a sync race, see [Known issues](#known-issues)) is recoverable instead of permanent.
 
@@ -214,9 +224,9 @@ JotDrop is intentionally simple plumbing:
 - The Android app writes the file. The Obsidian plugin reads it. They never talk to each other - they meet in the vault.
 - Link-preview cards are written as a "pending" placeholder by Android, then the plugin (or Android) fetches the Open Graph data and rewrites the note. A race-safe marker check prevents either side from overwriting user edits.
 
-**Network use (Obsidian plugin).** The plugin only goes online for two things. It fetches the web page of a link you capture, to build the preview card. And the first time you use "Text from photo", it asks before downloading the English and Dutch language data (about 6 MB) once from the [JotDrop GitHub release `ocr-data-1`](https://github.com/Diexar-Labs/jotdrop/releases/tag/ocr-data-1), checks it against a fixed SHA-256 and stores it in the plugin folder. The recognition code itself ships inside the plugin, and your photos never leave your device.
+**Network use (Obsidian plugin).** Without JotDrop Cloud, the plugin only goes online for two things. It fetches the web page of a link you capture, to build the preview card. And the first time you use "Text from photo", it asks before downloading the English and Dutch language data (about 6 MB) once from the [JotDrop GitHub release `ocr-data-1`](https://github.com/Diexar-Labs/jotdrop/releases/tag/ocr-data-1), checks it against a fixed SHA-256 and stores it in the plugin folder. The recognition code itself ships inside the plugin, and your photos never leave your device. If you sign in to the optional JotDrop Cloud, the plugin also connects to `app.jotdrop.net` to sign in and to sync your notes and attachments, encrypted on your device first. The cloud needs an account; its free plan needs no payment, JotDrop Plus is paid.
 
-This is why JotDrop **needs no server, no account, no API key** - and why anything that can write to the same folder (e.g. a `curl` script, a Shortcuts automation) can capture into it.
+This is why JotDrop **needs no server, no account, no API key** unless you choose JotDrop Cloud - and why anything that can write to the same folder (e.g. a `curl` script, a Shortcuts automation) can capture into it.
 
 ## Known issues
 
@@ -248,6 +258,7 @@ UI in English (default) and Dutch. Skeletons exist for **Spanish, German, French
 - [x] Lightbox for image embeds
 - [x] Voice memos (record + playback, both platforms)
 - [x] Submit to official Obsidian community-plugins register
+- [x] Optional end-to-end encrypted JotDrop Cloud with a web app
 - [ ] iOS share-target (share-extension)
 - [ ] Firefox / Edge clipper (the Chrome extension is MV3, should port cleanly)
 
@@ -267,7 +278,7 @@ For larger ideas, open an issue first to chat about it. No CLA, no commit-messag
 
 ## Support
 
-Open source, MIT-licensed, no premium tiers. If JotDrop saves you time and you feel like saying thanks:
+Open source and MIT-licensed. The plugin, the Android app and the clipper stay free. If JotDrop saves you time and you feel like saying thanks:
 
 <a href="https://ko-fi.com/L3L11ZETB9"><img src="https://img.shields.io/badge/Ko--fi-Support%20me-FF5E5B?logo=ko-fi&logoColor=white" alt="Ko-fi" /></a>
 &nbsp;
