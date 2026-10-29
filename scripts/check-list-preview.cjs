@@ -3,7 +3,7 @@ const esbuild = require("esbuild");
 (async () => {
   const result = await esbuild.build({
     stdin: {
-      contents: 'export { checklistToGlyphs, plainPreviewText, renderInlinePreview, toggleChecklistItem } from "./src/metadata.ts";',
+      contents: 'export { checklistToGlyphs, plainPreviewText, renderInlinePreview, toggleChecklistItem, formatChangedAgo } from "./src/metadata.ts";',
       resolveDir: process.cwd(),
     },
     bundle: true,
@@ -23,7 +23,7 @@ const esbuild = require("esbuild");
 
   const loaded = { exports: {} };
   new Function("module", "exports", "require", result.outputFiles[0].text)(loaded, loaded.exports, require);
-  const { checklistToGlyphs, plainPreviewText, renderInlinePreview, toggleChecklistItem } = loaded.exports;
+  const { checklistToGlyphs, plainPreviewText, renderInlinePreview, toggleChecklistItem, formatChangedAgo } = loaded.exports;
 
   const input = [
     "- alpha",
@@ -122,6 +122,12 @@ const esbuild = require("esbuild");
   const withQuote = "- [ ] a\n> - [ ] quoted\n- [ ] b\n";
   if (checklistToGlyphs(plainPreviewText(withQuote)).match(/[☐☑]/g).length !== 2) throw new Error("quoted checklist became a checkbox");
   if (toggleChecklistItem(withQuote, 1) !== "- [ ] a\n> - [ ] quoted\n- [x] b\n") throw new Error("second checkbox toggles the wrong item");
+  // Android's "changed x ago" card footer.
+  const now = Date.parse("2026-10-29T10:00:00Z");
+  const ago = ["2026-10-29T09:59:55Z", "2026-10-29T09:30:00Z", "2026-10-29T07:00:00Z", "2026-10-28T09:00:00Z", "2026-10-26T09:00:00Z"]
+    .map((iso) => formatChangedAgo(Date.parse(iso), now));
+  if (ago.join("|") !== "5 sec. ago|30 min. ago|3 hr. ago|1 day ago|3 days ago") throw new Error(`changed ago mismatch: ${ago.join("|")}`);
+  if (formatChangedAgo(0, now) !== "") throw new Error("unknown change time should show nothing");
   console.log("Markdown list preview checks passed");
 })().catch((error) => {
   console.error(error);

@@ -267,6 +267,19 @@ export function parseReminderMs(reminder: string | null): number {
  * language via `t()`. Deliberately colorless — color-blind friendly:
  * overdue reminders are identified by the "Overdue" label, not by color alone.
  */
+/** Android's card footer: when the note last changed, "5 sec. ago" up to a date. */
+export function formatChangedAgo(mtime: number, now: number = Date.now()): string {
+  if (!Number.isFinite(mtime) || mtime <= 0) return "";
+  const seconds = Math.max(0, Math.round((now - mtime) / 1000));
+  if (seconds < 60) return t("changed_sec_ago", String(seconds));
+  if (seconds < 3600) return t("changed_min_ago", String(Math.floor(seconds / 60)));
+  if (seconds < 86400) return t("changed_hr_ago", String(Math.floor(seconds / 3600)));
+  const days = Math.floor(seconds / 86400);
+  if (days < 7) return t(days === 1 ? "changed_day_ago" : "changed_days_ago", String(days));
+  const date = new Date(mtime);
+  return date.toLocaleDateString(undefined, { month: "long", day: "numeric", ...(date.getFullYear() !== new Date(now).getFullYear() ? { year: "numeric" } : {}) });
+}
+
 export function formatReminderShort(reminder: string | null, now: number = Date.now()): string {
   const ms = parseReminderMs(reminder);
   if (!Number.isFinite(ms)) return "";

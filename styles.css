@@ -989,6 +989,37 @@
   color: var(--text-accent);
 }
 
+/* A label or tag chip filters the view, like on the website. */
+.jotdrop-card-tag[role="button"] {
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+
+.jotdrop-card-tag[role="button"]:hover {
+  border-color: var(--interactive-accent);
+}
+
+.jotdrop-card-tag-more {
+  font-size: 0.75em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  color: var(--text-muted);
+  border: 1px dashed var(--background-modifier-border);
+}
+
+.jotdrop-card-date {
+  margin-top: 8px;
+  font-size: 0.75em;
+  color: var(--text-muted);
+}
+
+.jotdrop-card-voice-player {
+  display: block;
+  width: 100%;
+  height: 36px;
+  margin-top: 6px;
+}
+
 .jotdrop-card-label {
   display: inline-flex;
   align-items: center;

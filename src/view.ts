@@ -12,6 +12,7 @@ import {
   colorLabel,
   COLOR_NAMES,
   DEFAULT_META,
+  formatChangedAgo,
   formatReminderShort,
   formatRepeatShort,
   NoteMeta,
@@ -38,6 +39,7 @@ const PREVIEW_MAX_WORDS = 25;
 const TITLE_MAX_CHARS = 80;
 const PREVIEW_MAX_CHARS = 240;
 const LINK_CHIPS_VISIBLE = 3;
+const CARD_CHIPS_VISIBLE = 4;
 const TAG_CHIPS_TOP_N = 8;
 const LONG_PRESS_MS = 500;
 // Cards are rendered in windows of this size; an IntersectionObserver sentinel
@@ -2060,6 +2062,12 @@ export class JotDropView extends ItemView {
       banner.setAttribute("aria-label", t("voice_memo_card_label"));
       const iconEl = banner.createSpan({ cls: "jotdrop-card-voice-icon" });
       setIcon(iconEl, "audio-lines");
+      // Like the website: the memo plays on the card, without opening the note (Eric, 29 Oct).
+      const sound = this.resolveAttachmentResource(file, audioBasename);
+      if (sound) {
+        const player = body.createEl("audio", { cls: "jotdrop-card-voice-player", attr: { controls: "", preload: "none", src: sound.resourcePath, "aria-label": t("voice_memo_card_label") } });
+        for (const type of ["click", "pointerdown", "mousedown"]) player.addEventListener(type, (e) => e.stopPropagation());
+      }
     }
 
     body.createEl("h3", { cls: "jotdrop-card-title", text: titleText });
@@ -2158,16 +2166,37 @@ export class JotDropView extends ItemView {
 
     if (meta.labels.length > 0 || cardTags(meta).length > 0) {
       const tagWrap = body.createDiv({ cls: "jotdrop-card-tags" });
+      // Like the website: a chip filters the view by its label or tag; while selecting it selects the card.
+      const filterBy = (chip: HTMLElement, toggle: () => void): void => {
+        chip.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (this.selectionMode) this.toggleSelect(file.path);
+          else toggle();
+        });
+      };
+      // Labels first, then #tags; at most four and the rest as "+N", which opens the note (Eric, 29 Oct).
+      const chips: HTMLElement[] = [];
       // Label icon in front: a label differs from a #tag by shape, not by color.
       for (const label of meta.labels) {
-        const chip = tagWrap.createSpan({ cls: "jotdrop-card-tag jotdrop-card-label" });
+        const chip = tagWrap.createSpan({ cls: "jotdrop-card-tag jotdrop-card-label", attr: { role: "button", tabindex: "0" } });
         setIcon(chip.createSpan({ cls: "jotdrop-card-label-icon" }), "tag");
         chip.createSpan({ text: label });
+        filterBy(chip, () => this.toggleLabelFilter(label));
+        chips.push(chip);
       }
       for (const tag of cardTags(meta)) {
-        tagWrap.createSpan({ cls: "jotdrop-card-tag", text: `#${tag}` });
+        const chip = tagWrap.createSpan({ cls: "jotdrop-card-tag", text: `#${tag}`, attr: { role: "button", tabindex: "0" } });
+        filterBy(chip, () => this.toggleTagFilter(tag));
+        chips.push(chip);
+      }
+      for (const chip of chips.slice(CARD_CHIPS_VISIBLE)) chip.remove();
+      if (chips.length > CARD_CHIPS_VISIBLE) {
+        tagWrap.createSpan({ cls: "jotdrop-card-tag-more", text: `+${chips.length - CARD_CHIPS_VISIBLE}`, attr: { title: t("tag_chip_more_tooltip") } });
       }
     }
+
+    // Like Android: when the note last changed.
+    body.createDiv({ cls: "jotdrop-card-date", text: formatChangedAgo(file.stat.mtime), attr: { title: new Date(file.stat.mtime).toLocaleString() } });
 
     const actions = cardEl.createDiv({ cls: "jotdrop-card-actions" });
 
@@ -2678,7 +2707,15 @@ function extractTitle(content: string, fallback: string): string {
  * URLs are stripped because they are shown separately as chips at the bottom.
  */
 function extractPreview(content: string): string {
-  const body = stripFrontmatter(content);
+  const all = stripFrontmatter(content).split("\n");
+  // Like Android: a plain first line is the card title, so the text does not repeat it; a list item stays.
+  const first = all.findIndex((line) => {
+    const trimmed = line.trim();
+    return trimmed.length > 0 && !/^!\[\[[^\]]+\]\]$|^!\[[^\]]*\]\([^)]+\)$|^<!--/.test(trimmed);
+  });
+  const body = first >= 0 && !/^\s*(?:#|[-*+][ \t]|\d{1,9}[.)][ \t])/.test(all[first])
+    ? all.filter((_line, index) => index !== first).join("\n")
+    : all.join("\n");
   const stripped = body
     .replace(/!\[\[[^\]]+\]\]/g, "")
     .replace(/!\[[^\]]*\]\([^)]+\)/g, "")
