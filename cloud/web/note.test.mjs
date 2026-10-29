@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { noteSummary, updateMetadata, toggleTask, attachmentPath, plainPreviewText, splitNote, joinNote, noteFilename, manualRank, betweenRank } from './note.mjs';
+import { noteSummary, updateMetadata, toggleTask, attachmentPath, plainPreviewText, splitNote, joinNote, noteFilename, manualRank, betweenRank, noteUrls, urlHost } from './note.mjs';
 
 test('browser reads canonical plugin/Android labels without treating tags or body hashtags as labels', () => {
   const markdown = '---\ntags: [not-a-label]\njotdrop_labels:\n  - Work\n  - "Work: notes"\n  - work\ncolor: teal\npinned: true\nunknown_key: preserve\n---\n\n# Heading\n\nText #not-a-label';
@@ -101,4 +101,17 @@ test('manual order ranks and drops cards like the plugin and Android', () => {
   assert.equal(betweenRank(1, 2), 1.5);
   assert.equal(betweenRank(1, 1), null);
   assert.equal(betweenRank(1, 1 + Number.EPSILON), null);
+});
+
+test('link chips list each web link once, like the plugin and Android', () => {
+  const markdown = [
+    '---', 'source: https://front.example/skip', '---', '# Title https://title.example/x', '',
+    'Read [the docs](https://docs.example.com/a?b=1) and https://www.Docs.example.com/a/?b=1.',
+    '![[photo.jpg]] ![](https://img.example/p.png)',
+    'Also https://github.com/Diexar-Labs/jotdrop), http://old.example and https://www.tiktok.com/@x/video/1#t',
+  ].join('\n');
+  assert.deepEqual(noteUrls(markdown), ['https://docs.example.com/a?b=1', 'https://github.com/Diexar-Labs/jotdrop', 'http://old.example', 'https://www.tiktok.com/@x/video/1#t']);
+  assert.equal(urlHost('https://www.tiktok.com/@x/video/1'), 'tiktok.com');
+  assert.equal(urlHost('http://localhost:8787/x'), 'localhost:8787');
+  assert.deepEqual(noteUrls('No links here, just text.'), []);
 });

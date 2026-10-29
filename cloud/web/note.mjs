@@ -104,6 +104,44 @@ function stripInlineMarks(text) {
     });
 }
 
+/** The web links of a note for its link chips, like the plugin and Android: markdown targets and bare URLs, in order and once each. */
+export function noteUrls(text) {
+  let body = text.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, '')
+    .replace(/!\[\[[^\]]+\]\]/g, '')
+    .replace(/!\[[^\]]*\]\([^)]+\)/g, '')
+    // The first heading is the card title, so its link is not repeated as a chip.
+    .replace(/^[ \t]*#{1,6}[ \t]+.*$/m, '');
+  const seen = new Set(), urls = [];
+  const add = (raw) => {
+    const url = raw.replace(/[.,)\]}"'!?;:]+$/, '');
+    const key = urlKey(url);
+    if (!url || seen.has(key)) return;
+    seen.add(key);
+    urls.push(url);
+  };
+  body = body.replace(/\[[^\]\n]*\]\((https?:\/\/[^)\s]+)\)/g, (_link, url) => { add(url); return ' '; });
+  for (const raw of body.match(/https?:\/\/[^\s)<>"']+/g) || []) add(raw);
+  return urls;
+}
+
+function urlKey(url) {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.host.toLowerCase().replace(/^www\./, '')}${parsed.pathname.replace(/\/+$/, '')}${parsed.search}`;
+  } catch {
+    return url.trim().toLowerCase();
+  }
+}
+
+/** What a link chip shows: the site, without `www.`. */
+export function urlHost(url) {
+  try {
+    return new URL(url).host.replace(/^www\./, '');
+  } catch {
+    return url;
+  }
+}
+
 export function toggleTask(text, lineIndex, checked) {
   const lines = text.split('\n');
   if (!/^\s*[-*+] \[[ xX]\] /.test(lines[lineIndex] || '')) throw new Error('This checklist changed. Reopen the current note.');

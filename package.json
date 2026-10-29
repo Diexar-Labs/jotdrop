@@ -37,6 +37,7 @@
     "check:cloud-parity": "python cloud/parity_browser_check.py",
     "check:cloud-grid": "python cloud/grid_browser_check.py",
     "check:cloud-cards": "python cloud/card_actions_browser_check.py",
+    "check:cloud-links": "python cloud/link_chips_browser_check.py",
     "check:cloud-order": "python cloud/order_browser_check.py",
     "check:cloud-steady": "python cloud/steady_browser_check.py",
     "check:cloud-playful": "python cloud/playful_browser_check.py",

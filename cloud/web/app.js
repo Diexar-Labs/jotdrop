@@ -2,7 +2,7 @@ import { CloudClient } from '/shared/client.mjs';
 import { accountInfo, approveDevice, attachAccount, availableProviders, changePassword, checkApproval, completeApproval, confirmLogin, confirmSignup, deleteAccount, disableTotp, enableTotp, listApprovals, logIn, newRecoveryCode, personCheckKey, providerApproval, providerRecover, providerSignUp, providerTicket, rejectDevice, requestApproval, resetWithRecoveryCode, setupTotp, signUp, startOver, startProviderSignIn, startReset } from '/shared/account.mjs';
 import { base64ToBytes, bytesToBase64, decodeRecovery, decryptEnvelope, encryptEnvelope, objectId, sealLocal, unsealLocal } from '/shared/crypto.mjs';
 import { exportZip } from '/export.mjs';
-import { noteSummary, updateMetadata, toggleTask, attachmentPath, plainPreviewText, splitNote, joinNote, noteFilename, manualRank, betweenRank } from '/note.mjs';
+import { noteSummary, updateMetadata, toggleTask, attachmentPath, plainPreviewText, splitNote, joinNote, noteFilename, manualRank, betweenRank, noteUrls, urlHost } from '/note.mjs';
 
 const $ = (id) => document.getElementById(id);
 try {
@@ -313,6 +313,37 @@ function mediaType(path) {
   return ({ png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', m4a: 'audio/mp4', mp3: 'audio/mpeg', ogg: 'audio/ogg', webm: 'audio/webm', wav: 'audio/wav' })[extension];
 }
 
+// Like the plugin and Android: up to three links as chips with the site's name, the rest as "+N".
+const LINK_CHIPS_VISIBLE = 3;
+function appendLinkChips(card, urls, owner) {
+  if (!urls.length) return;
+  const row = document.createElement('div');
+  row.className = 'link-chips';
+  for (const url of urls.slice(0, LINK_CHIPS_VISIBLE)) {
+    const chip = document.createElement('a');
+    chip.className = 'link-chip';
+    chip.href = url;
+    chip.target = '_blank';
+    chip.rel = 'noopener noreferrer';
+    chip.title = url;
+    chip.textContent = urlHost(url);
+    // A chip opens its link, not the note; while selecting, it selects the card like the rest of it.
+    chip.addEventListener('click', (event) => {
+      if (selectedIds.size && selectableIds.has(owner)) event.preventDefault();
+      else event.stopPropagation();
+    });
+    row.append(chip);
+  }
+  if (urls.length > LINK_CHIPS_VISIBLE) {
+    const more = document.createElement('span');
+    more.className = 'link-more';
+    more.textContent = `+${urls.length - LINK_CHIPS_VISIBLE}`;
+    more.title = 'More links in this note';
+    row.append(more);
+  }
+  card.append(row);
+}
+
 function appendMedia(card, entry, owner, alt = '') {
   const type = mediaType(entry.file.path);
   if (!type || entry.deleted) return;
@@ -551,7 +582,9 @@ function render() {
         // Media show below the text, so their links go; any other link shows only its label (Eric: no Markdown signs on a card).
         const value = plainPreviewText(text.join('\n').replace(/!\[\[[^\]]+\]\]|!\[[^\]]*\]\([^)]+\)/g, '')
           .replace(/\[([^\]\n]+)\]\(([^)\n]+)\)/g, (_link, label, target) => (!/^https?:/i.test(target) && shownAsMedia(target) ? '' : label))
-          .replace(/\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\]/g, (_link, name, alias) => alias || name.replace(/#.*$/, '')))
+          .replace(/\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\]/g, (_link, name, alias) => alias || name.replace(/#.*$/, ''))
+          // A bare web address shows as a link chip below the text, like the plugin and Android.
+          .replace(/https?:\/\/[^\s)<>"']+/g, ''))
           .replace(/\n{3,}/g, '\n\n').trim().slice(0, budget);
         if (value) { card.append(paragraph(value, 'note-preview')); budget -= value.length; }
         text = [];
@@ -627,6 +660,7 @@ function render() {
     } else appendMedia(card, entry, entry.id);
     if (waiting) card.append(paragraph('Encrypted draft on this browser. Waiting for cloud.', 'note-meta'));
     if (entry.conflict) card.append(paragraph('Another device saved a different version. Review both before choosing.', 'message'));
+    if (markdown) appendLinkChips(card, noteUrls(noteText(entry.file)), entry.id);
     if (markdown) for (const label of parts.labels) card.append(button(label, () => showLabel(label.toLowerCase()), 'label-chip'));
     if (markdown) for (const tag of [...parts.tags, ...parts.inlineTags]) card.append(button(`#${tag}`, () => { selectedTags.add(tag.toLowerCase()); render(); }, 'label-chip'));
     if (entry.conflict) card.append(button('Resolve now', () => reviewConflict(entry)));
