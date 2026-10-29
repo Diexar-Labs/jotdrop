@@ -1,124 +1,111 @@
-# JotDrop Web Clipper - Chrome Web Store Listing (0.1.3)
+# JotDrop Web Clipper - Chrome Web Store Listing (0.1.4)
 
 Existing item: `mkgcicjljogifeaccaclbcoemllmgjfo` (publisher `DiexarLabs`,
 public contact `eric@diexar.com`). Version 0.1.3 was published publicly on
 2026-09-13. For future updates, upload the exact GitHub ZIP from the verified
 release, never create a new item, and keep public distribution enabled.
 
+Version 0.1.4 brings the "Paper and ink" house style and the new logo. The
+store package is local-only: `chrome-extension/cloud.mjs` is only loaded by the
+separate cloud build (`npm run build:cloud-clipper`), not by the store ZIP.
+
 ## Store fields
 
 - **Name:** JotDrop Web Clipper (renamed by the package manifest)
-- **Short description:** `Google Keep-style clipping straight into Obsidian. Save pages, links, and selected text as Markdown notes in your own vault.`
+- **Short description:** `Clip any page, link or highlight into JotDrop as a Keep-style note card: plain Markdown in your Obsidian vault. Free.`
 - **Publisher:** DiexarLabs
 - **Contact:** eric@diexar.com
 - **Category:** Tools → Productivity
-- **Website/source:** `https://github.com/Diexar-Labs/jotdrop`
+- **Website:** `https://jotdrop.net/`
 - **Support:** `https://github.com/Diexar-Labs/jotdrop/issues`
 - **Privacy policy URL:** `https://raw.githubusercontent.com/Diexar-Labs/jotdrop/main/chrome-extension/privacy-policy.html`
 - **Public distribution:** on
 
-## Screenshots (640x400 – 1280x800)
+## Screenshots (1280x800) and promo tile
 
 | File | Shows |
 | --- | --- |
-| `docs/screenshots/plugin-grid-1280.webp` (1280x772) | JotDrop card grid in Obsidian |
-| `docs/screenshots/clipper-popup-cnn-1280.webp` (1280x646) | Web Clipper popup on a real article, direct-mode badge visible |
-| `docs/screenshots/clipper-background-connection.webp` (1280x634) | Optional Background connection page |
+| `docs/store/screenshots/1-clip-any-page.png` | The 0.1.4 popup on an article, with selection, tags, color and pin |
+| `docs/store/screenshots/2-lands-as-a-card.png` | The clip as a card in the JotDrop board in Obsidian |
+| `docs/store/screenshots/3-plain-markdown.png` | The same note as a plain Markdown file |
+| `docs/store/screenshots/4-free-and-private.png` | Free forever, no account, local-only clipping |
+| `docs/store/screenshots/promo-tile-440x280.png` | Small promo tile |
 
-Do not reuse the old ObsiDrop-branded screenshots.
+Do not reuse the old screenshots in `docs/screenshots/` for the store.
 
 ## Full listing copy
 
-**JotDrop Web Clipper - the Google Keep alternative that saves straight into Obsidian.**
+**JotDrop Web Clipper: clip the web into your notes, the Google Keep way.**
 
-JotDrop is a private, open-source Google Keep alternative built for Obsidian.
-Save any web page, link, or selected text into your vault as a clean Markdown
-note - with tags, colors, pinning, and an automatic preview image. No account,
-no cloud, no telemetry: your clips land as plain `.md` files in your own vault.
+JotDrop is the free, open-source Google Keep alternative. This clipper saves
+any web page, link or selected text as a JotDrop note card, with tags, a
+color, a pin and a preview image. Every clip lands as a plain Markdown file in
+your own Obsidian vault, on your own computer.
 
-**REQUIRES OBSIDIAN:** This extension does nothing on its own. It only works
-when the JotDrop plugin is installed and running inside the Obsidian desktop
-app. Do not install if you don't use Obsidian.
+**REQUIRES OBSIDIAN:** This extension works together with the free JotDrop
+plugin in the Obsidian desktop app. Install that first.
+
+### Free forever. No account needed.
+
+The JotDrop apps are free and will always stay free. No ads, no trial, no
+paywall. The clipper needs no account and no cloud: clips go straight from
+your browser to Obsidian on your own computer, never through a server.
 
 ### Why a Google Keep alternative?
 
-Google Keep is a great tool - until you look at what you give up for it:
+Google Keep is great for dumping a thought in two seconds. But your notes live
+on Google's servers, in Google's format, and leaving means exporting. JotDrop
+keeps the fast, friendly cards and gives you back the rest:
 
-- Your notes live on Google's servers, tied to a Google account, under
-  Google's terms - not yours.
-- Keep notes are not plain Markdown, and getting them out later is never
-  trivial.
-- No real files, no folder you control, no open format you can edit in any
-  editor.
-- Your notes app is one product decision away from ads and upsells.
+- **Plain Markdown, always.** Every clip is a normal `.md` file you can open in
+  any editor, today or in 20 years.
+- **Your files, your sync.** Notes land in a folder you control. Sync them with
+  Syncthing, iCloud, Dropbox, Obsidian Sync or the optional, end-to-end
+  encrypted JotDrop Cloud.
+- **Open source (MIT).** Anyone can check the code. No ads, no tracking.
+- **Everywhere you write.** JotDrop also has an Android app and a web app, with
+  the same cards.
 
-JotDrop keeps the part of Google Keep everyone loves - the fast, friction-free
-"dump a thought" card - and changes where your notes live: your own Obsidian
-vault, as plain Markdown files that you own forever.
+### How it works
 
-### What JotDrop does better than Google Keep
-
-- **Plain Markdown, always** - every clip is an editable `.md` file with YAML
-  frontmatter, readable in Obsidian, VS Code, Vim, or any text editor.
-- **Local-first privacy** - clips travel over `127.0.0.1` or the local
-  `obsidian://` protocol. They never touch a cloud relay.
-- **Your vault, your files** - notes land in a folder you control. Sync them
-  with Syncthing, iCloud, Obsidian Sync, or any folder sync you already use.
-- **Open source (MIT)** - auditable, free, no premium tier, no ads, ever.
-- **Part of a trio** - JotDrop is a Google Keep-style card grid in Obsidian,
-  plus a companion Android app with share-sheet capture, OCR, and voice memos.
-
-If you have ever wished Google Keep saved straight into Obsidian as Markdown,
-JotDrop is exactly that.
-
-### Setup in three steps (zero-config)
-
-1. Install the JotDrop plugin in Obsidian.
+1. Install the free JotDrop plugin in Obsidian.
 2. Install this extension.
-3. Click Save - Obsidian opens and your card is there.
+3. Click the JotDrop icon on any page and press Save. Obsidian opens and your
+   card is there.
 
-No token, no port, no settings screen required.
+No token, no port, no settings needed.
 
-### What gets captured
+### What gets saved
 
-Page title and URL, your text selection (if any), tags, a color, a pin flag,
-and an optional preview image (controlled by JotDrop's settings). Everything
-arrives as an editable Markdown note with YAML frontmatter, so it stays yours
-- editable in Obsidian, VS Code, or any text editor.
+The page title and URL, the text you selected (if any), your tags, a color, a
+pin and, if you like, a preview image. Everything arrives as an editable
+Markdown note in your vault.
 
-### Optional: Background connection
+### Optional: background connection
 
-Prefer silent saves? Pair the clipper once with the JotDrop plugin's local
-clip server and saves run quietly in the background - Obsidian never jumps to
-the foreground. If the connection ever fails, the clipper automatically falls
-back to the direct URI, so a clip is never lost.
+Prefer quiet saves? Pair the clipper once with the JotDrop plugin's local clip
+server and clips are saved in the background, without bringing Obsidian to the
+front. If that connection fails, the clipper falls back to opening Obsidian, so
+a clip is never lost.
 
 ### Requirements
 
 - Obsidian desktop with the JotDrop plugin 0.20.3 or newer
-- Google Chrome, Edge, or Brave
-
-### Who is JotDrop for?
-
-- Obsidian users who miss Google Keep's quick-capture cards
-- Google Keep users who want out of the cloud without losing the speed
-- Privacy-minded note-takers who want plain files instead of a proprietary
-  export
-- Researchers and writers who clip the web all day and want it in their
-  vault, not in a walled garden
+- Google Chrome, Edge or Brave
 
 ### Privacy
 
-Everything stays local: clips travel either over `127.0.0.1` to the JotDrop
-plugin on your own computer, or through the local `obsidian://` protocol -
-never through a cloud relay. No account, no analytics, no telemetry, no ads.
-The optional token and port are stored only in `chrome.storage.local` on your
-device. See our privacy policy for the full details.
+The clipper only reads the current tab when you open it. Clips travel to your
+own computer, either over `127.0.0.1` to the JotDrop plugin or through the
+local `obsidian://` link. No account, no analytics, no ads. The optional token
+and port stay in `chrome.storage.local` on this device. See the privacy policy
+for the details.
 
-### Open source & support
+### More
 
+- Website: https://jotdrop.net/
 - Source: https://github.com/Diexar-Labs/jotdrop
-- Support/issues: https://github.com/Diexar-Labs/jotdrop/issues
+- Support: https://github.com/Diexar-Labs/jotdrop/issues
 
 ## Permission justifications
 
@@ -135,7 +122,7 @@ device. See our privacy policy for the full details.
 
 1. Install Obsidian desktop and add the JotDrop plugin from Obsidian's
    community plugin browser.
-2. Click the extension icon on any page and press Save - Obsidian opens and
+2. Click the extension icon on any page and press Save. Obsidian opens and
    creates a Markdown card. No configuration is needed.
 3. Optionally enable the clip server in the plugin settings and paste the
    token in the extension's "Background connection" page; "Save and test
