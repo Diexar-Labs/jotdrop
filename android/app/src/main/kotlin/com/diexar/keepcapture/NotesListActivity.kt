@@ -100,6 +100,10 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.pulltorefresh.PullToRefreshContainer
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.FloatingActionButton
@@ -202,6 +206,7 @@ import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -357,6 +362,7 @@ class NotesListActivity : ComponentActivity() {
                     },
                     sortModeFlow = sortModeFlow.asStateFlow(),
                     onRefresh = { reload(rescheduleReminders = true) },
+                    onPullRefresh = ::pullRefresh,
                     onOpenSettings = {
                         startActivity(Intent(this, MainActivity::class.java))
                     },
@@ -492,6 +498,19 @@ class NotesListActivity : ComponentActivity() {
         super.onResume()
         reload(rescheduleReminders = true)
         CloudSyncManager.request(this)
+    }
+
+    /** Pull down on the list: read the folder again and, with cloud sync on, sync right away. */
+    private suspend fun pullRefresh() {
+        reload(rescheduleReminders = true)
+        if (!withContext(Dispatchers.IO) { CloudSyncManager.status(this@NotesListActivity).enabled }) return
+        try {
+            CloudSyncManager.sync(this)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            Toast.makeText(this, getString(R.string.toast_error, error.message ?: error.javaClass.simpleName), Toast.LENGTH_LONG).show()
+        }
     }
 
     override fun onStop() {
@@ -776,6 +795,7 @@ private fun NotesListScreen(
     onFolderChange: (NoteFolder) -> Unit,
     sortModeFlow: StateFlow<NoteSortMode>,
     onRefresh: () -> Unit,
+    onPullRefresh: suspend () -> Unit,
     onOpenSettings: () -> Unit,
     onWelcome: (google: Boolean) -> Unit,
     onNewNote: (String?) -> Unit,
@@ -1325,7 +1345,14 @@ private fun NotesListScreen(
                             // weight(1f) zorgt dat de grid (of "no-results"-state) de rest
                             // van de hoogte krijgt naast de bar bovenin — anders raakt de
                             // verticale layout in de knoop.
-                            Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                            // Pulling the list down past the top refreshes it and syncs with the cloud when that is on.
+                            val pullState = rememberPullToRefreshState(enabled = { !selectionMode })
+                            if (pullState.isRefreshing) {
+                                LaunchedEffect(Unit) {
+                                    try { onPullRefresh() } finally { pullState.endRefresh() }
+                                }
+                            }
+                            Box(modifier = Modifier.weight(1f).fillMaxWidth().clipToBounds().nestedScroll(pullState.nestedScrollConnection)) {
                                 if (filtered.isEmpty()) {
                                     CenteredText(stringResource(R.string.empty_no_results))
                                 } else {
@@ -1348,6 +1375,7 @@ private fun NotesListScreen(
                                         archived = folder == NoteFolder.ARCHIVE,
                                     )
                                 }
+                                PullToRefreshContainer(state = pullState, modifier = Modifier.align(Alignment.TopCenter))
                             }
                         }
                     }
