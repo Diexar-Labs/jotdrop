@@ -755,7 +755,7 @@ internal fun CloudRecoveryDialog() {
     var saved by remember { mutableStateOf(false) }
     AlertDialog(onDismissRequest = {}, title = { Text("Save your recovery code") },
         text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("If you forget your password and have no other connected device, this code is the only way back to your cloud. Store it somewhere safe, for example in a password manager. JotDrop cannot show it again.")
+            Text("If you lose access to all your signed-in devices, this code may be the only way back to your notes. Store it somewhere safe, for example in a password manager. JotDrop cannot show it again.")
             SelectionContainer { Text(code, style = MaterialTheme.typography.bodySmall) }
             CheckRow(saved, { saved = it }, "I saved my recovery code")
         } },

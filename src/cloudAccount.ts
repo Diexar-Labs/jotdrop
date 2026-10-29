@@ -126,12 +126,12 @@ export function renderCloudAccount(app: App, el: HTMLElement, cloud: CloudContro
   return () => { stopped = true; window.clearInterval(timer); };
 }
 
-/** Shown once: the recovery code is the only way back in when the password is lost. `then` runs after "Done". */
+/** Shown once: the recovery code is the way back in when no signed-in device is left (accounts made with Google have no password). `then` runs after "Done". */
 export class RecoveryCodeModal extends Modal {
   constructor(app: App, private code: string, private then?: () => void) { super(app); }
   onOpen(): void {
     this.titleEl.setText("Save your recovery code");
-    this.contentEl.createEl("p", { text: "If you forget your password or lose your devices, this code is the only way back into your notes. Store it in a password manager. Nobody, including JotDrop, can recover your notes without it." });
+    this.contentEl.createEl("p", { text: "If you lose access to all your signed-in devices, this code may be the only way back into your notes. Store it in a password manager. Nobody, including JotDrop, can recover your notes without it." });
     const box = this.contentEl.createEl("textarea", { cls: "jotdrop-recovery-code", attr: { readonly: "", rows: "4", "aria-label": "Recovery code" } });
     box.value = this.code;
     // Through the component: Obsidian ignores clicks on a button it still thinks is disabled.
