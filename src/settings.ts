@@ -347,7 +347,7 @@ export class JotDropSettingTab extends PluginSettingTab {
       if (cloud.signedIn !== shown.signedIn || cloud.enabled !== shown.enabled || !statusRow) refresh();
       else { statusRow.setDesc(statusText()); showConflicts(); }
     });
-    new Setting(el).setName("JotDrop Cloud").setHeading();
+    new Setting(el).setName("Cloud sync").setHeading();
     el.createEl("p", { text: "Optional. Sync your JotDrop notes with the website and the Android app, end-to-end encrypted: notes are locked on this device before they leave it. Without the cloud, everything keeps working offline." });
     privacyLink(el.createEl("p"), this.plugin.settings.cloudServer || DEFAULT_CLOUD_SERVER);
     if (!cloud.signedIn) {

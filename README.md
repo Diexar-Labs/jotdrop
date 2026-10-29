@@ -8,7 +8,8 @@
 
 The free, open-source **Google Keep alternative** for **Android**, **Obsidian**, the **web** and **Chrome**.<br/>
 Keep-style note cards, end-to-end encrypted sync and plain Markdown files you own.<br/>
-Keep the ease. Lose the lock-in.
+Keep the ease. Lose the lock-in.<br/>
+See it in action on [jotdrop.net, the private Google Keep alternative](https://jotdrop.net/).
 
 [**Website**](https://jotdrop.net/) · [**Web app**](https://app.jotdrop.net/) · [**Get it**](#get-jotdrop) · [**Features**](#features) · [**Switch from Keep**](#switch-from-google-keep) · [**JotDrop Cloud**](#jotdrop-cloud) · [**FAQ**](#faq)
 
@@ -151,7 +152,7 @@ Your Keep notes are now Markdown files in your own vault, and with JotDrop Cloud
 | Open source (apps and sync server) | Yes, MIT | No |
 | Time machine to restore an earlier moment | Yes, with JotDrop Cloud | No |
 
-Also considering other note apps? [jotdrop.net](https://jotdrop.net/#why-switch) compares JotDrop with Apple Notes, Evernote, Notion, OneNote, Joplin, Standard Notes, Notesnook, Simplenote and Bear.
+Also considering other note apps? The [note app comparison on jotdrop.net](https://jotdrop.net/#why-switch) puts JotDrop next to Apple Notes, Evernote, Notion, OneNote, Joplin, Standard Notes, Notesnook, Simplenote and Bear.
 
 ## JotDrop Cloud
 
@@ -165,11 +166,11 @@ To you, a thought. To us, gibberish.
 2. **Our server** stores the encrypted result. It has no key to decrypt it, so there is no readable copy for us, for a hacker or for anyone who asks.
 3. **Your other devices** download the encrypted file and decrypt it themselves.
 
-The encryption code is in this repository ([`cloud/shared/crypto.mjs`](cloud/shared/crypto.mjs)), next to the server, so anyone can check it. What the server does keep, such as your email address, device names and file sizes and times, and why, is in the [JotDrop Cloud privacy policy](https://app.jotdrop.net/privacy).
+The encryption code is in this repository ([`cloud/shared/crypto.mjs`](cloud/shared/crypto.mjs)), next to the server, so anyone can check it. What the server does keep, such as your email address, device names and file sizes and times, and why, is in the [JotDrop Cloud privacy policy](https://app.jotdrop.net/privacy). The website shows it step by step: [end-to-end encrypted notes on jotdrop.net](https://jotdrop.net/#privacy).
 
 ### How it works for you
 
-- **Start in a few taps.** On Android, the first screen offers **Continue with Google**. In Obsidian, use the JotDrop Cloud button in the JotDrop view or Settings → JotDrop → JotDrop Cloud. On the web, sign in at [app.jotdrop.net](https://app.jotdrop.net/). You can also use GitHub or an email address with a password.
+- **Start in a few taps.** On Android, the first screen offers **Continue with Google**. In Obsidian, use the JotDrop Cloud button in the JotDrop view or Settings → JotDrop → Cloud sync. On the web, sign in at [app.jotdrop.net](https://app.jotdrop.net/). You can also use GitHub or an email address with a password.
 - **Keep your recovery code.** When you create your cloud you get a recovery code, shown only once. Store it in a password manager. If you lose access to all your signed-in devices, it may be the only way back to your notes.
 - **Add devices** by signing in on them, or with a one-time pairing code from a device that is already connected.
 - **Extra protection**: add an authenticator app to your account in the web app.
@@ -190,7 +191,7 @@ The apps are free and always will be. Pay only when you want more from the cloud
 | Time machine | 30 days | Full available history |
 | End-to-end encryption | Included | Included |
 
-250 MB is more than it sounds: 10,000 notes of 5 KB are about 50 MB of text. Photos, encryption and history take extra space. The free plan needs no payment details. When both free devices are in use, signing in on a third asks which one it replaces. JotDrop Plus is bought on [jotdrop.net](https://jotdrop.net/), where the current prices are.
+250 MB is more than it sounds: 10,000 notes of 5 KB are about 50 MB of text. Photos, encryption and history take extra space. The free plan needs no payment details. When both free devices are in use, signing in on a third asks which one it replaces. JotDrop Plus is bought on the [JotDrop pricing page](https://jotdrop.net/#pricing), where the current prices are.
 
 ## Install
 
@@ -202,7 +203,7 @@ The apps are free and always will be. Pay only when you want more from the cloud
 
 Notes go to the `Mini Notes` folder of your vault; you can choose another folder in the settings.
 
-**Manual install** (offline or pre-release): download `manifest.json`, `main.js` and `styles.css` from the [latest plugin release](https://github.com/Diexar-Labs/jotdrop/releases/tag/0.22.0), put them in `<your-vault>/.obsidian/plugins/jotdrop/` and enable JotDrop under Community plugins.
+**Manual install** (offline or pre-release): download `manifest.json`, `main.js` and `styles.css` from the [latest plugin release](https://github.com/Diexar-Labs/jotdrop/releases/tag/0.22.1), put them in `<your-vault>/.obsidian/plugins/jotdrop/` and enable JotDrop under Community plugins.
 
 ### Android app
 
