@@ -253,6 +253,9 @@ private fun EditorScreen(
     // herstelde (ongesavede) tekst heen.
     var currentUri by rememberSaveable { mutableStateOf(initialUri?.toString()) }
     var loadedBodyHash by rememberSaveable { mutableStateOf<String?>(null) }
+    // Echt conflict bij opslaan: de versie die nu in het bestand staat, plus de
+    // opslagactie die na "Mijn versie gebruiken" opnieuw moet lopen.
+    var saveConflict by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
     DisposableEffect(currentUri) {
         val uri = currentUri?.let(Uri::parse)
         if (uri != null) CloudSyncManager.openEditor(uri)
@@ -738,6 +741,7 @@ private fun EditorScreen(
             onError = { msg ->
                 Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
             },
+            onConflict = { current -> saveConflict = current to { closeWithSaveIfNeeded() } },
             closeWhenClean = true,
             onClose = onClose,
         )
@@ -791,6 +795,7 @@ private fun EditorScreen(
                 onError = { msg ->
                     Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                 },
+                onConflict = { current -> saveConflict = current to { navigateTo(delta) } },
                 closeWhenClean = false,
                 onClose = {},
             )
@@ -1000,6 +1005,7 @@ private fun EditorScreen(
                                     onError = { msg ->
                                         Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                                     },
+                                    onConflict = { current -> saveConflict = current to { closeWithSaveIfNeeded() } },
                                     closeWhenClean = false,
                                     onClose = onClose,
                                 )
@@ -1250,6 +1256,41 @@ private fun EditorScreen(
             onDismiss = { folderCopy = null },
         )
     }
+    saveConflict?.let { (savedBody, retrySave) ->
+        val mine = combineBodyAndEmbeds(joinHeadingTitle(titleText, bodyText.text, titleLevel), embedLines.toList())
+        SaveConflictDialog(
+            mine = mine,
+            saved = savedBody,
+            onKeepBoth = {
+                saveConflict = null
+                val uri = currentUri
+                scope.launch {
+                    // Zonder herinnering: anders gaan voor dezelfde notitie twee alarmen af.
+                    val copy = FrontmatterWriter.apply(mine, NoteMeta(color = color, tags = tags.toList(), pinned = pinned), labels = labels.toList())
+                    val res = withContext(Dispatchers.IO) {
+                        Storage.noteWriteMutex.withLock { Storage.createNote(context, copy) }
+                    }
+                    res.onSuccess { (name, _) ->
+                        Toast.makeText(context, context.getString(R.string.parked_copy_saved, name), Toast.LENGTH_LONG).show()
+                        if (uri != null) loadInto(uri)
+                    }.onFailure { err ->
+                        Toast.makeText(context, context.getString(R.string.toast_error, err.message ?: ""), Toast.LENGTH_LONG).show()
+                    }
+                }
+            },
+            onUseMine = {
+                saveConflict = null
+                loadedBodyHash = editorBodyHash(savedBody)
+                retrySave()
+            },
+            onUseSaved = {
+                saveConflict = null
+                currentUri?.let { uri -> scope.launch { loadInto(uri) } }
+            },
+            onDismiss = { saveConflict = null },
+        )
+    }
+
     if (showArchiveDialog) {
         ConfirmDialog(
             title = stringResource(R.string.archive_title),
@@ -1843,6 +1884,51 @@ private fun LinkPickerRow(file: VaultMarkdownFile, onClick: () -> Unit) {
     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.15f))
 }
 
+/** Toont beide versies naast elkaar; niets gaat verloren tot de gebruiker kiest. */
+@Composable
+private fun SaveConflictDialog(
+    mine: String,
+    saved: String,
+    onKeepBoth: () -> Unit,
+    onUseMine: () -> Unit,
+    onUseSaved: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    @Composable
+    fun Version(label: String, text: String) {
+        Text(label, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 140.dp)
+                .border(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+                .padding(8.dp)
+                .verticalScroll(rememberScrollState()),
+        )
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.save_conflict_title)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(stringResource(R.string.save_conflict_message))
+                Version(stringResource(R.string.save_conflict_mine), mine)
+                Version(stringResource(R.string.save_conflict_saved), saved)
+            }
+        },
+        confirmButton = {
+            Column(horizontalAlignment = Alignment.End) {
+                TextButton(onClick = onKeepBoth) { Text(stringResource(R.string.save_conflict_keep_both)) }
+                TextButton(onClick = onUseMine) { Text(stringResource(R.string.save_conflict_use_mine)) }
+                TextButton(onClick = onUseSaved) { Text(stringResource(R.string.save_conflict_use_saved)) }
+                TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
+            }
+        },
+    )
+}
+
 @Composable
 private fun ConfirmDialog(
     title: String,
@@ -1882,6 +1968,7 @@ private fun attemptSaveAndClose(
     onSavingChange: (Boolean) -> Unit,
     onSaved: (Uri?) -> Unit,
     onError: (String) -> Unit,
+    onConflict: (currentBody: String) -> Unit,
     closeWhenClean: Boolean,
     onClose: () -> Unit,
 ) {
@@ -1922,7 +2009,7 @@ private fun attemptSaveAndClose(
                         .getOrElse { return@withContext Result.failure(it) }
                     val parsed = FrontmatterParser.parse(rawCurrent)
                     if (expectedBodyHash == null || editorBodyHash(parsed.body) != expectedBodyHash) {
-                        return@withContext Result.failure(IllegalStateException("This note changed since it was opened. Your draft was kept; compare the current note before saving."))
+                        return@withContext Result.failure(NoteChangedException(parsed.body.removePrefix("\n")))
                     }
                     val fmBlock = parsed.frontmatter
                     val newRaw = if (fmBlock.isEmpty()) combinedBody else fmBlock + combinedBody
@@ -1938,10 +2025,15 @@ private fun attemptSaveAndClose(
         onSavingChange(false)
         result.onSuccess { newUri -> onSaved(newUri) }
             .onFailure { err ->
-                onError(context.getString(R.string.toast_error, err.message ?: ""))
+                if (err is NoteChangedException) onConflict(err.currentBody)
+                else onError(context.getString(R.string.toast_error, err.message ?: ""))
             }
     }
 }
+
+/** Opslaan geweigerd: de notitie is gewijzigd sinds de editor haar opende. */
+internal class NoteChangedException(val currentBody: String) :
+    IllegalStateException("This note changed since it was opened.")
 
 /**
  * De body zoals de editor hem vergelijkt voor opslaan. Pin, kleur, tags en

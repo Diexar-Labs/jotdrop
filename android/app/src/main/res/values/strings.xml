@@ -53,6 +53,13 @@
     <string name="parked_discard_message">The full version of the change will be lost. Only the note as it is now remains, and it may be incomplete or empty. Keep as copy is safer.</string>
     <string name="parked_copy_saved">Saved as \"%1$s\".</string>
     <string name="parked_nothing_to_keep">There was nothing left to keep. The note is available again.</string>
+    <string name="save_conflict_title">This note changed while you were editing</string>
+    <string name="save_conflict_message">Another app or device saved a new version. Nothing is lost yet: choose which version to keep. Keep both saves your version as a separate note.</string>
+    <string name="save_conflict_mine">Your version</string>
+    <string name="save_conflict_saved">Saved version</string>
+    <string name="save_conflict_keep_both">Keep both</string>
+    <string name="save_conflict_use_mine">Use my version</string>
+    <string name="save_conflict_use_saved">Use saved version</string>
 
     <string name="loading">Loading…</string>
     <string name="welcome_title">Welcome to JotDrop</string>

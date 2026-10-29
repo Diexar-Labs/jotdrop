@@ -51,6 +51,13 @@
     <string name="parked_discard_message">De volledige versie van de wijziging gaat verloren. Alleen de notitie zoals ze nu is blijft over, en die kan onvolledig of leeg zijn. Bewaar als kopie is veiliger.</string>
     <string name="parked_copy_saved">Bewaard als \"%1$s\".</string>
     <string name="parked_nothing_to_keep">Er was niets meer te bewaren. De notitie is weer beschikbaar.</string>
+    <string name="save_conflict_title">Deze notitie is gewijzigd terwijl je bewerkte</string>
+    <string name="save_conflict_message">Een andere app of een ander apparaat heeft een nieuwe versie opgeslagen. Er is nog niets verloren: kies welke versie je bewaart. Beide bewaren zet jouw versie in een aparte notitie.</string>
+    <string name="save_conflict_mine">Jouw versie</string>
+    <string name="save_conflict_saved">Opgeslagen versie</string>
+    <string name="save_conflict_keep_both">Beide bewaren</string>
+    <string name="save_conflict_use_mine">Mijn versie gebruiken</string>
+    <string name="save_conflict_use_saved">Opgeslagen versie gebruiken</string>
 
     <string name="loading">Laden…</string>
     <string name="welcome_title">Welkom bij JotDrop</string>
