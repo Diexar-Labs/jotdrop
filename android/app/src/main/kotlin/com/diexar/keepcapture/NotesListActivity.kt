@@ -3,6 +3,7 @@ package com.diexar.keepcapture
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
@@ -82,6 +83,12 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.DeleteForever
+import androidx.compose.material.icons.filled.DriveFileMove
+import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
@@ -107,16 +114,15 @@ import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
-import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -146,6 +152,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
@@ -184,6 +192,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
@@ -805,7 +814,6 @@ private fun NotesListScreen(
             Toast.makeText(context, context.getString(R.string.toast_error, e.message ?: ""), Toast.LENGTH_SHORT).show()
         }
     }
-    val openLinkLabel = stringResource(R.string.action_open_link)
     val dark = isSystemInDarkTheme()
     val bgBrush = remember(dark) { screenBackgroundBrush(dark) }
     var searchQuery by remember { mutableStateOf("") }
@@ -825,6 +833,10 @@ private fun NotesListScreen(
     var bulkLabelsOpen by remember { mutableStateOf(false) }
     var bulkColorOpen by remember { mutableStateOf(false) }
     var helpOpen by remember { mutableStateOf(false) }
+    // The note a card's own menu acts on; without it the dialogs act on the selected notes.
+    var cardTarget by remember { mutableStateOf<Uri?>(null) }
+    var cardFolderCopy by remember { mutableStateOf<Boolean?>(null) }
+    var cardFolders by remember { mutableStateOf<List<String>?>(null) }
 
     // Eenmalige, throttled update-check (max 1x/dag) bij openen van het dashboard.
     // Banner verschijnt alleen als de gevonden versie niet eerder is weggetikt.
@@ -875,6 +887,10 @@ private fun NotesListScreen(
     val exitSelection: () -> Unit = {
         selectionMode = false
         selectedNoteUris = emptySet()
+    }
+    val actionUris = cardTarget?.let { setOf(it) } ?: selectedNoteUris
+    val finishAction: () -> Unit = {
+        if (cardTarget != null) cardTarget = null else exitSelection()
     }
     val toggleSelect: (Uri) -> Unit = { uri ->
         val newSet = if (uri in selectedNoteUris) selectedNoteUris - uri else selectedNoteUris + uri
@@ -935,27 +951,70 @@ private fun NotesListScreen(
         else -> stringResource(R.string.app_name)
     }
 
+    // A link opens at once, like a link chip on the website and in Obsidian.
     val onUrlClick: (String) -> Unit = { url ->
-        scope.launch {
-            val result = snackbarHostState.showSnackbar(
-                message = url,
-                actionLabel = openLinkLabel,
-                duration = SnackbarDuration.Short,
-                withDismissAction = true,
-            )
-            if (result == SnackbarResult.ActionPerformed) {
-                try {
-                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-                    context.startActivity(intent)
-                } catch (e: Throwable) {
-                    Toast.makeText(
-                        context,
-                        context.getString(R.string.toast_error, e.message ?: ""),
-                        Toast.LENGTH_SHORT,
-                    ).show()
+        try {
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+        } catch (e: Throwable) {
+            Toast.makeText(
+                context,
+                context.getString(R.string.toast_error, e.message ?: ""),
+                Toast.LENGTH_SHORT,
+            ).show()
+        }
+    }
+    // A label or tag chip on a card filters the notes by it; a second tap clears that filter.
+    val onChipLabel: (String) -> Unit = { label ->
+        selectedLabel = if (selectedLabel.equals(label, ignoreCase = true)) null else label
+    }
+    val onChipTag: (String) -> Unit = { tag ->
+        selectedTags = if (tag in selectedTags) selectedTags - tag else selectedTags + tag
+    }
+    // The conflict copy's card opens the comparison of the note it belongs to.
+    val onResolveConflict: (NoteSummary) -> Unit = { note ->
+        context.startActivity(
+            Intent(context, CloudActivity::class.java)
+                .putExtra(CloudActivity.EXTRA_RESOLVE, conflictOriginalName(note.filename)),
+        )
+    }
+    val onCardAction: (NoteSummary, CardAction) -> Unit = { note, action ->
+        when (action) {
+            CardAction.COLOR -> { cardTarget = note.uri; bulkColorOpen = true }
+            CardAction.LABELS -> { cardTarget = note.uri; bulkLabelsOpen = true }
+            CardAction.DELETE -> { cardTarget = note.uri; showBulkDeleteDialog = true }
+            CardAction.MOVE, CardAction.COPY -> {
+                cardTarget = note.uri
+                cardFolderCopy = action == CardAction.COPY
+                cardFolders = null
+                scope.launch { cardFolders = withContext(Dispatchers.IO) { Storage.listVaultFolders(context) } }
+            }
+            // Archiving is undone from the Archive in one tap, so it needs no question, like in Keep.
+            CardAction.ARCHIVE -> scope.launch {
+                ReminderScheduler.cancel(context, note.uri)
+                val result = withContext(Dispatchers.IO) {
+                    Storage.noteWriteMutex.withLock { Storage.archiveNote(context, note.uri) }
                 }
+                Toast.makeText(
+                    context,
+                    result.fold({ context.getString(R.string.toast_archived) }, { context.getString(R.string.toast_error, it.message ?: "") }),
+                    Toast.LENGTH_SHORT,
+                ).show()
+                onRefresh()
+            }
+            CardAction.RESTORE -> scope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    Storage.noteWriteMutex.withLock { Storage.restoreNote(context, note.uri) }
+                }
+                if (result.isSuccess) withContext(Dispatchers.IO) { ReminderScheduler.rescheduleAll(context) }
+                Toast.makeText(
+                    context,
+                    result.fold({ context.getString(R.string.toast_restored) }, { context.getString(R.string.toast_error, it.message ?: "") }),
+                    Toast.LENGTH_SHORT,
+                ).show()
+                onRefresh()
             }
         }
     }
@@ -1281,6 +1340,12 @@ private fun NotesListScreen(
                                         onToggleChecklist = onToggleChecklist,
                                         onUrlClick = onUrlClick,
                                         onMoveNote = onMoveNote,
+                                        onLabelClick = onChipLabel,
+                                        onTagClick = onChipTag,
+                                        onResolveConflict = onResolveConflict,
+                                        cardActions = cardActionsFor(folder),
+                                        onCardAction = onCardAction,
+                                        archived = folder == NoteFolder.ARCHIVE,
                                     )
                                 }
                             }
@@ -1337,14 +1402,21 @@ private fun NotesListScreen(
         )
     }
     if (showBulkDeleteDialog) {
+        val single = cardTarget != null
         AlertDialog(
-            onDismissRequest = { showBulkDeleteDialog = false },
-            title = { Text(stringResource(R.string.bulk_delete_title, selectedNoteUris.size)) },
-            text = { Text(stringResource(if (folder == NoteFolder.TRASH) R.string.delete_permanent_message else R.string.bulk_delete_message)) },
+            onDismissRequest = { showBulkDeleteDialog = false; cardTarget = null },
+            title = { Text(if (single) stringResource(R.string.delete_title) else stringResource(R.string.bulk_delete_title, actionUris.size)) },
+            text = {
+                Text(stringResource(when {
+                    folder == NoteFolder.TRASH -> R.string.delete_permanent_message
+                    single -> R.string.delete_message
+                    else -> R.string.bulk_delete_message
+                }))
+            },
             confirmButton = {
                 TextButton(onClick = {
                     showBulkDeleteDialog = false
-                    val toDelete = selectedNoteUris.toList()
+                    val toDelete = actionUris.toList()
                     scope.launch {
                         val (ok, fail) = bulkPerform(toDelete) { uri ->
                             ReminderScheduler.cancel(context, uri)
@@ -1353,12 +1425,13 @@ private fun NotesListScreen(
                             }
                         }
                         val msg = if (fail == 0) {
-                            context.getString(R.string.toast_bulk_deleted, ok)
+                            if (toDelete.size == 1) context.getString(R.string.toast_deleted)
+                            else context.getString(R.string.toast_bulk_deleted, ok)
                         } else {
                             context.getString(R.string.toast_bulk_partial, ok, fail)
                         }
                         Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-                        exitSelection()
+                        finishAction()
                         onRefresh()
                     }
                 }) {
@@ -1366,7 +1439,7 @@ private fun NotesListScreen(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showBulkDeleteDialog = false }) {
+                TextButton(onClick = { showBulkDeleteDialog = false; cardTarget = null }) {
                     Text(stringResource(R.string.action_cancel))
                 }
             },
@@ -1408,13 +1481,13 @@ private fun NotesListScreen(
     }
     if (bulkColorOpen) {
         // Like Keep: long-press cards, then pick one color for all of them.
-        val colors = loadedNotes.filter { it.uri in selectedNoteUris }.map { it.meta.color }.distinct()
+        val colors = loadedNotes.filter { it.uri in actionUris }.map { it.meta.color }.distinct()
         ColorPickerDialog(
             current = colors.singleOrNull(),
             dark = dark,
             onPick = { picked ->
                 bulkColorOpen = false
-                val uris = selectedNoteUris.toList()
+                val uris = actionUris.toList()
                 scope.launch {
                     val (ok, fail) = bulkPerform(uris) { uri ->
                         withContext(Dispatchers.IO) {
@@ -1422,15 +1495,15 @@ private fun NotesListScreen(
                         }
                     }
                     if (fail > 0) Toast.makeText(context, context.getString(R.string.toast_bulk_partial, ok, fail), Toast.LENGTH_SHORT).show()
-                    exitSelection()
+                    finishAction()
                     onRefresh()
                 }
             },
-            onDismiss = { bulkColorOpen = false },
+            onDismiss = { bulkColorOpen = false; cardTarget = null },
         )
     }
     if (bulkLabelsOpen) {
-        val chosen = loadedNotes.filter { it.uri in selectedNoteUris }
+        val chosen = loadedNotes.filter { it.uri in actionUris }
         val memberships = chosen.flatMap { it.meta.labels }.distinctBy { it.lowercase() }
         val common = memberships.filter { label -> chosen.all { note -> note.meta.labels.any { it.equals(label, true) } } }.toSet()
         LabelAssignmentSheet(
@@ -1438,7 +1511,7 @@ private fun NotesListScreen(
             selectedLabels = common,
             mixedLabels = memberships.filterNot { it in common }.toSet(),
             onApply = { added, removed ->
-                val uris = selectedNoteUris.toList()
+                val uris = actionUris.toList()
                 val (ok, fail) = bulkPerform(uris) { uri ->
                     withContext(Dispatchers.IO) {
                         if (added.isEmpty() && removed.isEmpty()) Result.success(Unit)
@@ -1447,13 +1520,40 @@ private fun NotesListScreen(
                 }
                 onRefresh()
                 if (fail == 0) {
-                    exitSelection()
+                    finishAction()
                     Result.success(Unit)
                 } else {
                     Result.failure(IllegalStateException(context.getString(R.string.toast_bulk_partial, ok, fail)))
                 }
             },
-            onDismiss = { bulkLabelsOpen = false },
+            onDismiss = { bulkLabelsOpen = false; cardTarget = null },
+        )
+    }
+    cardFolderCopy?.let { copy ->
+        FolderPickerDialog(
+            title = stringResource(if (copy) R.string.folder_picker_copy_title else R.string.folder_picker_move_title),
+            hint = if (copy) null else stringResource(R.string.folder_picker_move_hint),
+            folders = cardFolders,
+            onPick = { picked ->
+                cardFolderCopy = null
+                val uri = cardTarget ?: return@FolderPickerDialog
+                cardTarget = null
+                scope.launch {
+                    val result = withContext(Dispatchers.IO) {
+                        Storage.noteWriteMutex.withLock { Storage.moveNoteToVaultFolder(context, uri, picked, copy) }
+                    }
+                    val shownFolder = picked.ifEmpty { context.getString(R.string.folder_root_label) }
+                    result.onSuccess {
+                        Toast.makeText(context, context.getString(if (copy) R.string.toast_copied_to else R.string.toast_moved_to, shownFolder), Toast.LENGTH_SHORT).show()
+                        // The note left JotDrop, so its reminder goes with it.
+                        if (!copy) ReminderScheduler.cancel(context, uri)
+                    }.onFailure { err ->
+                        Toast.makeText(context, context.getString(R.string.toast_error, err.message ?: ""), Toast.LENGTH_LONG).show()
+                    }
+                    onRefresh()
+                }
+            },
+            onDismiss = { cardFolderCopy = null; cardTarget = null },
         )
     }
     if (helpOpen) {
@@ -1511,6 +1611,12 @@ private fun NotesGrid(
     onToggleChecklist: (NoteSummary, Int) -> Unit,
     onUrlClick: (String) -> Unit,
     onMoveNote: (NoteSummary, List<NoteSummary>) -> Unit,
+    onLabelClick: (String) -> Unit,
+    onTagClick: (String) -> Unit,
+    onResolveConflict: (NoteSummary) -> Unit,
+    cardActions: List<CardAction>,
+    onCardAction: (NoteSummary, CardAction) -> Unit,
+    archived: Boolean,
 ) {
     val dark = isSystemInDarkTheme()
     // Vast 2 kolommen in portrait (Google Keep-style), 4 in landscape voor tablets/
@@ -1694,6 +1800,12 @@ private fun NotesGrid(
                     onPinClick = { onTogglePin(note) },
                     onChecklistClick = { index -> onToggleChecklist(note, index) },
                     onUrlClick = onUrlClick,
+                    onLabelClick = onLabelClick,
+                    onTagClick = onTagClick,
+                    onResolveConflict = { onResolveConflict(note) },
+                    cardActions = cardActions,
+                    onCardAction = { action -> onCardAction(note, action) },
+                    archived = archived,
                     droppedAt = droppedAt[noteKey(note)],
                     sealedAt = sealedAt[noteKey(note)],
                 )
@@ -1719,6 +1831,12 @@ private fun NotesGrid(
                 onPinClick = { onTogglePin(note) },
                 onChecklistClick = { index -> onToggleChecklist(note, index) },
                 onUrlClick = onUrlClick,
+                onLabelClick = onLabelClick,
+                onTagClick = onTagClick,
+                onResolveConflict = { onResolveConflict(note) },
+                cardActions = cardActions,
+                onCardAction = { action -> onCardAction(note, action) },
+                archived = archived,
                 droppedAt = droppedAt[noteKey(note)],
                 sealedAt = sealedAt[noteKey(note)],
             )
@@ -1735,6 +1853,7 @@ private fun NotesGrid(
             onPinClick = {},
             onChecklistClick = {},
             onUrlClick = {},
+            archived = archived,
             isDragging = true,
             dragPreview = true,
             modifier = Modifier
@@ -2216,6 +2335,12 @@ private fun NoteCard(
     onPinClick: () -> Unit,
     onChecklistClick: (Int) -> Unit,
     onUrlClick: (String) -> Unit,
+    onLabelClick: (String) -> Unit = {},
+    onTagClick: (String) -> Unit = {},
+    onResolveConflict: () -> Unit = {},
+    cardActions: List<CardAction> = emptyList(),
+    onCardAction: (CardAction) -> Unit = {},
+    archived: Boolean = false,
     isDragging: Boolean = false,
     isDragPlaceholder: Boolean = false,
     isDropTarget: Boolean = false,
@@ -2282,6 +2407,8 @@ private fun NoteCard(
     // content is clipped to the card's shape. In Manual handelt de grid de gesture af, anders combinedClickable.
     Box(
         modifier = modifier
+            // An archived card is paler, like on the website and in Obsidian.
+            .then(if (archived) Modifier.alpha(0.7f) else Modifier)
             .then(if (isDragging) Modifier.shadow(10.dp, CARD_SHAPE, clip = false) else Modifier)
             .graphicsLayer {
                 val p = drop?.value ?: return@graphicsLayer
@@ -2324,7 +2451,12 @@ private fun NoteCard(
                             .clickable(onClick = onClick),
                     )
                 } else if (note.audioBasename != null) {
-                    VoiceMemoBanner(foreground = fg)
+                    VoiceMemoBanner(
+                        foreground = fg,
+                        audioUri = if (dragPreview) null else note.audioUri,
+                        selectionMode = selectionMode,
+                        onCardClick = onClick,
+                    )
                 }
                 Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
                     Text(
@@ -2337,6 +2469,30 @@ private fun NoteCard(
                         // Room for the pin in the corner.
                         modifier = Modifier.padding(end = 22.dp),
                     )
+                    val reminderAt = remember(note.meta.reminder) {
+                        note.meta.reminder?.takeIf { it.isNotBlank() }?.let(ReminderScheduler::parseToEpochMillis)
+                    }
+                    if (reminderAt != null) {
+                        Spacer(Modifier.height(6.dp))
+                        ReminderBadge(reminderAt, foreground = fg)
+                    }
+                    // A cloud conflict copy says what it is and opens the comparison, like in Obsidian.
+                    if (note.filename.contains(CLOUD_CONFLICT_MARK)) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = stringResource(R.string.card_conflict_text),
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Medium,
+                            color = fg,
+                        )
+                        OutlinedButton(
+                            onClick = if (selectionMode) onClick else onResolveConflict,
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                            modifier = Modifier.padding(top = 4.dp).heightIn(min = 32.dp),
+                        ) {
+                            Text(stringResource(R.string.card_conflict_resolve), style = MaterialTheme.typography.labelMedium, color = fg)
+                        }
+                    }
                     if (note.snippet.isNotBlank()) {
                         Spacer(Modifier.height(6.dp))
                         val annotated = remember(note.snippet, accent) {
@@ -2404,18 +2560,26 @@ private fun NoteCard(
                     }
                     if (note.meta.labels.isNotEmpty() || note.meta.allTags.isNotEmpty()) {
                         Spacer(Modifier.height(8.dp))
-                        TagChips(note.meta.labels, note.meta.allTags, foreground = fg)
+                        // In selection mode a chip selects the card, like the rest of it.
+                        TagChips(
+                            note.meta.labels,
+                            note.meta.allTags,
+                            foreground = fg,
+                            onLabelClick = if (selectionMode) ({ onClick() }) else onLabelClick,
+                            onTagClick = if (selectionMode) ({ onClick() }) else onTagClick,
+                            onMoreClick = onClick,
+                        )
                     }
                     Spacer(Modifier.height(8.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
                             text = timestampText,
                             style = labelStyle,
                             color = timestampColor,
+                            modifier = Modifier.weight(1f),
                         )
                         val repeatText = repeatIndicatorLabel(note.meta.reminderRepeat)
                         if (repeatText != null) {
@@ -2433,6 +2597,10 @@ private fun NoteCard(
                                     color = timestampColor,
                                 )
                             }
+                        }
+                        // Each card has its own menu, like the card buttons in Obsidian; selecting uses the top bar.
+                        if (cardActions.isNotEmpty() && !selectionMode) {
+                            CardMenu(cardActions, foreground = fg, onAction = onCardAction)
                         }
                     }
                 }
@@ -2481,13 +2649,163 @@ private fun NoteCard(
     }
 }
 
+/** A copy the cloud kept because the note changed in two places (`CloudVaultAdapter.conflict`). */
+private const val CLOUD_CONFLICT_MARK = ".cloud-conflict-"
+
+/** The note a conflict copy belongs to: "Note.cloud-conflict-r5.md" -> "Note.md". */
+internal fun conflictOriginalName(filename: String): String =
+    filename.replace(Regex("\\.cloud-conflict-r\\d+(?:-[0-9a-fA-F-]+)?(?=\\.[^.]*$|$)"), "")
+
+/** What a card's own menu can do, depending on the folder it is shown in. */
+internal enum class CardAction { COLOR, LABELS, ARCHIVE, RESTORE, MOVE, COPY, DELETE }
+
+internal fun cardActionsFor(folder: NoteFolder): List<CardAction> = when (folder) {
+    NoteFolder.NOTES -> listOf(CardAction.COLOR, CardAction.LABELS, CardAction.ARCHIVE, CardAction.MOVE, CardAction.COPY, CardAction.DELETE)
+    NoteFolder.ARCHIVE -> listOf(CardAction.COLOR, CardAction.LABELS, CardAction.RESTORE, CardAction.MOVE, CardAction.COPY, CardAction.DELETE)
+    NoteFolder.TRASH -> listOf(CardAction.RESTORE, CardAction.DELETE)
+}
+
+@Composable
+private fun CardMenu(actions: List<CardAction>, foreground: Color, onAction: (CardAction) -> Unit) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { open = true }, modifier = Modifier.size(28.dp)) {
+            Icon(
+                Icons.Filled.MoreVert,
+                contentDescription = stringResource(R.string.card_menu),
+                tint = foreground.copy(alpha = 0.7f),
+                modifier = Modifier.size(18.dp),
+            )
+        }
+        DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+            val inTrash = CardAction.ARCHIVE !in actions && CardAction.COLOR !in actions
+            for (action in actions) {
+                val (icon, text) = when (action) {
+                    CardAction.COLOR -> Icons.Filled.Palette to R.string.action_color
+                    CardAction.LABELS -> Icons.Filled.Label to R.string.nav_labels
+                    CardAction.ARCHIVE -> Icons.Filled.Archive to R.string.action_archive
+                    CardAction.RESTORE -> Icons.Filled.Restore to R.string.action_restore
+                    CardAction.MOVE -> Icons.Filled.DriveFileMove to R.string.action_move_to_folder
+                    CardAction.COPY -> Icons.Filled.ContentCopy to R.string.action_copy_to_folder
+                    CardAction.DELETE -> if (inTrash) Icons.Filled.DeleteForever to R.string.action_delete_forever
+                        else Icons.Filled.Delete to R.string.action_delete
+                }
+                DropdownMenuItem(
+                    text = { Text(stringResource(text)) },
+                    leadingIcon = { Icon(icon, contentDescription = null) },
+                    onClick = { open = false; onAction(action) },
+                )
+            }
+        }
+    }
+}
+
+/** "⏰ Due in 2 h" or "⚠ Overdue 3 d overdue": a word and a sign, never only a color (like Obsidian and the website). */
+@Composable
+private fun ReminderBadge(at: Long, foreground: Color) {
+    val diff = at - System.currentTimeMillis()
+    val overdue = diff < 0
+    val minutes = kotlin.math.abs(diff) / 60_000.0
+    val relative = when {
+        minutes < 1 -> stringResource(if (overdue) R.string.reminder_just_overdue else R.string.reminder_now)
+        minutes < 60 -> stringResource(if (overdue) R.string.reminder_min_overdue else R.string.reminder_in_min, minutes.roundToInt())
+        minutes < 60 * 24 -> stringResource(if (overdue) R.string.reminder_hr_overdue else R.string.reminder_in_hr, (minutes / 60).roundToInt())
+        minutes < 60 * 24 * 30 -> stringResource(if (overdue) R.string.reminder_day_overdue else R.string.reminder_in_day, (minutes / 60 / 24).roundToInt())
+        else -> java.time.Instant.ofEpochMilli(at).atZone(java.time.ZoneId.systemDefault()).toLocalDate().toString()
+    }
+    Surface(
+        color = foreground.copy(alpha = if (overdue) 0.16f else 0.08f),
+        contentColor = foreground,
+        shape = RoundedCornerShape(10.dp),
+        border = if (overdue) androidx.compose.foundation.BorderStroke(1.dp, foreground.copy(alpha = 0.6f)) else null,
+    ) {
+        Row(modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = stringResource(if (overdue) R.string.reminder_badge_overdue else R.string.reminder_badge_due),
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+            )
+            Spacer(Modifier.size(4.dp))
+            Text(text = relative, style = MaterialTheme.typography.labelSmall)
+        }
+    }
+}
+
+/** One voice memo plays at a time on the board: starting another stops the one before. */
+private object CardAudio {
+    private var stopCurrent: (() -> Unit)? = null
+    fun claim(stop: () -> Unit) {
+        if (stopCurrent !== stop) stopCurrent?.invoke()
+        stopCurrent = stop
+    }
+    fun release(stop: () -> Unit) {
+        if (stopCurrent === stop) stopCurrent = null
+    }
+}
+
 /**
- * Visuele banner bovenaan een voicememo-kaart: equalizer-icoon op een subtiele
- * tint van de kaartkleur. Statisch (de kaart speelt niet af), maar in één
- * oogopslag herkenbaar als audio-notitie.
+ * Banner bovenaan een voicememo-kaart, met een afspeelknop: de memo speelt op de
+ * kaart zelf, zonder de notitie te openen (Eric, 29 okt; zoals website en plugin).
+ * De speler ontstaat pas bij de eerste tik, zodat scrollen geen spelers aanmaakt.
  */
 @Composable
-private fun VoiceMemoBanner(foreground: Color) {
+private fun VoiceMemoBanner(foreground: Color, audioUri: Uri?, selectionMode: Boolean, onCardClick: () -> Unit) {
+    val context = LocalContext.current
+    var player by remember(audioUri) { mutableStateOf<MediaPlayer?>(null) }
+    var playing by remember(audioUri) { mutableStateOf(false) }
+    var positionMs by remember(audioUri) { mutableStateOf(0) }
+    var durationMs by remember(audioUri) { mutableStateOf(0) }
+    var failed by remember(audioUri) { mutableStateOf(false) }
+    val stop: () -> Unit = remember(audioUri) {
+        {
+            player?.let { runCatching { it.stop() }; runCatching { it.release() } }
+            player = null
+            playing = false
+            positionMs = 0
+        }
+    }
+    DisposableEffect(audioUri) {
+        onDispose {
+            CardAudio.release(stop)
+            stop()
+        }
+    }
+    LaunchedEffect(playing) {
+        while (playing) {
+            positionMs = runCatching { player?.currentPosition }.getOrNull() ?: positionMs
+            delay(250)
+        }
+    }
+    val toggle: () -> Unit = toggle@{
+        if (selectionMode) { onCardClick(); return@toggle }
+        val current = player
+        if (current != null) {
+            if (playing) {
+                runCatching { current.pause() }
+                playing = false
+            } else if (runCatching { current.start() }.isSuccess) {
+                CardAudio.claim(stop)
+                playing = true
+            }
+            return@toggle
+        }
+        if (audioUri == null || failed) { onCardClick(); return@toggle }
+        CardAudio.claim(stop)
+        val created = MediaPlayer()
+        player = created
+        try {
+            created.setDataSource(context, audioUri)
+            created.setOnPreparedListener {
+                durationMs = it.duration.coerceAtLeast(0)
+                if (player === it) { it.start(); playing = true }
+            }
+            created.setOnCompletionListener { playing = false; positionMs = 0 }
+            created.setOnErrorListener { _, _, _ -> failed = true; stop(); true }
+            created.prepareAsync()
+        } catch (_: Exception) {
+            failed = true
+            stop()
+        }
+    }
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -2495,27 +2813,101 @@ private fun VoiceMemoBanner(foreground: Color) {
             .background(foreground.copy(alpha = 0.10f)),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(
-            imageVector = Icons.Filled.GraphicEq,
-            contentDescription = stringResource(R.string.voice_memo_card_label),
-            tint = foreground.copy(alpha = 0.85f),
-            modifier = Modifier.size(64.dp),
-        )
+        if (audioUri == null || failed) {
+            Icon(
+                imageVector = Icons.Filled.GraphicEq,
+                contentDescription = stringResource(R.string.voice_memo_card_label),
+                tint = foreground.copy(alpha = 0.85f),
+                modifier = Modifier.size(64.dp),
+            )
+        } else {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(
+                    onClick = toggle,
+                    modifier = Modifier
+                        .size(52.dp)
+                        .background(foreground.copy(alpha = 0.12f), androidx.compose.foundation.shape.CircleShape),
+                ) {
+                    Icon(
+                        imageVector = if (playing) Icons.Filled.Pause else Icons.Filled.PlayArrow,
+                        contentDescription = stringResource(if (playing) R.string.audio_pause else R.string.audio_play),
+                        tint = foreground,
+                        modifier = Modifier.size(34.dp),
+                    )
+                }
+                Spacer(Modifier.size(10.dp))
+                // The name stays and the time goes below it, so the button does not shift while playing.
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Filled.GraphicEq,
+                            contentDescription = null,
+                            tint = foreground.copy(alpha = 0.7f),
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.size(4.dp))
+                        Text(
+                            text = stringResource(R.string.voice_memo_card_label),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = foreground,
+                        )
+                    }
+                    Text(
+                        text = if (playing || positionMs > 0) formatMemoDuration(positionMs.toLong())
+                            else if (durationMs > 0) formatMemoDuration(durationMs.toLong())
+                            else "",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = foreground.copy(alpha = 0.8f),
+                    )
+                }
+            }
+        }
     }
 }
 
+/** Labels first, then #tags; at most four, the rest as "+N", which opens the note (Eric, 29 Oct). */
+private const val CARD_CHIPS_VISIBLE = 4
+
 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun TagChips(labels: List<String>, tags: List<String>, foreground: Color) {
+private fun TagChips(
+    labels: List<String>,
+    tags: List<String>,
+    foreground: Color,
+    onLabelClick: (String) -> Unit,
+    onTagClick: (String) -> Unit,
+    onMoreClick: () -> Unit,
+) {
+    val shownLabels = labels.take(CARD_CHIPS_VISIBLE)
+    val shownTags = tags.take(CARD_CHIPS_VISIBLE - shownLabels.size)
+    val hidden = labels.size + tags.size - shownLabels.size - shownTags.size
     androidx.compose.foundation.layout.FlowRow(
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        for (label in labels) {
-            LabelChip(label, foreground)
+        // A chip filters the notes by its label or tag, like on the website and in Obsidian.
+        for (label in shownLabels) {
+            LabelChip(label, foreground, onClick = { onLabelClick(label) })
         }
-        for (tag in tags) {
-            TagChip(tag, foreground)
+        for (tag in shownTags) {
+            TagChip(tag, foreground, onClick = { onTagClick(tag) })
+        }
+        if (hidden > 0) {
+            val description = stringResource(R.string.chip_more_description, hidden)
+            Surface(
+                color = foreground.copy(alpha = 0.06f),
+                contentColor = foreground,
+                shape = RoundedCornerShape(10.dp),
+                modifier = Modifier
+                    .clickable(onClick = onMoreClick)
+                    .semantics { contentDescription = description },
+            ) {
+                Text(
+                    text = stringResource(R.string.chip_more, hidden),
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
+                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+                )
+            }
         }
     }
 }
@@ -2559,16 +2951,23 @@ private fun LinkChip(url: String, foreground: Color, onClick: () -> Unit) {
         shape = RoundedCornerShape(10.dp),
         modifier = Modifier.clickable(onClick = onClick),
     ) {
-        Text(
-            text = host,
-            style = MaterialTheme.typography.labelSmall.copy(
-                fontWeight = FontWeight.Medium,
-                textDecoration = TextDecoration.Underline,
-            ),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
+        // A link sign in front, like the website's 🔗 chips: shape, not only underline, says it is a link.
+        Row(
             modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
-        )
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Filled.Link, contentDescription = null, modifier = Modifier.size(13.dp))
+            Spacer(Modifier.size(3.dp))
+            Text(
+                text = host,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontWeight = FontWeight.Medium,
+                    textDecoration = TextDecoration.Underline,
+                ),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 
@@ -2582,11 +2981,12 @@ private fun hostnameOf(url: String): String {
 }
 
 @Composable
-private fun TagChip(tag: String, foreground: Color) {
+private fun TagChip(tag: String, foreground: Color, onClick: () -> Unit) {
     Surface(
         color = foreground.copy(alpha = 0.10f),
         contentColor = foreground,
         shape = RoundedCornerShape(10.dp),
+        modifier = Modifier.clickable(onClick = onClick),
     ) {
         Text(
             text = "#$tag",
@@ -2600,11 +3000,12 @@ private fun TagChip(tag: String, foreground: Color) {
 
 // Labelpictogram ervoor: zo verschilt een label van een #tag door vorm, niet door kleur.
 @Composable
-private fun LabelChip(label: String, foreground: Color) {
+private fun LabelChip(label: String, foreground: Color, onClick: () -> Unit) {
     Surface(
         color = foreground.copy(alpha = 0.10f),
         contentColor = foreground,
         shape = RoundedCornerShape(10.dp),
+        modifier = Modifier.clickable(onClick = onClick),
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),

@@ -290,4 +290,22 @@
     <string name="md_help_table">a table with columns A and B</string>
     <string name="empty_hint_new_note">jot the first one with +</string>
     <string name="stamp_sealed">Sealed</string>
+    <!-- Cards: what a card shows and does on all three platforms (Eric, 29 Oct). -->
+    <string name="reminder_badge_due">⏰ Due</string>
+    <string name="reminder_badge_overdue">⚠ Overdue</string>
+    <string name="reminder_now">now</string>
+    <string name="reminder_just_overdue">just overdue</string>
+    <string name="reminder_in_min">in %1$d min</string>
+    <string name="reminder_min_overdue">%1$d min overdue</string>
+    <string name="reminder_in_hr">in %1$d h</string>
+    <string name="reminder_hr_overdue">%1$d h overdue</string>
+    <string name="reminder_in_day">in %1$d d</string>
+    <string name="reminder_day_overdue">%1$d d overdue</string>
+    <string name="card_conflict_text">Changed in two places: this is the other version.</string>
+    <string name="card_conflict_resolve">Resolve now</string>
+    <string name="chip_more">+%1$d</string>
+    <string name="chip_more_description">Open the note to see all %1$d more labels and tags</string>
+    <string name="card_menu">Note actions</string>
+    <string name="toast_restored">Note restored</string>
+    <string name="action_delete_forever">Delete forever</string>
 </resources>

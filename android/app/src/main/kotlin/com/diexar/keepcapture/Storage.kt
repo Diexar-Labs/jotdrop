@@ -467,6 +467,7 @@ object Storage {
                 thumbnailBasename = firstImage,
                 thumbnailUri = firstImage?.let { attachments[it] },
                 audioBasename = firstAudio,
+                audioUri = firstAudio?.let { attachments[it] },
             )
         }
     }
@@ -1537,12 +1538,21 @@ object Storage {
         return "$base ($i)$ext"
     }
 
+    // The whole note, like the plugin and the website: links, tasks and tags further down belong on the card too.
+    // Only a very large note is cut off, so one pasted log cannot slow the whole list down.
+    private const val PREVIEW_MAX_BYTES = 256 * 1024
+
     private fun readPreview(context: Context, uri: Uri): String {
         return try {
             context.contentResolver.openInputStream(uri)?.use { input ->
-                val buf = ByteArray(4096)
-                val read = input.read(buf)
-                if (read <= 0) "" else String(buf, 0, read, Charsets.UTF_8)
+                val out = java.io.ByteArrayOutputStream()
+                val buf = ByteArray(8192)
+                while (out.size() < PREVIEW_MAX_BYTES) {
+                    val read = input.read(buf, 0, minOf(buf.size, PREVIEW_MAX_BYTES - out.size()))
+                    if (read <= 0) break
+                    out.write(buf, 0, read)
+                }
+                out.toString(Charsets.UTF_8.name())
             }.orEmpty()
         } catch (_: Exception) {
             ""
@@ -1584,9 +1594,11 @@ object Storage {
         val firstIsList = lines.firstOrNull()?.matches(
             Regex("^[ \\t]*(?:-[ \\t]+\\[[ xX]\\](?:[ \\t]|$)|[-*+][ \\t]+|\\d{1,9}[.)][ \\t]+).*$"),
         ) == true
-        val rest = if (firstIsList) lines.joinToString("\n")
-        else if (lines.size > 1) lines.drop(1).joinToString("\n")
-        else ""
+        val rest = withoutHeadingMarks(
+            if (firstIsList) lines.joinToString("\n")
+            else if (lines.size > 1) lines.drop(1).joinToString("\n")
+            else "",
+        )
         // URLs strippen — die worden als chips onderaan getoond (plugin-pariteit).
         // Markdown-link-syntax behoudt het label, losse URLs verdwijnen volledig.
         // Daarna opmaaktekens weg (plugin-pariteit), en `\#tag` zonder backslash.
@@ -1602,6 +1614,25 @@ object Storage {
             .joinToString("\n")
             .trimEnd()
         return stripped.take(280)
+    }
+
+    /** A heading further down keeps its words on the card, without the `#` signs; code in a fence stays as it is. */
+    private fun withoutHeadingMarks(text: String): String {
+        val fenceMarker = Regex("^\\s{0,3}(`{3,}|~{3,})")
+        val heading = Regex("^\\s{0,3}#{1,6}[ \\t]+")
+        var fence = ""
+        return text.split("\n").joinToString("\n") { line ->
+            val marker = fenceMarker.find(line)?.groupValues?.get(1)
+            when {
+                marker != null -> {
+                    if (fence.isEmpty()) fence = marker
+                    else if (marker[0] == fence[0] && marker.length >= fence.length) fence = ""
+                    line
+                }
+                fence.isNotEmpty() -> line
+                else -> heading.replaceFirst(line, "")
+            }
+        }
     }
 
     /**
@@ -1678,6 +1709,7 @@ data class NoteSummary(
     val thumbnailBasename: String? = null,
     val thumbnailUri: Uri? = null,
     val audioBasename: String? = null,
+    val audioUri: Uri? = null,
 )
 
 data class VaultMarkdownFile(

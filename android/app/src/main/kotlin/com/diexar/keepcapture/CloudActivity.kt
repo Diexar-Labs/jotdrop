@@ -15,6 +15,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -47,12 +48,15 @@ class CloudActivity : ComponentActivity() {
             takeProviderReturn(intent)
         }
         val welcome = intent.getBooleanExtra(EXTRA_WELCOME, false)
-        setContent { JotDropTheme { CloudScreen(welcome, onBack = { finish() }, onSettings = { startActivity(Intent(this, MainActivity::class.java)) }) } }
+        val resolve = intent.getStringExtra(EXTRA_RESOLVE)
+        setContent { JotDropTheme { CloudScreen(welcome, resolve, onBack = { finish() }, onSettings = { startActivity(Intent(this, MainActivity::class.java)) }) } }
     }
 
     companion object {
         /** From the welcome screen: Google sign-in opens at once, and the screen closes once sync runs. */
         const val EXTRA_WELCOME = "welcome"
+        /** From a conflict copy's card: the file name of the note it belongs to, whose comparison opens at once. */
+        const val EXTRA_RESOLVE = "resolve"
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -70,7 +74,7 @@ class CloudActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun CloudScreen(welcome: Boolean, onBack: () -> Unit, onSettings: () -> Unit) {
+private fun CloudScreen(welcome: Boolean, resolve: String?, onBack: () -> Unit, onSettings: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
     var status by remember { mutableStateOf<CloudSyncStatus?>(null) }
@@ -192,6 +196,19 @@ private fun CloudScreen(welcome: Boolean, onBack: () -> Unit, onSettings: () -> 
     // From the welcome screen: back to the notes once sync runs and the recovery code is saved.
     if (welcome) LaunchedEffect(status?.enabled, CloudAccountFlow.recoveryCode, CloudAccountFlow.secureOffer) {
         if (status?.enabled == true && CloudAccountFlow.recoveryCode == null && CloudAccountFlow.secureOffer == null) onBack()
+    }
+    // From a conflict copy's card: straight into the comparison of its note, like "Resolve now" on the card in Obsidian.
+    var resolveOpened by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(status?.connected) {
+        if (resolve == null || resolveOpened || status?.connected != true) return@LaunchedEffect
+        resolveOpened = true
+        snapshotFlow { busy }.first { !it }
+        run {
+            tab = 0
+            files = CloudSyncManager.cloudFiles(context).sortedBy { it.path }
+            showHistory(files.firstOrNull { !it.deleted && (it.path == resolve || it.path.endsWith("/$resolve")) }
+                ?: throw CloudSyncException("$resolve is no longer in the cloud. Sync again."))
+        }
     }
     val list = rememberLazyListState()
     // Errors show at the top; a form further down would otherwise seem to do nothing.

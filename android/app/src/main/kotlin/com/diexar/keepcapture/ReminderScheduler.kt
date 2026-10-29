@@ -101,7 +101,7 @@ object ReminderScheduler {
      * teruggeeft) als lokale tijd. Levert epoch-millis terug, of null bij
      * ongeldige input.
      */
-    private fun parseToEpochMillis(iso: String): Long? {
+    internal fun parseToEpochMillis(iso: String): Long? {
         return try {
             val ldt = LocalDateTime.parse(iso, DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm"))
             ldt.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
