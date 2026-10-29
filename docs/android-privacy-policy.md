@@ -1,20 +1,30 @@
 # JotDrop Android Privacy Policy
 
-Last updated: October 23, 2026
+Last updated: October 29, 2026
 
 JotDrop (`com.diexar.keepcapture`) is a local-first Android notes app from Diexar Labs. Contact us at [eric@diexar.com](mailto:eric@diexar.com) about privacy questions.
 
 ## Your notes and media
 
-JotDrop does not require an account and does not send your notes, photos, voice memos, or OCR results to a Diexar Labs server. Markdown notes and their attachments are stored in the vault folder you select on your device. Photos you capture or share are saved there in their original quality; voice memos are recorded there as audio files. OCR runs on the device. JotDrop does not include advertising, its own analytics, or a crash-reporting service.
+JotDrop does not require an account. Unless you turn on the optional JotDrop Cloud described below, it does not send your notes, photos, voice memos, or OCR results to a Diexar Labs server. Markdown notes and their attachments are stored in the vault folder you select on your device. Photos you capture or share are saved there in their original quality; voice memos are recorded there as audio files. OCR runs on the device. JotDrop does not include advertising, its own analytics, or a crash-reporting service.
 
 OCR uses Google's bundled ML Kit SDK. Google documents that this SDK sends limited device and app information, a per-installation identifier, and performance and usage metrics to Google over HTTPS for diagnostics and usage analytics. Images supplied for OCR and the recognized text are processed on-device, not sent to Google. See [ML Kit's data disclosure](https://developers.google.com/ml-kit/android-data-disclosure) and [privacy terms](https://developers.google.com/ml-kit/terms).
 
 If you choose to sync your vault with another app or service, such as Syncthing or Obsidian Sync, that service handles your files under its own privacy policy. The vault is not automatically encrypted by JotDrop. You can edit, export, or delete your files in your chosen folder at any time.
 
+## JotDrop Cloud (optional)
+
+You can create a free JotDrop Cloud account to sync your notes between devices, with Google, GitHub, or an email address and password. Your notes and attachments are encrypted on your device before they are uploaded; the server stores them encrypted and cannot read them. The server does keep your account email address, your device names, and the size and save time of each encrypted file. The full details, retention periods, processors and your rights are in the [JotDrop Cloud privacy policy](https://app.jotdrop.net/privacy).
+
+- **Continue with Google** uses Android's own Google account picker, provided by Google Play services. Google learns that you signed in to JotDrop; JotDrop receives only your Google account ID and your verified email address. If that picker is unavailable, the sign-in opens in your browser instead.
+- **New email accounts** may open a Cloudflare Turnstile check in your browser to confirm that you are a person.
+- **Keys on this phone:** the connection to your cloud and the key to your notes are stored in JotDrop's private storage, encrypted with a key from the Android Keystore, and are excluded from Android backups. Your recovery code is shown once; JotDrop cannot show it again.
+- **Sync** runs in the background over HTTPS when you have turned it on, and only for the notes and attachment folders in your chosen vault. You can pause it, disconnect this phone, or delete your cloud account in the app.
+
 ## When JotDrop connects to the internet
 
 - When you save a web link, JotDrop may request the page and its Open Graph preview image from the website you chose. Some links use a public preview endpoint, including TikTok oEmbed or fxtwitter.com for X links. Those sites receive the requested URL, your IP address, and a browser-style user-agent. The downloaded preview is stored in your vault. You can turn off preview-image downloads in the app settings.
+- If you use JotDrop Cloud, JotDrop connects to `app.jotdrop.net` to sign in and to sync encrypted files, as described above.
 - JotDrop checks the public GitHub releases API for updates, at most once per day unless you request another check. GitHub receives the connection's IP address and the `JotDrop-Android` user-agent. No note contents are included.
 - Ko-fi links open in your external browser only when you tap them, under Ko-fi's own policy. Versions 0.28.23 and earlier also offered an email link to join the Google Play test; it was removed in 0.28.24.
 
@@ -26,7 +36,7 @@ Recording a voice memo stores audio in your vault without uploading it through J
 
 ## Device access and backups
 
-JotDrop asks for microphone access when recording audio, notification access for reminders, internet access for link previews and update checks, and boot events to restore reminders. The Android system picker grants access only to the vault or media you select. App preferences, including the selected vault-folder reference, can be included in your device's Android backup if backup is enabled. Your vault files are outside JotDrop's app-private backup; their backup and deletion depend on the folder and sync services you choose.
+JotDrop asks for microphone access when recording audio, notification access for reminders, internet access for link previews, update checks and JotDrop Cloud, and boot events to restore reminders. The Android system picker grants access only to the vault or media you select. App preferences, including the selected vault-folder reference, can be included in your device's Android backup if backup is enabled. Your vault files are outside JotDrop's app-private backup; their backup and deletion depend on the folder and sync services you choose.
 
 You can revoke app permissions in Android settings, remove app preferences by clearing app data or uninstalling, and delete notes and attachments from your own vault. Google or other external services may retain data under their own policies. JotDrop is not designed for children under 13.
 

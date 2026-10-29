@@ -31,7 +31,6 @@ h1 { font-size: 2.4rem; font-weight: 800; line-height: 1.02; letter-spacing: -.0
 #view-description { font-family: "Caveat", "Instrument Sans", cursive; font-weight: 600; font-size: 1.5rem; line-height: 1.2; color: var(--hand); margin: .35rem 0 0; transform: rotate(-1.5deg); transform-origin: left; }
 h2 { font-size: 1.25rem; margin-top: 2rem; }
 h3 { font-size: 1.05rem; }
-.local-banner { padding: .5rem 1.2rem; text-align: center; background: light-dark(#fff1c7, #3b3219); color: light-dark(#654d0a, #f1d995); font-size: .8rem; }
 .appearance { display: flex; justify-content: flex-end; align-items: center; gap: .65rem; padding: .6rem 1rem; }
 .appearance label { margin: 0; font-size: .85rem; }
 /* Account actions sit top right, like the account menu in Keep, so they are always in view. */
