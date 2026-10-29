@@ -30,4 +30,6 @@
     <string name="recording_notification_title">Grabación activa</string>
     <string name="recording_notification_channel_name">Grabación de memorias de voz</string>
     <string name="recording_notification_channel_desc">Se muestra cuando una grabación de memoria de voz está activa.</string>
+    <string name="empty_hint_new_note">apunta la primera con +</string>
+    <string name="stamp_sealed">Sellada</string>
 </resources>

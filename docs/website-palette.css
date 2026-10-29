@@ -1,0 +1,52 @@
+/* JotDrop website palette: Sunset & Ink.
+ * Source: docs/banner.png, Git blob b40179d6bd96580dfbaa0d760ca1140ec816623c.
+ * Ink/night/warm accents/violet are banner samples or regional color averages.
+ * Eric's preferred identity: midnight blue with peach, coral and gold.
+ * Paper and secondary text are derived for usable contrast. Violet stays in the logo.
+ * Brand colors do not replace the existing selectable colors of user notes.
+ */
+:root {
+  --jd-color-ink: #070a2f;
+  --jd-color-night: #0f123a;
+  --jd-color-violet: #a24dff;
+  --jd-color-coral: #f28b89;
+  --jd-color-apricot: #feaa81;
+  --jd-color-gold: #fdcb7e;
+  --jd-color-paper: #fff9f3;
+  --jd-color-white: #ffffff;
+  --jd-color-muted: #636477;
+  --jd-color-muted-dark: #cac7dd;
+
+  --jd-page-bg: var(--jd-color-ink);
+  --jd-surface-bg: var(--jd-color-night);
+  --jd-text: var(--jd-color-paper);
+  --jd-text-secondary: var(--jd-color-muted-dark);
+  --jd-link: var(--jd-color-apricot);
+  --jd-button-bg: var(--jd-color-apricot);
+  --jd-button-hover: var(--jd-color-gold);
+  --jd-button-text: var(--jd-color-ink);
+  --jd-focus: var(--jd-color-gold);
+  --jd-hero-text: var(--jd-color-ink);
+  --jd-hero-gradient: linear-gradient(125deg, #f28b89 0%, #feaa81 55%, #fdcb7e 100%);
+}
+
+/* Explicit theme selection, not an automatic redesign of the existing app. */
+[data-theme="light"] {
+  --jd-page-bg: var(--jd-color-paper);
+  --jd-surface-bg: var(--jd-color-white);
+  --jd-text: var(--jd-color-ink);
+  --jd-text-secondary: var(--jd-color-muted);
+  --jd-link: var(--jd-color-ink);
+  --jd-button-bg: var(--jd-color-ink);
+  --jd-button-hover: var(--jd-color-night);
+  --jd-button-text: var(--jd-color-apricot);
+  --jd-focus: var(--jd-color-ink);
+}
+
+/* Bright logo violet is an accent, not normal text on a dark background.
+ * Use peach links on dark surfaces; underlined ink links on light surfaces.
+ * The dark website gets peach buttons with ink text; light reading areas reverse it.
+ * Coral/apricot/gold take dark ink text, never small white body text.
+ * Keep gradients in limited brand/hero areas; reading/editing surfaces stay quiet.
+ * Brand accents are not error/success states; status always needs a label/icon too.
+ */

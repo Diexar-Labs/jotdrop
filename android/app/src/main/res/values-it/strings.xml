@@ -30,4 +30,6 @@
     <string name="recording_notification_title">Registrazione attiva</string>
     <string name="recording_notification_channel_name">Registrazione memo vocale</string>
     <string name="recording_notification_channel_desc">Viene mostrato quando una registrazione di memo vocale è attiva.</string>
+    <string name="empty_hint_new_note">scrivi la prima con +</string>
+    <string name="stamp_sealed">Sigillata</string>
 </resources>

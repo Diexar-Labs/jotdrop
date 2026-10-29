@@ -53,9 +53,12 @@
     <string name="parked_nothing_to_keep">Er was niets meer te bewaren. De notitie is weer beschikbaar.</string>
 
     <string name="loading">Laden…</string>
-    <string name="empty_no_vault">Nog geen vault gekozen. Open instellingen om aan de slag te gaan.</string>
+    <string name="welcome_title">Welkom bij JotDrop</string>
+    <string name="welcome_text">Je notities, foto\'s en spraakmemo\'s, als gewone bestanden op deze telefoon. Ga verder met Google voor een gratis versleutelde cloud met 250 MB, zodat je ze op al je apparaten hebt.</string>
+    <string name="welcome_google">Doorgaan met Google</string>
+    <string name="welcome_local">Gebruiken zonder cloud</string>
+    <string name="welcome_folder_hint">Eerst kies je een map voor je notities. Tip: maak een nieuwe map met de naam JotDrop. Gebruik je Obsidian al? Kies dan je vault.</string>
     <string name="empty_no_notes">Nog geen notities. Tik op + om te beginnen.</string>
-    <string name="open_settings">Open instellingen</string>
     <string name="retry">Opnieuw proberen</string>
 
     <string name="action_settings">Instellingen</string>
@@ -244,4 +247,38 @@
     <string name="label_hint">Labels zijn collecties, los van tags. Spaties blijven behouden.</string>
     <string name="label_search">Label zoeken of aanmaken</string>
     <string name="label_create_first">Maak eerst een label in het navigatiemenu.</string>
+    <!-- Markdown help (same list as the web app and the plugin) -->
+    <string name="md_help_button">Markdown-hulp</string>
+    <string name="action_move_to_folder">Verplaats naar map…</string>
+    <string name="action_copy_to_folder">Kopieer naar map…</string>
+    <string name="folder_picker_move_title">Notitie naar map verplaatsen</string>
+    <string name="folder_picker_copy_title">Notitie naar map kopiëren</string>
+    <string name="folder_picker_search">Mappen zoeken</string>
+    <string name="folder_picker_move_hint">De notitie gaat uit JotDrop en wordt een gewone Obsidian-notitie in die map.</string>
+    <string name="folder_picker_empty">Geen mappen gevonden.</string>
+    <string name="folder_root_label">(vault-hoofdmap)</string>
+    <string name="toast_moved_to">Verplaatst naar: %1$s</string>
+    <string name="toast_copied_to">Gekopieerd naar: %1$s</string>
+    <string name="error_target_exists">Er bestaat al een notitie met die naam in de doelmap.</string>
+    <string name="md_help_title">Markdown-hulp</string>
+    <string name="md_help_intro">Typ de code links om je notitie op te maken. Obsidian toont het resultaat rechts; JotDrop-kaarten tonen de tekst zonder de codes.</string>
+    <string name="md_help_heading">Kop</string>
+    <string name="md_help_smaller_heading">Kleinere kop</string>
+    <string name="md_help_bold">vet</string>
+    <string name="md_help_italic">cursief</string>
+    <string name="md_help_strikethrough">doorgestreept</string>
+    <string name="md_help_highlight">gemarkeerd</string>
+    <string name="md_help_bullet">• punt</string>
+    <string name="md_help_numbered">1. punt</string>
+    <string name="md_help_task">☐ taak</string>
+    <string name="md_help_done">☑ klaar</string>
+    <string name="md_help_quote">citaat</string>
+    <string name="md_help_code">code</string>
+    <string name="md_help_web_link">tekst (een weblink)</string>
+    <string name="md_help_note_link">Notitienaam (een link naar een andere notitie)</string>
+    <string name="md_help_tag">een tag waarop je kunt filteren</string>
+    <string name="md_help_divider">een scheidingslijn</string>
+    <string name="md_help_table">een tabel met kolommen A en B</string>
+    <string name="empty_hint_new_note">schrijf de eerste met +</string>
+    <string name="stamp_sealed">Verzegeld</string>
 </resources>

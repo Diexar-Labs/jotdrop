@@ -1,10 +1,12 @@
-import { Notice, Platform, Plugin, TFile, WorkspaceLeaf, normalizePath } from "obsidian";
+import { Notice, Platform, Plugin, TFile, WorkspaceLeaf, addIcon, normalizePath } from "obsidian";
+import { LOGO_ICON, LOGO_ICON_SVG } from "./logo";
 import { DEFAULT_SETTINGS, JotDropSettings, JotDropSettingTab } from "./settings";
 import { JotDropView, VIEW_TYPE_JOTDROP } from "./view";
 import { QuickCaptureModal, createNoteInFolder } from "./capture";
 import { PreviewRescue } from "./previewRescue";
 import { ReminderScheduler } from "./reminderScheduler";
 import { ClipServer } from "./clipServer";
+import { CloudController } from "./cloud";
 import { fetchOg, safeMarkdownLink } from "./ogfetch";
 import { legacyAssetsPath } from "./attachments";
 import { ConfirmModal } from "./confirmModal";
@@ -38,13 +40,17 @@ export default class JotDropPlugin extends Plugin {
   private readonly suppressedPaths: Set<string> = new Set();
   private reminderScheduler!: ReminderScheduler;
   private clipServer!: ClipServer;
+  cloud!: CloudController;
 
   async onload(): Promise<void> {
     await this.loadSettings();
+    this.cloud = new CloudController(this);
+    this.cloud.register();
 
     this.registerView(VIEW_TYPE_JOTDROP, (leaf) => new JotDropView(leaf, this));
 
-    this.addRibbonIcon("sticky-note", t("open_jotdrop"), () => {
+    addIcon(LOGO_ICON, LOGO_ICON_SVG);
+    this.addRibbonIcon(LOGO_ICON, t("open_jotdrop"), () => {
       void this.activateView();
     });
 
@@ -144,6 +150,7 @@ export default class JotDropPlugin extends Plugin {
     // Obsidian closes the view automatically
     this.reminderScheduler?.cancelAll();
     this.clipServer?.stop();
+    this.cloud?.lock();
   }
 
   /**
@@ -212,6 +219,8 @@ export default class JotDropPlugin extends Plugin {
       DEFAULT_SETTINGS,
       (await this.loadData()) as Partial<JotDropSettings>,
     );
+    // The isolated cloud preview is replaced by JotDrop Cloud; its wrapped test credentials are not used anymore.
+    delete (this.settings as unknown as Record<string, unknown>).cloudConnection;
     // One-time migration: the previous default "modified-desc" reordered cards
     // on every edit. Move it to the stable "created-desc" once, then leave the
     // setting alone so a deliberate later choice sticks.

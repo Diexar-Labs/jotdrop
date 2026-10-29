@@ -1,6 +1,49 @@
 plugins {
     id("com.android.application") version "8.5.2" apply false
+    id("com.android.test") version "8.5.2" apply false
     id("org.jetbrains.kotlin.android") version "1.9.24" apply false
+    // Baseline Profile generator (see baselineprofile/build.gradle.kts). Only
+    // :app:generateBaselineProfile runs it; normal release builds just read the
+    // checked-in profile under app/src/main/generated/baselineProfiles.
+    id("androidx.baselineprofile") version "1.3.4" apply false
+}
+
+val cloudCryptoClasses = layout.buildDirectory.dir("cloud-crypto-check")
+val cloudCryptoSources = files("app/src/main/kotlin/com/diexar/keepcapture/CloudCrypto.kt", "../cloud/android/CloudCryptoCheck.kt",
+    "app/src/main/kotlin/com/diexar/keepcapture/CloudSyncEngine.kt", "../cloud/android/CloudSyncEngineCheck.kt",
+    "app/src/main/kotlin/com/diexar/keepcapture/CloudNoteMerge.kt",
+    "app/src/main/kotlin/com/diexar/keepcapture/CloudDiagnostics.kt",
+    "app/src/main/kotlin/com/diexar/keepcapture/CloudUpload.kt")
+val cloudCryptoCompile = tasks.register<JavaExec>("cloudCryptoCompile") {
+    inputs.files(cloudCryptoSources)
+    outputs.dir(cloudCryptoClasses)
+    classpath(buildscript.configurations.getByName("classpath"))
+    mainClass.set("org.jetbrains.kotlin.cli.jvm.K2JVMCompiler")
+    doFirst {
+        args("-Xdisable-default-scripting-plugin", "-no-stdlib", "-no-reflect", "-jvm-target", "17", "-classpath",
+            project(":app").configurations.getByName("debugCompileClasspath").asPath,
+            "-d", cloudCryptoClasses.get().asFile.absolutePath)
+        args(cloudCryptoSources.files.map { it.absolutePath })
+    }
+}
+
+tasks.register<JavaExec>("checkCloudCrypto") {
+    dependsOn(cloudCryptoCompile)
+    classpath(cloudCryptoClasses)
+    classpath(provider { project(":app").configurations.getByName("debugCompileClasspath") })
+    mainClass.set("com.diexar.keepcapture.CloudCryptoCheckKt")
+    doFirst {
+        args(requireNotNull(System.getenv("JOTDROP_CRYPTO_INPUT")), requireNotNull(System.getenv("JOTDROP_CRYPTO_OUTPUT")))
+    }
+}
+
+tasks.register<JavaExec>("checkCloudSync") {
+    dependsOn(cloudCryptoCompile)
+    classpath(cloudCryptoClasses)
+    classpath(provider { project(":app").configurations.getByName("debugCompileClasspath") })
+    mainClass.set("com.diexar.keepcapture.CloudSyncEngineCheckKt")
+    // The sync scale check moves 300 MB through this heap; holding them all at once would fail.
+    maxHeapSize = "160m"
 }
 
 val listEditorClasses = layout.buildDirectory.dir("list-editor-check")
@@ -46,4 +89,31 @@ tasks.register<JavaExec>("checkInlineTags") {
     classpath(inlineTagsClasses)
     classpath(provider { project(":app").configurations.getByName("debugCompileClasspath") })
     mainClass.set("com.diexar.keepcapture.InlineTagsCheckKt")
+}
+
+val cloudAccountClasses = layout.buildDirectory.dir("cloud-account-check")
+val cloudAccountSources = files("app/src/main/kotlin/com/diexar/keepcapture/CloudCrypto.kt",
+    "app/src/main/kotlin/com/diexar/keepcapture/CloudAccountCrypto.kt", "app/src/main/kotlin/com/diexar/keepcapture/CloudWords.kt",
+    "../cloud/android/CloudAccountCryptoCheck.kt")
+val cloudAccountCompile = tasks.register<JavaExec>("cloudAccountCompile") {
+    inputs.files(cloudAccountSources)
+    outputs.dir(cloudAccountClasses)
+    classpath(buildscript.configurations.getByName("classpath"))
+    mainClass.set("org.jetbrains.kotlin.cli.jvm.K2JVMCompiler")
+    doFirst {
+        args("-Xdisable-default-scripting-plugin", "-no-stdlib", "-no-reflect", "-jvm-target", "17", "-classpath",
+            project(":app").configurations.getByName("debugCompileClasspath").asPath,
+            "-d", cloudAccountClasses.get().asFile.absolutePath)
+        args(cloudAccountSources.files.map { it.absolutePath })
+    }
+}
+
+tasks.register<JavaExec>("checkCloudAccount") {
+    dependsOn(cloudAccountCompile)
+    classpath(cloudAccountClasses)
+    classpath(provider { project(":app").configurations.getByName("debugCompileClasspath") })
+    mainClass.set("com.diexar.keepcapture.CloudAccountCryptoCheckKt")
+    doFirst {
+        args(requireNotNull(System.getenv("JOTDROP_ACCOUNT_INPUT")), requireNotNull(System.getenv("JOTDROP_ACCOUNT_OUTPUT")))
+    }
 }

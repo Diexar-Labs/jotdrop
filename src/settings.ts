@@ -2,6 +2,10 @@ import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import type JotDropPlugin from "./main";
 import { legacyAssetsPath, normalizeAssetsFolder } from "./attachments";
 import { t } from "./i18n";
+import { ConfirmModal } from "./confirmModal";
+import { renderCloudAccount } from "./cloudAccount";
+import { DEFAULT_CLOUD_SERVER, privacyLink } from "./cloud";
+import { ConflictReviewModal, TimeMachineModal } from "./cloudReview";
 
 function generateToken(): string {
   const bytes = new Uint8Array(24);
@@ -31,6 +35,8 @@ export interface JotDropSettings {
   clipServerPort: number;
   /** Bearer token the extension must send. Generated automatically. */
   clipServerToken: string;
+  /** JotDrop Cloud server; keys and sync state live per device outside data.json. */
+  cloudServer: string;
   /**
    * One-time guard: older installs defaulted to "modified-desc", which made
    * cards jump on every edit. On first load we switch that old default to the
@@ -57,6 +63,7 @@ export const DEFAULT_SETTINGS: JotDropSettings = {
   clipServerEnabled: false,
   clipServerPort: 27124,
   clipServerToken: "",
+  cloudServer: DEFAULT_CLOUD_SERVER,
   sortMigratedToCreated: false,
   localLabels: [],
 };
@@ -64,6 +71,8 @@ export const DEFAULT_SETTINGS: JotDropSettings = {
 export class JotDropSettingTab extends PluginSettingTab {
   plugin: JotDropPlugin;
   private lastInvalidNotice = 0;
+  private cloudListener?: () => void;
+  private cloudAccountStop?: () => void;
 
   constructor(app: App, plugin: JotDropPlugin) {
     super(app, plugin);
@@ -304,6 +313,8 @@ export class JotDropSettingTab extends PluginSettingTab {
         }),
     );
 
+    this.displayCloud(containerEl.createDiv({ cls: "jotdrop-cloud-settings" }));
+
     // "About JotDrop" — unobtrusive, dismisses itself if the user has no
     // interest. No popups, no "premium" features. Open source +
     // optional thank-you button.
@@ -317,5 +328,76 @@ export class JotDropSettingTab extends PluginSettingTab {
     });
     kofiLink.setText(t("support_kofi"));
     // GitHub Sponsors will be added once the application is approved.
+  }
+
+  /** JotDrop Cloud: the same account as the website and the Android app. */
+  private displayCloud(el: HTMLElement): void {
+    const cloud = this.plugin.cloud;
+    const refresh = () => { el.empty(); this.displayCloud(el); };
+    this.cloudListener?.();
+    this.cloudAccountStop?.();
+    this.cloudAccountStop = undefined;
+    // Sign-in and on/off redraw everything; a sync only updates the status line.
+    const shown = { signedIn: cloud.signedIn, enabled: cloud.enabled };
+    let statusRow: Setting | undefined;
+    let showConflicts = () => {};
+    const statusText = () => `${cloud.status}${cloud.lastSynced ? ` Last sync: ${new Date(cloud.lastSynced).toLocaleString()}.` : ""}`;
+    this.cloudListener = cloud.onChange(() => {
+      if (!el.isConnected) return;
+      if (cloud.signedIn !== shown.signedIn || cloud.enabled !== shown.enabled || !statusRow) refresh();
+      else { statusRow.setDesc(statusText()); showConflicts(); }
+    });
+    new Setting(el).setName("JotDrop Cloud").setHeading();
+    el.createEl("p", { text: "Optional. Sync your JotDrop notes with the website and the Android app, end-to-end encrypted: notes are locked on this device before they leave it. Without the cloud, everything keeps working offline." });
+    privacyLink(el.createEl("p"), this.plugin.settings.cloudServer || DEFAULT_CLOUD_SERVER);
+    if (!cloud.signedIn) {
+      new Setting(el).setName("Account").setDesc(cloud.status)
+        .addButton((button) => button.setButtonText("Create account").onClick(() => cloud.showSignIn(true)))
+        .addButton((button) => button.setButtonText("Log in").setCta().onClick(() => cloud.showSignIn(false)));
+      new Setting(el).setName("Server").setDesc("Leave this as it is unless you run your own JotDrop Cloud server.")
+        .addText((text) => text.setPlaceholder(DEFAULT_CLOUD_SERVER).setValue(this.plugin.settings.cloudServer).onChange(async (value) => {
+          this.plugin.settings.cloudServer = value.trim() || DEFAULT_CLOUD_SERVER;
+          await this.plugin.saveSettings();
+        }));
+      return;
+    }
+    new Setting(el).setName("Account").setDesc(`Logged in as ${cloud.email}.`)
+      .addButton((button) => button.setButtonText("Log out").onClick(() => {
+        new ConfirmModal(this.app, {
+          title: "Log out of JotDrop Cloud?",
+          message: "Sync stops on this device. Your notes stay in this vault and in the cloud. To come back, log in with your email and password.",
+          confirmLabel: "Log out",
+        }, () => { void cloud.logOut().then(refresh, (error) => new Notice(error instanceof Error ? error.message : String(error), 10000)); }).open();
+      }));
+    new Setting(el).setName("Sync this vault").setDesc(cloud.enabled ? "On: notes and attachments sync automatically." : "Off: nothing in this vault is sent to the cloud.")
+      .addToggle((toggle) => toggle.setValue(cloud.enabled).onChange((on) => {
+        if (on) cloud.confirmEnable(refresh);
+        else void cloud.setEnabled(false).then(refresh);
+      }));
+    statusRow = new Setting(el).setName("Status").setDesc(statusText())
+      .addButton((button) => button.setButtonText("Sync now").setDisabled(!cloud.enabled).onClick(async () => {
+        button.setDisabled(true);
+        try { await cloud.syncNow(); } catch (error) { new Notice(error instanceof Error ? error.message : String(error), 10000); }
+        finally { button.setDisabled(false); }
+      }));
+    const conflicts = el.createDiv();
+    // After every sync: a conflict can appear, and a choice in the review window settles one.
+    showConflicts = () => void cloud.conflicts().then((list) => {
+      conflicts.empty();
+      if (!list.length || !el.isConnected) return;
+      new Setting(conflicts).setName("Conflicts").setDesc(`${list.length === 1 ? "1 note was" : `${list.length} notes were`} changed in two places. Choose which version to keep.`)
+        .addButton((button) => button.setButtonText("Resolve now").setCta().onClick(() => new ConflictReviewModal(this.app, cloud).open()));
+    }, () => {});
+    if (cloud.enabled) showConflicts();
+    new Setting(el).setName("Time machine").setDesc("See your notes as they were at an earlier moment, and go back to it.")
+      .addButton((button) => button.setButtonText("Open time machine").onClick(() => new TimeMachineModal(this.app, cloud).open()));
+    this.cloudAccountStop = renderCloudAccount(this.app, el.createDiv(), cloud);
+  }
+
+  hide(): void {
+    this.cloudListener?.();
+    this.cloudListener = undefined;
+    this.cloudAccountStop?.();
+    this.cloudAccountStop = undefined;
   }
 }

@@ -72,10 +72,13 @@ import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DriveFileMove
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Label
 import androidx.compose.material.icons.filled.Notifications
@@ -249,6 +252,12 @@ private fun EditorScreen(
     // anders herlaadt de LaunchedEffect de notitie van schijf óver de
     // herstelde (ongesavede) tekst heen.
     var currentUri by rememberSaveable { mutableStateOf(initialUri?.toString()) }
+    var loadedBodyHash by rememberSaveable { mutableStateOf<String?>(null) }
+    DisposableEffect(currentUri) {
+        val uri = currentUri?.let(Uri::parse)
+        if (uri != null) CloudSyncManager.openEditor(uri)
+        onDispose { if (uri != null) CloudSyncManager.closeEditor(uri) }
+    }
     // Positie binnen de meegegeven kaartvolgorde; -1 = geen navigatie mogelijk.
     var navIndex by rememberSaveable { mutableStateOf(navUris.indexOf(initialUri?.toString())) }
     val navEnabled = navUris.size >= 2 && navIndex >= 0
@@ -290,6 +299,10 @@ private fun EditorScreen(
     var reminderDone by rememberSaveable { mutableStateOf(0) }
     var saving by remember { mutableStateOf(false) }
     var showArchiveDialog by remember { mutableStateOf(false) }
+    // Move/copy to a vault folder like the plugin: null = closed, true = copy, false = move.
+    var folderCopy by remember { mutableStateOf<Boolean?>(null) }
+    var vaultFolders by remember { mutableStateOf<List<String>?>(null) }
+    var showMarkdownHelp by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var editorMenuOpen by remember { mutableStateOf(false) }
     var labelsSheetOpen by remember { mutableStateOf(false) }
@@ -546,6 +559,7 @@ private fun EditorScreen(
                 attachmentUris = attachments
                 attachmentIndexLoaded = indexReady
                 val parsed = FrontmatterParser.parse(raw)
+                loadedBodyHash = CloudSyncEngine.hash(parsed.body.toByteArray(Charsets.UTF_8))
                 val cleanBody = parsed.body.removePrefix("\n")
                 val (textPart, embeds) = splitBodyAndEmbeds(cleanBody)
                 val (loadedTitle, loadedBody, loadedLevel) = splitHeadingTitle(textPart)
@@ -691,6 +705,7 @@ private fun EditorScreen(
             titleLevel = titleLevel,
             embedLines = embedLines.toList(),
             currentUri = currentUri,
+            expectedBodyHash = loadedBodyHash,
             color = color,
             pinned = pinned,
             tags = tags.toList(),
@@ -749,6 +764,7 @@ private fun EditorScreen(
                 titleLevel = titleLevel,
                 embedLines = embedLines.toList(),
                 currentUri = currentUri,
+                expectedBodyHash = loadedBodyHash,
                 color = color,
                 pinned = pinned,
                 tags = tags.toList(),
@@ -906,12 +922,33 @@ private fun EditorScreen(
                                         }
                                     },
                                 )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.md_help_button)) },
+                                    leadingIcon = { Icon(Icons.Filled.Info, null) },
+                                    onClick = { editorMenuOpen = false; showMarkdownHelp = true },
+                                )
                                 if (isExisting) {
                                     DropdownMenuItem(
                                         text = { Text(stringResource(R.string.action_archive)) },
                                         leadingIcon = { Icon(Icons.Filled.Archive, null) },
                                         onClick = { editorMenuOpen = false; showArchiveDialog = true },
                                     )
+                                    // Works on the saved file, so unsaved edits must be saved first.
+                                    for (copy in listOf(false, true)) {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(if (copy) R.string.action_copy_to_folder else R.string.action_move_to_folder)) },
+                                            leadingIcon = { Icon(if (copy) Icons.Filled.ContentCopy else Icons.Filled.DriveFileMove, null) },
+                                            enabled = loaded && loadError == null && !saving && !isDirty,
+                                            onClick = {
+                                                editorMenuOpen = false
+                                                folderCopy = copy
+                                                vaultFolders = null
+                                                scope.launch {
+                                                    vaultFolders = withContext(Dispatchers.IO) { Storage.listVaultFolders(context) }
+                                                }
+                                            },
+                                        )
+                                    }
                                     DropdownMenuItem(
                                         text = { Text(stringResource(R.string.action_delete)) },
                                         leadingIcon = { Icon(Icons.Filled.Delete, null) },
@@ -932,6 +969,7 @@ private fun EditorScreen(
                                     titleLevel = titleLevel,
                                     embedLines = embedLines.toList(),
                                     currentUri = currentUri,
+                                    expectedBodyHash = loadedBodyHash,
                                     color = color,
                                     pinned = pinned,
                                     tags = tags.toList(),
@@ -1182,6 +1220,36 @@ private fun EditorScreen(
         )
     }
 
+    if (showMarkdownHelp) MarkdownHelpDialog(onDismiss = { showMarkdownHelp = false })
+    folderCopy?.let { copy ->
+        FolderPickerDialog(
+            title = stringResource(if (copy) R.string.folder_picker_copy_title else R.string.folder_picker_move_title),
+            hint = if (copy) null else stringResource(R.string.folder_picker_move_hint),
+            folders = vaultFolders,
+            onPick = { folder ->
+                folderCopy = null
+                val uri = currentUri ?: return@FolderPickerDialog
+                scope.launch {
+                    val parsedUri = Uri.parse(uri)
+                    val res = withContext(Dispatchers.IO) {
+                        Storage.noteWriteMutex.withLock { Storage.moveNoteToVaultFolder(context, parsedUri, folder, copy) }
+                    }
+                    val shownFolder = folder.ifEmpty { context.getString(R.string.folder_root_label) }
+                    res.onSuccess {
+                        Toast.makeText(context, context.getString(if (copy) R.string.toast_copied_to else R.string.toast_moved_to, shownFolder), Toast.LENGTH_SHORT).show()
+                        if (!copy) {
+                            // The note left JotDrop, so its reminder goes with it.
+                            ReminderScheduler.cancel(context, parsedUri)
+                            onClose()
+                        }
+                    }.onFailure { err ->
+                        Toast.makeText(context, context.getString(R.string.toast_error, err.message ?: ""), Toast.LENGTH_LONG).show()
+                    }
+                }
+            },
+            onDismiss = { folderCopy = null },
+        )
+    }
     if (showArchiveDialog) {
         ConfirmDialog(
             title = stringResource(R.string.archive_title),
@@ -1624,9 +1692,10 @@ private fun EditorTagChip(tag: String, foreground: Color, onRemove: () -> Unit) 
     }
 }
 
+/** Also used from the note list; [current] is null when the selected notes have different colors. */
 @Composable
-private fun ColorPickerDialog(
-    current: NoteColor,
+internal fun ColorPickerDialog(
+    current: NoteColor?,
     dark: Boolean,
     onPick: (NoteColor) -> Unit,
     onDismiss: () -> Unit,
@@ -1644,11 +1713,13 @@ private fun ColorPickerDialog(
                         }
                     }
                 }
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    text = stringResource(R.string.color_label, stringResource(current.labelRes)),
-                    style = MaterialTheme.typography.bodySmall,
-                )
+                if (current != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = stringResource(R.string.color_label, stringResource(current.labelRes)),
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
             }
         },
         confirmButton = {
@@ -1797,6 +1868,7 @@ private fun attemptSaveAndClose(
     titleLevel: Int = 1,
     embedLines: List<String>,
     currentUri: String?,
+    expectedBodyHash: String?,
     color: NoteColor,
     pinned: Boolean,
     tags: List<String>,
@@ -1849,6 +1921,9 @@ private fun attemptSaveAndClose(
                     val rawCurrent = Storage.readNote(context, Uri.parse(currentUri))
                         .getOrElse { return@withContext Result.failure(it) }
                     val parsed = FrontmatterParser.parse(rawCurrent)
+                    if (expectedBodyHash == null || CloudSyncEngine.hash(parsed.body.toByteArray(Charsets.UTF_8)) != expectedBodyHash) {
+                        return@withContext Result.failure(IllegalStateException("This note changed since it was opened. Your draft was kept; compare the current note before saving."))
+                    }
                     val fmBlock = parsed.frontmatter
                     val newRaw = if (fmBlock.isEmpty()) combinedBody else fmBlock + combinedBody
                     // Pas eerst meta toe (geeft consistente frontmatter), dan write.

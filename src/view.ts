@@ -2,10 +2,12 @@ import { App, ItemView, Menu, Modal, Notice, TFile, WorkspaceLeaf, normalizePath
 import type JotDropPlugin from "./main";
 import { QuickCaptureModal, createNoteInFolder } from "./capture";
 import { AttachmentPreviewHint, EditNoteModal } from "./edit";
+import { LOGO_ICON } from "./logo";
 import { FolderPickerModal } from "./folderPicker";
 import { TagPickerModal, TagItem } from "./tagPicker";
 import { ConfirmModal } from "./confirmModal";
 import { VoiceMemoRecorder, RecordResult } from "./recorder";
+import { LocalOcr } from "./ocr";
 import {
   colorLabel,
   COLOR_NAMES,
@@ -25,6 +27,7 @@ import {
 } from "./metadata";
 import { discoverLabels, assignLabel, removeLabel, createLabel as managerCreateLabel, renameLabel as managerRenameLabel, deleteLabel as managerDeleteLabel, LabelInfo } from "./labelManager";
 import { voidAsync } from "./asyncUtil";
+import { ConflictReviewModal, NoteHistoryModal } from "./cloudReview";
 import { betweenRank, rankForManualOrder, respaceRanks } from "./manualOrder";
 import { t } from "./i18n";
 
@@ -44,6 +47,43 @@ const RENDER_CHUNK = 60;
 // Must match the flex gap of .jotdrop-grid-inner / .jotdrop-grid-col in styles.css.
 const GRID_GAP = 12;
 const SEARCH_DEBOUNCE_MS = 120;
+// Playful details from design A (Eric, 27 Oct), as on the website. A note made in the last
+// minute drops onto the board the first time it shows up, and gets a "Sealed" stamp once the
+// cloud holds it. Each moment lasts this long; a render meanwhile plays the rest of it.
+const FRESH_MS = 60_000;
+const DROP_MS = 420;
+const PIN_MS = 450;
+const STAMP_MS = 1800;
+
+// A paper card sits a little askew, always at the same angle for the same note.
+const TILT_ANGLES = [-0.6, -0.35, 0.3, 0.5, -0.15, 0.2];
+function tiltFor(path: string): string {
+  let hash = 0;
+  for (const char of path) hash = (hash * 31 + (char.codePointAt(0) ?? 0)) | 0;
+  return `${TILT_ANGLES[Math.abs(hash) % TILT_ANGLES.length]}deg`;
+}
+
+/** Puts the text after each checkbox in a span with a pen line, shown once the task is done. */
+function wrapTaskText(preview: HTMLElement): void {
+  for (const toggle of Array.from(preview.querySelectorAll(".jotdrop-checklist-toggle"))) {
+    const text = createSpan({ cls: "jotdrop-task-text" });
+    toggle.after(text);
+    let node = text.nextSibling;
+    while (node && !(node instanceof HTMLElement && node.hasClass("jotdrop-checklist-toggle"))) {
+      if (node instanceof Text && node.data.includes("\n")) {
+        // The task ends at its line end; the rest stays outside.
+        node.splitText(node.data.indexOf("\n"));
+        text.appendChild(node);
+        break;
+      }
+      const next = node.nextSibling;
+      text.appendChild(node);
+      node = next;
+    }
+    const strike = text.createSvg("svg", { cls: "jotdrop-strike", attr: { viewBox: "0 0 100 10", preserveAspectRatio: "none", "aria-hidden": "true" } });
+    strike.createSvg("path", { attr: { pathLength: "1", d: "M1 6 C 18 2, 30 8, 50 5 S 82 3, 99 6" } });
+  }
+}
 
 // Mirrors Storage.findEmbeddedImageBasenames / findEmbeddedAudioBasenames in
 // the Android app. Covers both Obsidian-style `![[name.ext]]` and standard
@@ -116,8 +156,9 @@ interface AttachmentResource {
   fallbacks: { resourcePath: string; vaultPath: string }[];
 }
 
+// Labels for one note, or for every chosen note: a ticked label is one they all have.
 class LabelPickerModal extends Modal {
-  private file: TFile;
+  private files: TFile[];
   private plugin: JotDropPlugin;
   private items: { name: string; isLocal: boolean }[] = [];
   private checked: Set<string> = new Set();
@@ -131,10 +172,10 @@ class LabelPickerModal extends Modal {
   private saving = false;
   private query = "";
 
-  constructor(app: App, plugin: JotDropPlugin, file: TFile) {
+  constructor(app: App, plugin: JotDropPlugin, files: TFile[]) {
     super(app);
     this.plugin = plugin;
-    this.file = file;
+    this.files = files;
   }
 
   async onOpen(): Promise<void> {
@@ -206,8 +247,8 @@ class LabelPickerModal extends Modal {
     }
     this.items = merged.sort((a, b) => a.name.localeCompare(b.name));
 
-    const meta = readMeta(this.app, this.file);
-    this.checked = new Set(meta.labels.map((l) => l.toLowerCase()));
+    const sets = this.files.map((file) => new Set(readMeta(this.app, file).labels.map((l) => l.toLowerCase())));
+    this.checked = new Set([...(sets[0] ?? [])].filter((name) => sets.every((set) => set.has(name))));
     this.originalChecked = new Set(this.checked);
 
     this.renderList();
@@ -305,10 +346,12 @@ class LabelPickerModal extends Modal {
         if (!this.originalChecked.has(name)) {
           const item = this.items.find((i) => i.name.toLowerCase() === name);
           if (item) {
-            try {
-              await assignLabel(this.app, this.file, item.name);
-            } catch (err) {
-              errorMsg = err instanceof Error ? err.message : String(err);
+            for (const file of this.files) {
+              try {
+                await assignLabel(this.app, file, item.name);
+              } catch (err) {
+                errorMsg = err instanceof Error ? err.message : String(err);
+              }
             }
           }
         }
@@ -317,10 +360,12 @@ class LabelPickerModal extends Modal {
         if (!this.checked.has(name)) {
           const item = this.items.find((i) => i.name.toLowerCase() === name);
           if (item) {
-            try {
-              await removeLabel(this.app, this.file, item.name);
-            } catch (err) {
-              errorMsg = err instanceof Error ? err.message : String(err);
+            for (const file of this.files) {
+              try {
+                await removeLabel(this.app, file, item.name);
+              } catch (err) {
+                errorMsg = err instanceof Error ? err.message : String(err);
+              }
             }
           }
         }
@@ -353,7 +398,18 @@ export class JotDropView extends ItemView {
   private selectionToolbarEl!: HTMLElement;
   private selectionCountEl!: HTMLElement;
   private selectAllBtn!: HTMLButtonElement;
+  private selectionColorBtn!: HTMLButtonElement;
+  private selectionLabelsBtn!: HTMLButtonElement;
+  private selectionArchiveBtn!: HTMLButtonElement;
+  private selectionDeleteBtn!: HTMLButtonElement;
   private labelBtnEl!: HTMLButtonElement;
+  private trashBarEl!: HTMLElement;
+  private conflictBarEl!: HTMLElement;
+  private cloudLineEl: HTMLElement | null = null;
+  private offCloud: (() => void) | null = null;
+  // Like the Android app: deleted notes go to <notes folder>/Trash and this
+  // view can show that folder instead of the notes.
+  private showTrash = false;
   private query = "";
   private selectedTags = new Set<string>();
   private selectedLabels = new Set<string>();
@@ -361,9 +417,11 @@ export class JotDropView extends ItemView {
   private selectionMode = false;
   private selectedPaths = new Set<string>();
   private lastCards: CardData[] = [];
+  private renderGeneration = 0;
   private lastFiltered: CardData[] = [];
   private micBtnEl: HTMLButtonElement | null = null;
   private recorder: VoiceMemoRecorder | null = null;
+  private ocr: LocalOcr;
   // Windowed rendering state. renderLimit survives re-renders (selection
   // toggles, external modifies) so the scroll position is not thrown away;
   // it resets to one chunk whenever the filter set changes.
@@ -377,10 +435,18 @@ export class JotDropView extends ItemView {
   // dragged; `dropIndicatorCard` is the card showing the insertion indicator.
   private dragInfo: { path: string; pinned: boolean } | null = null;
   private dropIndicatorCard: HTMLElement | null = null;
+  // Playful moments: every path shown so far, notes that just dropped in (until the cloud
+  // seals them), notes the cloud just sealed, and the pin pressed last.
+  private seenPaths = new Set<string>();
+  private hasRendered = false;
+  private freshAt = new Map<string, number>();
+  private sealedAt = new Map<string, number>();
+  private pinnedAt: { path: string; at: number } | null = null;
 
   constructor(leaf: WorkspaceLeaf, plugin: JotDropPlugin) {
     super(leaf);
     this.plugin = plugin;
+    this.ocr = new LocalOcr(this.app, plugin.manifest.dir ?? normalizePath(`${this.app.vault.configDir}/plugins/${plugin.manifest.id}`));
   }
 
   getViewType(): string {
@@ -392,7 +458,7 @@ export class JotDropView extends ItemView {
   }
 
   getIcon(): string {
-    return "sticky-note";
+    return LOGO_ICON;
   }
 
   async onOpen(): Promise<void> {
@@ -415,6 +481,19 @@ export class JotDropView extends ItemView {
     });
     setIcon(this.micBtnEl, "mic");
     this.micBtnEl.addEventListener("click", () => void this.toggleRecord());
+
+    // Like the Android main screen: a photo note, or a photo with its recognized text.
+    const photoBtn = this.normalToolbarEl.createEl("button", {
+      cls: "jotdrop-mic-btn",
+      attr: { "aria-label": t("action_photo"), "aria-haspopup": "true" },
+    });
+    setIcon(photoBtn, "camera");
+    photoBtn.addEventListener("click", (e) => {
+      const menu = new Menu();
+      menu.addItem((item) => item.setTitle(t("action_add_photo")).setIcon("image-plus").onClick(() => this.pickPhoto(false)));
+      menu.addItem((item) => item.setTitle(t("action_text_from_photo")).setIcon("scan-text").onClick(() => void this.startTextFromPhoto()));
+      menu.showAtMouseEvent(e);
+    });
 
     this.searchEl = this.normalToolbarEl.createEl("input", {
       cls: "jotdrop-search",
@@ -446,7 +525,16 @@ export class JotDropView extends ItemView {
     });
     this.buildSelectionToolbar();
 
+    this.cloudLineEl = root.createDiv({ cls: "jotdrop-cloud-line is-hidden" });
+    this.offCloud = this.plugin.cloud?.onChange(() => { this.renderCloudLine(); this.sealFresh(); }) ?? null;
+    this.renderCloudLine();
+
     this.filterBarEl = root.createDiv({ cls: "jotdrop-filter-bar" });
+    this.trashBarEl = root.createDiv({ cls: "jotdrop-trash-bar is-hidden" });
+    this.trashBarEl.createSpan({ text: t("trash_banner") });
+    const backBtn = this.trashBarEl.createEl("button", { text: t("trash_back") });
+    backBtn.addEventListener("click", () => this.setShowTrash(false));
+    this.conflictBarEl = root.createDiv({ cls: "jotdrop-trash-bar jotdrop-conflict-bar is-hidden" });
     this.gridEl = root.createDiv({ cls: "jotdrop-grid" });
     this.applyCardWidth();
 
@@ -501,19 +589,55 @@ export class JotDropView extends ItemView {
     setIcon(this.selectAllBtn, "check-check");
     this.selectAllBtn.addEventListener("click", () => this.selectAllFiltered());
 
-    const archiveBtn = bar.createEl("button", {
+    // Color and labels for every chosen note, like Android's selection bar.
+    this.selectionColorBtn = bar.createEl("button", {
       cls: "jotdrop-selection-action",
-      attr: { "aria-label": t("action_archive") },
+      attr: { "aria-label": t("action_color") },
     });
-    setIcon(archiveBtn, "archive");
-    archiveBtn.addEventListener("click", () => this.confirmBulkArchive());
+    setIcon(this.selectionColorBtn, "palette");
+    this.selectionColorBtn.addEventListener("click", (e) => this.showBulkColorMenu(e));
 
-    const deleteBtn = bar.createEl("button", {
-      cls: "jotdrop-selection-action is-destructive",
-      attr: { "aria-label": t("action_delete") },
+    this.selectionLabelsBtn = bar.createEl("button", {
+      cls: "jotdrop-selection-action",
+      attr: { "aria-label": t("label_picker_open") },
     });
-    setIcon(deleteBtn, "trash-2");
-    deleteBtn.addEventListener("click", () => this.confirmBulkDelete());
+    setIcon(this.selectionLabelsBtn, "tag");
+    this.selectionLabelsBtn.addEventListener("click", () => {
+      new LabelPickerModal(this.app, this.plugin, this.selectedFiles()).open();
+    });
+
+    // In the trash this button restores, like Android's selection bar.
+    this.selectionArchiveBtn = bar.createEl("button", { cls: "jotdrop-selection-action" });
+    this.selectionArchiveBtn.addEventListener("click", () => {
+      if (this.showTrash) void this.bulkRestore();
+      else this.confirmBulkArchive();
+    });
+
+    this.selectionDeleteBtn = bar.createEl("button", { cls: "jotdrop-selection-action is-destructive" });
+    setIcon(this.selectionDeleteBtn, "trash-2");
+    this.selectionDeleteBtn.addEventListener("click", () => this.confirmBulkDelete());
+    this.updateSelectionActions();
+  }
+
+  private updateSelectionActions(): void {
+    this.selectionColorBtn.toggleClass("is-hidden", this.showTrash);
+    this.selectionLabelsBtn.toggleClass("is-hidden", this.showTrash);
+    this.selectionArchiveBtn.setAttribute("aria-label", t(this.showTrash ? "action_restore" : "action_archive"));
+    setIcon(this.selectionArchiveBtn, this.showTrash ? "archive-restore" : "archive");
+    this.selectionDeleteBtn.setAttribute("aria-label", t(this.showTrash ? "action_delete_forever" : "action_move_to_trash"));
+  }
+
+  private setShowTrash(show: boolean): void {
+    if (this.selectionMode) this.exitSelection();
+    this.showTrash = show;
+    this.trashBarEl.toggleClass("is-hidden", !show);
+    this.updateSelectionActions();
+    this.renderLimit = RENDER_CHUNK;
+    void this.render();
+  }
+
+  private trashFolder(): string {
+    return normalizePath(`${this.plugin.settings.notesFolder}/Trash`);
   }
 
   private updateSelectionToolbar(): void {
@@ -695,6 +819,74 @@ export class JotDropView extends ItemView {
     }
   }
 
+  private async startTextFromPhoto(): Promise<void> {
+    if (await this.ocr.hasData()) { this.pickPhoto(true); return; }
+    new ConfirmModal(
+      this.app,
+      { title: t("ocr_download_title"), message: t("ocr_download_message"), confirmLabel: t("ocr_download_button") },
+      () => void this.downloadOcrData(),
+    ).open();
+  }
+
+  private async downloadOcrData(): Promise<void> {
+    const notice = new Notice(t("ocr_downloading"), 0);
+    try {
+      await this.ocr.download();
+      notice.hide();
+      this.pickPhoto(true);
+    } catch (err) {
+      notice.hide();
+      new Notice(t("ocr_download_failed", err instanceof Error ? err.message : String(err)));
+    }
+  }
+
+  private pickPhoto(withOcr: boolean): void {
+    // On a phone the system picker also offers the camera.
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/png,image/jpeg,image/webp,image/gif";
+    input.addEventListener("change", () => {
+      const file = input.files?.[0];
+      if (file) void this.savePhotoNote(file, withOcr);
+    });
+    input.click();
+  }
+
+  /** Same note as the Android app: `# Foto <stamp>`, the image embed, then any recognized text. */
+  private async savePhotoNote(file: File, withOcr: boolean): Promise<void> {
+    const extension = ({ "image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif" } as Record<string, string>)[file.type];
+    if (!extension) { new Notice(t("photo_invalid")); return; }
+    let text = "";
+    if (withOcr) {
+      const notice = new Notice(t("ocr_running", "0"), 0);
+      try {
+        text = await this.ocr.recognize(file, (progress) => notice.setMessage(t("ocr_running", String(Math.round(progress * 100)))));
+        if (!text) new Notice(t("ocr_no_text"));
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        new Notice(msg === "no-simd" ? t("ocr_no_simd") : msg === "data-missing" ? t("ocr_data_missing") : t("ocr_failed", msg));
+      } finally {
+        notice.hide();
+      }
+    }
+    const stamp = formatStamp(new Date());
+    const basename = `diexar-${stamp}.${extension}`;
+    const attachmentsDir = this.plugin.resolveAssetsFolder();
+    const notesFolder = this.plugin.settings.notesFolder;
+    const title = `Foto ${stamp}`;
+    try {
+      if (!(await this.app.vault.adapter.exists(attachmentsDir))) await this.app.vault.adapter.mkdir(attachmentsDir);
+      await this.app.vault.adapter.writeBinary(normalizePath(`${attachmentsDir}/${basename}`), await file.arrayBuffer());
+      if (!(await this.app.vault.adapter.exists(notesFolder))) await this.app.vault.adapter.mkdir(notesFolder);
+      const body = [`# ${title}`, "", `![[${basename}]]`, ...(text ? ["", text] : []), ""].join("\n");
+      await this.app.vault.create(normalizePath(`${notesFolder}/${stamp} ${title}.md`), body);
+      new Notice(t("photo_saved"));
+      void this.render();
+    } catch (err) {
+      new Notice(t("notice_save_failed", err instanceof Error ? err.message : String(err)));
+    }
+  }
+
   private confirmBulkArchive(): void {
     const count = this.selectedPaths.size;
     if (count === 0) return;
@@ -712,23 +904,65 @@ export class JotDropView extends ItemView {
   private confirmBulkDelete(): void {
     const count = this.selectedPaths.size;
     if (count === 0) return;
+    const forever = this.showTrash;
     new ConfirmModal(
       this.app,
       {
-        title: t("bulk_delete_title", String(count)),
-        message: t("bulk_delete_message"),
-        confirmLabel: t("action_delete"),
-        destructive: true,
+        title: t(forever ? "bulk_delete_title" : "bulk_trash_title", String(count)),
+        message: t(forever ? "bulk_delete_message" : "bulk_trash_message"),
+        confirmLabel: t(forever ? "action_delete_forever" : "action_move_to_trash"),
+        destructive: forever,
       },
-      () => void this.bulkDelete(),
+      () => void (forever ? this.bulkDelete() : this.bulkMove(this.trashFolder(), "notice_bulk_trashed")),
     ).open();
   }
 
-  private async bulkArchive(): Promise<void> {
+  private async bulkRestore(): Promise<void> {
+    await this.bulkMove(normalizePath(this.plugin.settings.notesFolder), "notice_bulk_restored");
+  }
+
+  private selectedFiles(): TFile[] {
+    return Array.from(this.selectedPaths)
+      .map((path) => this.app.vault.getAbstractFileByPath(path))
+      .filter((file): file is TFile => file instanceof TFile);
+  }
+
+  private showBulkColorMenu(event: MouseEvent): void {
+    const files = this.selectedFiles();
+    const colors = new Set(files.map((file) => readMeta(this.app, file).color));
+    const menu = new Menu();
+    for (const name of COLOR_NAMES) {
+      menu.addItem((i) =>
+        i
+          .setTitle(colorLabel(name))
+          .setIcon(colors.size === 1 && colors.has(name) ? "check" : "circle")
+          .onClick(async () => {
+            let fail = 0;
+            for (const file of files) {
+              try {
+                // In place, like the card's own color menu, so the grid does not re-sort.
+                this.plugin.suppressModifyOnce(file.path);
+                await updateMeta(this.app, file, { color: name });
+              } catch {
+                fail++;
+              }
+            }
+            for (const cardEl of Array.from(this.gridEl.querySelectorAll<HTMLElement>(".jotdrop-card"))) {
+              if (!cardEl.dataset.path || !this.selectedPaths.has(cardEl.dataset.path)) continue;
+              if (name === "default") delete cardEl.dataset.color;
+              else cardEl.dataset.color = name;
+            }
+            if (fail > 0) new Notice(t("notice_bulk_partial", String(files.length - fail), String(fail)));
+          }),
+      );
+    }
+    menu.showAtMouseEvent(event);
+  }
+
+  private async bulkMove(folder: string, successKey: string): Promise<void> {
     // Snapshot of paths — selection may change during the operation
     // (unlikely) and we want to work sequentially.
     const paths = Array.from(this.selectedPaths);
-    const archiveFolder = normalizePath(this.plugin.settings.archiveFolder);
     let ok = 0;
     let fail = 0;
     for (const path of paths) {
@@ -738,14 +972,18 @@ export class JotDropView extends ItemView {
         continue;
       }
       try {
-        await this.moveArchivedFile(file, archiveFolder);
+        await this.moveArchivedFile(file, folder);
         ok++;
       } catch {
         fail++;
       }
     }
-    this.reportBulkResult("notice_bulk_archived", ok, fail);
+    this.reportBulkResult(successKey, ok, fail);
     this.exitSelection();
+  }
+
+  private async bulkArchive(): Promise<void> {
+    await this.bulkMove(normalizePath(this.plugin.settings.archiveFolder), "notice_bulk_archived");
   }
 
   private async bulkDelete(): Promise<void> {
@@ -1055,7 +1293,29 @@ export class JotDropView extends ItemView {
     this.resizeObserver = null;
     if (this.resizeTimer != null) window.clearTimeout(this.resizeTimer);
     if (this.searchTimer != null) window.clearTimeout(this.searchTimer);
+    this.offCloud?.();
+    this.offCloud = null;
     this.contentEl.empty();
+  }
+
+  /** The account this vault syncs with stays in sight on the main view, not only in Settings. */
+  private renderCloudLine(): void {
+    const el = this.cloudLineEl, cloud = this.plugin.cloud;
+    if (!el) return;
+    el.empty();
+    const shown = !!cloud?.signedIn && !!cloud.email;
+    el.toggleClass("is-hidden", !shown);
+    if (!shown) return;
+    setIcon(el.createSpan({ cls: "jotdrop-cloud-line-icon" }), cloud.enabled ? "cloud" : "cloud-off");
+    el.createSpan({ cls: "jotdrop-cloud-line-email", text: cloud.email, attr: { title: `Logged in as ${cloud.email}` } });
+    el.createSpan({ cls: "jotdrop-cloud-line-status", text: cloud.enabled ? cloud.status : "Cloud sync is off." });
+    const open = el.createEl("button", { cls: "clickable-icon jotdrop-cloud-line-settings", attr: { "aria-label": "JotDrop Cloud settings" } });
+    setIcon(open, "settings");
+    open.addEventListener("click", () => {
+      const setting = (this.app as unknown as { setting: { open(): void; openTabById(id: string): void } }).setting;
+      setting.open();
+      setting.openTabById(this.plugin.manifest.id);
+    });
   }
 
   applyCardWidth(): void {
@@ -1064,16 +1324,35 @@ export class JotDropView extends ItemView {
     }
   }
 
+  /** Cloud notes changed in two places stay in sight until the user chooses a version. */
+  private async renderConflictBar(): Promise<void> {
+    const cloud = this.plugin.cloud;
+    const list = cloud?.enabled ? await cloud.conflicts().catch(() => []) : [];
+    this.conflictBarEl.empty();
+    this.conflictBarEl.toggleClass("is-hidden", !list.length);
+    if (!list.length) return;
+    this.conflictBarEl.createSpan({ text: `${list.length === 1 ? "1 note was" : `${list.length} notes were`} changed in two places. Both versions are kept.` });
+    this.conflictBarEl.createEl("button", { cls: "mod-cta", text: "Resolve now" }).addEventListener("click", () => new ConflictReviewModal(this.app, cloud).open());
+  }
+
   async render(): Promise<void> {
     if (!this.gridEl) return;
+    // Read the notes first and swap the grid in one go: a grid left empty while
+    // they are read drops the scroll position to the top (a tick, every sync).
+    // A newer render that started meanwhile wins, so cards are never doubled.
+    const generation = ++this.renderGeneration;
+    void this.renderConflictBar();
+    const cards = await this.collectCards();
+    await this.refreshLabels();
+    if (generation !== this.renderGeneration) return;
+    // Measuring the emptied grid (column count) also resets the scroll; it is put back below, before anything is drawn.
+    const scrollTop = this.contentEl.scrollTop;
     this.applyCardWidth();
     this.sentinelObserver?.disconnect();
     this.sentinelObserver = null;
     this.gridEl.empty();
 
-    const cards = await this.collectCards();
     this.lastCards = cards;
-    await this.refreshLabels();
     this.renderFilterBar(cards);
 
     // Drop selected tags that no longer exist after note mutations, so the
@@ -1098,9 +1377,17 @@ export class JotDropView extends ItemView {
 
     if (filtered.length === 0) {
       const empty = this.gridEl.createDiv({ cls: "jotdrop-empty" });
-      if (cards.length === 0) {
+      if (cards.length === 0 && this.showTrash) {
+        empty.createEl("h3", { text: t("trash_empty") });
+      } else if (cards.length === 0) {
         empty.createEl("h3", { text: t("empty_no_notes_title") });
         empty.createEl("p", { text: t("empty_no_notes_desc") });
+        const hint = empty.createEl("p", { cls: "jotdrop-empty-hint" });
+        // A drawn arrow up to the New note button.
+        const arrow = hint.createSvg("svg", { attr: { viewBox: "0 0 64 44", "aria-hidden": "true" } });
+        arrow.createSvg("path", { attr: { d: "M58 38C40 40 20 32 12 8" } });
+        arrow.createSvg("path", { attr: { d: "M5 17l7-9 8 8" } });
+        hint.appendText(t("empty_hint_new_note", t("action_new_note")));
         const appHint = empty.createEl("p", { cls: "jotdrop-empty-app-hint" });
         appHint.appendText(t("empty_no_notes_app_hint") + " ");
         appHint.createEl("a", {
@@ -1120,6 +1407,7 @@ export class JotDropView extends ItemView {
         });
         clearBtn.addEventListener("click", () => this.clearAllFilters());
       }
+      this.hasRendered = true;
       return;
     }
 
@@ -1183,6 +1471,8 @@ export class JotDropView extends ItemView {
     };
 
     renderUpTo(this.renderLimit);
+    this.contentEl.scrollTop = scrollTop;
+    this.hasRendered = true;
 
     if (renderedCount < ordered.length) {
       const sentinel = this.gridEl.createDiv({ cls: "jotdrop-grid-sentinel" });
@@ -1424,6 +1714,13 @@ export class JotDropView extends ItemView {
             void this.promptCreateLabel();
           }),
       );
+      menu.addSeparator();
+      menu.addItem((i) =>
+        i
+          .setTitle(t("nav_trash"))
+          .setIcon(this.showTrash ? "check" : "trash-2")
+          .onClick(() => this.setShowTrash(!this.showTrash)),
+      );
       menu.showAtMouseEvent(event);
     });
   }
@@ -1558,11 +1855,11 @@ export class JotDropView extends ItemView {
   }
 
   private promptAssignLabel(file: TFile): void {
-    new LabelPickerModal(this.app, this.plugin, file).open();
+    new LabelPickerModal(this.app, this.plugin, [file]).open();
   }
 
   private promptRemoveLabel(file: TFile): void {
-    new LabelPickerModal(this.app, this.plugin, file).open();
+    new LabelPickerModal(this.app, this.plugin, [file]).open();
   }
 
   private hasLabelSelected(name: string): boolean {
@@ -1590,12 +1887,13 @@ export class JotDropView extends ItemView {
     const archive = normalizePath(this.plugin.settings.archiveFolder);
     const showArchived = this.plugin.settings.showArchived;
 
+    const trashPath = this.trashFolder();
     const all = this.app.vault.getMarkdownFiles().filter((f) => {
+      if (this.showTrash) return isUnder(f.path, trashPath);
       const inArchive = isUnder(f.path, archive);
       const inFolder = isUnder(f.path, folder);
       if (!inFolder) return false;
       if (inArchive && !showArchived) return false;
-      const trashPath = normalizePath(`${folder}/Trash`);
       if (isUnder(f.path, trashPath)) return false;
       return true;
     });
@@ -1660,11 +1958,24 @@ export class JotDropView extends ItemView {
     if (meta.color !== "default") {
       cardEl.dataset.color = meta.color;
     }
+    cardEl.style.setProperty("--jotdrop-tilt", tiltFor(file.path));
+    // Only the paper is askew: turned text goes soft, so the words on it stay straight and sharp.
+    cardEl.createSpan({ cls: "jotdrop-card-paper" });
+    // The tape of a pinned note lies on top of everything, also over a cover photo, and turns with the paper.
+    cardEl.createSpan({ cls: "jotdrop-card-tape" });
+    const now = Date.now();
+    if (this.hasRendered && !this.seenPaths.has(file.path) && now - file.stat.ctime < FRESH_MS) this.freshAt.set(file.path, now);
+    this.seenPaths.add(file.path);
+    this.playMoment(cardEl, "is-dropped", this.freshAt.get(file.path), DROP_MS);
+    if (this.pinnedAt?.path === file.path) this.playMoment(cardEl, "just-pinned", this.pinnedAt.at, PIN_MS);
+    const sealed = now - (this.sealedAt.get(file.path) ?? -Infinity);
+    if (sealed < STAMP_MS) cardEl.appendChild(this.sealedStamp(sealed));
+    else this.sealedAt.delete(file.path);
 
     // Cards are draggable only in manual sort mode. This is the "clearly
     // require manual" path: drag/reorder is unavailable until the user selects
     // "Manual" in settings, so card clicks/checklist/selection stay untouched.
-    if (this.plugin.settings.sortMode === "manual" && !this.selectionMode) {
+    if (this.plugin.settings.sortMode === "manual" && !this.selectionMode && !this.showTrash) {
       cardEl.draggable = true;
       this.attachDragHandlers(cardEl, card);
     }
@@ -1680,20 +1991,23 @@ export class JotDropView extends ItemView {
     // Pinning is a primary card action: keep it directly available instead of
     // hiding it in the hover-only action row. The icon changes shape as well as
     // state, so the distinction does not rely on colour.
-    const quickPinBtn = cardEl.createEl("button", {
-      cls: `jotdrop-card-quick-pin${meta.pinned ? " is-active" : ""}`,
-      attr: {
-        "aria-label": meta.pinned ? t("action_unpin") : t("action_pin"),
-        "aria-pressed": String(meta.pinned),
-      },
-    });
-    setIcon(quickPinBtn, meta.pinned ? "pin-off" : "pin");
-    quickPinBtn.addEventListener("click", voidAsync(async (e) => {
-      e.stopPropagation();
-      await updateMeta(this.app, file, { pinned: !meta.pinned });
-      this.plugin.refreshViews();
-    }));
-    quickPinBtn.addEventListener("pointerdown", (e) => e.stopPropagation());
+    if (!this.showTrash) {
+      const quickPinBtn = cardEl.createEl("button", {
+        cls: `jotdrop-card-quick-pin${meta.pinned ? " is-active" : ""}`,
+        attr: {
+          "aria-label": meta.pinned ? t("action_unpin") : t("action_pin"),
+          "aria-pressed": String(meta.pinned),
+        },
+      });
+      setIcon(quickPinBtn, meta.pinned ? "pin-off" : "pin");
+      quickPinBtn.addEventListener("click", voidAsync(async (e) => {
+        e.stopPropagation();
+        this.pinnedAt = { path: file.path, at: Date.now() };
+        await updateMeta(this.app, file, { pinned: !meta.pinned });
+        this.plugin.refreshViews();
+      }));
+      quickPinBtn.addEventListener("pointerdown", (e) => e.stopPropagation());
+    }
 
     const titleText = extractTitle(content, file.basename);
     const previewText = extractPreview(content);
@@ -1777,9 +2091,22 @@ export class JotDropView extends ItemView {
       }
     }
 
+    // A cloud conflict copy says what it is and opens the comparison right here.
+    if (file.name.includes(".cloud-conflict-") && this.plugin.cloud?.enabled) {
+      const conflict = body.createDiv({ cls: "jotdrop-card-conflict" });
+      conflict.createEl("p", { text: "Changed in two places: this is the other version." });
+      const review = conflict.createEl("button", { cls: "mod-cta", text: "Resolve now" });
+      review.addEventListener("click", (e) => {
+        e.stopPropagation();
+        if (this.selectionMode) { this.toggleSelect(file.path); return; }
+        new ConflictReviewModal(this.app, this.plugin.cloud, file.path).open();
+      });
+    }
+
     if (previewText) {
       const preview = body.createDiv({ cls: "jotdrop-card-preview" });
       renderInlinePreview(preview, previewText);
+      wrapTaskText(preview);
       preview.addEventListener("click", (e) => {
         if (this.selectionMode) {
           e.stopPropagation();
@@ -1829,14 +2156,51 @@ export class JotDropView extends ItemView {
       }
     }
 
-    if (cardTags(meta).length > 0) {
+    if (meta.labels.length > 0 || cardTags(meta).length > 0) {
       const tagWrap = body.createDiv({ cls: "jotdrop-card-tags" });
+      // Label icon in front: a label differs from a #tag by shape, not by color.
+      for (const label of meta.labels) {
+        const chip = tagWrap.createSpan({ cls: "jotdrop-card-tag jotdrop-card-label" });
+        setIcon(chip.createSpan({ cls: "jotdrop-card-label-icon" }), "tag");
+        chip.createSpan({ text: label });
+      }
       for (const tag of cardTags(meta)) {
         tagWrap.createSpan({ cls: "jotdrop-card-tag", text: `#${tag}` });
       }
     }
 
     const actions = cardEl.createDiv({ cls: "jotdrop-card-actions" });
+
+    if (this.showTrash) {
+      const restoreBtn = actions.createEl("button", {
+        cls: "jotdrop-card-action",
+        attr: { "aria-label": t("action_restore") },
+      });
+      setIcon(restoreBtn, "archive-restore");
+      restoreBtn.addEventListener("click", voidAsync(async (e) => {
+        e.stopPropagation();
+        await this.moveToFolder(file, normalizePath(this.plugin.settings.notesFolder), "notice_restored");
+      }));
+      const foreverBtn = actions.createEl("button", {
+        cls: "jotdrop-card-action is-destructive",
+        attr: { "aria-label": t("action_delete_forever") },
+      });
+      setIcon(foreverBtn, "trash-2");
+      foreverBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        new ConfirmModal(
+          this.app,
+          {
+            title: t("delete_forever_title", file.basename),
+            message: t("bulk_delete_message"),
+            confirmLabel: t("action_delete_forever"),
+            destructive: true,
+          },
+          () => void this.deleteForever(file),
+        ).open();
+      });
+      return;
+    }
 
     const colorBtn = actions.createEl("button", {
       cls: "jotdrop-card-action",
@@ -1908,17 +2272,21 @@ export class JotDropView extends ItemView {
             ).open();
           })
       );
+      if (this.plugin.cloud?.enabled && !file.name.includes(".cloud-conflict-")) {
+        menu.addItem((i) =>
+          i
+            .setTitle("Version history")
+            .setIcon("history")
+            .onClick(() => new NoteHistoryModal(this.app, this.plugin.cloud, file.path).open())
+        );
+      }
+      // Attachments stay: the note in Trash still shows them and can come back.
       menu.addItem((i) =>
         i
-          .setTitle(t("action_delete"))
+          .setTitle(t("action_move_to_trash"))
           .setIcon("trash-2")
           .onClick(async () => {
-            const stillReferenced = await this.collectReferencedAttachmentBasenames(
-              new Set([file.path]),
-            );
-            await this.trashNoteWithOrphanedAttachments(file, stillReferenced);
-            new Notice(t("notice_deleted", file.basename));
-            this.plugin.refreshViews();
+            await this.moveToFolder(file, this.trashFolder(), "notice_trashed");
           })
       );
       menu.addSeparator();
@@ -1932,6 +2300,37 @@ export class JotDropView extends ItemView {
     });
   }
 
+  /** Plays a moment that began at `at`, or the rest of it when the card was rebuilt meanwhile. */
+  private playMoment(el: HTMLElement, cls: string, at: number | undefined, ms: number): void {
+    const elapsed = Date.now() - (at ?? -Infinity);
+    if (elapsed >= ms) return;
+    el.addClass(cls);
+    el.style.setProperty("--jotdrop-since", `-${elapsed}ms`);
+  }
+
+  private sealedStamp(elapsed: number): HTMLElement {
+    const stamp = createSpan({ cls: "jotdrop-card-stamp", attr: { "aria-hidden": "true" } });
+    setIcon(stamp.createSpan({ cls: "jotdrop-card-stamp-icon" }), "lock");
+    stamp.appendText(t("stamp_sealed"));
+    stamp.style.setProperty("--jotdrop-since", `-${elapsed}ms`);
+    stamp.addEventListener("animationend", () => stamp.remove());
+    return stamp;
+  }
+
+  /** The "Sealed" stamp, never before the cloud holds a note made here just now. */
+  private sealFresh(): void {
+    const uploaded = this.plugin.cloud?.lastUploaded;
+    if (!uploaded?.size || !this.gridEl) return;
+    const now = Date.now();
+    for (const [path, at] of this.freshAt) {
+      if (now - at > FRESH_MS) this.freshAt.delete(path);
+      if (!uploaded.has(path) || !this.freshAt.delete(path)) continue;
+      this.sealedAt.set(path, now);
+      const card = Array.from(this.gridEl.querySelectorAll<HTMLElement>(".jotdrop-card")).find((el) => el.dataset.path === path);
+      card?.appendChild(this.sealedStamp(0));
+    }
+  }
+
   private async toggleChecklist(file: TFile, index: number, toggle: HTMLElement): Promise<void> {
     if (!Number.isInteger(index) || index < 0) return;
     try {
@@ -1939,6 +2338,9 @@ export class JotDropView extends ItemView {
       this.plugin.suppressModifyOnce(file.path);
       await this.app.vault.process(file, (content) => toggleChecklistItem(content, index));
       toggle.setText(wasChecked ? "☐" : "☑");
+      toggle.setAttribute("aria-checked", String(!wasChecked));
+      // The pen draws its line through a task just ticked.
+      toggle.nextElementSibling?.toggleClass("just-struck", !wasChecked);
       toggle.setAttribute(
         "aria-label",
         t(wasChecked ? "checklist_mark_checked" : "checklist_mark_unchecked"),
@@ -2140,9 +2542,22 @@ export class JotDropView extends ItemView {
   private async toggleArchive(file: TFile, currentlyArchived: boolean): Promise<void> {
     const archiveFolder = normalizePath(this.plugin.settings.archiveFolder);
     const notesFolder = normalizePath(this.plugin.settings.notesFolder);
+    await this.moveToFolder(file, currentlyArchived ? notesFolder : archiveFolder,
+      currentlyArchived ? "notice_unarchived" : "notice_archived");
+  }
+
+  private async deleteForever(file: TFile): Promise<void> {
+    const stillReferenced = await this.collectReferencedAttachmentBasenames(new Set([file.path]));
+    await this.trashNoteWithOrphanedAttachments(file, stillReferenced);
+    new Notice(t("notice_deleted", file.basename));
+    this.plugin.refreshViews();
+  }
+
+  private async moveToFolder(file: TFile, folder: string, noticeKey: string): Promise<void> {
+    const name = file.basename;
     try {
-      await this.moveArchivedFile(file, currentlyArchived ? notesFolder : archiveFolder);
-      new Notice(t(currentlyArchived ? "notice_unarchived" : "notice_archived", file.basename));
+      await this.moveArchivedFile(file, folder);
+      new Notice(t(noticeKey, name));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       new Notice(t("notice_error", message));
@@ -2269,7 +2684,9 @@ function extractPreview(content: string): string {
     .replace(/!\[[^\]]*\]\([^)]+\)/g, "")
     .replace(/<!--\s*(?:jotdrop|diexar)-preview:.*?-->/g, "")
     .replace(/^\s{0,3}#+\s+.*$/gm, "")
-    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/g, "$1")
+    // A card shows no Markdown signs (Eric): any link keeps only its label.
+    .replace(/\[([^\]\n]+)\]\(([^)\n]+)\)/g, "$1")
+    .replace(/\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\]/g, (_link: string, name: string, alias?: string) => alias || name.replace(/#.*$/, ""))
     .replace(/https?:\/\/\S+/g, "");
   const lines = plainPreviewText(stripped)
     .split("\n")

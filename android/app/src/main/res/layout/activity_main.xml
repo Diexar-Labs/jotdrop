@@ -209,6 +209,14 @@
             android:layout_marginTop="8dp"
             android:text="@string/reminder_sound_settings" />
 
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/cloudButton"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:text="JotDrop Cloud" />
+
         <View
             android:layout_width="match_parent"
             android:layout_height="1dp"

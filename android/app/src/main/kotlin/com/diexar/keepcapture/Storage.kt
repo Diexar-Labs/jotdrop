@@ -39,8 +39,8 @@ object Storage {
      * een nieuwere overschrijven (getypte tekst kwijt na een tag-tik).
      */
     val noteWriteMutex = Mutex()
-    // Eén journaal voor alle notitie-writes; dit slot houdt ze daarom na elkaar.
-    private val noteJournalLock = Any()
+    // ponytail: one synchronous SAF lock; use per-document locks if capture throughput needs it.
+    val cloudFileLock = Any()
 
     private const val KEY_VAULT_URI = "vault_tree_uri"
     private const val KEY_SUBFOLDER = "subfolder"
@@ -284,6 +284,7 @@ object Storage {
         sourceFile: java.io.File,
         durationMs: Long,
     ): Result<String> {
+        synchronized(cloudFileLock) {
         val attachmentsFolder = getOrCreateAttachmentsFolder(context).getOrElse {
             return Result.failure(it)
         }
@@ -318,6 +319,7 @@ object Storage {
             sourceFile.delete()
         }
         return result
+        }
     }
 
     /** Formatteert milliseconden als `M:SS`. */
@@ -335,6 +337,7 @@ object Storage {
      * bestaande notitie).
      */
     fun copyImageToAttachments(context: Context, imageUri: Uri): Result<String> {
+        synchronized(cloudFileLock) {
         val attachmentsFolder = getOrCreateAttachmentsFolder(context).getOrElse {
             return Result.failure(it)
         }
@@ -379,9 +382,11 @@ object Storage {
             return Result.failure(e)
         }
         return Result.success(basename)
+        }
     }
 
     fun createNote(context: Context, content: String): Result<Pair<String, Uri>> {
+        synchronized(cloudFileLock) {
         // Eerst herstellen: anders bleef bij een vastzittend journaal een leeg bestand achter.
         if (!recoverNoteJournals(context)) {
             return Result.failure(IllegalStateException(context.getString(R.string.error_interrupted_save)))
@@ -397,11 +402,13 @@ object Storage {
                 newFile.delete()
                 return Result.failure(IllegalStateException("Kan niet schrijven naar bestand."))
             }
+            CloudSyncManager.request(context)
             Result.success((newFile.name ?: filename) to newFile.uri)
         } catch (e: Exception) {
             // Staat het journaal nog, dan maakt het herstel deze notitie later af.
             if (!noteJournal(context).baseFile.exists()) newFile.delete()
             Result.failure(e)
+        }
         }
     }
 
@@ -570,7 +577,7 @@ object Storage {
         val parked = parkedJournal(context, uri)
         if (parked.baseFile.exists()) {
             // Deze notitie zelf wel meteen opnieuw proberen (Try again), los van de wachttijd voor de rest.
-            synchronized(noteJournalLock) { recoverJournal(context, parked) }
+            synchronized(cloudFileLock) { recoverJournal(context, parked) }
             if (parked.baseFile.exists()) {
                 return Result.failure(ParkedSaveException(context.getString(R.string.error_parked_save, noteName(uri))))
             }
@@ -586,13 +593,16 @@ object Storage {
     }
 
     fun updateNote(context: Context, uri: Uri, content: String): Result<Unit> {
+        synchronized(cloudFileLock) {
         return try {
             if (!writeNoteBytes(context, uri, content.toByteArray(Charsets.UTF_8))) {
                 return Result.failure(IllegalStateException("Kan niet schrijven naar bestand."))
             }
+            CloudSyncManager.request(context)
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
+        }
         }
     }
 
@@ -604,7 +614,7 @@ object Storage {
      */
     private fun noteJournal(context: Context) = AtomicFile(File(context.noBackupFilesDir, "note-write.journal"))
 
-    private fun writeNoteBytes(context: Context, uri: Uri, bytes: ByteArray): Boolean = synchronized(noteJournalLock) {
+    private fun writeNoteBytes(context: Context, uri: Uri, bytes: ByteArray): Boolean {
         check(recoverNoteJournals(context)) { context.getString(R.string.error_interrupted_save) }
         val journal = noteJournal(context)
         val output = journal.startWrite()
@@ -630,7 +640,7 @@ object Storage {
         journal.delete()
         // Een ouder geparkeerd journaal mag deze nieuwere inhoud later niet meer aanvullen.
         if (written) parkedJournal(context, uri).delete()
-        written
+        return written
     }
 
     private fun writeSynced(context: Context, uri: Uri, bytes: ByteArray): Boolean {
@@ -658,7 +668,7 @@ object Storage {
         val parkedDir = File(context.noBackupFilesDir, PARKED_JOURNAL_DIR)
         val retryParked = SystemClock.elapsedRealtime() >= parkedRetryAt
         if (!journal.baseFile.exists() && (!retryParked || parkedDir.list().isNullOrEmpty())) return true
-        synchronized(noteJournalLock) {
+        synchronized(cloudFileLock) {
         // Vóór het actieve journaal opgehaald: een net geparkeerde notitie krijgt pas bij een volgende ronde een nieuwe poging.
         val parked = if (retryParked) parkedJournalFiles(context) else emptyList()
         var recovered = !journal.baseFile.exists() || recoverJournal(context, journal)
@@ -670,6 +680,25 @@ object Storage {
         }
         return recovered
         }
+    }
+
+    /** Voor cloud-sync: ook een geparkeerde notitie kan half zijn en mag niet worden geüpload. */
+    fun recoverInterruptedNoteWrite(context: Context): Boolean {
+        // Sync draait zelden en zegt "probeer opnieuw": dan ook echt opnieuw proberen, zonder wachttijd.
+        parkedRetryAt = 0L
+        return recoverNoteJournals(context) && parkedJournalFiles(context).isEmpty()
+    }
+
+    /** Melding bij een geblokkeerde sync: noemt de geparkeerde notitie, zodat duidelijk is wat te openen. */
+    fun interruptedSaveMessage(context: Context): String {
+        // Het actieve journaal blokkeert alle notities; dan helpt het openen van één geparkeerde notitie niet.
+        if (noteJournal(context).baseFile.exists()) return context.getString(R.string.error_interrupted_save)
+        val parked = parkedJournalFiles(context).firstNotNullOfOrNull { file ->
+            runCatching { parseJournal(AtomicFile(file).readFully()) }.getOrNull()?.first
+        } ?: return context.getString(R.string.error_interrupted_save)
+        // Zonder bestand is er geen kaart om te openen; dan helpt alleen de map weer bereikbaar maken.
+        val exists = runCatching { DocumentFile.fromSingleUri(context, parked)?.exists() == true }.getOrDefault(false)
+        return context.getString(if (exists) R.string.error_parked_save else R.string.error_parked_save_missing, noteName(parked))
     }
 
     /** Readnote weigert een notitie met een geparkeerde, nog niet afgemaakte opslag. */
@@ -688,7 +717,7 @@ object Storage {
      * die laat het journaal vervallen als de notitie intussen elders is gewijzigd.
      */
     fun keepParkedSaveAsCopy(context: Context, uri: Uri): Result<ParkedResolution> {
-        synchronized(noteJournalLock) {
+        synchronized(cloudFileLock) {
         val parked = parkedJournal(context, uri)
         val data = try {
             parked.readFully()
@@ -704,13 +733,15 @@ object Storage {
             rescueNote(context, uri, bytes) ?: return Result.failure(IllegalStateException(context.getString(R.string.error_parked_copy)))
         }
         parked.delete()
-        return Result.success(if (name == null) ParkedResolution.Released else ParkedResolution.Copied(name))
+        if (name == null) return Result.success(ParkedResolution.Released)
+        CloudSyncManager.request(context)
+        return Result.success(ParkedResolution.Copied(name))
         }
     }
 
     /** Uitweg voor een geparkeerde notitie: verwerpt de onvolledige wijziging; de notitie blijft zoals ze nu is. */
     fun discardParkedSave(context: Context, uri: Uri) {
-        synchronized(noteJournalLock) { parkedJournal(context, uri).delete() }
+        synchronized(cloudFileLock) { parkedJournal(context, uri).delete() }
     }
 
     private fun parkedJournalFiles(context: Context): List<File> =
@@ -854,6 +885,14 @@ object Storage {
         return updateNote(context, uri, newContent)
     }
 
+    /** Zet alleen de kleur van een bestaande notitie (kleur kiezen vanaf de kaart). */
+    fun setNoteColor(context: Context, uri: Uri, color: NoteColor): Result<Unit> {
+        val current = readNote(context, uri).getOrElse { return Result.failure(it) }
+        val meta = FrontmatterParser.parse(current).meta
+        if (meta.color == color) return Result.success(Unit)
+        return updateNote(context, uri, FrontmatterWriter.apply(current, meta.copy(color = color)))
+    }
+
     /** Zet alleen de handmatige `order`-waarde op een bestaande notitie. */
     fun setNoteOrder(context: Context, uri: Uri, order: Double): Result<Unit> {
         val current = readNote(context, uri).getOrElse { return Result.failure(it) }
@@ -913,6 +952,7 @@ object Storage {
     }
 
     fun deleteNote(context: Context, uri: Uri): Result<Unit> {
+        synchronized(cloudFileLock) {
         return try {
             // Delete the note first; a failed delete must never strip its attachments.
             // OG-thumbnails worden door OgFetcher gehasht op URL en kunnen dus gedeeld
@@ -944,9 +984,11 @@ object Storage {
                 }
             }
 
+            CloudSyncManager.request(context)
             Result.success(Unit)
         } catch (e: Exception) {
             Result.failure(e)
+        }
         }
     }
 
@@ -1216,7 +1258,20 @@ object Storage {
      * Verifies target output exists and matches source content BEFORE deleting
      * the source. If verification fails, source is retained and failure returned.
      */
-    private fun moveNoteToFolder(context: Context, uri: Uri, folder: NoteFolder): Result<Unit> {
+    private fun moveNoteToFolder(context: Context, uri: Uri, folder: NoteFolder): Result<Unit> =
+        moveNoteToPath(context, uri, folderPath(context, folder), keepSource = false, unique = true)
+
+    /**
+     * Verplaats of kopieer een notitie naar een gewone map in de vault, zoals
+     * "Move to folder"/"Copy to folder" in de plugin. Bestaat er daar al een
+     * bestand met dezelfde naam, dan gebeurt er niets (pariteit met de plugin).
+     * Bijlagen blijven waar ze zijn; de links werken in dezelfde vault.
+     */
+    fun moveNoteToVaultFolder(context: Context, uri: Uri, folderPath: String, copy: Boolean): Result<Unit> =
+        moveNoteToPath(context, uri, folderPath, keepSource = copy, unique = false)
+
+    private fun moveNoteToPath(context: Context, uri: Uri, folderPath: String, keepSource: Boolean, unique: Boolean): Result<Unit> {
+        synchronized(cloudFileLock) {
         val content = readNote(context, uri).getOrElse { return Result.failure(it) }
 
         val vaultUri = getVaultUri(context)
@@ -1224,7 +1279,6 @@ object Storage {
         val tree = DocumentFile.fromTreeUri(context, vaultUri)
             ?: return Result.failure(IllegalStateException("Vault-map kan niet worden geopend."))
 
-        val folderPath = folderPath(context, folder)
         val targetFolder = findOrCreateSubfolder(context, tree, folderPath)
             ?: return Result.failure(IllegalStateException("Doelmap kon niet worden aangemaakt."))
 
@@ -1232,7 +1286,10 @@ object Storage {
             ?: return Result.failure(IllegalStateException("Bronbestand niet gevonden."))
         val filename = sourceDoc.name ?: "${System.currentTimeMillis()}.md"
 
-        val targetName = uniqueFilename(targetFolder, filename)
+        if (!unique && targetFolder.findFile(filename) != null) {
+            return Result.failure(IllegalStateException(context.getString(R.string.error_target_exists)))
+        }
+        val targetName = if (unique) uniqueFilename(targetFolder, filename) else filename
         val newFile = targetFolder.createFile("text/markdown", targetName)
             ?: return Result.failure(IllegalStateException("Bestand kon niet worden aangemaakt in doelmap."))
 
@@ -1251,14 +1308,18 @@ object Storage {
                 return Result.failure(IllegalStateException("Doelbestand verificatie mislukt."))
             }
 
-            if (!sourceDoc.delete()) {
-                newFile.delete()
-                return Result.failure(IllegalStateException("Origineel bestand kon niet worden verwijderd."))
+            if (!keepSource) {
+                if (!sourceDoc.delete()) {
+                    newFile.delete()
+                    return Result.failure(IllegalStateException("Origineel bestand kon niet worden verwijderd."))
+                }
             }
+            CloudSyncManager.request(context)
             Result.success(Unit)
         } catch (e: Exception) {
             newFile.delete()
             Result.failure(e)
+        }
         }
     }
 
@@ -1406,6 +1467,53 @@ object Storage {
         } catch (_: Exception) { null }
     }
 
+    /**
+     * Alle mappen in de vault als paden vanaf de vaultroot ("" = de vault zelf),
+     * zonder verborgen mappen (.obsidian, .attachments, .trash). Voor de mapkeuze
+     * van "Move to folder"/"Copy to folder", zoals de plugin.
+     */
+    fun listVaultFolders(context: Context): List<String> {
+        val vaultUri = getVaultUri(context) ?: return emptyList()
+        val tree = DocumentFile.fromTreeUri(context, vaultUri) ?: return emptyList()
+        val out = mutableListOf("")
+        val queue = ArrayDeque(listOf("" to tree.uri))
+        while (queue.isNotEmpty() && out.size < MAX_VAULT_FOLDERS) {
+            val (path, uri) = queue.removeFirst()
+            for ((name, child) in queryDirectories(context, vaultUri, uri)) {
+                if (name.startsWith(".")) continue
+                val childPath = if (path.isEmpty()) name else "$path/$name"
+                out.add(childPath)
+                queue.add(childPath to child)
+            }
+        }
+        return out.sorted()
+    }
+
+    private const val MAX_VAULT_FOLDERS = 2000
+
+    private fun queryDirectories(context: Context, treeUri: Uri, parentUri: Uri): List<Pair<String, Uri>> {
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, DocumentsContract.getDocumentId(parentUri))
+        val projection = arrayOf(
+            DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            DocumentsContract.Document.COLUMN_MIME_TYPE,
+        )
+        val out = mutableListOf<Pair<String, Uri>>()
+        try {
+            context.contentResolver.query(childrenUri, projection, null, null, null)?.use { cursor ->
+                while (cursor.moveToNext()) {
+                    if (cursor.getString(2) != DocumentsContract.Document.MIME_TYPE_DIR) continue
+                    val id = cursor.getString(0) ?: continue
+                    val name = cursor.getString(1) ?: continue
+                    out.add(name to DocumentsContract.buildDocumentUriUsingTree(treeUri, id))
+                }
+            }
+        } catch (_: Exception) {
+            // Een onleesbare map slaan we over; de rest van de lijst blijft bruikbaar.
+        }
+        return out
+    }
+
     private fun findOrCreateSubfolder(context: Context, parent: DocumentFile, name: String): DocumentFile? {
         var current: DocumentFile = parent
         for (segment in name.split('/').map { it.trim() }.filter { it.isNotEmpty() }) {
@@ -1483,7 +1591,11 @@ object Storage {
         // Markdown-link-syntax behoudt het label, losse URLs verdwijnen volledig.
         // Daarna opmaaktekens weg (plugin-pariteit), en `\#tag` zonder backslash.
         val stripped = CardText.plain(rest
-            .replace(Regex("\\[([^\\]\\n]+)]\\(https?://[^)\\s]+\\)"), "$1")
+            // Geen Markdown-tekens op de kaart (Eric): elke link toont alleen zijn label.
+            .replace(Regex("\\[([^\\]\\n]+)]\\([^)\\n]+\\)"), "$1")
+            .replace(Regex("\\[\\[([^\\]|\\n]+)(?:\\|([^\\]\\n]+))?]]")) { m ->
+                m.groupValues[2].ifEmpty { m.groupValues[1].substringBefore('#') }
+            }
             .replace(Regex("https?://\\S+"), ""))
             .lineSequence()
             .map { it.trimEnd() }

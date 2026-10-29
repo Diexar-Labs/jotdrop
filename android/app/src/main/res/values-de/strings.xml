@@ -30,4 +30,6 @@
     <string name="recording_notification_title">Aufnahme aktiv</string>
     <string name="recording_notification_channel_name">Voicememo-Aufnahme</string>
     <string name="recording_notification_channel_desc">Wird angezeigt, wenn eine Voicememo-Aufnahme aktiv ist.</string>
+    <string name="empty_hint_new_note">die erste mit + notieren</string>
+    <string name="stamp_sealed">Versiegelt</string>
 </resources>

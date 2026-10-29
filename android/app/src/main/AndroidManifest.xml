@@ -54,6 +54,17 @@
             android:exported="false"
             android:label="@string/settings_title" />
 
+        <!-- singleTask: the way back from Google or GitHub returns to the open sign-in, not a second copy in the browser's task. -->
+        <activity android:name=".CloudActivity" android:exported="true" android:label="JotDrop Cloud" android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="jotdrop-cloud" android:host="oauth" />
+                <data android:scheme="jotdrop-cloud" android:host="human" />
+            </intent-filter>
+        </activity>
+
         <activity
             android:name=".ShareActivity"
             android:exported="true"

@@ -1,21 +1,32 @@
+/* House style "Paper and ink", as in the web app: paper, ink, amber; the dark side is ink with amber. */
+@font-face { font-family: "Instrument Sans"; font-weight: 400 700; font-display: swap; src: url("../fonts/instrument-sans.woff2") format("woff2"); }
+@font-face { font-family: "Bricolage Grotesque"; font-weight: 200 800; font-display: swap; src: url("../fonts/bricolage-grotesque.woff2") format("woff2"); }
+
 :root {
-  --bg: #ffffff;
-  --fg: #1f1f1f;
-  --muted: #6b6b6b;
-  --border: #d6d6d6;
-  --accent: #4B3754;
+  --bg: #fbf8f1;
+  --fg: #14213d;
+  --muted: #56607a;
+  --border: #e2d9c3;
+  --accent: #315fb4;
   --accent-fg: #ffffff;
   --danger-border: #b91c1c;
+  --edge: #14213d;
+  --field: #ffffff;
+  --field-line: #c9c1ae;
+  --amber: #f4c458;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #1f1f1f;
-    --fg: #f0f0f0;
-    --muted: #a8a8a8;
-    --border: #404040;
-    --accent: #C2185B;
-    --accent-fg: #ffffff;
+    --bg: #0e1626;
+    --fg: #fbf8f1;
+    --muted: #b7bfd0;
+    --border: #2b3a5c;
+    --accent: #f4c458;
+    --accent-fg: #14213d;
+    --edge: #d3d9e6;
+    --field: #16213a;
+    --field-line: #3a4a70;
   }
 }
 
@@ -25,7 +36,7 @@ body {
   margin: 0;
   padding: 14px;
   width: 360px;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: "Instrument Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 13px;
   background: var(--bg);
   color: var(--fg);
@@ -40,7 +51,10 @@ body {
 
 .head h1 {
   margin: 0;
-  font-size: 14px;
+  font-family: "Bricolage Grotesque", "Instrument Sans", sans-serif;
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
 }
 
 .status {
@@ -57,13 +71,13 @@ body {
 .preview {
   padding: 8px 10px;
   margin-bottom: 10px;
-  background: var(--border);
-  border-radius: 8px;
+  background: var(--field);
+  border-radius: 10px 10px 22px 10px;
   border: 1px solid var(--border);
 }
 
 @media (prefers-color-scheme: dark) {
-  .preview { background: rgba(255,255,255,0.04); }
+  .preview { background: var(--field); }
 }
 
 .preview-title {
@@ -110,9 +124,9 @@ input[type="text"],
 textarea,
 select {
   padding: 6px 8px;
-  border-radius: 6px;
-  border: 1px solid var(--border);
-  background: var(--bg);
+  border-radius: 8px;
+  border: 1.5px solid var(--field-line);
+  background: var(--field);
   color: var(--fg);
   font-family: inherit;
   font-size: 13px;
@@ -184,17 +198,20 @@ textarea { resize: vertical; }
 .btn-secondary {
   flex: 1;
   padding: 8px 12px;
-  border-radius: 8px;
+  /* The folded corner of a note, as in the web app. */
+  border-radius: 10px 10px 18px 10px;
   cursor: pointer;
+  font-family: inherit;
   font-size: 13px;
   font-weight: 600;
-  border: 1px solid var(--border);
+  border: 1.5px solid var(--edge);
 }
 
+/* Clipping is design A's "Drop it": amber with ink. */
 .btn-primary {
-  background: var(--accent);
-  color: var(--accent-fg);
-  border-color: var(--accent);
+  background: var(--amber);
+  color: #14213d;
+  border-color: var(--amber);
 }
 
 .btn-primary:disabled {
@@ -205,4 +222,40 @@ textarea { resize: vertical; }
 .btn-secondary {
   background: transparent;
   color: var(--fg);
+}
+
+/* Playful details from design A, as in the web app: the main button presses in, and a saved page drops onto the board and gets a stamp.
+   With less motion the stamp fades in and nothing moves. */
+.preview { position: relative; }
+.btn-primary:not(:disabled) { box-shadow: 3px 3px 0 var(--edge); transition: translate 0.08s ease, box-shadow 0.08s ease; }
+.btn-primary:not(:disabled):hover { box-shadow: 4px 4px 0 var(--edge); }
+.btn-primary:not(:disabled):active { box-shadow: 0 0 0 var(--edge); }
+.preview-stamp {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  translate: 0 -50%;
+  padding: 1px 7px;
+  border: 2px solid var(--fg);
+  border-radius: 6px;
+  background: var(--field);
+  color: var(--fg);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  rotate: -7deg;
+  pointer-events: none;
+}
+@keyframes drop { from { opacity: 0; translate: 0 -14px; } to { opacity: 1; translate: 0 0; } }
+@keyframes stamp { 0% { opacity: 0; scale: 1.6; } 60% { opacity: 1; scale: 0.96; } 100% { opacity: 1; scale: 1; } }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: no-preference) {
+  .preview.is-saved { animation: drop 0.4s cubic-bezier(0.16, 1, 0.3, 1); }
+  .preview-stamp { animation: stamp 0.45s ease-out 0.15s both; }
+  .btn-primary:not(:disabled):hover { translate: -1px -1px; }
+  .btn-primary:not(:disabled):active { translate: 3px 3px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .preview-stamp { animation: fade-in 0.2s ease-out; }
 }

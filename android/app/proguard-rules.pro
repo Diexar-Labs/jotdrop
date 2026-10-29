@@ -4,3 +4,9 @@
 # Stacktraces in crashmeldingen leesbaar houden (mapping blijft lokaal in build/outputs).
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile
+
+# Credential Manager finds its Play Services provider by class name (androidx.credentials docs).
+-if class androidx.credentials.CredentialManager
+-keep class androidx.credentials.playservices.** {
+  *;
+}

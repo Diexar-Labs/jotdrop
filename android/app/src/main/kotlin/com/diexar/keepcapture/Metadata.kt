@@ -37,7 +37,7 @@ enum class NoteColor(val key: String, @StringRes val labelRes: Int) {
  */
 object Palette {
     val light: Map<NoteColor, Color> = mapOf(
-        NoteColor.DEFAULT to Color(0xFFFFF8F1),
+        NoteColor.DEFAULT to Color(0xFFFFFFFF),
         NoteColor.RED to Color(0xFFFAB0A8),
         NoteColor.ORANGE to Color(0xFFF6B690),
         NoteColor.YELLOW to Color(0xFFFFEFA8),
@@ -51,7 +51,7 @@ object Palette {
     )
 
     val dark: Map<NoteColor, Color> = mapOf(
-        NoteColor.DEFAULT to Color(0xFF2A2438),
+        NoteColor.DEFAULT to Color(0xFF16213A),
         NoteColor.RED to Color(0xFF5E2A2F),
         NoteColor.ORANGE to Color(0xFF63441E),
         NoteColor.YELLOW to Color(0xFF5C4A1A),

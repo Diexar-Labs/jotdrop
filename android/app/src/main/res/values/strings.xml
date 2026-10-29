@@ -55,9 +55,12 @@
     <string name="parked_nothing_to_keep">There was nothing left to keep. The note is available again.</string>
 
     <string name="loading">Loading…</string>
-    <string name="empty_no_vault">No vault chosen yet. Open settings to get started.</string>
+    <string name="welcome_title">Welcome to JotDrop</string>
+    <string name="welcome_text">Your notes, photos and voice memos, saved as plain files on this phone. Continue with Google for a free encrypted cloud with 250 MB, to have them on all your devices.</string>
+    <string name="welcome_google">Continue with Google</string>
+    <string name="welcome_local">Use without cloud</string>
+    <string name="welcome_folder_hint">First you pick a folder for your notes. Tip: make a new folder called JotDrop. Already using Obsidian? Pick your vault.</string>
     <string name="empty_no_notes">No notes yet. Tap + to start.</string>
-    <string name="open_settings">Open settings</string>
     <string name="retry">Try again</string>
 
     <string name="action_settings">Settings</string>
@@ -253,4 +256,38 @@
     <string name="label_hint">Labels are collections, separate from tags. Spaces stay unchanged.</string>
     <string name="label_search">Search or create a label</string>
     <string name="label_create_first">Create a label in the navigation menu first.</string>
+    <!-- Markdown help (same list as the web app and the plugin) -->
+    <string name="md_help_button">Markdown help</string>
+    <string name="action_move_to_folder">Move to folder…</string>
+    <string name="action_copy_to_folder">Copy to folder…</string>
+    <string name="folder_picker_move_title">Move note to folder</string>
+    <string name="folder_picker_copy_title">Copy note to folder</string>
+    <string name="folder_picker_search">Search folders</string>
+    <string name="folder_picker_move_hint">The note leaves JotDrop and becomes a normal Obsidian note in that folder.</string>
+    <string name="folder_picker_empty">No folders found.</string>
+    <string name="folder_root_label">(vault root)</string>
+    <string name="toast_moved_to">Moved to: %1$s</string>
+    <string name="toast_copied_to">Copied to: %1$s</string>
+    <string name="error_target_exists">A note with that name already exists in the target folder.</string>
+    <string name="md_help_title">Markdown help</string>
+    <string name="md_help_intro">Type the code on the left to format your note. Obsidian shows the result on the right; JotDrop cards show the text without the codes.</string>
+    <string name="md_help_heading">Heading</string>
+    <string name="md_help_smaller_heading">Smaller heading</string>
+    <string name="md_help_bold">bold</string>
+    <string name="md_help_italic">italic</string>
+    <string name="md_help_strikethrough">strikethrough</string>
+    <string name="md_help_highlight">highlight</string>
+    <string name="md_help_bullet">• item</string>
+    <string name="md_help_numbered">1. item</string>
+    <string name="md_help_task">☐ task</string>
+    <string name="md_help_done">☑ done</string>
+    <string name="md_help_quote">quote</string>
+    <string name="md_help_code">code</string>
+    <string name="md_help_web_link">text (a web link)</string>
+    <string name="md_help_note_link">Note name (a link to another note)</string>
+    <string name="md_help_tag">a tag you can filter on</string>
+    <string name="md_help_divider">a dividing line</string>
+    <string name="md_help_table">a table with columns A and B</string>
+    <string name="empty_hint_new_note">jot the first one with +</string>
+    <string name="stamp_sealed">Sealed</string>
 </resources>

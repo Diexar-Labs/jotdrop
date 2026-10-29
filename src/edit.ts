@@ -4,6 +4,7 @@ import { toggleOrInsertChecklistOnTextArea } from "./capture";
 import { LightboxModal } from "./lightbox";
 import { voidAsync } from "./asyncUtil";
 import { RepeatEditor } from "./repeat";
+import { MarkdownHelpModal } from "./markdownHelp";
 import { t } from "./i18n";
 import { keepModalAboveKeyboard } from "./mobileKeyboard";
 import { enhanceListEditing } from "./listEditor";
@@ -104,6 +105,9 @@ export class EditNoteModal extends Modal {
 
   /** Loads a note into the modal. Called on open and again on prev/next navigation. */
   private async loadNote(file: TFile): Promise<void> {
+    // Cloud sync never replaces the note that is open here; a change from elsewhere arrives as a conflict copy.
+    if (this.file !== file) this.plugin.cloud?.endEdit(this.file.path);
+    this.plugin.cloud?.beginEdit(file.path);
     this.file = file;
     this.titleEl.setText(this.file.basename);
 
@@ -372,6 +376,12 @@ export class EditNoteModal extends Modal {
       toggleOrInsertChecklistOnTextArea(this.bodyEl);
       this.state.body = this.bodyEl.value;
     });
+
+    const helpBtn = pinWrap.createEl("button", {
+      cls: "jotdrop-edit-linkbtn",
+      text: t("md_help_button"),
+    });
+    helpBtn.addEventListener("click", () => new MarkdownHelpModal(this.app).open());
 
     // Reminder
     const reminderRow = parent.createDiv({ cls: "jotdrop-edit-row jotdrop-reminder-row" });
@@ -669,6 +679,7 @@ export class EditNoteModal extends Modal {
   }
 
   onClose(): void {
+    this.plugin.cloud?.endEdit(this.file.path);
     this.cleanupListEditor?.();
     this.cleanupListEditor = null;
     this.cleanupKeyboard?.();

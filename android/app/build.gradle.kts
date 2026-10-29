@@ -3,6 +3,7 @@ import org.gradle.api.tasks.Exec
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("androidx.baselineprofile")
 }
 
 android {
@@ -112,6 +113,16 @@ tasks.matching {
     }
 }
 
+// Baseline Profile: AOT-compiles the startup + notes-list scroll code at install
+// time, so a fresh install or update scrolls smoothly before ART's overnight
+// compile. The profile is checked in; regenerate it with
+// ./gradlew :app:generateBaselineProfile (emulator API 33+ or rooted device).
+baselineProfile {
+    mergeIntoMain = true
+    // Never generate during assembleRelease/CI; use the checked-in profile.
+    automaticGenerationDuringBuild = false
+}
+
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.core:core-splashscreen:1.0.1")
@@ -121,6 +132,11 @@ dependencies {
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("androidx.preference:preference-ktx:1.2.1")
     implementation("androidx.work:work-runtime-ktx:2.9.0")
+    // Installs the Baseline Profile on sideloaded (adb/GitHub APK) installs too.
+    // 1.4+ is required on Android 15+: 1.3.x (what Compose pulls in) stops at API 34
+    // and reports "unsupported ART version" there, so the profile was never installed.
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
+    baselineProfile(project(":baselineprofile"))
 
     val composeBom = platform("androidx.compose:compose-bom:2024.06.00")
     implementation(composeBom)
@@ -137,5 +153,12 @@ dependencies {
     // het Latijns-schrift-model in de APK (~3-4MB), zodat de app ook werkt op
     // toestellen zonder Google Play (en op GitHub-gedistribueerde builds).
     implementation("com.google.mlkit:text-recognition:16.0.1")
+    // Argon2id for cloud accounts (docs/cloud-accounts-design.md); used directly, not as a JCA provider.
+    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
+    // Android's own Google account picker for "Continue with Google"; the browser stays the fallback.
+    // 1.3.0: the newest that builds against compileSdk 34.
+    implementation("androidx.credentials:credentials:1.3.0")
+    implementation("androidx.credentials:credentials-play-services-auth:1.3.0")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.1.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

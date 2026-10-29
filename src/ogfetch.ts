@@ -588,16 +588,15 @@ function extractLinkImageSrc(html: string): string | null {
   return decodeHtmlEntities(m[1]).trim() || null;
 }
 
+const NAMED_ENTITIES: Record<string, string> = { amp: "&", quot: '"', apos: "'", lt: "<", gt: ">", nbsp: " " };
+
+// Every code in one pass, also hex ones such as Instagram's &#x2019; and emoji: left as is, the tag filter cut them to "&;".
 function decodeHtmlEntities(s: string): string {
-  return s
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&#x27;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&#(\d+);/g, (_, n: string) => String.fromCharCode(parseInt(n, 10)));
+  return s.replace(/&(?:#(\d+)|#[xX]([0-9a-fA-F]+)|([a-zA-Z]+));/g, (entity, decimal?: string, hex?: string, name?: string) => {
+    if (name) return NAMED_ENTITIES[name.toLowerCase()] ?? entity;
+    const point = decimal ? parseInt(decimal, 10) : parseInt(hex ?? "", 16);
+    return point > 0 && point <= 0x10ffff ? String.fromCodePoint(point) : entity;
+  });
 }
 
 function absolutize(maybeRelative: string, base: string): string {

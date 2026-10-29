@@ -526,6 +526,7 @@ object OgFetcher {
                 "gif" -> "image/gif"
                 else -> "image/*"
             }
+            synchronized(Storage.cloudFileLock) {
             val target = attachmentsFolder.createFile(mimeForFile, basename)
                 ?: return Result.failure(IllegalStateException("Kan attachment niet aanmaken."))
 
@@ -548,6 +549,7 @@ object OgFetcher {
                 return Result.failure(IllegalStateException("Kan niet schrijven naar attachment."))
             }
             Result.success(basename)
+            }
         } catch (e: Exception) {
             Result.failure(e)
         } finally {
@@ -627,19 +629,17 @@ object OgFetcher {
         return match?.groupValues?.getOrNull(1)?.let { decodeHtmlEntities(it).trim() }
     }
 
-    private fun decodeHtmlEntities(input: String): String {
-        return input
-            .replace("&amp;", "&")
-            .replace("&quot;", "\"")
-            .replace("&#39;", "'")
-            .replace("&#x27;", "'")
-            .replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&nbsp;", " ")
-            .replace(Regex("&#(\\d+);")) { m ->
-                m.groupValues[1].toIntOrNull()?.toChar()?.toString() ?: m.value
-            }
-    }
+    private val ENTITY_REGEX = Regex("&(?:#(\\d+)|#[xX]([0-9a-fA-F]+)|([a-zA-Z]+));")
+    private val NAMED_ENTITIES = mapOf("amp" to "&", "quot" to "\"", "apos" to "'", "lt" to "<", "gt" to ">", "nbsp" to " ")
+
+    // Every code in one pass, also hex ones such as Instagram's &#x2019; and emoji: left as is, the tag filter cut them to "&;".
+    private fun decodeHtmlEntities(input: String): String =
+        ENTITY_REGEX.replace(input) { m ->
+            val (decimal, hex, name) = m.destructured
+            if (name.isNotEmpty()) return@replace NAMED_ENTITIES[name.lowercase()] ?: m.value
+            val point = (if (decimal.isNotEmpty()) decimal.toIntOrNull() else hex.toIntOrNull(16)) ?: return@replace m.value
+            if (point in 1..0x10FFFF) String(Character.toChars(point)) else m.value
+        }
 
     /**
      * Sommige sites (TikTok, YouTube, Vimeo) renderen hun OG-meta pas met JavaScript

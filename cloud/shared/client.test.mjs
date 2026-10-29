@@ -1,0 +1,151 @@
+import assert from 'node:assert/strict';
+import test, { mock } from 'node:test';
+import { CloudClient, CloudError, request, validateUrl } from './client.mjs';
+import { bytesToBase64, encryptEnvelope, generateVaultKey, MAX_CHUNKED_BYTES, objectId, randomToken } from './crypto.mjs';
+
+// The v1 single-envelope draft that devices made before encrypted pieces; the server still accepts it.
+async function legacyPrepare(client, path, bytes, baseRevision) {
+  const { vaultKey, vaultId } = client.credentials, id = await objectId(vaultKey, path);
+  const envelope = await encryptEnvelope(vaultKey, { path, content: bytesToBase64(bytes), modifiedAt: new Date().toISOString() }, `jotdrop:object:v1:${vaultId}:${id}`);
+  return { id, baseRevision, envelope: JSON.stringify(envelope) };
+}
+
+test('client transmits opaque ciphertext, scoped credentials and strict optimistic revision', async () => {
+  let sent;
+  const client = new CloudClient({ url: 'http://127.0.0.1:8080', vaultId: crypto.randomUUID(), deviceId: crypto.randomUUID(), token: randomToken(), vaultKey: generateVaultKey(), fetcher: async (url, options) => { sent = { url, options }; return new Response(JSON.stringify({ revision: 1, sequence: 1, pieces: { version: 1, pieceBytes: 1024 * 1024 } }), { status: 200 }); } });
+  const prepared = await client.prepareWrite('notes/private.md', new TextEncoder().encode('secret note body'), 0);
+  await client.commitWrite(prepared);
+  assert.ok(!sent.options.body.includes('secret note body'));
+  assert.ok(!sent.options.body.includes('private.md'));
+  assert.ok(!sent.options.body.includes(client.credentials.vaultKey));
+  assert.equal(JSON.parse(sent.options.body).baseRevision, 0);
+  assert.equal(sent.options.headers['X-JotDrop-Vault'], client.credentials.vaultId);
+  assert.equal(sent.options.redirect, 'error');
+  const envelope = prepared.envelope;
+  client.fetcher = async () => new Response(JSON.stringify({ id: prepared.id, revision: 1, deleted: false, envelope }), { status: 200 });
+  assert.equal((await client.read(prepared.id)).file.path, 'notes/private.md');
+  client.fetcher = async () => new Response(JSON.stringify({ error: 'Conflict', currentRevision: 2 }), { status: 409 });
+  await assert.rejects(client.commitWrite(prepared), (error) => error instanceof CloudError && error.status === 409 && error.currentRevision === 2);
+  await assert.rejects(client.prepareWrite('notes/x', new Uint8Array(MAX_CHUNKED_BYTES + 1), 0));
+  // A server without encrypted pieces gets nothing: older devices could not read what it would keep.
+  const methods = [];
+  client.fetcher = async (url, options) => { methods.push(options.method); return new Response(JSON.stringify({ usedBytes: 0 }), { status: 200 }); };
+  await assert.rejects(client.commitWrite(prepared), /does not support encrypted pieces/);
+  assert.deepEqual(methods, ['GET']);
+});
+
+test('client refuses insecure servers, URL credentials, path injection and malformed keys', () => {
+  for (const url of ['http://example.com', 'https://user:pass@example.com', 'https://example.com?token=secret', 'https://example.com/subpath', 'file:///tmp/x']) assert.throws(() => validateUrl(url));
+  assert.equal(validateUrl('https://example.com/'), 'https://example.com');
+  assert.equal(validateUrl('http://localhost:8080'), 'http://localhost:8080');
+  assert.throws(() => new CloudClient({ url: 'https://example.com', vaultId: crypto.randomUUID(), deviceId: crypto.randomUUID(), token: 'bad', vaultKey: generateVaultKey() }));
+});
+
+test('client bounds streamed response bytes and cancels before buffering the entire body', async () => {
+  const chunk = new TextEncoder().encode('\u00e9'.repeat(512 * 1024));
+  let pulls = 0, cancelled = false;
+  const client = new CloudClient({ url: 'https://example.com', vaultId: crypto.randomUUID(), deviceId: crypto.randomUUID(), token: randomToken(), vaultKey: generateVaultKey(), fetcher: async () => new Response(new ReadableStream({
+    pull(controller) {
+      if (pulls === 0) controller.enqueue(new TextEncoder().encode('{"padding":"'));
+      else if (pulls <= 18) controller.enqueue(chunk);
+      else { controller.enqueue(new TextEncoder().encode('"}')); controller.close(); }
+      pulls++;
+    },
+    cancel() { cancelled = true; },
+  }, { highWaterMark: 0 })) });
+  await assert.rejects(client.status(), (error) => error instanceof CloudError && error.status === 502);
+  assert.ok(cancelled);
+  assert.ok(pulls < 20);
+});
+
+test('client rejects announced oversized responses before reading and rejects non-object JSON', async () => {
+  let pulls = 0, cancelled = false;
+  const client = new CloudClient({ url: 'https://example.com', vaultId: crypto.randomUUID(), deviceId: crypto.randomUUID(), token: randomToken(), vaultKey: generateVaultKey(), fetcher: async () => new Response(new ReadableStream({
+    pull(controller) { pulls++; controller.enqueue(new TextEncoder().encode('{}')); controller.close(); },
+    cancel() { cancelled = true; },
+  }, { highWaterMark: 0 }), { headers: { 'Content-Length': String(16 * 1024 * 1024 + 1) } }) });
+  await assert.rejects(client.status(), (error) => error instanceof CloudError && error.status === 502);
+  assert.equal(pulls, 0);
+  assert.ok(cancelled);
+  for (const status of [200, 401]) for (const value of [null, [], 'not an object']) {
+    client.fetcher = async () => new Response(JSON.stringify(value), { status });
+    await assert.rejects(client.status(), (error) => error instanceof CloudError && error.status === status);
+  }
+  client.fetcher = async () => new Response(new ReadableStream({
+    start(controller) {
+      for (const byte of new TextEncoder().encode('{"name":"\u00e9"}')) controller.enqueue(Uint8Array.of(byte));
+      controller.close();
+    },
+  }));
+  assert.deepEqual(await client.status(), { name: '\u00e9' });
+});
+
+test('resumable uploads fail closed on missing capabilities and never silently downgrade', async () => {
+  const client = new CloudClient({ url: 'https://example.com', vaultId: crypto.randomUUID(), deviceId: crypto.randomUUID(), token: randomToken(), vaultKey: generateVaultKey() });
+  const prepared = await legacyPrepare(client, 'notes/test.md', new TextEncoder().encode('Synthetic draft'), 0);
+  for (const transport of [undefined, { version: 2, chunkBytes: 65536 }, { version: 1, chunkBytes: 1 }]) {
+    const requests = [];
+    client.fetcher = async (url, options) => { requests.push({ url, options }); return new Response(JSON.stringify({ transport })); };
+    await assert.rejects(client.commitWrite(prepared, { resumable: true }), /does not support/);
+    assert.equal(requests.length, 1);
+    assert.ok(requests[0].url.endsWith('/status'));
+    assert.equal(requests[0].options.redirect, 'error');
+    assert.equal(requests[0].options.headers.Authorization, `Bearer ${client.credentials.token}`);
+  }
+  let requests = 0;
+  client.fetcher = async () => { requests++; throw new TypeError('Synthetic network failure'); };
+  await assert.rejects(client.commitWrite(prepared, { resumable: true }), /network failure/);
+  assert.equal(requests, 2);
+  requests = 0;
+  const controller = new AbortController(); controller.abort();
+  await assert.rejects(client.commitWrite(prepared, { resumable: true, signal: controller.signal }));
+  assert.equal(requests, 0);
+  client.fetcher = async () => { requests++; return new Response(JSON.stringify({ error: 'Unavailable' }), { status: 503 }); };
+  await assert.rejects(client.commitWrite(prepared, { resumable: true }), (error) => error.status === 503);
+  assert.equal(requests, 1);
+});
+
+test('resumable uploads reject impossible offsets and invalid final receipts without reporting success', async () => {
+  const client = new CloudClient({ url: 'https://example.com', vaultId: crypto.randomUUID(), deviceId: crypto.randomUUID(), token: randomToken(), vaultKey: generateVaultKey() });
+  const prepared = await legacyPrepare(client, 'notes/test.md', new TextEncoder().encode('Synthetic draft'), 0);
+  for (const mode of ['negative', 'wrong-size', 'no-progress', 'wrong-id', 'wrong-revision', 'wrong-sequence', 'missing-commit']) {
+    const progress = [];
+    let size;
+    client.fetcher = async (url, options) => {
+      if (url.endsWith('/status')) return new Response(JSON.stringify({ transport: { version: 1, chunkBytes: 65536 } }));
+      if (url.endsWith('/commit')) {
+        const committed = { id: prepared.id, revision: 1, sequence: 1 };
+        if (mode === 'wrong-id') committed.id = '0'.repeat(64);
+        if (mode === 'wrong-revision') committed.revision = 2;
+        if (mode === 'wrong-sequence') committed.sequence = 0;
+        return new Response(JSON.stringify(mode === 'missing-commit' ? {} : { committed }));
+      }
+      if (options.method === 'POST') size = JSON.parse(options.body).size;
+      return new Response(JSON.stringify({ offset: mode === 'negative' ? -1 : options.method === 'PUT' && mode !== 'no-progress' ? size : 0, size: mode === 'wrong-size' ? size + 1 : size }));
+    };
+    await assert.rejects(client.commitWrite(prepared, { resumable: true, onProgress: (event) => progress.push(event) }), /acknowledgment/);
+    assert.ok(progress.every((event) => event.phase !== 'committed'));
+  }
+});
+
+test('a slow body keeps going while bytes arrive and fails only after 30 seconds without any', async (t) => {
+  t.after(() => mock.timers.reset());
+  mock.timers.enable({ apis: ['setTimeout'] });
+  const flush = () => new Promise((resolve) => setImmediate(resolve));
+  // One chunk every 20 seconds: 60 seconds in total, never 30 seconds silent.
+  const parts = ['{"ok":', 'true', '}'];
+  const slow = async (url, options) => new Response(new ReadableStream({
+    pull: (controller) => new Promise((resolve) => setTimeout(() => { const part = parts.shift(); if (part) controller.enqueue(new TextEncoder().encode(part)); else controller.close(); resolve(); }, 20000)),
+  }), { status: 200 });
+  const done = request('http://127.0.0.1:8080/', '/status', { fetcher: slow });
+  for (let step = 0; step < 4; step++) { await flush(); mock.timers.tick(20000); }
+  assert.deepEqual(await done, { ok: true });
+  // One chunk, then silence: the request aborts after 30 seconds.
+  const stalled = async (url, options) => new Response(new ReadableStream({
+    start: (controller) => { controller.enqueue(new TextEncoder().encode('{"ok":')); options.signal.addEventListener('abort', () => controller.error(options.signal.reason)); },
+  }), { status: 200 });
+  const failed = assert.rejects(request('http://127.0.0.1:8080/', '/status', { fetcher: stalled }), { name: 'TimeoutError' });
+  await flush(); mock.timers.tick(29999); await flush();
+  mock.timers.tick(1);
+  await failed;
+});
