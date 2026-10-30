@@ -6,20 +6,20 @@
 
 ### Your notes. Yours. Really.
 
-The free, open-source **Google Keep alternative** for **Android**, **Obsidian**, the **web** and **Chrome**.<br/>
+The free, open-source **Google Keep alternative** for **Android**, **Obsidian**, the **web** and **Chrome**, plus a card board for **Joplin**.<br/>
 Keep-style note cards, end-to-end encrypted sync and plain Markdown files you own.<br/>
 Keep the ease. Lose the lock-in.<br/>
 See it in action on [jotdrop.net, the private Google Keep alternative](https://jotdrop.net/).
 
-[**Website**](https://jotdrop.net/) · [**Web app**](https://app.jotdrop.net/) · [**Get it**](#get-jotdrop) · [**Features**](#features) · [**Switch from Keep**](#switch-from-google-keep) · [**JotDrop Cloud**](#jotdrop-cloud) · [**FAQ**](#faq)
+[**Website**](https://jotdrop.net/) · [**Web app**](https://app.jotdrop.net/) · [**Get it**](#get-jotdrop) · [**Features**](#features) · [**Switch from Keep**](#switch-from-google-keep) · [**JotDrop Cloud**](#jotdrop-cloud) · [**Joplin**](#jotdrop-for-joplin) · [**FAQ**](#faq)
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-f4c458.svg)](LICENSE) [![Obsidian plugin](https://img.shields.io/badge/Obsidian-plugin-14213d)](https://community.obsidian.md/plugins/jotdrop) [![Android APK](https://img.shields.io/badge/Android-APK-14213d)](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.28/jotdrop.apk) [![Chrome clipper](https://img.shields.io/badge/Chrome-clipper-14213d)](https://chromewebstore.google.com/detail/jotdrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo) [![Build](https://github.com/Diexar-Labs/jotdrop/actions/workflows/android-build.yml/badge.svg)](https://github.com/Diexar-Labs/jotdrop/actions/workflows/android-build.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-f4c458.svg)](LICENSE) [![Obsidian plugin](https://img.shields.io/badge/Obsidian-plugin-14213d)](https://community.obsidian.md/plugins/jotdrop) [![Android APK](https://img.shields.io/badge/Android-APK-14213d)](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.28/jotdrop.apk) [![Chrome clipper](https://img.shields.io/badge/Chrome-clipper-14213d)](https://chromewebstore.google.com/detail/jotdrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo) [![Joplin plugin](https://img.shields.io/badge/Joplin-plugin-14213d)](https://github.com/Diexar-Labs/joplin-plugin-jotdrop) [![Build](https://github.com/Diexar-Labs/jotdrop/actions/workflows/android-build.yml/badge.svg)](https://github.com/Diexar-Labs/jotdrop/actions/workflows/android-build.yml)
 
 </div>
 
 > ### Free forever. No cloud required.
 >
-> The JotDrop apps (the Android app, the Obsidian plugin and the Chrome clipper) are free and will always stay free. No ads, no trial, no paywall.
+> The JotDrop apps (the Android app, the Obsidian and Joplin plugins and the Chrome clipper) are free and will always stay free. No ads, no trial, no paywall.
 >
 > You don't need our cloud to sync. Use your own: [Syncthing](https://syncthing.net/) with [Syncthing-Fork](https://github.com/researchxxl/syncthing-android) on Android, Obsidian Sync, iCloud, Dropbox or any folder sync. JotDrop Cloud is simply the easiest option, end-to-end encrypted, with a free plan.
 
@@ -29,11 +29,11 @@ See it in action on [jotdrop.net, the private Google Keep alternative](https://j
 
 Google Keep is great for dumping a thought in two seconds. But your notes live on Google's servers, in Google's format, and leaving means exporting. JotDrop is a **privacy-friendly Google Keep alternative** that keeps the fast, friendly cards and gives you back the rest:
 
-- **Every note is your own file.** A plain Markdown `.md` file in your Obsidian vault or a folder on your phone. Open it in Obsidian, VS Code, Vim or any editor. Back it up any way you like.
+- **Your own files, on Android and in Obsidian.** Every note there is a plain Markdown `.md` file in your Obsidian vault or a folder on your phone. Open it in Obsidian, VS Code, Vim or any editor. Back it up any way you like. The web app works from JotDrop Cloud and exports your notes as a ZIP.
 - **Private sync, if you want it.** The optional JotDrop Cloud is end-to-end encrypted: your notes are encrypted on your device before they leave, and the server cannot read them. Even on the free plan.
 - **Or no cloud at all.** Without JotDrop Cloud there is no account and no server. Sync with Syncthing (Syncthing-Fork on Android), Obsidian Sync, iCloud or any folder sync you already use, or don't sync at all.
 - **Free forever.** The apps cost nothing and always will. Only the optional cloud has a paid plan, for people who want more storage.
-- **One set of notes, four places.** Android app, Obsidian plugin, web app and Chrome clipper all show the same cards and do the same things.
+- **One set of notes, four ways in.** The Android app, the Obsidian plugin and the web app show the same cards, and the Chrome clipper adds to them through the Obsidian desktop plugin.
 - **Open source.** The apps and the sync server are MIT-licensed and public. Read the code, run it, change it.
 
 ## All the little things, in one place
@@ -69,7 +69,9 @@ A card shows what matters at a glance: its title and text, ticked tasks with a p
 
 And the **web app** at [app.jotdrop.net](https://app.jotdrop.net/) puts the same cards in any browser, with JotDrop Cloud.
 
-Each part works on its own. Together they feel like Google Keep, on your own files.
+Android and Obsidian work on their own, without an account. The web app needs JotDrop Cloud, and the Chrome clipper needs the Obsidian desktop plugin. Not every feature is everywhere: speech-to-text is Android only, and reminder notifications come from Android and from Obsidian while it runs, not from the web app.
+
+Already on Joplin? [JotDrop for Joplin](#jotdrop-for-joplin) turns the notes you have there into a card board, on Joplin desktop and Android. It is a separate plugin: your notes stay in Joplin and use Joplin's own sync, not Markdown files or JotDrop Cloud.
 
 ## Get JotDrop
 
@@ -79,6 +81,7 @@ Each part works on its own. Together they feel like Google Keep, on your own fil
 | **Android** | Download the APK and open it on your phone | [JotDrop 0.28.28 APK](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.28/jotdrop.apk) |
 | **Web** | Open the web app and sign in with Google, GitHub or email | [app.jotdrop.net](https://app.jotdrop.net/) |
 | **Chrome** | One click from the Chrome Web Store; works together with the Obsidian desktop plugin | [JotDrop Web Clipper](https://chromewebstore.google.com/detail/jotdrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo) |
+| **Joplin** | Tools → Options → Plugins → search **JotDrop** → Install; on Android, first Configuration → Plugins → Enable plugin support | [JotDrop for Joplin](https://github.com/Diexar-Labs/joplin-plugin-jotdrop) |
 
 Step-by-step instructions for each part are under [Install](#install).
 
@@ -131,13 +134,13 @@ With JotDrop Cloud, the **time machine** shows your notes as they were at an ear
 
 ## Switch from Google Keep
 
-Moving from Google Keep to JotDrop takes a few minutes, and your notes keep their colors, pins, labels, checklists, images and dates.
+Moving from Google Keep to JotDrop takes three steps, and your notes keep their colors, pins, labels, checklists, images and dates. Google prepares the export itself, which [can take from a few minutes to a few days](https://support.google.com/accounts/answer/3024190?hl=en).
 
 1. Go to [takeout.google.com](https://takeout.google.com/), deselect everything, select only **Keep** and export.
 2. Download the zip file(s) Google sends you.
 3. Import them: in Obsidian with the command **"Import from Google Keep"** (or Settings → JotDrop → Import from Google Keep), or in the web app with **Import notes**.
 
-Your Keep notes are now Markdown files in your own vault, and with JotDrop Cloud on your phone too.
+Imported in Obsidian, your Keep notes become Markdown files in your own vault, and with JotDrop Cloud they reach your phone too. Imported in the web app, they go straight to JotDrop Cloud, so check that they fit: the free plan has 250 MB.
 
 ### JotDrop vs Google Keep
 
@@ -163,7 +166,7 @@ JotDrop Cloud is the optional, **end-to-end encrypted note sync** that keeps you
 To you, a thought. To us, gibberish.
 
 1. **On your device**, JotDrop encrypts each note and attachment with AES-256-GCM, using keys that only your devices hold.
-2. **Our server** stores the encrypted result. It has no key to decrypt it, so there is no readable copy for us, for a hacker or for anyone who asks.
+2. **Our server** stores the encrypted result. It has no key to decrypt it, so the server holds no readable copy, for us, for someone who breaks in or for anyone who asks. That protection covers the server: an unlocked or compromised device can still expose your notes.
 3. **Your other devices** download the encrypted file and decrypt it themselves.
 
 The encryption code is in this repository ([`cloud/shared/crypto.mjs`](cloud/shared/crypto.mjs)), next to the server, so anyone can check it. What the server does keep, such as your email address, device names and file sizes and times, and why, is in the [JotDrop Cloud privacy policy](https://app.jotdrop.net/privacy). The website shows it step by step: [end-to-end encrypted notes on jotdrop.net](https://jotdrop.net/#privacy).
@@ -241,6 +244,20 @@ That's the whole setup: saving works through Obsidian's own `obsidian://` link, 
 | Wrong port or token | Open **Background connection → Advanced**, correct the port (default 27124) and paste the token again. |
 | "Selection too long for direct mode" | Shorten the selection, or use the background connection, which handles much longer quotes. |
 
+### JotDrop for Joplin
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Diexar-Labs/joplin-plugin-jotdrop/main/images/screenshot-board.png" alt="The JotDrop board in Joplin, showing existing notes as Google Keep-style cards" width="760" />
+</p>
+
+Works on Joplin desktop and Joplin for Android.
+
+1. In Joplin, open **Tools > Options > Plugins** (Android: **Configuration > Plugins**, then **Enable plugin support**).
+2. Search for **JotDrop** and install it. Restart Joplin if it asks.
+3. Desktop: click the board button in the editor toolbar, or **View > Open JotDrop board**. Android: tap the puzzle button at the top and **Open JotDrop board**.
+
+Your existing notes appear as cards, with pins, colors, checklists, reminders and an archive. They stay in Joplin and use Joplin's own sync, so the plugin needs no account and does not connect to JotDrop Cloud. On iPhone and iPad, Joplin only allows the plugins it recommends itself, so JotDrop is not available there. Details are in the [JotDrop for Joplin repository](https://github.com/Diexar-Labs/joplin-plugin-jotdrop).
+
 ### Staying up to date
 
 - **Obsidian:** a plugin from Community plugins updates with one click when Obsidian shows "Update available". For a manual install, [BRAT](https://github.com/TfTHacker/obsidian42-brat) with `Diexar-Labs/jotdrop` keeps it current.
@@ -250,7 +267,7 @@ That's the whole setup: saving works through Obsidian's own `obsidian://` link, 
 
 ## Syncing without JotDrop Cloud
 
-JotDrop Cloud is optional. Every JotDrop app works with plain files, so any tool that syncs a folder keeps your phone and computer in step, and JotDrop needs nothing else. Point it at the same notes folder on every device.
+JotDrop Cloud is optional. The Android app and the Obsidian plugin work with plain files, so any tool that syncs a folder keeps your phone and computer in step, and JotDrop needs nothing else. Point it at the same notes folder on every device.
 
 **Syncthing: free, private and direct.** [Syncthing](https://syncthing.net/) syncs your devices with each other, without any server in between. A popular free setup:
 
@@ -344,7 +361,8 @@ English and Dutch. Spanish, German, French and Italian are ready for translators
 - [x] Import from Google Keep, Evernote and Apple Notes
 - [x] Listed in the official Obsidian community plugins
 - [x] End-to-end encrypted JotDrop Cloud with a web app and a time machine
-- [x] The same cards and card features on every platform
+- [x] The same cards and card features in the Android app, Obsidian and the web app
+- [x] JotDrop for Joplin: a card board on Joplin desktop and Android
 - [ ] JotDrop on Google Play for everyone (now in closed testing)
 - [ ] Light and dark choice in the Android app
 - [ ] iOS share extension
