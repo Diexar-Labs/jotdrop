@@ -96,6 +96,23 @@ test('authorization, tenant isolation, origin and host checks fail closed', asyn
   assert.equal((await fetch(`${app.url}/cloud.db`)).status, 404);
 });
 
+test('the Joplin plugin origin may call the API, and still needs a device token', async (t) => {
+  // Joplin runs plugins from a local page, which sends this origin. A local page in a browser sends `null`, which stays out.
+  const app = await fixture(t, { corsOrigins: ['file://'] });
+  const preflight = await fetch(`${app.url}/api/v1/status`, { method: 'OPTIONS', headers: { Origin: 'file://' } });
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get('access-control-allow-origin'), 'file://');
+  assert.equal(preflight.headers.get('access-control-allow-credentials'), null);
+  assert.equal((await fetch(`${app.url}/api/v1/status`, { headers: { Origin: 'file://' } })).status, 401);
+  assert.equal((await fetch(`${app.url}/api/v1/status`, { headers: { Origin: 'null' } })).status, 403);
+  assert.equal((await fetch(`${app.url}/api/v1/status`, { method: 'OPTIONS', headers: { Origin: 'null' } })).status, 403);
+  const { client } = await app.create('A');
+  const fetcher = (url, options) => fetch(url, { ...options, headers: { ...options.headers, Origin: 'file://' } });
+  const saved = await new CloudClient({ ...client.credentials, fetcher }).write('notes/a.md', text('A'), 0);
+  assert.equal(saved.revision, 1);
+  await assert.rejects(createCloudServer({ dataDir: app.dataDir, corsOrigins: ['null'] }), /explicit client origin/);
+});
+
 test('explicit HTTPS proxy origin preserves loopback binding and exact host and origin checks', async (t) => {
   const publicOrigin = 'https://api.example.test';
   const app = await fixture(t, { publicOrigin });
