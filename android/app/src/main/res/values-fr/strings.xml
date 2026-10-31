@@ -32,4 +32,13 @@
     <string name="recording_notification_channel_desc">S\'affiche lorsqu\'un enregistrement de mémo vocal est actif.</string>
     <string name="empty_hint_new_note">note la première avec +</string>
     <string name="stamp_sealed">Scellée</string>
+    <string name="action_share_note">Partager…</string>
+    <string name="action_group">Groupe partagé…</string>
+    <string name="action_move_to_mine">Déplacer vers mes notes</string>
+    <string name="toast_moved_to_mine">Déplacée vers tes notes</string>
+    <string name="shared_with">Partagée avec %1$s</string>
+    <string name="shared_only_you">Partagée, toi seul pour l\'instant</string>
+    <string name="shared_read_only">Partagée, lecture seule</string>
+    <string name="shared_delete_message">Cela supprime la note pour tout le monde dans le groupe. Une copie va dans votre Corbeille ; si vous la restaurez, elle rejoint vos propres notes.</string>
+    <string name="shared_no_access">Partagée, plus d\'accès</string>
 </resources>

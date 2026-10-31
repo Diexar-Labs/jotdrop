@@ -13,7 +13,7 @@ data class CloudPiece(val name: String, val size: Int)
 /** What the cloud acknowledged for a write or delete; a delete can give [hash] without the file's bytes. */
 data class CloudSyncObject(val path: String, val bytes: ByteArray, val revision: Int, val deleted: Boolean = false, val hash: String = CloudSyncEngine.hash(bytes))
 /** A cloud file as the sync sees it; [bytes] downloads it only when it is needed. */
-class CloudSyncEntry(val path: String, val revision: Int, val deleted: Boolean, val hash: String, val bytes: () -> ByteArray)
+class CloudSyncEntry(val path: String, val revision: Int, val deleted: Boolean, val hash: String, val bad: Boolean = false, val bytes: () -> ByteArray)
 data class CloudSyncBase(val revision: Int, val hash: String, val deleted: Boolean = false)
 /** [skipped]: files over the maximum per file, left alone on this device. */
 data class CloudSyncReport(var uploaded: Int = 0, var downloaded: Int = 0, var deleted: Int = 0, var conflicts: Int = 0, val skipped: MutableList<String> = mutableListOf(), val conflictPaths: MutableList<String> = mutableListOf()) {
@@ -25,7 +25,9 @@ data class CloudLocalFile(val size: Long, val modified: Long)
 /** The hash of a local file as it was at this size and modification time. */
 data class CloudSeenFile(val size: Long, val modified: Long, val hash: String)
 /** A cloud file without its content, as the changes feed and one read gave it. */
-data class CloudIndexedFile(val path: String, val revision: Int, val deleted: Boolean, val hash: String)
+data class CloudIndexedFile(val path: String, val revision: Int, val deleted: Boolean, val hash: String, val bad: Boolean = false)
+/** A file in a shared space that does not open under its key. */
+class CloudBadFile : Exception()
 /** The cloud as last read from the changes feed: every file by id, and the changes still to read. */
 class CloudRemoteIndex(var cursor: Long = 0, val objects: MutableMap<String, CloudIndexedFile> = linkedMapOf(), val pending: MutableMap<String, Int> = linkedMapOf())
 data class CloudChange(val id: String, val revision: Int)
@@ -174,6 +176,12 @@ object CloudSyncEngine {
                 val entry = clouds[name]
                 val base = next[name]
                 val (localHash, bytes) = if (name in files) scan(name) else null to null
+                // The newest version does not open. A change made here goes on top of it, which repairs the note; nothing else can be decided.
+                if (entry?.bad == true) {
+                    if (localHash == entry.hash) remember(entry)
+                    else if (localHash != null) upload(name, bytes, entry.revision)
+                    continue
+                }
                 if (entry == null) {
                     check(base == null)
                     if (localHash != null) upload(name, bytes, 0)
@@ -237,7 +245,9 @@ object CloudSyncEngine {
      * file's bytes from its manifest, only for a file that is missing or different here.
      */
     fun remoteFiles(index: CloudRemoteIndex, changes: (Long) -> CloudChanges, read: (String) -> CloudManifest?, download: (CloudManifest) -> ByteArray,
-        checkActive: () -> Unit = {}, save: () -> Unit = {}, progress: (Int, Int) -> Unit = { _, _ -> }): List<CloudSyncEntry> {
+        checkActive: () -> Unit = {}, save: () -> Unit = {}, progress: (Int, Int) -> Unit = { _, _ -> },
+        // In a shared space another person writes the files: one bad one is left out instead of stopping the sync for everyone.
+        skipBad: ((String) -> Boolean)? = null): List<CloudSyncEntry> {
         do {
             checkActive()
             val page = changes(index.cursor)
@@ -253,14 +263,20 @@ object CloudSyncEngine {
         var kept = 0
         var savedAt = System.currentTimeMillis()
         val waiting = index.pending.keys.toList()
+        // The version before stays, marked: a path with a baseline must not vanish. A later good version replaces it.
+        fun leaveOut(id: String) {
+            val revision = index.pending.remove(id)
+            index.objects[id]?.let { old -> index.objects[id] = old.copy(revision = revision ?: old.revision, bad = true) }
+        }
         try {
             for ((done, id) in waiting.withIndex()) {
                 checkActive()
                 progress(done, waiting.size)
-                val file = read(id)
+                val file = try { read(id) } catch (_: CloudBadFile) { leaveOut(id); continue }
                 index.pending.remove(id)
                 if (file == null) { index.objects.remove(id); continue }
                 require(file.id == id && file.revision > 0) { "Invalid cloud file or revision" }
+                if (skipBad != null && (runCatching { path(file.path) }.isFailure || skipBad(file.path))) { index.pending[id] = file.revision; leaveOut(id); continue }
                 index.objects[id] = CloudIndexedFile(path(file.path), file.revision, file.deleted, file.hash)
                 file.bytes?.let { if (kept + it.size <= KEPT_BYTES) { loaded[id] = it; kept += it.size } }
                 if (System.currentTimeMillis() - savedAt >= SAVE_EVERY_MS) { save(); savedAt = System.currentTimeMillis() }
@@ -271,7 +287,7 @@ object CloudSyncEngine {
         }
         if (waiting.isNotEmpty()) save()
         return index.objects.map { (id, item) ->
-            CloudSyncEntry(item.path, item.revision, item.deleted, item.hash) {
+            CloudSyncEntry(item.path, item.revision, item.deleted, item.hash, item.bad) {
                 loaded.remove(id) ?: requireNotNull(read(id)) { "Cloud file changed during sync. Local files were kept" }.let {
                     // The current version, like the web: the free plan locks older versions, never the newest.
                     require(it.revision == item.revision && it.path == item.path && it.hash == item.hash) { "Cloud file changed during sync. Local files were kept" }

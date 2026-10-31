@@ -69,8 +69,8 @@ internal object CloudAccountFlow {
     var waitingForPerson by mutableStateOf(false)
     var personReturn by mutableStateOf<String?>(null)
     var provider by mutableStateOf<CloudProviderSignIn?>(null)
-    /** Opened from the welcome screen: Google sign-in starts without another tap. */
-    var startGoogle by mutableStateOf(false)
+    /** Opened from the welcome screen: the sign-in chosen there starts without another tap. */
+    var startProvider by mutableStateOf<String?>(null)
     /** Signed up with a password: the authenticator offer follows the recovery code, then this is dropped. */
     var secureOffer by mutableStateOf<CloudSecureOffer?>(null)
     /** An authenticator being set up, in settings or in the offer, until it is turned on or cancelled. */
@@ -289,11 +289,11 @@ internal fun CloudSignIn(busy: Boolean, run: (suspend () -> Unit) -> Unit, showE
         delay(500)
         providers = runCatching { io { CloudAccount.providers(server) } }.getOrDefault(emptyList()).filter { it in PROVIDER_NAMES }
     }
-    // From the welcome screen: straight to Google.
+    // From the welcome screen: straight to Google or GitHub.
     LaunchedEffect(Unit) {
-        if (!flow.startGoogle) return@LaunchedEffect
-        flow.startGoogle = false
-        run { startProviderSignIn(context, server, "google") }
+        val chosen = flow.startProvider ?: return@LaunchedEffect
+        flow.startProvider = null
+        run { startProviderSignIn(context, server, chosen) }
     }
     // Back from the browser: the ticket only works with the verifier this phone kept, and only once.
     LaunchedEffect(flow.providerReturn) {

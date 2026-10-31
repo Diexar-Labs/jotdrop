@@ -533,7 +533,27 @@ fun main() {
     quiet.reads = 0
     quietRemote.downloads = 0
     check(CloudSyncEngine.sync(quietRemote, quiet, quietTracked, seen = quietSeen) {} == CloudSyncReport() && quiet.reads == 0 && quietRemote.downloads == 0)
-    println("Native sync checks passed: two devices, binary attachments, offline conflicts, CAS races, delete/recreate/restore, lost responses, persisted baselines and fail-closed limits")
+    // In a shared space a bad newest version stops nobody: the note stays, and a change on top of it repairs it.
+    val badPath = "notes/List.md"
+    val badHash = CloudSyncEngine.hash("mine".toByteArray())
+    val badIndex = CloudRemoteIndex(0, linkedMapOf("good" to CloudIndexedFile(badPath, 1, false, badHash)))
+    val badEntries = CloudSyncEngine.remoteFiles(badIndex, { CloudChanges(listOf(CloudChange("good", 2), CloudChange("new", 1)), 2, false) }, { throw CloudBadFile() }, { error("Must not be read") }, skipBad = { false })
+    check(badEntries.single().let { it.path == badPath && it.revision == 2 && it.bad } && badIndex.pending.isEmpty() && "new" !in badIndex.objects)
+    val badWrites = mutableListOf<Pair<String, Int>>()
+    val badRemote = object : CloudSyncRemote {
+        override fun list() = badEntries
+        override fun write(path: String, bytes: ByteArray, baseRevision: Int) = CloudSyncObject(path, bytes, baseRevision + 1).also { badWrites += path to baseRevision }
+        override fun delete(path: String, baseRevision: Int): CloudSyncObject = error("Nothing is deleted")
+    }
+    val badLocal = CheckLocal().also { it.files[badPath] = "mine".toByteArray() }
+    val badTracked = mutableMapOf(badPath to CloudSyncBase(1, badHash))
+    check(CloudSyncEngine.sync(badRemote, badLocal, badTracked) {} == CloudSyncReport() && badWrites.isEmpty() && badTracked.getValue(badPath).revision == 2)
+    badLocal.files[badPath] = "changed here".toByteArray()
+    check(CloudSyncEngine.sync(badRemote, badLocal, badTracked) {}.uploaded == 1 && badWrites == listOf(badPath to 2))
+    // Changed here at the moment the bad version arrives: the same, without reading what does not open.
+    val badTrackedOld = mutableMapOf(badPath to CloudSyncBase(1, badHash))
+    check(CloudSyncEngine.sync(badRemote, badLocal, badTrackedOld) {}.uploaded == 1 && badWrites.last() == badPath to 2)
+    println("Native sync checks passed: two devices,binary attachments, offline conflicts, CAS races, delete/recreate/restore, lost responses, persisted baselines and fail-closed limits")
     checkMerge()
     checkScale()
 }

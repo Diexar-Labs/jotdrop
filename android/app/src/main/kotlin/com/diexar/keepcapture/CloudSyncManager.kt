@@ -194,14 +194,14 @@ object CloudSyncManager {
         val json = store.syncState(indexScope(client)) ?: return CloudRemoteIndex()
         val index = CloudRemoteIndex(json.getLong("cursor"))
         val objects = json.getJSONObject("objects")
-        for (id in objects.keys()) objects.getJSONObject(id).let { index.objects[id] = CloudIndexedFile(it.getString("path"), it.getInt("revision"), it.getBoolean("deleted"), it.getString("hash")) }
+        for (id in objects.keys()) objects.getJSONObject(id).let { index.objects[id] = CloudIndexedFile(it.getString("path"), it.getInt("revision"), it.getBoolean("deleted"), it.getString("hash"), it.optBoolean("bad")) }
         val pending = json.getJSONObject("pending")
         for (id in pending.keys()) index.pending[id] = pending.getInt(id)
         return index
     }
     private fun saveIndex(store: CloudPreviewStore, client: CloudClient, index: CloudRemoteIndex) {
         val objects = JSONObject()
-        for ((id, file) in index.objects) objects.put(id, JSONObject().put("path", file.path).put("revision", file.revision).put("deleted", file.deleted).put("hash", file.hash))
+        for ((id, file) in index.objects) objects.put(id, JSONObject().put("path", file.path).put("revision", file.revision).put("deleted", file.deleted).put("hash", file.hash).apply { if (file.bad) put("bad", true) })
         val pending = JSONObject()
         for ((id, revision) in index.pending) pending.put(id, revision)
         store.saveSyncState(indexScope(client), JSONObject().put("cursor", index.cursor).put("objects", objects).put("pending", pending))
@@ -229,13 +229,13 @@ object CloudSyncManager {
 
     /** [source]: the file just prepared. After a restart, the local file finishes a large v2 upload if it is still the same. */
     private fun finishUpload(store: CloudPreviewStore, scope: String, client: CloudClient, state: JSONObject, checkActive: () -> Unit,
-        source: ByteArray? = null, local: (String) -> ByteArray = { error("No local file") }): CloudSyncObject? {
-        val prepared = store.upload(scope, client.credentials.deviceId) ?: return null
+        source: ByteArray? = null, local: (String) -> ByteArray = { error("No local file") }, holder: String = client.credentials.deviceId): CloudSyncObject? {
+        val prepared = store.upload(scope, holder) ?: return null
         val file = client.preparedManifest(prepared)
         val bytes = file.bytes ?: source ?: runCatching { local(file.path) }.getOrNull()?.takeIf { CloudSyncEngine.hash(it) == file.hash }
         val revision = try { client.commitWrite(prepared, bytes, checkActive) } catch (_: CloudSourceMissingException) {
             // Changed since: the cloud did not get it, and the file here is newer; the sync takes it from here.
-            store.clearUpload(scope, client.credentials.deviceId)
+            store.clearUpload(scope, holder)
             return null
         }
         val saved = CloudSyncObject(file.path, bytes ?: ByteArray(0), revision, hash = file.hash)
@@ -250,16 +250,16 @@ object CloudSyncManager {
         val next = JSONObject(state.toString()).put("tracked", tracked)
         store.saveSyncState(scope, next)
         state.put("tracked", tracked)
-        store.clearUpload(scope, client.credentials.deviceId)
+        store.clearUpload(scope, holder)
         return saved
     }
 
     private fun writeUpload(store: CloudPreviewStore, scope: String, client: CloudClient, state: JSONObject,
-        path: String, bytes: ByteArray, baseRevision: Int, checkActive: () -> Unit): CloudSyncObject {
+        path: String, bytes: ByteArray, baseRevision: Int, checkActive: () -> Unit, holder: String = client.credentials.deviceId): CloudSyncObject {
         checkActive()
-        check(store.upload(scope, client.credentials.deviceId) == null) { "Resume the previous encrypted upload before saving another file" }
-        store.saveUpload(scope, client.credentials.deviceId, client.prepareWrite(path, bytes, baseRevision))
-        return requireNotNull(finishUpload(store, scope, client, state, checkActive, bytes))
+        check(store.upload(scope, holder) == null) { "Resume the previous encrypted upload before saving another file" }
+        store.saveUpload(scope, holder, client.prepareWrite(path, bytes, baseRevision))
+        return requireNotNull(finishUpload(store, scope, client, state, checkActive, bytes, holder = holder))
     }
 
     suspend fun resolve(context: Context, path: String, keepLocal: Boolean) {
@@ -295,6 +295,192 @@ object CloudSyncManager {
             }
         }
         sync(context)
+    }
+
+    /**
+     * Every shared space in its own folder, with its own state. Nothing here may stop the own vault's sync: a 401 means
+     * this space, not this device, and a member's bad file is left out. Runs inside the sync's lock.
+     */
+    private fun syncSpaces(context: Context, store: CloudPreviewStore, client: CloudClient, checkActive: () -> Unit) {
+        val known = store.spaces()
+        val items = try { CloudSpaces.list(client) } catch (error: Exception) {
+            // No account on this cloud has no spaces; anything else leaves what is known as it is.
+            Log.i("JotDropCloud", "Shared spaces not read: ${error.javaClass.simpleName}")
+            return
+        }
+        val listed = items.map { it.id }.toSet()
+        for (item in items) {
+            checkActive()
+            try {
+                val saved = known.optJSONObject(item.id)
+                // Who is in it can change without a new note, so this is asked on every sync.
+                val details = CloudSpaces.details(client, item.id)
+                val savedKey = saved?.optString("key")?.takeIf { it.isNotEmpty() }
+                val key = details.key ?: savedKey
+                // Nothing to open yet, or read-only and not on this phone: put aside here, or replaced before this phone
+                // had it. It is remembered without a key, so it stays out of sight and the 30-second look stops asking.
+                // A group someone can still take over does show on a phone that never had it.
+                if (key == null || details.unfinished || (item.frozen && savedKey == null && (saved != null || !details.canTakeOver))) {
+                    known.put(item.id, (saved ?: JSONObject()).put("frozen", item.frozen).put("sequence", item.sequence).put("gone", false))
+                    store.saveSpaces(known)
+                    continue
+                }
+                val next = (saved ?: JSONObject()).put("key", key).put("frozen", item.frozen).put("replacedBy", item.replacedBy.orEmpty()).put("sequence", item.sequence).put("gone", false)
+                next.put("name", details.name.orEmpty()).put("owner", details.owner).put("others", JSONArray(details.members.filter { it.accountId != details.accountId }.map { it.name ?: "Someone" }))
+                known.put(item.id, next)
+                store.saveSpaces(known)
+                if (item.frozen) rescueUnsent(context, store, client, item.id, key, checkActive)
+                else syncSpace(context, store, client, item.id, key, checkActive)
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                Log.w("JotDropCloud", "Shared space not synced: ${error.javaClass.simpleName}")
+                val saved = known.optJSONObject(item.id)
+                if (error is CloudRequestException && error.status == 401 && saved != null) { known.put(item.id, saved.put("gone", true)); store.saveSpaces(known) }
+            }
+        }
+        // Not in the list any more: nothing is removed here without asking.
+        for (id in known.keys().asSequence().toList()) if (id !in listed) known.optJSONObject(id)?.let { if (it.optString("key").isEmpty()) known.remove(id) else known.put(id, it.put("gone", true)) }
+        store.saveSpaces(known)
+        changed.value++
+    }
+
+    private fun syncSpace(context: Context, store: CloudPreviewStore, own: CloudClient, spaceId: String, spaceKey: String, checkActive: () -> Unit) {
+        val client = CloudSpaces.files(own, spaceId, spaceKey)
+        val initial = CloudVaultAdapter(context, spaceId = spaceId)
+        val scope = scope(client, initial.binding)
+        val state = store.syncState(scope) ?: JSONObject()
+        val active = { checkActive(); initial.validateBinding() }
+        // The folder itself is gone, whatever took it. That says nothing about the notes: starting over brings them back,
+        // while reading it as deletions would remove them for everyone.
+        if (!initial.hasFolder() && (state.has("tracked") || state.has("pending"))) {
+            state.remove("tracked")
+            state.remove("pending")
+            store.saveSyncState(scope, state)
+        }
+        state.optJSONObject("pending")?.let { pending ->
+            check(synchronized(Storage.cloudFileLock) { initial.verifyPending(pending.getString("path"), pending.optString("original").takeIf { it.isNotEmpty() }, pending.optString("replacement").takeIf { it.isNotEmpty() }) }) { "An interrupted local write in a shared space needs recovery." }
+            state.remove("pending")
+            store.saveSyncState(scope, state)
+        }
+        try { finishUpload(store, scope, client, state, active, local = initial::read, holder = spaceId) }
+        catch (error: CloudRequestException) {
+            if (error.status != 409) throw error
+            val prepared = store.upload(scope, spaceId) ?: throw error
+            val file = client.preparedManifest(prepared)
+            (file.bytes ?: runCatching { initial.read(file.path) }.getOrNull()?.takeIf { CloudSyncEngine.hash(it) == file.hash })?.let { initial.recoverUpload(file.path, it) }
+            store.clearUpload(scope, spaceId)
+        }
+        val adapter = CloudVaultAdapter(context, { path, original, replacement ->
+            state.put("pending", JSONObject().put("path", path).put("original", original.orEmpty()).put("replacement", replacement.orEmpty()))
+            store.saveSyncState(scope, state)
+        }, { state.remove("pending"); store.saveSyncState(scope, state) }, spaceId = spaceId)
+        val tracked = mutableMapOf<String, CloudSyncBase>()
+        val baseline = state.optJSONObject("tracked") ?: JSONObject()
+        for (name in baseline.keys()) baseline.getJSONObject(name).let { tracked[name] = CloudSyncBase(it.getInt("revision"), it.getString("hash"), it.getBoolean("deleted")) }
+        val index = loadIndex(store, client)
+        val seen = loadSeen(store, scope)
+        val maxFileBytes = minOf(client.maxFileBytes(), Runtime.getRuntime().maxMemory() / 4)
+        // A file that does not open under the key, or a note where the attachments are, is someone else's mistake or malice.
+        val manifest = { id: String -> try { client.manifestOrNull(id) } catch (error: Exception) { if (error is CloudRequestException || error is java.io.IOException) throw error else throw CloudBadFile() } }
+        val remote = object : CloudSyncRemote {
+            override fun list(): List<CloudSyncEntry> = CloudSyncEngine.remoteFiles(index, client::changes, manifest, client::readPieces, active, { saveIndex(store, client, index) }, skipBad = { it.startsWith("notes/attachments/") })
+            override fun write(path: String, bytes: ByteArray, baseRevision: Int): CloudSyncObject {
+                checkActive()
+                val saved = writeUpload(store, scope, client, state, path, bytes, baseRevision, active, holder = spaceId)
+                index.objects[CloudCrypto.objectId(client.credentials.vaultKey, path)] = CloudIndexedFile(path, saved.revision, false, CloudSyncEngine.hash(bytes))
+                return saved
+            }
+            override fun delete(path: String, baseRevision: Int): CloudSyncObject {
+                checkActive()
+                val id = CloudCrypto.objectId(client.credentials.vaultKey, path)
+                val current = client.readManifest(id)
+                check(current.revision == baseRevision) { "Cloud changed during sync. Retry to compare both versions" }
+                val deleted = CloudSyncObject(path, ByteArray(0), client.remove(id, baseRevision), true, current.hash)
+                index.objects[id] = CloudIndexedFile(path, deleted.revision, true, current.hash)
+                return deleted
+            }
+            override fun base(path: String, revision: Int): ByteArray? {
+                checkActive()
+                return try { client.read(CloudCrypto.objectId(client.credentials.vaultKey, path), revision).bytes }
+                catch (error: Exception) { if (error is CloudRequestException && error.status !in 400..499 || error is java.io.IOException) throw error else null }
+            }
+        }
+        try {
+            CloudSyncEngine.sync(remote, adapter, tracked, active, seen, maxFileBytes = maxFileBytes) { values ->
+                val next = JSONObject()
+                for ((path, base) in values) next.put(path, JSONObject().put("revision", base.revision).put("hash", base.hash).put("deleted", base.deleted))
+                state.put("tracked", next)
+                store.saveSyncState(scope, state)
+                saveIndex(store, client, index)
+            }
+        } finally { runCatching { saveIndex(store, client, index); saveSeen(store, scope, seen) } }
+    }
+
+    /**
+     * A read-only space takes nothing more. What differs from the last synced state is copied to the own notes as an
+     * ordinary note, once per version; nothing in the space's folder is moved, so a space that comes back loses nothing.
+     */
+    private fun rescueUnsent(context: Context, store: CloudPreviewStore, own: CloudClient, spaceId: String, spaceKey: String, checkActive: () -> Unit) {
+        val initial = CloudVaultAdapter(context, spaceId = spaceId)
+        val scope = scope(CloudSpaces.files(own, spaceId, spaceKey), initial.binding)
+        val state = store.syncState(scope) ?: JSONObject()
+        val baseline = state.optJSONObject("tracked") ?: JSONObject()
+        val rescued = state.optJSONObject("rescued") ?: JSONObject()
+        val vault = CloudVaultAdapter(context)
+        val mine = vault.list()
+        for (path in initial.list().keys) {
+            checkActive()
+            val bytes = initial.read(path)
+            val hash = CloudSyncEngine.hash(bytes)
+            if (baseline.optJSONObject(path)?.takeIf { !it.optBoolean("deleted") }?.optString("hash") == hash || rescued.optString(path) == hash) continue
+            val name = path.substringAfterLast('/')
+            val wanted = if (path.startsWith("notes/")) "notes/Not sent - $name" else "attachments/$name"
+            val free = generateSequence(1) { it + 1 }.map { copy -> if (copy == 1) wanted else wanted.substringBeforeLast('.') + " $copy." + wanted.substringAfterLast('.') }.first { it !in mine }
+            check(vault.compareAndSet(free, null, bytes)) { "Could not save an unsent change. It is still in the shared folder." }
+            rescued.put(path, hash)
+            state.put("rescued", rescued)
+            store.saveSyncState(scope, state)
+        }
+    }
+
+    /** While this runs no sync touches a space's folder or the list of spaces. */
+    internal suspend fun <T> exclusive(block: suspend () -> T): T = serialized(block)
+
+    /** Inside [exclusive]. What differs from the last synced state goes to the own notes, before the folder is removed. */
+    internal fun rescueSpace(context: Context, spaceId: String, spaceKey: String) {
+        val client = client(context) ?: throw CloudSyncException("Pair this device first")
+        rescueUnsent(context, CloudPreviewStore(context), client, spaceId, spaceKey) {}
+    }
+
+    /**
+     * Inside [exclusive]. A space leaves this phone: its folder, kept as own notes or not, and everything remembered about
+     * it. A baseline left behind would read the missing notes as deleted here, and delete them for everyone on coming back.
+     * What stays is an entry without a key, so a read-only space the server still lists does not come back by itself.
+     */
+    internal fun dropSpace(context: Context, spaceId: String, spaceKey: String, keep: Boolean) {
+        val store = CloudPreviewStore(context)
+        val client = CloudSpaces.files(client(context) ?: throw CloudSyncException("Pair this device first"), spaceId, spaceKey)
+        val scope = scope(client, CloudVaultAdapter(context, spaceId = spaceId).binding)
+        store.clearSyncState(scope)
+        store.clearSyncState("$scope-seen")
+        store.clearSyncState(indexScope(client))
+        store.clearUpload(scope, spaceId)
+        Storage.releaseSpaceFolder(context, spaceId, keep).getOrThrow()
+        val spaces = store.spaces()
+        spaces.put(spaceId, JSONObject())
+        store.saveSpaces(spaces)
+        changed.value++
+    }
+
+    /** True when a shared space has something new, for a cheap look every 30 seconds while the app is open. */
+    suspend fun spacesChanged(context: Context): Boolean = withContext(Dispatchers.IO) {
+        if (!status(context).enabled) return@withContext false
+        val store = CloudPreviewStore(context)
+        val client = client(context) ?: return@withContext false
+        val known = store.spaces()
+        val items = runCatching { CloudSpaces.list(client) }.getOrNull() ?: return@withContext false
+        items.any { item -> known.optJSONObject(item.id)?.let { it.optLong("sequence", -1) != item.sequence || it.optBoolean("frozen") != item.frozen || it.optBoolean("gone") } ?: true } ||
+            known.keys().asSequence().any { id -> known.optJSONObject(id)?.optBoolean("gone") != true && items.none { it.id == id } }
     }
 
     suspend fun sync(context: Context) = serialized {
@@ -440,6 +626,8 @@ object CloudSyncManager {
             store.saveSettings(settings)
             uploaded.value = report.uploadedPaths.toSet()
             changed.value++
+            // The own vault is done; a shared space that fails says so itself and never stops this.
+            syncSpaces(context, store, client, checkActive)
         } catch (error: Exception) {
             if (error is CancellationException) throw error
             Log.w("JotDropCloud", CloudDiagnostics.failure(error, phase, (System.nanoTime() - startedAt) / 1_000_000))

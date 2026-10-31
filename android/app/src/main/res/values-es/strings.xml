@@ -32,4 +32,13 @@
     <string name="recording_notification_channel_desc">Se muestra cuando una grabación de memoria de voz está activa.</string>
     <string name="empty_hint_new_note">apunta la primera con +</string>
     <string name="stamp_sealed">Sellada</string>
+    <string name="action_share_note">Compartir…</string>
+    <string name="action_group">Grupo compartido…</string>
+    <string name="action_move_to_mine">Mover a mis notas</string>
+    <string name="toast_moved_to_mine">Movida a tus notas</string>
+    <string name="shared_with">Compartida con %1$s</string>
+    <string name="shared_only_you">Compartida, solo tú por ahora</string>
+    <string name="shared_read_only">Compartida, solo lectura</string>
+    <string name="shared_delete_message">Esto elimina la nota para todas las personas del grupo. Una copia va a tu Papelera; si la restauras, pasa a tus propias notas.</string>
+    <string name="shared_no_access">Compartida, sin acceso</string>
 </resources>

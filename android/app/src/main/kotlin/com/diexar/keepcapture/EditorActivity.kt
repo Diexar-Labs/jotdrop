@@ -374,7 +374,7 @@ private fun EditorScreen(
             }
 
             val result = withContext(Dispatchers.IO) {
-                Storage.copyImageToAttachments(context, uri)
+                Storage.copyImageToAttachments(context, uri, Storage.spaceIdOf(initialUri))
             }
             cleanupFile?.delete()
             val basename = result.getOrNull()
@@ -382,9 +382,9 @@ private fun EditorScreen(
                 val hadCompleteIndex = attachmentIndexLoaded
                 val refreshed = withContext(Dispatchers.IO) {
                     if (hadCompleteIndex) {
-                        Storage.findAttachmentUri(context, basename)?.let { mapOf(basename to it) }.orEmpty()
+                        Storage.findAttachmentUri(context, basename, Storage.spaceIdOf(initialUri))?.let { mapOf(basename to it) }.orEmpty()
                     } else {
-                        Storage.listAttachmentUris(context)
+                        Storage.listAttachmentUris(context, Storage.spaceIdOf(initialUri))
                     }
                 }
                 attachmentUris = if (hadCompleteIndex) attachmentUris + refreshed else refreshed
@@ -552,7 +552,7 @@ private fun EditorScreen(
                 val shouldBuildIndex = cachedAttachments == null && embedded.isNotEmpty() && fromList == null
                 Triple(
                     raw,
-                    cachedAttachments ?: fromList ?: if (shouldBuildIndex) Storage.listAttachmentUris(context) else emptyMap(),
+                    cachedAttachments ?: fromList ?: if (shouldBuildIndex) Storage.listAttachmentUris(context, Storage.spaceIdOf(initialUri)) else emptyMap(),
                     cachedAttachments != null || shouldBuildIndex,
                 )
             }
@@ -831,7 +831,8 @@ private fun EditorScreen(
                 actions = {
                     // Zonder geladen notitie (bv. geparkeerd) zouden deze acties op een vorige of verkeerde notitie werken.
                     if (loadError == null) {
-                        IconButton(onClick = {
+                        // Pin and labels are per person, and a reminder would go off for everyone: not in a shared note.
+                        if (Storage.spaceIdOf(initialUri) == null) IconButton(onClick = {
                             pinned = !pinned
                             if (isExisting) applyMetaAsync(newPinned = pinned)
                         }) {
@@ -900,7 +901,7 @@ private fun EditorScreen(
                                 Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.more_options))
                             }
                             DropdownMenu(expanded = editorMenuOpen, onDismissRequest = { editorMenuOpen = false }) {
-                                DropdownMenuItem(
+                                if (Storage.spaceIdOf(initialUri) == null) DropdownMenuItem(
                                     text = { Text(stringResource(R.string.nav_labels)) },
                                     leadingIcon = { Icon(Icons.Filled.Label, null) },
                                     enabled = loaded && loadError == null && !saving && !labelsOpening,
@@ -933,13 +934,14 @@ private fun EditorScreen(
                                     onClick = { editorMenuOpen = false; showMarkdownHelp = true },
                                 )
                                 if (isExisting) {
-                                    DropdownMenuItem(
+                                    // Out of a group's folder means gone for everyone in it, so these are for own notes.
+                                    if (Storage.spaceIdOf(initialUri) == null) DropdownMenuItem(
                                         text = { Text(stringResource(R.string.action_archive)) },
                                         leadingIcon = { Icon(Icons.Filled.Archive, null) },
                                         onClick = { editorMenuOpen = false; showArchiveDialog = true },
                                     )
                                     // Works on the saved file, so unsaved edits must be saved first.
-                                    for (copy in listOf(false, true)) {
+                                    if (Storage.spaceIdOf(initialUri) == null) for (copy in listOf(false, true)) {
                                         DropdownMenuItem(
                                             text = { Text(stringResource(if (copy) R.string.action_copy_to_folder else R.string.action_move_to_folder)) },
                                             leadingIcon = { Icon(if (copy) Icons.Filled.ContentCopy else Icons.Filled.DriveFileMove, null) },
@@ -1094,6 +1096,7 @@ private fun EditorScreen(
                     )
                 }
                 else -> EditorBody(
+                    showReminder = Storage.spaceIdOf(initialUri) == null,
                     value = bodyText,
                     onValueChange = { next ->
                         val current = bodyText
@@ -1322,7 +1325,7 @@ private fun EditorScreen(
     if (showDeleteDialog) {
         ConfirmDialog(
             title = stringResource(R.string.delete_title),
-            message = stringResource(R.string.delete_message),
+            message = stringResource(if (Storage.deletesForEveryone(initialUri)) R.string.shared_delete_message else R.string.delete_message),
             confirmLabel = stringResource(R.string.action_delete),
             onConfirm = {
                 showDeleteDialog = false
@@ -1361,6 +1364,7 @@ private fun EditorScreen(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun EditorBody(
+    showReminder: Boolean = true,
     value: TextFieldValue,
     onValueChange: (TextFieldValue) -> Unit,
     bodyEditing: Boolean,
@@ -1475,7 +1479,7 @@ private fun EditorBody(
             foreground = foreground,
         )
         Spacer(Modifier.height(8.dp))
-        ReminderEditor(
+        if (showReminder) ReminderEditor(
             reminder = reminder,
             repeat = repeat,
             until = until,

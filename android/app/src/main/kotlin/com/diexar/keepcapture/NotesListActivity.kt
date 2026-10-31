@@ -75,6 +75,7 @@ import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material.icons.filled.Done
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
@@ -295,8 +296,8 @@ class NotesListActivity : ComponentActivity() {
         if (uri != null) saveCapturedImage(uri, deleteSourceAfter = null, withOcr = ocr)
     }
 
-    // Welcome: the notes folder first; with Google, the cloud sign-in follows straight away.
-    private var welcomeGoogle = false
+    // Welcome: the notes folder first; with Google or GitHub, the cloud sign-in follows straight away.
+    private var welcomeProvider: String? = null
     private val pickVaultLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
@@ -304,29 +305,31 @@ class NotesListActivity : ComponentActivity() {
         Storage.persistUriPermission(this, uri)
         Storage.saveVaultUri(this, uri)
         reload(rescheduleReminders = true)
-        if (welcomeGoogle) startActivity(Intent(this, CloudActivity::class.java).putExtra(CloudActivity.EXTRA_WELCOME, true))
+        welcomeProvider?.let { startActivity(Intent(this, CloudActivity::class.java).putExtra(CloudActivity.EXTRA_WELCOME, true).putExtra(CloudActivity.EXTRA_PROVIDER, it)) }
     }
 
-    private fun startWelcome(google: Boolean) {
-        welcomeGoogle = google
+    private fun startWelcome(provider: String?) {
+        welcomeProvider = provider
         // Opens in Documents, where "New folder" makes the suggested JotDrop folder.
         pickVaultLauncher.launch(DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", "primary:Documents"))
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        outState.putBoolean("welcomeGoogle", welcomeGoogle)
+        outState.putString("welcomeProvider", welcomeProvider)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        welcomeGoogle = savedInstanceState?.getBoolean("welcomeGoogle") ?: false
+        welcomeProvider = savedInstanceState?.getString("welcomeProvider")
         VoiceMemoRecordingService.restorePending(this)
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
                 launch { CloudSyncManager.changes.drop(1).collect { reload(rescheduleReminders = true) } }
+                // While the app is open, what someone else changed in a shared group shows within 30 seconds.
+                launch { while (true) { kotlinx.coroutines.delay(30_000); if (runCatching { CloudSyncManager.spacesChanged(this@NotesListActivity) }.getOrDefault(false)) CloudSyncManager.request(this@NotesListActivity) } }
                 launch {
                     VoiceMemoRecordingService.failure.collect { message ->
                         if (message != null) {
@@ -797,7 +800,7 @@ private fun NotesListScreen(
     onRefresh: () -> Unit,
     onPullRefresh: suspend () -> Unit,
     onOpenSettings: () -> Unit,
-    onWelcome: (google: Boolean) -> Unit,
+    onWelcome: (provider: String?) -> Unit,
     onNewNote: (String?) -> Unit,
     onTakePhoto: () -> Unit,
     onPickPhoto: () -> Unit,
@@ -922,11 +925,11 @@ private fun NotesListScreen(
         selectedNoteUris = setOf(uri)
     }
     val selectAll: () -> Unit = {
-        selectedNoteUris = filtered.map { it.uri }.toSet()
+        selectedNoteUris = filtered.filter { it.space == null }.map { it.uri }.toSet()
     }
     val onCardClick: (NoteSummary) -> Unit = { note ->
         if (selectionMode) {
-            toggleSelect(note.uri)
+            if (note.space == null) toggleSelect(note.uri)
         } else {
             // Kaartvolgorde zoals het grid rendert (gepind eerst, dan de rest) —
             // daarmee kan de editor naar de vorige/volgende notitie navigeren.
@@ -935,7 +938,8 @@ private fun NotesListScreen(
         }
     }
     val onCardLongClick: (NoteSummary) -> Unit = { note ->
-        if (selectionMode) toggleSelect(note.uri) else enterSelection(note.uri)
+        // In manual order the grid sends the long press here too. Out of a group's folder means gone for everyone, so no selecting.
+        if (note.space == null) { if (selectionMode) toggleSelect(note.uri) else enterSelection(note.uri) }
     }
 
     // BackHandler: in selection-mode vangt back-button af om uit te stappen
@@ -1022,6 +1026,15 @@ private fun NotesListScreen(
                     result.fold({ context.getString(R.string.toast_archived) }, { context.getString(R.string.toast_error, it.message ?: "") }),
                     Toast.LENGTH_SHORT,
                 ).show()
+                onRefresh()
+            }
+            CardAction.SHARE -> context.startActivity(Intent(context, CloudActivity::class.java).putExtra(CloudActivity.EXTRA_SHARE, note.uri.toString()))
+            CardAction.GROUP -> context.startActivity(Intent(context, CloudActivity::class.java))
+            CardAction.MOVE_TO_MINE -> scope.launch {
+                val result = withContext(Dispatchers.IO) {
+                    Storage.noteWriteMutex.withLock { Storage.moveNoteOutOfSpace(context, note.uri, note.space!!.id, keepSource = note.space.frozen || note.space.gone) }
+                }
+                Toast.makeText(context, result.fold({ context.getString(R.string.toast_moved_to_mine) }, { context.getString(R.string.toast_error, it.message ?: "") }), Toast.LENGTH_SHORT).show()
                 onRefresh()
             }
             CardAction.RESTORE -> scope.launch {
@@ -1306,7 +1319,7 @@ private fun NotesListScreen(
         ) {
             when (val s = state) {
                 NotesUiState.Loading -> LoadingSpinner()
-                NotesUiState.NoVault -> WelcomeState(onGoogle = { onWelcome(true) }, onLocal = { onWelcome(false) })
+                NotesUiState.NoVault -> WelcomeState(onProvider = { onWelcome(it) }, onLocal = { onWelcome(null) })
                 is NotesUiState.Error -> EmptyState(
                     text = stringResource(R.string.error_with_message, s.message),
                     actionLabel = stringResource(R.string.retry),
@@ -1437,6 +1450,7 @@ private fun NotesListScreen(
             text = {
                 Text(stringResource(when {
                     folder == NoteFolder.TRASH -> R.string.delete_permanent_message
+                    Storage.deletesForEveryone(cardTarget) -> R.string.shared_delete_message
                     single -> R.string.delete_message
                     else -> R.string.bulk_delete_message
                 }))
@@ -2513,7 +2527,8 @@ private fun NoteCard(
                             fontWeight = FontWeight.Medium,
                             color = fg,
                         )
-                        OutlinedButton(
+                        // In a group the other version is simply a note here; the comparison only knows the own cloud.
+                        if (note.space == null) OutlinedButton(
                             onClick = if (selectionMode) onClick else onResolveConflict,
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
                             modifier = Modifier.padding(top = 4.dp).heightIn(min = 32.dp),
@@ -2598,6 +2613,24 @@ private fun NoteCard(
                             onMoreClick = onClick,
                         )
                     }
+                    // Words and an icon, never only a colour: who else is in this note. On its own line, so the time keeps its room.
+                    note.space?.let { space ->
+                        Spacer(Modifier.height(8.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(imageVector = Icons.Filled.Group, contentDescription = null, tint = timestampColor, modifier = Modifier.size(14.dp))
+                            Spacer(Modifier.size(3.dp))
+                            Text(
+                                text = when {
+                                    space.gone -> stringResource(R.string.shared_no_access)
+                                    space.frozen -> stringResource(R.string.shared_read_only)
+                                    space.others.isEmpty() -> stringResource(R.string.shared_only_you)
+                                    else -> stringResource(R.string.shared_with, space.others.joinToString(", "))
+                                },
+                                style = labelStyle,
+                                color = timestampColor,
+                            )
+                        }
+                    }
                     Spacer(Modifier.height(8.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -2628,7 +2661,7 @@ private fun NoteCard(
                         }
                         // Each card has its own menu, like the card buttons in Obsidian; selecting uses the top bar.
                         if (cardActions.isNotEmpty() && !selectionMode) {
-                            CardMenu(cardActions, foreground = fg, onAction = onCardAction)
+                            CardMenu(if (note.space != null) SHARED_CARD_ACTIONS else cardActions, foreground = fg, onAction = onCardAction)
                         }
                     }
                 }
@@ -2645,7 +2678,7 @@ private fun NoteCard(
                         .padding(8.dp)
                         .size(24.dp),
                 )
-            } else {
+            } else if (note.space == null) {
                 IconButton(
                     onClick = onPinClick,
                     modifier = Modifier
@@ -2685,10 +2718,12 @@ internal fun conflictOriginalName(filename: String): String =
     filename.replace(Regex("\\.cloud-conflict-r\\d+(?:-[0-9a-fA-F-]+)?(?=\\.[^.]*$|$)"), "")
 
 /** What a card's own menu can do, depending on the folder it is shown in. */
-internal enum class CardAction { COLOR, LABELS, ARCHIVE, RESTORE, MOVE, COPY, DELETE }
+internal enum class CardAction { COLOR, LABELS, ARCHIVE, RESTORE, MOVE, COPY, DELETE, SHARE, GROUP, MOVE_TO_MINE }
+/** Pin, labels and archive are per person, so a shared note's card offers what goes for everyone. */
+internal val SHARED_CARD_ACTIONS = listOf(CardAction.COLOR, CardAction.GROUP, CardAction.MOVE_TO_MINE, CardAction.DELETE)
 
 internal fun cardActionsFor(folder: NoteFolder): List<CardAction> = when (folder) {
-    NoteFolder.NOTES -> listOf(CardAction.COLOR, CardAction.LABELS, CardAction.ARCHIVE, CardAction.MOVE, CardAction.COPY, CardAction.DELETE)
+    NoteFolder.NOTES -> listOf(CardAction.COLOR, CardAction.LABELS, CardAction.ARCHIVE, CardAction.SHARE, CardAction.MOVE, CardAction.COPY, CardAction.DELETE)
     NoteFolder.ARCHIVE -> listOf(CardAction.COLOR, CardAction.LABELS, CardAction.RESTORE, CardAction.MOVE, CardAction.COPY, CardAction.DELETE)
     NoteFolder.TRASH -> listOf(CardAction.RESTORE, CardAction.DELETE)
 }
@@ -2715,6 +2750,9 @@ private fun CardMenu(actions: List<CardAction>, foreground: Color, onAction: (Ca
                     CardAction.RESTORE -> Icons.Filled.Restore to R.string.action_restore
                     CardAction.MOVE -> Icons.Filled.DriveFileMove to R.string.action_move_to_folder
                     CardAction.COPY -> Icons.Filled.ContentCopy to R.string.action_copy_to_folder
+                    CardAction.SHARE -> Icons.Filled.Group to R.string.action_share_note
+                    CardAction.GROUP -> Icons.Filled.Group to R.string.action_group
+                    CardAction.MOVE_TO_MINE -> Icons.Filled.DriveFileMove to R.string.action_move_to_mine
                     CardAction.DELETE -> if (inTrash) Icons.Filled.DeleteForever to R.string.action_delete_forever
                         else Icons.Filled.Delete to R.string.action_delete
                 }
@@ -3128,9 +3166,9 @@ private fun EmptyState(text: String, actionLabel: String, onAction: () -> Unit) 
     }
 }
 
-/** First start: a folder for the notes, and with Google a free cloud in the same few taps (Eric: Play Store, Google, free account). */
+/** First start: a folder for the notes, and with Google or GitHub a free cloud in the same few taps (Eric: many Obsidian users are on GitHub). */
 @Composable
-private fun WelcomeState(onGoogle: () -> Unit, onLocal: () -> Unit) {
+private fun WelcomeState(onProvider: (String) -> Unit, onLocal: () -> Unit) {
     Box(modifier = Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -3140,7 +3178,8 @@ private fun WelcomeState(onGoogle: () -> Unit, onLocal: () -> Unit) {
             Text(stringResource(R.string.welcome_title), style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onBackground, textAlign = TextAlign.Center)
             Text(stringResource(R.string.welcome_text), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onBackground, textAlign = TextAlign.Center)
             Spacer(Modifier.height(4.dp))
-            ProviderButton("google", stringResource(R.string.welcome_google), enabled = true, onClick = onGoogle)
+            ProviderButton("google", stringResource(R.string.welcome_google), enabled = true, onClick = { onProvider("google") })
+            ProviderButton("github", stringResource(R.string.welcome_github), enabled = true, onClick = { onProvider("github") })
             OutlinedButton(onClick = onLocal, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(stringResource(R.string.welcome_local)) }
             Text(stringResource(R.string.welcome_folder_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onBackground, textAlign = TextAlign.Center)
         }

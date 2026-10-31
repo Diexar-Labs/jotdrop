@@ -32,4 +32,13 @@
     <string name="recording_notification_channel_desc">Viene mostrato quando una registrazione di memo vocale è attiva.</string>
     <string name="empty_hint_new_note">scrivi la prima con +</string>
     <string name="stamp_sealed">Sigillata</string>
+    <string name="action_share_note">Condividi…</string>
+    <string name="action_group">Gruppo condiviso…</string>
+    <string name="action_move_to_mine">Sposta nelle mie note</string>
+    <string name="toast_moved_to_mine">Spostata nelle tue note</string>
+    <string name="shared_with">Condivisa con %1$s</string>
+    <string name="shared_only_you">Condivisa, per ora solo tu</string>
+    <string name="shared_read_only">Condivisa, sola lettura</string>
+    <string name="shared_delete_message">Così la nota viene rimossa per tutti nel gruppo. Una copia finisce nel tuo Cestino; se la ripristini, torna tra le tue note.</string>
+    <string name="shared_no_access">Condivisa, nessun accesso</string>
 </resources>

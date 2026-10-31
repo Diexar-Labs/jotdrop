@@ -336,9 +336,9 @@ object Storage {
      * zowel saveImageNote (nieuwe foto-notitie) als de editor (foto invoegen in
      * bestaande notitie).
      */
-    fun copyImageToAttachments(context: Context, imageUri: Uri): Result<String> {
+    fun copyImageToAttachments(context: Context, imageUri: Uri, spaceId: String? = null): Result<String> {
         synchronized(cloudFileLock) {
-        val attachmentsFolder = getOrCreateAttachmentsFolder(context).getOrElse {
+        val attachmentsFolder = getOrCreateAttachmentsFolder(context, spaceId).getOrElse {
             return Result.failure(it)
         }
         val mime = context.contentResolver.getType(imageUri).orEmpty().lowercase()
@@ -419,7 +419,7 @@ object Storage {
         val subfolder = openOrCreateNotesFolder(context).getOrElse { return Result.failure(it) }
         val children = queryChildren(context, vaultUri, subfolder.uri)
             .filter { !it.name.startsWith(".") && it.name.endsWith(".md", ignoreCase = true) }
-        return Result.success(buildNoteSummaries(context, vaultUri, children))
+        return Result.success(buildNoteSummaries(context, vaultUri, children) + sharedNotes(context, vaultUri))
     }
 
     /**
@@ -447,8 +447,9 @@ object Storage {
         context: Context,
         vaultUri: Uri,
         children: List<ChildDoc>,
+        // A group's notes show the attachments of that group.
+        attachments: Map<String, Uri> = snapshotAttachments(context, vaultUri),
     ): List<NoteSummary> {
-        val attachments = snapshotAttachments(context, vaultUri)
         return children.map { child ->
             val preview = readPreview(context, child.uri)
             val parsed = FrontmatterParser.parse(preview)
@@ -563,9 +564,100 @@ object Storage {
      * de Compose UI-thread. Deze snapshot wordt op Dispatchers.IO opgebouwd en
      * daarna voor alle notities binnen dezelfde editorsessie hergebruikt.
      */
-    fun listAttachmentUris(context: Context): Map<String, Uri> {
+    fun listAttachmentUris(context: Context, spaceId: String? = null): Map<String, Uri> {
         val vaultUri = getVaultUri(context) ?: return emptyMap()
-        return snapshotAttachments(context, vaultUri)
+        return if (spaceId != null) spaceAttachments(context, vaultUri, spaceId) else snapshotAttachments(context, vaultUri)
+    }
+
+    private val spaceFolder = Regex("/Shared/([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})/")
+    /** The shared group a note's file is in, from its place in the folder; null for an own note. */
+    fun spaceIdOf(uri: Uri?): String? = uri?.let { note -> runCatching { spaceFolder.find(DocumentsContract.getDocumentId(note))?.groupValues?.get(1) }.getOrNull() }
+    /** A note whose file is the group's: a conflict copy is only on this phone. */
+    fun deletesForEveryone(uri: Uri?): Boolean = spaceIdOf(uri) != null && uri?.toString()?.contains(".cloud-conflict-") != true
+    private fun spacePath(context: Context, spaceId: String) = "${getSubfolder(context).trimEnd('/')}/Shared/$spaceId"
+
+    private fun spaceAttachments(context: Context, vaultUri: Uri, spaceId: String): Map<String, Uri> {
+        val tree = DocumentFile.fromTreeUri(context, vaultUri) ?: return emptyMap()
+        val folder = traverseSubfolder(context, tree, "${spacePath(context, spaceId)}/attachments") ?: return emptyMap()
+        return queryChildren(context, vaultUri, folder.uri).associate { it.name to it.uri }
+    }
+
+    /** The notes of every group this phone knows, among the own notes: like Keep, they are simply there. */
+    private fun sharedNotes(context: Context, vaultUri: Uri): List<NoteSummary> {
+        val tree = DocumentFile.fromTreeUri(context, vaultUri) ?: return emptyList()
+        return CloudSpacesFlow.known(context).flatMap { space ->
+            val folder = traverseSubfolder(context, tree, spacePath(context, space.id)) ?: return@flatMap emptyList()
+            val children = queryChildren(context, vaultUri, folder.uri).filter { !it.name.startsWith(".") && it.name.endsWith(".md", ignoreCase = true) }
+            val mark = NoteSpace(space.id, space.name, space.others, space.frozen, space.gone)
+            buildNoteSummaries(context, vaultUri, children, spaceAttachments(context, vaultUri, space.id)).map { it.copy(space = mark) }
+        }
+    }
+
+    fun noteCountInSpace(context: Context, spaceId: String): Int {
+        val vaultUri = getVaultUri(context) ?: return 0
+        val tree = DocumentFile.fromTreeUri(context, vaultUri) ?: return 0
+        val folder = traverseSubfolder(context, tree, spacePath(context, spaceId)) ?: return 0
+        return queryChildren(context, vaultUri, folder.uri).count { !it.name.startsWith(".") && it.name.endsWith(".md", ignoreCase = true) }
+    }
+
+    /**
+     * Into a group's folder, destination first: a crash leaves a double note, never a lost one. What is per person stays
+     * behind, and a reminder too, because it would go off for everyone. The attachments are copied; the originals stay,
+     * so another note that shows them keeps working.
+     */
+    fun moveNoteToSpace(context: Context, uri: Uri, spaceId: String): Result<Unit> = runCatching {
+        synchronized(cloudFileLock) {
+            val content = readNote(context, uri).getOrThrow()
+            val parsed = FrontmatterParser.parse(content)
+            val shared = FrontmatterWriter.apply(content, parsed.meta.copy(pinned = false, order = null, reminder = null, reminderRepeat = null, reminderUntil = null, reminderLimit = null, reminderDone = 0), emptyList())
+            val vaultUri = requireNotNull(getVaultUri(context)) { "Geen vault-map gekozen." }
+            val tree = requireNotNull(DocumentFile.fromTreeUri(context, vaultUri)) { "Vault-map kan niet worden geopend." }
+            val attachments = listAttachmentUris(context)
+            val folder = getOrCreateAttachmentsFolder(context, spaceId).getOrThrow()
+            for (name in findEmbeddedAttachmentBasenames(content)) {
+                val source = attachments[name] ?: continue
+                if (folder.findFile(name) != null) continue
+                val copy = requireNotNull(folder.createFile(context.contentResolver.getType(source) ?: "application/octet-stream", name)) { "Kan bijlage niet kopieren." }
+                context.contentResolver.openInputStream(source).use { input -> context.contentResolver.openOutputStream(copy.uri, "wt").use { output -> input!!.copyTo(output!!) } }
+            }
+            val target = requireNotNull(findOrCreateSubfolder(context, tree, spacePath(context, spaceId))) { "Doelmap kon niet worden aangemaakt." }
+            val source = requireNotNull(DocumentFile.fromSingleUri(context, uri)) { "Bronbestand niet gevonden." }
+            val file = requireNotNull(target.createFile("text/markdown", uniqueFilename(target, source.name ?: "${System.currentTimeMillis()}.md"))) { "Bestand kon niet worden aangemaakt in doelmap." }
+            context.contentResolver.openOutputStream(file.uri, "wt").use { it!!.write(shared.toByteArray(Charsets.UTF_8)) }
+            check(readNote(context, file.uri).getOrNull() == shared) { "Doelbestand verificatie mislukt." }
+            check(source.delete()) { "Origineel bestand kon niet worden verwijderd." }
+            CloudSyncManager.request(context)
+        }
+    }
+
+    /** A note out of its group, into the own notes, with copies of its attachments. */
+    fun moveNoteOutOfSpace(context: Context, uri: Uri, spaceId: String, keepSource: Boolean): Result<Unit> = runCatching {
+        synchronized(cloudFileLock) {
+            val content = readNote(context, uri).getOrThrow()
+            val attachments = listAttachmentUris(context, spaceId)
+            val own = getOrCreateAttachmentsFolder(context).getOrThrow()
+            for (name in findEmbeddedAttachmentBasenames(content)) {
+                val source = attachments[name] ?: continue
+                if (own.findFile(name) != null) continue
+                val copy = requireNotNull(own.createFile(context.contentResolver.getType(source) ?: "application/octet-stream", name)) { "Kan bijlage niet kopieren." }
+                context.contentResolver.openInputStream(source).use { input -> context.contentResolver.openOutputStream(copy.uri, "wt").use { output -> input!!.copyTo(output!!) } }
+            }
+            moveNoteToPath(context, uri, getSubfolder(context).trimEnd('/'), keepSource = keepSource, unique = true).getOrThrow()
+        }
+    }
+
+    /** The folder of a group this phone leaves behind: its notes kept as own notes first, or simply removed. */
+    fun releaseSpaceFolder(context: Context, spaceId: String, keep: Boolean): Result<Unit> = runCatching {
+        synchronized(cloudFileLock) {
+            val vaultUri = requireNotNull(getVaultUri(context)) { "Geen vault-map gekozen." }
+            val tree = requireNotNull(DocumentFile.fromTreeUri(context, vaultUri)) { "Vault-map kan niet worden geopend." }
+            val folder = traverseSubfolder(context, tree, spacePath(context, spaceId)) ?: return@synchronized
+            if (keep) for (child in queryChildren(context, vaultUri, folder.uri)) {
+                if (!child.name.startsWith(".") && child.name.endsWith(".md", ignoreCase = true)) moveNoteOutOfSpace(context, child.uri, spaceId, keepSource = false).getOrThrow()
+            }
+            check(folder.delete()) { "De map kon niet worden verwijderd." }
+            CloudSyncManager.request(context)
+        }
     }
 
     private data class ChildDoc(val uri: Uri, val name: String, val lastModified: Long)
@@ -908,8 +1000,10 @@ object Storage {
      * (gepind/overige), of hernummerd de sectie als er geen numerieke ruimte is.
      */
     fun applyManualOrder(context: Context, moved: NoteSummary, finalOrder: List<NoteSummary>): Result<Map<String, Double>> {
+        // The order is per person and a shared note has one file for everyone, so dragging leaves shared notes alone.
+        if (moved.space != null) return Result.success(emptyMap())
         val section = finalOrder
-            .filter { it.meta.pinned == moved.meta.pinned }
+            .filter { it.meta.pinned == moved.meta.pinned && it.space == null }
             .map { NoteOrder.OrderedNote(it.uri.toString(), NoteOrder.manualRank(it.meta.order, it.filename)) }
         return when (val plan = NoteOrder.planDrop(section, moved.uri.toString())) {
             is NoteOrder.DropPlan.Assign -> setNoteOrder(context, moved.uri, plan.order)
@@ -1166,7 +1260,7 @@ object Storage {
      * legacy `.attachments`-submap onder de notitiemap). Gebruikt voor OG-images,
      * foto-import en voicememo's.
      */
-    fun getOrCreateAttachmentsFolder(context: Context): Result<DocumentFile> {
+    fun getOrCreateAttachmentsFolder(context: Context, spaceId: String? = null): Result<DocumentFile> {
         val vaultUri = getVaultUri(context)
             ?: return Result.failure(IllegalStateException("Geen vault-map gekozen."))
         val tree = DocumentFile.fromTreeUri(context, vaultUri)
@@ -1174,7 +1268,7 @@ object Storage {
         if (!tree.canWrite()) {
             return Result.failure(IllegalStateException("Geen schrijfrechten op de vault-map."))
         }
-        val path = resolveAssetsFolder(context)
+        val path = if (spaceId != null) "${spacePath(context, spaceId)}/attachments" else resolveAssetsFolder(context)
         val folder = findOrCreateSubfolder(context, tree, path)
             ?: return Result.failure(IllegalStateException("Attachments-map kon niet worden aangemaakt."))
         return Result.success(folder)
@@ -1185,8 +1279,9 @@ object Storage {
      * `![[image.jpg]]`-embeds in de UI. Zoekt eerst de effectieve map, daarna de
      * legacy-locatie, zodat oude notities blijven werken na een mapwissel.
      */
-    fun findAttachmentUri(context: Context, basename: String): Uri? {
+    fun findAttachmentUri(context: Context, basename: String, spaceId: String? = null): Uri? {
         val vaultUri = getVaultUri(context) ?: return null
+        if (spaceId != null) return spaceAttachments(context, vaultUri, spaceId)[basename]
         val tree = DocumentFile.fromTreeUri(context, vaultUri) ?: return null
         val effective = resolveAssetsFolder(context)
         val effectiveFolder = traverseSubfolder(context, tree, effective)
@@ -1710,7 +1805,11 @@ data class NoteSummary(
     val thumbnailUri: Uri? = null,
     val audioBasename: String? = null,
     val audioUri: Uri? = null,
+    val space: NoteSpace? = null,
 )
+
+/** The shared group a note is in, for the mark on its card. */
+data class NoteSpace(val id: String, val name: String, val others: List<String>, val frozen: Boolean, val gone: Boolean)
 
 data class VaultMarkdownFile(
     val basename: String,

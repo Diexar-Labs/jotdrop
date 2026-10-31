@@ -1,6 +1,7 @@
 package com.diexar.keepcapture
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -44,8 +45,9 @@ class CloudActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         if (savedInstanceState == null) {
-            CloudAccountFlow.startGoogle = intent.getBooleanExtra(EXTRA_WELCOME, false)
+            CloudAccountFlow.startProvider = intent.getStringExtra(EXTRA_PROVIDER)
             takeProviderReturn(intent)
+            intent.getStringExtra(EXTRA_SHARE)?.let { CloudSpacesFlow.shareNote = Uri.parse(it) }
         }
         val welcome = intent.getBooleanExtra(EXTRA_WELCOME, false)
         val resolve = intent.getStringExtra(EXTRA_RESOLVE)
@@ -53,10 +55,14 @@ class CloudActivity : ComponentActivity() {
     }
 
     companion object {
-        /** From the welcome screen: Google sign-in opens at once, and the screen closes once sync runs. */
+        /** From the welcome screen: the screen closes once sync runs. */
         const val EXTRA_WELCOME = "welcome"
+        /** From the welcome screen: "google" or "github", whose sign-in opens at once. */
+        const val EXTRA_PROVIDER = "provider"
         /** From a conflict copy's card: the file name of the note it belongs to, whose comparison opens at once. */
         const val EXTRA_RESOLVE = "resolve"
+        /** From a card's menu: the note to share. */
+        const val EXTRA_SHARE = "share"
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -68,6 +74,8 @@ class CloudActivity : ComponentActivity() {
     private fun takeProviderReturn(intent: Intent?) {
         val data = intent?.data ?: return
         if (data.scheme == "jotdrop-cloud" && data.host == "oauth") CloudAccountFlow.providerReturn = data
+        // An invitation link: the secrets are in the part after # and never go to a server.
+        if (data.scheme == "https" && data.path == "/join" && data.fragment != null) CloudSpacesFlow.invitation = data.fragment
         if (data.scheme == "jotdrop-cloud" && data.host == "human") CloudAccountFlow.personReturn = data.getQueryParameter("token")
     }
 }
@@ -271,6 +279,10 @@ private fun CloudScreen(welcome: Boolean, resolve: String?, onBack: () -> Unit, 
                     }
                     // Google Play allows naming the website, without a link or button, when the app sells nothing itself.
                     Text("JotDrop Plus adds more storage, devices and history. Upgrade on our website.", style = MaterialTheme.typography.bodySmall)
+                }
+                item(key = "shared-groups") {
+                    SharedGroups(busy, { action -> run(true, action) }, ::cloud) { notice = it }
+                    notice?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
                 }
                 item {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
