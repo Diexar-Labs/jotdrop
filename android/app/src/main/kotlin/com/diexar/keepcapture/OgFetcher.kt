@@ -25,14 +25,6 @@ object OgFetcher {
     // dan desktop, dus desktop voorop is bewust. Spiegel van de plugin-kant.
     private const val USER_AGENT =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.6478.127 Safari/537.36"
-    // Crawler-UAs: nieuwsites met cookie-walls (Telegraaf e.d.) serveren OG-meta wél aan
-    // bekende social-media-crawlers, zodat hun shares op FB/Twitter netjes embedden.
-    // Twitterbot komt eerst omdat Telegraaf zelfs Googlebot/FB 403't, maar Twitterbot toelaat.
-    private val FALLBACK_UAS = listOf(
-        "Twitterbot/1.0",
-        "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
-        "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
-    )
     private const val CONNECT_TIMEOUT_MS = 8_000
     private const val READ_TIMEOUT_MS = 12_000
     private const val MAX_HTML_BYTES = 512 * 1024 // 512 KB — sommige sites hebben een grote <head>
@@ -98,32 +90,13 @@ object OgFetcher {
             }
             // Twitter/X blokkeert scrapers voor uitgelogde clients. fxtwitter.com is een mirror
             // die wél nette OG-meta serveert (gebruikt door Discord/Telegram embeds).
-            // Probeer eerst met Chrome desktop UA. Als dat een 4xx geeft (Telegraaf 403't bv.)
-            // óf geen image-kandidaten levert (cookie-wall HTML), retry met crawler-UAs in volgorde.
-            var html: String? = null
-            var rawImageCandidates: List<String> = emptyList()
-            var lastError: Throwable? = null
-
-            for (ua in listOf(USER_AGENT) + FALLBACK_UAS) {
-                val attempt = downloadHtml(fetchUrl, ua)
-                val attemptHtml = attempt.getOrNull()
-                if (attemptHtml == null) {
-                    lastError = attempt.exceptionOrNull()
-                    continue
-                }
-                if (html == null) html = attemptHtml
-                val candidates = findOgImageCandidates(attemptHtml, fetchUrl)
-                if (candidates.isNotEmpty()) {
-                    html = attemptHtml
-                    rawImageCandidates = candidates
-                    break
-                }
-            }
-
+            val attempt = downloadHtml(fetchUrl)
+            val html = attempt.getOrNull()
             if (html == null) {
                 if (oembed != null) return Result.success(oembed)
-                return Result.failure(lastError ?: IllegalStateException("Geen HTML opgehaald"))
+                return Result.failure(attempt.exceptionOrNull() ?: IllegalStateException("Geen HTML opgehaald"))
             }
+            val rawImageCandidates = findOgImageCandidates(html, fetchUrl)
 
             val title = extractMeta(html, "og:title")
                 ?: extractMeta(html, "twitter:title")
@@ -341,28 +314,23 @@ object OgFetcher {
      */
     private fun applyBrowserHeaders(
         conn: HttpURLConnection,
-        userAgent: String,
         accept: String,
         secFetchDest: String,
     ) {
-        conn.setRequestProperty("User-Agent", userAgent)
+        conn.setRequestProperty("User-Agent", USER_AGENT)
         conn.setRequestProperty("Accept", accept)
         conn.setRequestProperty("Accept-Language", "nl-NL,nl;q=0.9,en-US;q=0.8,en;q=0.7")
-        conn.setRequestProperty("Referer", "https://www.google.com/")
         if (secFetchDest == "document") {
             conn.setRequestProperty("Upgrade-Insecure-Requests", "1")
         }
-        val isChrome = userAgent.contains("Chrome/") && !userAgent.contains("Googlebot")
-        if (isChrome) {
-            conn.setRequestProperty("sec-ch-ua", "\"Not/A)Brand\";v=\"8\", \"Chromium\";v=\"126\", \"Google Chrome\";v=\"126\"")
-            conn.setRequestProperty("sec-ch-ua-mobile", "?0")
-            conn.setRequestProperty("sec-ch-ua-platform", "\"Windows\"")
-            conn.setRequestProperty("sec-fetch-dest", secFetchDest)
-            conn.setRequestProperty("sec-fetch-mode", if (secFetchDest == "document") "navigate" else "no-cors")
-            conn.setRequestProperty("sec-fetch-site", "cross-site")
-            if (secFetchDest == "document") {
-                conn.setRequestProperty("sec-fetch-user", "?1")
-            }
+        conn.setRequestProperty("sec-ch-ua", "\"Not/A)Brand\";v=\"8\", \"Chromium\";v=\"126\", \"Google Chrome\";v=\"126\"")
+        conn.setRequestProperty("sec-ch-ua-mobile", "?0")
+        conn.setRequestProperty("sec-ch-ua-platform", "\"Windows\"")
+        conn.setRequestProperty("sec-fetch-dest", secFetchDest)
+        conn.setRequestProperty("sec-fetch-mode", if (secFetchDest == "document") "navigate" else "no-cors")
+        conn.setRequestProperty("sec-fetch-site", "cross-site")
+        if (secFetchDest == "document") {
+            conn.setRequestProperty("sec-fetch-user", "?1")
         }
     }
 
@@ -392,7 +360,7 @@ object OgFetcher {
             a >= 224 // multicast/reserved
     }
 
-    private fun downloadHtml(urlString: String, userAgent: String = USER_AGENT, redirectsRemaining: Int = 6): Result<String> {
+    private fun downloadHtml(urlString: String, redirectsRemaining: Int = 6): Result<String> {
         if (isForbiddenTarget(urlString)) {
             return Result.failure(IllegalArgumentException("Geweigerd: alleen publieke HTTPS-doelen."))
         }
@@ -405,7 +373,6 @@ object OgFetcher {
         }
         applyBrowserHeaders(
             conn,
-            userAgent,
             "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
             "document",
         )
@@ -415,7 +382,7 @@ object OgFetcher {
             if (code in listOf(301, 302, 303, 307, 308) && redirectsRemaining > 0) {
                 val location = conn.getHeaderField("Location")
                 if (location != null) {
-                    return downloadHtml(URL(url, location).toString(), userAgent, redirectsRemaining - 1)
+                    return downloadHtml(URL(url, location).toString(), redirectsRemaining - 1)
                 }
             }
             if (code !in 200..299) {
@@ -461,7 +428,6 @@ object OgFetcher {
         }
         applyBrowserHeaders(
             conn,
-            USER_AGENT,
             "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
             "image",
         )

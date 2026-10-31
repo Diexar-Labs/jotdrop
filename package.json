@@ -18,6 +18,7 @@
     "check:statusbar-contrast": "node scripts/check-statusbar-contrast.cjs",
     "check:android-navigation": "node scripts/check-android-navigation.cjs",
     "check:android-startup": "node scripts/check-android-startup.cjs",
+    "check:android-play-policy": "node scripts/check-android-play-policy.cjs",
     "check:plugin-labels": "node scripts/check-plugin-labels.cjs",
     "check:hashtags": "node scripts/check-hashtags.cjs",
     "check:keep-import": "node scripts/check-keep-import.cjs",
