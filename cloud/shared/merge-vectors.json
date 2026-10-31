@@ -103,5 +103,173 @@
     "local": "---\nText under a rule, edited\n",
     "cloud": "---\nText under a rule\n",
     "merged": null
+  },
+  {
+    "name": "different lines ticked on each device merge",
+    "base": "- [ ] milk\n- [ ] eggs\n- [ ] bread\n- [ ] cheese\n",
+    "local": "- [x] milk\n- [ ] eggs\n- [ ] bread\n- [ ] cheese\n",
+    "cloud": "- [ ] milk\n- [ ] eggs\n- [ ] bread\n- [x] cheese\n",
+    "merged": "- [x] milk\n- [ ] eggs\n- [ ] bread\n- [x] cheese\n"
+  },
+  {
+    "name": "neighbouring lines ticked on each device merge",
+    "base": "- [ ] milk\n- [ ] eggs\n- [ ] bread\n- [ ] cheese\n",
+    "local": "- [ ] milk\n- [x] eggs\n- [ ] bread\n- [ ] cheese\n",
+    "cloud": "- [ ] milk\n- [ ] eggs\n- [x] bread\n- [ ] cheese\n",
+    "merged": "- [ ] milk\n- [x] eggs\n- [x] bread\n- [ ] cheese\n"
+  },
+  {
+    "name": "a line ticked on both devices next to other ticks is one change",
+    "base": "- [ ] milk\n- [ ] eggs\n- [ ] bread\n- [ ] cheese\n",
+    "local": "- [x] milk\n- [x] eggs\n- [ ] bread\n- [ ] cheese\n",
+    "cloud": "- [ ] milk\n- [x] eggs\n- [x] bread\n- [ ] cheese\n",
+    "merged": "- [x] milk\n- [x] eggs\n- [x] bread\n- [ ] cheese\n"
+  },
+  {
+    "name": "the first and the last of two equal lines ticked",
+    "base": "- [ ] milk\n- [ ] eggs\n- [ ] milk\n",
+    "local": "- [x] milk\n- [ ] eggs\n- [ ] milk\n",
+    "cloud": "- [ ] milk\n- [ ] eggs\n- [x] milk\n",
+    "merged": "- [x] milk\n- [ ] eggs\n- [x] milk\n"
+  },
+  {
+    "name": "two equal lines next to each other, each device ticks its own",
+    "base": "- [ ] milk\n- [ ] milk\n",
+    "local": "- [x] milk\n- [ ] milk\n",
+    "cloud": "- [ ] milk\n- [x] milk\n",
+    "merged": "- [x] milk\n- [x] milk\n"
+  },
+  {
+    "name": "two equal lines, one removed here and the other changed there",
+    "base": "- [ ] milk\n- [ ] milk\n",
+    "local": "- [ ] milk\n",
+    "cloud": "- [x] milk\n- [ ] milk\n",
+    "merged": "- [x] milk\n"
+  },
+  {
+    "name": "two equal lines, both devices change the same one differently",
+    "base": "- [ ] milk\n- [ ] milk\n",
+    "local": "- [ ] oat milk\n- [ ] milk\n",
+    "cloud": "- [x] milk\n- [ ] milk\n",
+    "merged": null
+  },
+  {
+    "name": "additions at the same place both stay, the cloud's first",
+    "base": "- [ ] milk\n- [ ] bread\n",
+    "local": "- [ ] milk\n- [ ] eggs\n- [ ] bread\n",
+    "cloud": "- [ ] milk\n- [ ] tea\n- [ ] bread\n",
+    "merged": "- [ ] milk\n- [ ] tea\n- [ ] eggs\n- [ ] bread\n"
+  },
+  {
+    "name": "additions that start alike both stay whole",
+    "base": "Top\n",
+    "local": "Top\nSame\nPhone\n",
+    "cloud": "Top\nSame\nDesktop\n",
+    "merged": "Top\nSame\nDesktop\nSame\nPhone\n"
+  },
+  {
+    "name": "the same addition at the same place stays once, with changes elsewhere",
+    "base": "A\nB\nC\nD\nE\n",
+    "local": "A\nNew\nB\nC\nD\nE changed\n",
+    "cloud": "A\nNew\nB\nC changed\nD\nE\n",
+    "merged": "A\nNew\nB\nC changed\nD\nE changed\n"
+  },
+  {
+    "name": "additions at the end on both devices without a closing line end",
+    "base": "Top",
+    "local": "Top\nFrom the phone",
+    "cloud": "Top\nFrom the desktop",
+    "merged": "Top\nFrom the desktop\nFrom the phone"
+  },
+  {
+    "name": "a line added next to a line changed on the other device",
+    "base": "One\nTwo\nThree\n",
+    "local": "One\nNew\nTwo\nThree\n",
+    "cloud": "One\nTwo changed\nThree\n",
+    "merged": "One\nNew\nTwo changed\nThree\n"
+  },
+  {
+    "name": "different lines removed on each device",
+    "base": "- [ ] milk\n- [ ] eggs\n- [ ] bread\n- [ ] cheese\n",
+    "local": "- [ ] eggs\n- [ ] bread\n- [ ] cheese\n",
+    "cloud": "- [ ] milk\n- [ ] eggs\n- [ ] bread\n",
+    "merged": "- [ ] eggs\n- [ ] bread\n"
+  },
+  {
+    "name": "a line removed here and changed there keeps both versions",
+    "base": "- [ ] milk\n- [ ] eggs\n- [ ] bread\n- [ ] cheese\n",
+    "local": "- [ ] milk\n- [ ] bread\n- [ ] cheese\n",
+    "cloud": "- [ ] milk\n- [ ] six eggs\n- [ ] bread\n- [ ] cheese\n",
+    "merged": null
+  },
+  {
+    "name": "a line moved here and changed there keeps both versions",
+    "base": "- [ ] milk\n- [ ] eggs\n- [ ] bread\n- [ ] cheese\n",
+    "local": "- [ ] eggs\n- [ ] bread\n- [ ] milk\n- [ ] cheese\n",
+    "cloud": "- [ ] oat milk\n- [ ] eggs\n- [ ] bread\n- [ ] cheese\n",
+    "merged": null
+  },
+  {
+    "name": "a line moved here and another changed there",
+    "base": "- [ ] milk\n- [ ] eggs\n- [ ] bread\n- [ ] cheese\n",
+    "local": "- [ ] eggs\n- [ ] bread\n- [ ] milk\n- [ ] cheese\n",
+    "cloud": "- [ ] milk\n- [ ] eggs\n- [ ] bread\n- [x] cheese\n",
+    "merged": "- [ ] eggs\n- [ ] bread\n- [ ] milk\n- [x] cheese\n"
+  },
+  {
+    "name": "the same line moved to different places stays twice, nothing is lost",
+    "base": "A\nB\nC\n",
+    "local": "B\nA\nC\n",
+    "cloud": "B\nC\nA\n",
+    "merged": "B\nA\nC\nA\n"
+  },
+  {
+    "name": "one line changed two ways in a list keeps both versions",
+    "base": "- [ ] milk\n- [ ] eggs\n- [ ] bread\n- [ ] cheese\n",
+    "local": "- [ ] milk\n- [ ] six eggs\n- [ ] bread\n- [ ] cheese\n",
+    "cloud": "- [ ] milk\n- [ ] twelve eggs\n- [ ] bread\n- [ ] cheese\n",
+    "merged": null
+  },
+  {
+    "name": "one device empties the note while the other edits it keeps both versions",
+    "base": "One\nTwo\n",
+    "local": "",
+    "cloud": "One\nTwo changed\n",
+    "merged": null
+  },
+  {
+    "name": "different lines changed without the shared version keep both versions",
+    "base": null,
+    "local": "One changed\nTwo\n",
+    "cloud": "One\nTwo changed\n",
+    "merged": null
+  },
+  {
+    "name": "lines and fields merge together",
+    "base": "---\ncolor: red\n---\n- [ ] milk\n- [ ] eggs\n",
+    "local": "---\ncolor: red\npinned: true\n---\n- [x] milk\n- [ ] eggs\n",
+    "cloud": "---\ncolor: blue\n---\n- [ ] milk\n- [x] eggs\n",
+    "merged": "---\ncolor: blue\npinned: true\n---\n- [x] milk\n- [x] eggs\n"
+  },
+  {
+    "name": "lines merge, a field changed two ways still keeps both versions",
+    "base": "---\ncolor: red\n---\nOne\nTwo\n",
+    "local": "---\ncolor: blue\n---\nOne changed\nTwo\n",
+    "cloud": "---\ncolor: green\n---\nOne\nTwo changed\n",
+    "merged": null
+  },
+  {
+    "name": "Windows line ends on different lines are left to the user",
+    "base": "One\r\nTwo\r\n",
+    "local": "One changed\r\nTwo\r\n",
+    "cloud": "One\r\nTwo changed\r\n",
+    "merged": null
+  },
+  {
+    "name": "accents and emoji merge by whole lines",
+    "base": "café\n日本\n📝\n",
+    "local": "café au lait\n日本\n📝\n",
+    "cloud": "café\n日本\n📝📝\n",
+    "merged": "café au lait\n日本\n📝📝\n"
   }
 ]

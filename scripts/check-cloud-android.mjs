@@ -5,6 +5,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { hugeCase, longCase, randomCases } from '../cloud/shared/merge-cases.mjs';
+import { mergeNote } from '../cloud/shared/merge.mjs';
 import { base64ToBytes, bytesToBase64, CHUNK_BYTES, decryptChunk, decryptEnvelope, encryptChunk, encryptEnvelope, generateVaultKey, hashToken, normalizePath, objectId, sha256Hex } from '../cloud/shared/crypto.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -41,7 +43,12 @@ try {
   writeFileSync(input, [...vectors, ...pieces].map((vector) => vector.line).join('\n'));
   // The merge cases the JavaScript tests use; Android must merge each note to the same bytes, or not at all.
   const merges = path.join(temporary, 'merge.tsv'), field = (value) => value === null ? '-' : encodeText(value);
-  writeFileSync(merges, JSON.parse(readFileSync(path.join(root, 'cloud/shared/merge-vectors.json'), 'utf8'))
+  const utf8 = (value) => new TextEncoder().encode(value);
+  const generated = [...randomCases(3000), hugeCase(), longCase()].map((item) => {
+    const merged = mergeNote(utf8(item.base), utf8(item.local), utf8(item.cloud));
+    return { ...item, merged: merged && new TextDecoder().decode(merged) };
+  });
+  writeFileSync(merges, [...JSON.parse(readFileSync(path.join(root, 'cloud/shared/merge-vectors.json'), 'utf8')), ...generated]
     .map((vector) => [vector.name, vector.base, vector.local, vector.cloud, vector.merged].map(field).join('\t')).join('\n'));
   const windows = process.platform === 'win32';
   execFileSync(windows ? process.env.ComSpec || 'cmd.exe' : './gradlew', windows ? ['/d', '/c', 'gradlew.bat checkCloudCrypto checkCloudSync --no-daemon --console=plain'] : ['checkCloudCrypto', 'checkCloudSync', '--no-daemon', '--console=plain'], {

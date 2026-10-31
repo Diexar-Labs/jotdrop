@@ -1,4 +1,4 @@
-import { bytesToBase64, MAX_FILE_BYTES, normalizePath } from './crypto.mjs';
+import { bytesToBase64, isSpacePath, MAX_FILE_BYTES, normalizePath } from './crypto.mjs';
 import { mergeNote } from './merge.mjs';
 
 // Two-way sync of a local notes folder, the same rules as Android's CloudSyncEngine.
@@ -41,8 +41,9 @@ export function copyName(path, suffix) {
 export async function syncFolder(remote, local, tracked, persist, { checkActive = () => {}, seen = {}, progress = (done, total) => {}, maxFileBytes = MAX_FILE_BYTES } = {}) {
   checkActive();
   const result = { uploaded: 0, downloaded: 0, deleted: 0, conflicts: 0, skipped: [] };
-  const files = await local.list();
-  const entries = await remote.list();
+  const files = new Map([...await local.list()].filter(([name]) => !isSpacePath(name)));
+  const entries = (await remote.list()).filter((entry) => !isSpacePath(entry.path));
+  for (const name of Object.keys(tracked)) if (isSpacePath(name)) delete tracked[name];
   const clouds = new Map();
   for (const entry of entries) {
     if (clouds.has(syncPath(entry.path))) throw new Error('Duplicate encrypted cloud paths');

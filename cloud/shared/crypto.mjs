@@ -38,6 +38,9 @@ export async function hashToken(token) {
   return [...new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(token)))].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
+// A shared space's folder, notes/Shared/<id>/, syncs with its own key and is never part of this vault. An ordinary folder called Shared stays ordinary.
+export const isSpacePath = (path) => /^notes\/shared\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\//i.test(path);
+
 export function normalizePath(path) {
   if (typeof path !== 'string' || !path || path.length > 512 || /[\\:\x00-\x1f\x7f]/.test(path)) throw new Error('Use a safe relative filename.');
   const parts = path.split('/');

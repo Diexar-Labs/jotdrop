@@ -1,12 +1,17 @@
 // A note changed on two devices merges when the changes do not overlap, the same rules as Android's CloudNoteMerge.
 // The note splits into frontmatter fields and the text below them. Against the version both devices last shared
-// (`base`), a field or the text that only one side changed takes that side; the same value on both sides is one
-// change, however each device writes it (`[a, b]` or a block list, quotes, 10 or 10.0). Anything else, and any
-// frontmatter this simple reading does not understand, gives null: then the sync keeps both versions as before.
+// (`base`), a field that only one side changed takes that side; the same value on both sides is one change, however
+// each device writes it (`[a, b]` or a block list, quotes, 10 or 10.0). The text merges per line the same way. Two
+// additions at one place both stay, the cloud's first. Anything else (one line changed two ways, a line changed and
+// removed), a missing `base` and any frontmatter this simple reading does not understand give null: then the sync
+// keeps both versions as before.
 
 const utf8 = (bytes) => {
   try { return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); } catch { return null; }
 };
+
+// A changed stretch of text bigger than this (base lines times changed lines) is not compared: both versions stay.
+const MERGE_CELLS = 1000000;
 
 const number = /^-?\d+(\.\d+)?([eE][+-]?\d+)?$/;
 
@@ -56,6 +61,53 @@ export function splitNote(text) {
   return { fields, body: lines.slice(end + 1).join('\n') };
 }
 
+/** What one side changed, in order: `[start, end, lines]` puts `lines` in place of those base lines. Null when too much changed. */
+function changes(base, side) {
+  let start = 0, baseEnd = base.length, sideEnd = side.length;
+  while (start < baseEnd && start < sideEnd && base[start] === side[start]) start++;
+  while (baseEnd > start && sideEnd > start && base[baseEnd - 1] === side[sideEnd - 1]) { baseEnd--; sideEnd--; }
+  const rows = baseEnd - start, columns = sideEnd - start, width = columns + 1;
+  if ((rows + 1) * width > MERGE_CELLS) return null;
+  // Lines in common from base line r and side line c onward. On a tie a base line counts as removed first.
+  const common = new Int32Array((rows + 1) * width);
+  for (let r = rows - 1; r >= 0; r--) for (let c = columns - 1; c >= 0; c--) {
+    common[r * width + c] = base[start + r] === side[start + c] ? common[(r + 1) * width + c + 1] + 1 : Math.max(common[(r + 1) * width + c], common[r * width + c + 1]);
+  }
+  const found = [];
+  for (let r = 0, c = 0, fromRow = 0, fromColumn = 0; ;) {
+    const same = r < rows && c < columns && base[start + r] === side[start + c];
+    if (same || (r === rows && c === columns)) {
+      // As many lines in as out: each line changed by itself, so two devices ticking neighbours do not collide.
+      if (r - fromRow === c - fromColumn) for (let i = 0; i < r - fromRow; i++) found.push([start + fromRow + i, start + fromRow + i + 1, [side[start + fromColumn + i]]]);
+      else found.push([start + fromRow, start + r, side.slice(start + fromColumn, start + c)]);
+      if (!same) return found;
+      fromRow = ++r;
+      fromColumn = ++c;
+    } else if (c === columns || (r < rows && common[(r + 1) * width + c] >= common[r * width + c + 1])) r++;
+    else c++;
+  }
+}
+
+/** The text with both sides' changes, or null when they touch the same lines differently. */
+function mergeLines(old, mine, theirs) {
+  const base = old.split('\n');
+  const own = changes(base, mine.split('\n')), other = changes(base, theirs.split('\n'));
+  if (!own || !other) return null;
+  const lines = [];
+  let at = 0, last = null;
+  for (const change of [...other, ...own].sort((a, b) => a[0] - b[0] || a[1] - b[1])) {
+    const [start, end, added] = change;
+    if (last && start === last[0] && end === last[1] && added.length === last[2].length && added.every((line, i) => line === last[2][i])) continue;
+    if (start < at) return null;
+    for (let i = at; i < start; i++) lines.push(base[i]);
+    for (const line of added) lines.push(line);
+    at = end;
+    last = change;
+  }
+  for (let i = at; i < base.length; i++) lines.push(base[i]);
+  return lines.join('\n');
+}
+
 /** The merged note's bytes, or null when the two versions really disagree. */
 export function mergeNote(base, local, cloud) {
   const texts = [local, cloud].map(utf8);
@@ -69,16 +121,17 @@ export function mergeNote(base, local, cloud) {
     if (shared && other === old) return 'local';
     return null;
   };
-  const body = pick(mine.body, theirs.body, shared?.body);
-  if (!body) return null;
+  const side = pick(mine.body, theirs.body, shared?.body);
+  const body = side ? (side === 'cloud' ? theirs.body : mine.body) : shared ? mergeLines(shared.body, mine.body, theirs.body) : null;
+  if (body === null) return null;
   const lines = [];
   for (const key of new Set([...theirs.fields.keys(), ...mine.fields.keys()])) {
     const own = mine.fields.get(key), other = theirs.fields.get(key);
-    const side = pick(own?.value, other?.value, shared?.fields.get(key)?.value);
-    if (!side) return null;
-    const chosen = side === 'cloud' ? other : own;
+    const from = pick(own?.value, other?.value, shared?.fields.get(key)?.value);
+    if (!from) return null;
+    const chosen = from === 'cloud' ? other : own;
     if (chosen) lines.push(...chosen.lines);
   }
-  const text = (lines.length ? `---\n${lines.join('\n')}\n---\n` : '') + (body === 'cloud' ? theirs.body : mine.body);
+  const text = (lines.length ? `---\n${lines.join('\n')}\n---\n` : '') + body;
   return new TextEncoder().encode(text);
 }

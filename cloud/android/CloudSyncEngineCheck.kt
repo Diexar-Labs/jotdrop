@@ -137,7 +137,7 @@ private fun checkMerge() {
         check(if (merged == "-") result == null else result != null && result.contentEquals(decode(merged))) { "Merge case failed: ${String(decode(name))}" }
         cases++
     }
-    check(cases >= 15) { "Too few merge cases" }
+    check(cases >= 3000) { "Too few merge cases" }
 
     val remote = CheckRemote()
     val desktop = CheckLocal()
@@ -180,7 +180,55 @@ private fun checkMerge() {
     desktop.files[note] = String(remote.files.getValue(note).bytes).replace("order: -5", "order: -6").toByteArray()
     syncDesktop()
     check(syncPhone().conflicts == 1)
-    println("Native merge checks passed: $cases shared cases, a daily reminder on two devices, text and fields from different devices, overlaps keep both versions")
+
+    // A list: each device ticks its own lines, both end up with all the ticks and no copy.
+    val listRemote = CheckRemote()
+    val listDesktop = CheckLocal()
+    val listPhone = CheckLocal()
+    val tld = mutableMapOf<String, CloudSyncBase>()
+    val tlp = mutableMapOf<String, CloudSyncBase>()
+    fun syncListDesktop() = CloudSyncEngine.sync(listRemote, listDesktop, tld) {}
+    fun syncListPhone() = CloudSyncEngine.sync(listRemote, listPhone, tlp) {}
+    val list = "notes/Shopping.md"
+    listDesktop.files[list] = "- [ ] milk\n- [ ] eggs\n- [ ] milk\n".toByteArray()
+    syncListDesktop()
+    syncListPhone()
+    listDesktop.files[list] = "- [x] milk\n- [ ] eggs\n- [ ] milk\n".toByteArray()
+    listPhone.files[list] = "- [ ] milk\n- [x] eggs\n- [ ] milk\n".toByteArray()
+    syncListDesktop()
+    check(syncListPhone().let { it.uploaded == 1 && it.conflicts == 0 })
+    check(syncListDesktop().downloaded == 1)
+    check(String(listDesktop.files.getValue(list)) == "- [x] milk\n- [x] eggs\n- [ ] milk\n" && listDesktop.files.getValue(list).contentEquals(listPhone.files.getValue(list)))
+    check(listDesktop.copies.isEmpty() && listPhone.copies.isEmpty())
+    // Without the shared version it is both versions, as before, with nothing lost.
+    listRemote.history.clear()
+    listDesktop.files[list] = "- [x] milk\n- [x] eggs\n- [x] milk\n".toByteArray()
+    listPhone.files[list] = "- [ ] milk\n- [x] eggs\n- [ ] milk\n".toByteArray()
+    syncListDesktop()
+    check(syncListPhone().conflicts == 1 && String(listPhone.files.getValue(list)) == "- [ ] milk\n- [x] eggs\n- [ ] milk\n")
+
+    // A shared space's folder is not part of the vault, in either direction; an ordinary folder called Shared is.
+    val spaceRemote = CheckRemote()
+    val spaceDevice = CheckLocal()
+    val spaces = mutableMapOf<String, CloudSyncBase>()
+    fun syncSpaces() = CloudSyncEngine.sync(spaceRemote, spaceDevice, spaces) {}
+    val spaceNote = "notes/Shared/3f2a1c9e-8b7d-4e6f-a5c4-1d2e3f4a5b6c/List.md"
+    val ordinary = "notes/Shared/Holiday.md"
+    spaceDevice.files[spaceNote] = "From the space\n".toByteArray()
+    spaceDevice.files[ordinary] = "My own note\n".toByteArray()
+    check(syncSpaces().uploaded == 1 && spaceRemote.files.keys == setOf(ordinary))
+    // An old app uploaded the space's note into the vault: it stays there untouched and does not come down.
+    val oldCopy = "notes/Shared/3F2A1C9E-8B7D-4E6F-A5C4-1D2E3F4A5B6C/Old.md"
+    spaceRemote.write(oldCopy, "Old copy\n".toByteArray(), 0)
+    spaces[oldCopy] = CloudSyncBase(1, spaceRemote.files.getValue(oldCopy).hash, false)
+    val quiet = syncSpaces()
+    check(quiet.uploaded == 0 && quiet.downloaded == 0 && quiet.deleted == 0 && quiet.conflicts == 0)
+    check(oldCopy !in spaceDevice.files && !spaceRemote.files.getValue(oldCopy).deleted && oldCopy !in spaces)
+    spaceDevice.files.remove(spaceNote)
+    check(syncSpaces().deleted == 0 && !spaceRemote.files.getValue(oldCopy).deleted)
+    for (path in listOf("notes/Shared/not-an-id/List.md", "notes/Shared/3f2a1c9e-8b7d-4e6f-a5c4-1d2e3f4a5b6c.md", "notes/Other/3f2a1c9e-8b7d-4e6f-a5c4-1d2e3f4a5b6c/List.md")) check(!CloudSyncEngine.isSpacePath(path)) { path }
+
+    println("Native merge checks passed: $cases shared cases, a daily reminder on two devices, text and fields from different devices, ticks on different lines, overlaps keep both versions, shared spaces stay out of the vault")
 }
 
 private fun checkScale() {

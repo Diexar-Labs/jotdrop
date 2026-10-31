@@ -59,6 +59,10 @@ object CloudSyncEngine {
     /** Notes up to this size merge when two devices changed different parts; bigger ones keep both versions. */
     const val MERGE_BYTES = 1024 * 1024
 
+    /** A shared space's folder, notes/Shared/<id>/, syncs with its own key and is never part of this vault. An ordinary folder called Shared stays ordinary. */
+    private val spacePath = Regex("^notes/shared/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/", RegexOption.IGNORE_CASE)
+    fun isSpacePath(path: String): Boolean = spacePath.containsMatchIn(path)
+
     fun hash(bytes: ByteArray): String = CloudCrypto.encode(MessageDigest.getInstance("SHA-256").digest(bytes))
     fun path(value: String, allowPreserved: Boolean = false): String {
         CloudCrypto.safePath(value)
@@ -73,8 +77,9 @@ object CloudSyncEngine {
         maxFileBytes: Long = CloudCrypto.MAX_FILE_BYTES.toLong(), persist: (Map<String, CloudSyncBase>) -> Unit): CloudSyncReport {
         checkActive()
         val result = CloudSyncReport()
-        val files = local.list()
-        val entries = remote.list()
+        val files = local.list().filterKeys { !isSpacePath(it) }
+        val entries = remote.list().filter { !isSpacePath(it.path) }
+        tracked.keys.removeAll { isSpacePath(it) }
         require(entries.map { it.path }.distinct().size == entries.size) { "Duplicate encrypted cloud paths" }
         val clouds = entries.associateBy { path(it.path) }
         for ((name, file) in files) {
