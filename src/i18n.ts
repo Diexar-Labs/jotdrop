@@ -342,11 +342,6 @@ const EN: Record<string, string> = {
   notice_clip_saved: "Clipped: {0}",
 
   // Support section
-  section_support: "About JotDrop",
-  support_blurb:
-    "JotDrop is free and open-source. Found it useful? A coffee or sponsorship makes my day — no obligations, no lock-ins.",
-  support_kofi: "☕ Buy me a Ko-fi",
-  support_sponsors: "❤ Sponsor on GitHub",
 
   // Note colors
   color_default: "Default",
@@ -674,11 +669,6 @@ const NL: Record<string, string> = {
   notice_clip_server_error: "Clip-server-fout: {0}",
   notice_clip_saved: "Geclipt: {0}",
 
-  section_support: "Over JotDrop",
-  support_blurb:
-    "JotDrop is gratis en open-source. Vind je het waardevol? Een koffie of sponsorship maakt mijn dag — geen verplichting, geen lock-ins.",
-  support_kofi: "☕ Trakteer op Ko-fi",
-  support_sponsors: "❤ Word sponsor op GitHub",
 
   color_default: "Standaard",
   color_red: "Rood",

@@ -1,5 +1,5 @@
 // Google Play rules that a later change could quietly break:
-// - no direct link to a payment page on Play installs (Payments policy);
+// - no direct link to a payment page in the app, and no Ko-fi anywhere (Payments policy);
 // - link previews do not pretend to be a crawler or to come from Google;
 // - the account deletion page has its own section and no link onward to the web app,
 //   because the app and Play Console link to it and it must not lead to checkout.
@@ -11,11 +11,19 @@ const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
 const errors = [];
 const check = (ok, message) => { if (!ok) errors.push(message); };
 
-const main = read("android/app/src/main/kotlin/com/diexar/keepcapture/MainActivity.kt");
-for (const view of ["supportHeading", "supportBlurb", "kofiButton"]) {
-  check(new RegExp(`if \\(UpdateChecker\\.isPlayInstall\\(this\\)\\) \\{[^}]*${view}\\.visibility = View\\.GONE`).test(main),
-    `MainActivity must hide ${view} on Play installs`);
-}
+const noKofi = [
+  "README.md",
+  "manifest.json",
+  "src/settings.ts",
+  "src/i18n.ts",
+  "docs/android-privacy-policy.md",
+  "android/app/src/main/kotlin/com/diexar/keepcapture/MainActivity.kt",
+  "android/app/src/main/res/layout/activity_main.xml",
+  "android/app/src/main/res/values/strings.xml",
+  "android/app/src/main/res/values-nl/strings.xml",
+];
+for (const file of noKofi) check(!/ko-?fi/i.test(read(file)), `${file} must not mention Ko-fi`);
+check(!fs.existsSync(path.join(root, ".github/FUNDING.yml")), ".github/FUNDING.yml must not exist");
 
 const preview = read("android/app/src/main/kotlin/com/diexar/keepcapture/OgFetcher.kt");
 for (const disguise of ["Twitterbot", "facebookexternalhit", "Googlebot", "www.google.com/"]) {

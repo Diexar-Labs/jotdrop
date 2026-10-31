@@ -6,8 +6,5 @@
   "description": "A private Google Keep alternative for your vault: quick-capture note cards in plain Markdown, free forever and offline. Pairs with the JotDrop Android app and Chrome web clipper. Optional end-to-end encrypted cloud sync.",
   "author": "Diexar Labs",
   "authorUrl": "https://github.com/Diexar-Labs",
-  "fundingUrl": {
-    "Ko-fi": "https://ko-fi.com/L3L11ZETB9"
-  },
   "isDesktopOnly": false
 }
