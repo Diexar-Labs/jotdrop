@@ -1,6 +1,6 @@
 # JotDrop Android Privacy Policy
 
-Last updated: October 29, 2026
+Last updated: October 31, 2026
 
 JotDrop (`com.diexar.keepcapture`) is a local-first Android notes app from Diexar Labs. Contact us at [eric@diexar.com](mailto:eric@diexar.com) about privacy questions.
 
@@ -20,6 +20,7 @@ You can create a free JotDrop Cloud account to sync your notes between devices, 
 - **New email accounts** may open a Cloudflare Turnstile check in your browser to confirm that you are a person.
 - **Keys on this phone:** the connection to your cloud and the key to your notes are stored in JotDrop's private storage, encrypted with a key from the Android Keystore, and are excluded from Android backups. Your recovery code is shown once; JotDrop cannot show it again.
 - **Sync** runs in the background over HTTPS when you have turned it on, and only for the notes and attachment folders in your chosen vault. You can pause it, disconnect this phone, or delete your cloud account in the app.
+- **Shared groups:** the people you invite can read and change the notes you share with them. The notes, the group's name and the names people choose are encrypted on your device. Our server stores which accounts are in which group, when something changed, how large the files are and which device saved a version. The owner of a group can see the email addresses of everyone in it. What you wrote stays with the others after you leave.
 
 ## When JotDrop connects to the internet
 
