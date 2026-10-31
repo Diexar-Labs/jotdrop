@@ -71,7 +71,7 @@ And the **web app** at [app.jotdrop.net](https://app.jotdrop.net/) puts the same
 
 Android and Obsidian work on their own, without an account. The web app needs JotDrop Cloud, and the Chrome clipper needs the Obsidian desktop plugin. Not every feature is everywhere: speech-to-text is Android only, and reminder notifications come from Android and from Obsidian while it runs, not from the web app.
 
-Already on Joplin? [JotDrop for Joplin](#jotdrop-for-joplin) turns the notes you have there into a card board, on Joplin desktop and Android. It is a separate plugin: your notes stay in Joplin and use Joplin's own sync, not Markdown files or JotDrop Cloud.
+Already on Joplin? [JotDrop for Joplin](#jotdrop-for-joplin) turns the notes you have there into a card board, on Joplin desktop and Android. It is a separate plugin: your notes stay in Joplin and use Joplin's own sync. Connect JotDrop Cloud and notes from the JotDrop app come in too, one way.
 
 ## Get JotDrop
 
@@ -256,7 +256,7 @@ Works on Joplin desktop and Joplin for Android.
 2. Search for **JotDrop** and install it. Restart Joplin if it asks.
 3. Desktop: click the board button in the editor toolbar, or **View > Open JotDrop board**. Android: tap the puzzle button at the top and **Open JotDrop board**.
 
-Your existing notes appear as cards, with pins, colors, checklists, reminders and an archive. They stay in Joplin and use Joplin's own sync, so the plugin needs no account and does not connect to JotDrop Cloud. On iPhone and iPad, Joplin only allows the plugins it recommends itself, so JotDrop is not available there. Details are in the [JotDrop for Joplin repository](https://github.com/Diexar-Labs/joplin-plugin-jotdrop).
+Your existing notes appear as cards, with pins, colors, checklists, reminders and an archive. They stay in Joplin and use Joplin's own sync, so the board needs no account. Want to catch notes on your phone? Connect JotDrop Cloud on Joplin desktop with a pairing code, choose only new notes or everything, and what you make in the JotDrop app comes in as ordinary Joplin notes. It goes one way, and whatever you changed in Joplin stays as you left it. On iPhone and iPad, Joplin only allows the plugins it recommends itself, so JotDrop is not available there. Details are in the [JotDrop for Joplin repository](https://github.com/Diexar-Labs/joplin-plugin-jotdrop).
 
 ### Staying up to date
 
@@ -363,6 +363,7 @@ English and Dutch. Spanish, German, French and Italian are ready for translators
 - [x] End-to-end encrypted JotDrop Cloud with a web app and a time machine
 - [x] The same cards and card features in the Android app, Obsidian and the web app
 - [x] JotDrop for Joplin: a card board on Joplin desktop and Android
+- [x] JotDrop for Joplin: notes from the JotDrop app through JotDrop Cloud, one way
 - [ ] JotDrop on Google Play for everyone (now in closed testing)
 - [ ] Light and dark choice in the Android app
 - [ ] iOS share extension
