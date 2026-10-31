@@ -72,7 +72,7 @@ function row(account) {
   cell(day(account.createdAt));
   cell(methods.join(', '), account.hasAuthenticator ? 'Authenticator app on' : undefined);
   cell(account.plan === 'plus' ? 'Plus' : 'Free', account.plan === 'plus' ? `until ${day(account.plusUntil)}${account.subscribed ? ', paying' : ''}` : account.plusUntil ? `Plus ended ${day(account.plusUntil)}` : undefined);
-  cell(`${bytes(account.usedBytes)} of ${bytes(account.quotaBytes)}`, `${percent(account.usedBytes, account.quotaBytes)} used`);
+  cell(`${bytes(account.usedBytes)} of ${bytes(account.quotaBytes)}`, `${percent(account.usedBytes, account.quotaBytes)} used${account.spaces ? `, ${account.spaces} shared` : ''}`);
   cell(`${account.activeDevices} active`);
   cell(when(account.lastActiveAt));
   cell(account.newsletter ? 'Yes' : 'No');

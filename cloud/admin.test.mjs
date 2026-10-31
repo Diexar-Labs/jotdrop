@@ -199,7 +199,7 @@ test('totals and the account list match the database and never include secrets',
   device(bob.vaultId, '2026-10-20T07:30:00.000Z');
   envelopes(bob.vaultId, [7000]);
   // A large file is stored in encrypted pieces; they count as storage too.
-  db.prepare('INSERT INTO chunks VALUES(?,?,?,?,?,1)').run(bob.vaultId, 'piece-1', 4000, Buffer.from('SECRET-PIECE-CONTENT'), now);
+  db.prepare('INSERT INTO chunks(vaultId,name,size,data,createdAt,claimed) VALUES(?,?,?,?,?,1)').run(bob.vaultId, 'piece-1', 4000, Buffer.from('SECRET-PIECE-CONTENT'), now);
   // Carol: older, Plus ended (a cancelled subscription still holds a founder place), no devices.
   const carol = account('carol@example.test', '2026-08-01T09:00:00.000Z');
   db.prepare('INSERT INTO plans VALUES(?,?,1)').run(carol.vaultId, now - 6 * DAY);
@@ -218,9 +218,9 @@ test('totals and the account list match the database and never include secrets',
 
   const list = await get('/api/admin/accounts');
   assert.deepEqual(list.body, { total: 3, page: 1, pageSize: 500, accounts: [
-    { email: 'alice@example.test', createdAt: '2026-10-24T09:00:00.000Z', hasPassword: true, hasAuthenticator: true, providers: ['google'], plan: 'plus', plusUntil: iso(now + 10 * DAY), subscribed: false, usedBytes: 5000, quotaBytes: 5000000, activeDevices: 2, lastActiveAt: '2026-10-26T11:00:00.000Z', newsletter: true },
-    { email: 'bob@example.test', createdAt: '2026-10-01T09:00:00.000Z', hasPassword: false, hasAuthenticator: false, providers: ['github', 'google'], plan: 'plus', plusUntil: iso(now + 30 * DAY), subscribed: true, usedBytes: 11000, quotaBytes: 5000000, activeDevices: 1, lastActiveAt: '2026-10-20T07:30:00.000Z', newsletter: true },
-    { email: 'carol@example.test', createdAt: '2026-08-01T09:00:00.000Z', hasPassword: true, hasAuthenticator: false, providers: [], plan: 'free', plusUntil: iso(now - 5 * DAY), subscribed: false, usedBytes: 0, quotaBytes: 1000000, activeDevices: 0, lastActiveAt: null, newsletter: false },
+    { email: 'alice@example.test', createdAt: '2026-10-24T09:00:00.000Z', hasPassword: true, hasAuthenticator: true, providers: ['google'], plan: 'plus', plusUntil: iso(now + 10 * DAY), subscribed: false, usedBytes: 5000, quotaBytes: 5000000, spaces: 0, activeDevices: 2, lastActiveAt: '2026-10-26T11:00:00.000Z', newsletter: true },
+    { email: 'bob@example.test', createdAt: '2026-10-01T09:00:00.000Z', hasPassword: false, hasAuthenticator: false, providers: ['github', 'google'], plan: 'plus', plusUntil: iso(now + 30 * DAY), subscribed: true, usedBytes: 11000, quotaBytes: 5000000, spaces: 0, activeDevices: 1, lastActiveAt: '2026-10-20T07:30:00.000Z', newsletter: true },
+    { email: 'carol@example.test', createdAt: '2026-08-01T09:00:00.000Z', hasPassword: true, hasAuthenticator: false, providers: [], plan: 'free', plusUntil: iso(now - 5 * DAY), subscribed: false, usedBytes: 0, quotaBytes: 1000000, spaces: 0, activeDevices: 0, lastActiveAt: null, newsletter: false },
   ] });
   const emails = async (query) => (await get(`/api/admin/accounts?${query}`)).body.accounts.map((entry) => entry.email.split('@')[0]);
   assert.deepEqual(await emails('q=BO'), ['bob']);

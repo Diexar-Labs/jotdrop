@@ -72,6 +72,11 @@ const ADMIN_PAGE = 500;
 // "argon2id:m=<KiB>,t=<passes>,p=<lanes>:<salt>:<hash>", base64url; no "$", so env files and shells keep it as is.
 const adminHashPattern = /^argon2id:m=(\d{1,7}),t=(\d{1,2}),p=(\d{1,2}):([A-Za-z0-9_-]{22,86}):([A-Za-z0-9_-]{43})$/;
 const BASE32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+// Shared spaces: with a space in X-JotDrop-Vault a member reaches its files through these routes and nothing else.
+const SPACE_ROUTES = [['GET', /^\/changes$/], ['GET', /^\/status$/], ['POST', /^\/chunks\/missing$/], ['GET', /^\/chunks\/[0-9a-f]{64}$/], ['PUT', /^\/chunks\/[0-9a-f]{64}$/],
+  ['GET', /^\/objects\/[0-9a-f]{64}$/], ['PUT', /^\/objects\/[0-9a-f]{64}$/], ['DELETE', /^\/objects\/[0-9a-f]{64}$/], ['GET', /^\/objects\/[0-9a-f]{64}\/history$/], ['POST', /^\/objects\/[0-9a-f]{64}\/restore$/]];
+const MAX_SPACE_MEMBERS = 20, MAX_OPEN_INVITES = 20, MAX_MEMBERSHIPS = 100, MAX_OWN_SPACES = 100, MAX_SPACE_PREFS = 64 * 1024;
+const INVITE_LIFETIME = 7 * DAY, TAKEOVER_WAIT = 7 * DAY, FROZEN_SPACE_LIFETIME = 30 * DAY, UNFINISHED_SPACE_LIFETIME = 2 * DAY;
 
 /** QR code as rows of "1" (dark) and "0", so every client can draw it without a QR library of its own. */
 function qrRows(text) {
@@ -282,6 +287,17 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       if (!all('PRAGMA table_info(envelopes)').some((column) => column.name === 'pieces')) db.exec('ALTER TABLE envelopes ADD COLUMN pieces INTEGER NOT NULL DEFAULT 0; UPDATE envelopes SET pieces=1 WHERE EXISTS (SELECT 1 FROM envelope_chunks ec WHERE ec.vaultId=envelopes.vaultId AND ec.id=envelopes.id AND ec.envelopeHash=envelopes.envelopeHash);');
       // The newsletter tick waits with the signup until the email address is confirmed.
       if (!all('PRAGMA table_info(signups)').some((column) => column.name === 'newsletter')) db.exec('ALTER TABLE signups ADD COLUMN newsletter INTEGER NOT NULL DEFAULT 0;');
+      // Shared spaces. No foreign key to accounts and no higher user_version: an older server must keep starting and deleting accounts.
+      db.exec(`CREATE TABLE IF NOT EXISTS spaces(id TEXT PRIMARY KEY REFERENCES vaults(id), ownerAccountId TEXT NOT NULL, nameEnvelope TEXT NOT NULL, createdAt INTEGER NOT NULL, frozenAt INTEGER, replaces TEXT UNIQUE, replacedBy TEXT, ownerGoneAt INTEGER);
+        CREATE INDEX IF NOT EXISTS spaces_by_owner ON spaces(ownerAccountId);
+        CREATE TABLE IF NOT EXISTS space_members(spaceId TEXT NOT NULL, accountId TEXT NOT NULL, nameEnvelope TEXT, joinedAt INTEGER NOT NULL, PRIMARY KEY(spaceId,accountId));
+        CREATE INDEX IF NOT EXISTS space_members_by_account ON space_members(accountId);
+        CREATE TABLE IF NOT EXISTS space_keys(accountId TEXT NOT NULL, spaceId TEXT NOT NULL, wrapped TEXT NOT NULL, prefs TEXT, PRIMARY KEY(accountId,spaceId));
+        CREATE TABLE IF NOT EXISTS space_invites(id TEXT PRIMARY KEY, spaceId TEXT NOT NULL, claimTokenHash TEXT NOT NULL, envelope TEXT, expiresAt INTEGER NOT NULL, claimedBy TEXT, claimedAt INTEGER);
+        CREATE INDEX IF NOT EXISTS space_invites_by_space ON space_invites(spaceId);`);
+      // Who uploaded a piece that no version uses yet; only set in a space, so one member cannot block the others.
+      if (!all('PRAGMA table_info(chunks)').some((column) => column.name === 'deviceId')) db.exec('ALTER TABLE chunks ADD COLUMN deviceId TEXT;');
+      db.exec('CREATE INDEX IF NOT EXISTS chunks_by_device ON chunks(deviceId) WHERE deviceId IS NOT NULL;');
       run("INSERT INTO secrets VALUES('fake-salt',?) ON CONFLICT(name) DO NOTHING", randomBytes(32).toString('base64url'));
       const legacy = all('PRAGMA table_info(revisions)').some((column) => column.name === 'envelope');
       db.exec(`CREATE TABLE IF NOT EXISTS ${legacy ? 'revisions_migrated' : 'revisions'}(vaultId TEXT NOT NULL REFERENCES vaults(id), id TEXT NOT NULL, revision INTEGER NOT NULL, envelopeHash TEXT NOT NULL, deleted INTEGER NOT NULL, size INTEGER NOT NULL, updatedAt TEXT NOT NULL, deviceId TEXT NOT NULL, PRIMARY KEY(vaultId,id,revision), FOREIGN KEY(vaultId,id,envelopeHash) REFERENCES envelopes(vaultId,id,envelopeHash));`);
@@ -336,8 +352,16 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     } catch { fail(503, 'The person check is not reachable right now. Try again in a moment.'); }
     if (outcome?.success !== true) fail(400, 'The person check did not pass. Try again.', { code: 'human-check' });
   }
+  const spaceRow = (id) => one('SELECT * FROM spaces WHERE id=?', id);
   // Plus runs until the latest of the trial or a manual grant (plans) and every paid subscription period.
+  // A space has its owner's plan; without an owner, the free plan.
   function planRow(vaultId) {
+    const space = spaceRow(vaultId);
+    if (space) {
+      const owner = !space.ownerGoneAt && one('SELECT vaultId FROM accounts WHERE id=?', space.ownerAccountId);
+      if (!owner) return { plusUntil: 0, trialUsed: 0 };
+      vaultId = owner.vaultId;
+    }
     const plan = one('SELECT plusUntil,trialUsed FROM plans WHERE vaultId=?', vaultId) ?? { plusUntil: 0, trialUsed: 0 };
     return { ...plan, plusUntil: Math.max(plan.plusUntil, one('SELECT COALESCE(MAX(paidUntil),0) AS until FROM subscriptions WHERE vaultId=?', vaultId).until) };
   }
@@ -387,6 +411,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     return active.length >= freeDeviceLimit ? active : [];
   }
   const deviceLimitReached = (devices) => fail(403, `The free plan includes ${freeDeviceLimit} devices. Sign out one of them, or try JotDrop Plus.`, { code: 'device-limit', deviceLimit: freeDeviceLimit, devices });
+  const dropDevicePieces = (deviceId) => run('DELETE FROM chunks WHERE deviceId=? AND claimed=0', deviceId);
   // A free cloud at its device limit can only swap a device, so someone who lost their phone can still sign in.
   function addDevice(vaultId, name, tokenHash, replaceDeviceId) {
     // Count revoked rows too: revocation must not bypass the local metadata ceiling.
@@ -397,6 +422,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       if (!replaced) deviceLimitReached(active);
       run('UPDATE devices SET revoked=1 WHERE id=?', replaced.id);
       run('DELETE FROM uploads WHERE vaultId=? AND deviceId=?', vaultId, replaced.id);
+      dropDevicePieces(replaced.id);
     }
     const id = randomUUID(), now = new Date(clock()).toISOString();
     run('INSERT INTO devices(id,vaultId,name,tokenHash,createdAt,lastSeenAt) VALUES(?,?,?,?,?,?)', id, vaultId, name.trim(), tokenHash, now, now);
@@ -564,8 +590,11 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   const latest = (vaultId, id) => one(`${revisionQuery} WHERE vaultId=? AND id=? ORDER BY revision DESC LIMIT 1`, vaultId, id);
   // ponytail: indexed row counts per mutation; use persisted counters if throughput requires it.
   const historyUsage = (vaultId) => ({ ...one('SELECT (SELECT COUNT(*) FROM revisions WHERE vaultId=?) AS revisionCount, (SELECT COUNT(*) FROM changes WHERE vaultId=?) AS changeCount', vaultId, vaultId), maxEntries: maxHistoryEntries });
-  function requireActiveDevice(vaultId, deviceId) {
-    if (one('SELECT revoked FROM devices WHERE vaultId=? AND id=?', vaultId, deviceId)?.revoked !== 0) fail(401, 'Device access denied');
+  const memberOf = (spaceId, deviceVaultId) => one('SELECT 1 FROM space_members m JOIN accounts a ON a.id=m.accountId WHERE m.spaceId=? AND a.vaultId=?', spaceId, deviceVaultId);
+  // Inside each write's transaction, so a device revoked or a member removed a moment ago cannot finish an upload.
+  function requireAccess(vaultId, deviceId) {
+    const device = one('SELECT vaultId,revoked FROM devices WHERE id=?', deviceId);
+    if (device?.revoked !== 0 || device.vaultId !== vaultId && !memberOf(vaultId, device.vaultId)) fail(401, 'Device access denied');
   }
   // A piece that no saved version uses after a day was an upload that never finished.
   const pruneUploads = (vaultId) => {
@@ -579,6 +608,26 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   const storageUsage = (vaultId) => one('SELECT (SELECT COALESCE(SUM(size),0) FROM envelopes WHERE vaultId=?) + (SELECT COALESCE(SUM(size),0) FROM chunks WHERE vaultId=?) + (SELECT COALESCE(SUM(reservedBytes),0) FROM uploads WHERE vaultId=?) AS used', vaultId, vaultId, vaultId).used;
   const quotaFor = (vaultId) => isPlus(vaultId) ? plusQuotaBytes : quotaBytes;
   const maxFileFor = (vaultId) => isPlus(vaultId) ? plusMaxFileBytes : maxFileBytes;
+  // ponytail: sums each owned space per write (100 at most); keep per-account counters if this shows up.
+  const spaceBytes = (accountId, except) => all('SELECT id FROM spaces WHERE ownerAccountId=? AND ownerGoneAt IS NULL', accountId).reduce((sum, space) => space.id === except ? sum : sum + storageUsage(space.id), 0);
+  // A replaced space holds the same notes as its replacement and goes within 30 days: it does not hold up the owner's own notes.
+  // It does count between spaces (roomForSpaces), and only the direct predecessor is left out there, so chains gain no room.
+  const liveSpaceBytes = (accountId) => all('SELECT id FROM spaces WHERE ownerAccountId=? AND ownerGoneAt IS NULL AND replacedBy IS NULL', accountId).reduce((sum, space) => sum + storageUsage(space.id), 0);
+  // An owner's quota covers their own cloud and their spaces together, and the spaces get half of it at most, so members
+  // can never fill up the owner's own notes. A new space does not compete with the one it replaces.
+  const roomForSpaces = (owner, except) => {
+    const quota = quotaFor(owner.vaultId), inSpaces = spaceBytes(owner.id, except);
+    return Math.min(quota - storageUsage(owner.vaultId) - inSpaces, Math.floor(quota / 2) - inSpaces);
+  };
+  function roomIn(vaultId) {
+    const space = spaceRow(vaultId);
+    if (space) {
+      const owner = !space.ownerGoneAt && one('SELECT id,vaultId FROM accounts WHERE id=?', space.ownerAccountId);
+      return owner ? roomForSpaces(owner, space.replaces) : quotaFor(vaultId) - storageUsage(vaultId);
+    }
+    const owner = one('SELECT id FROM accounts WHERE vaultId=?', vaultId);
+    return quotaFor(vaultId) - storageUsage(vaultId) - (owner ? liveSpaceBytes(owner.id) : 0);
+  }
   const pieceBytes = (vaultId, id, envelopeHash) => one('SELECT COALESCE(SUM(c.size),0) AS size FROM envelope_chunks ec JOIN chunks c ON c.vaultId=ec.vaultId AND c.name=ec.name WHERE ec.vaultId=? AND ec.id=? AND ec.envelopeHash=?', vaultId, id, envelopeHash).size;
   // Free clouds keep older versions, but only Plus opens one that was replaced before this moment.
   function lockedBefore(vaultId) {
@@ -602,7 +651,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   // ponytail: scans the vault's revision rows per full upload; keep a per-vault locked-bytes counter if large vaults make this slow.
   // `id` is the file being written; it is never cleared to make room for itself.
   function fits(vaultId, extra, deviceId, id) {
-    let shortfall = storageUsage(vaultId) + extra - quotaFor(vaultId);
+    let shortfall = extra - roomIn(vaultId);
     if (shortfall <= 0) return true;
     const cutoff = lockedBefore(vaultId);
     if (!cutoff) return false;
@@ -620,7 +669,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     if ([...trashed, ...freeable].reduce((sum, entry) => sum + entry.size, 0) < shortfall) return false;
     const now = new Date(clock()).toISOString();
     // A piece shared with a version that stays is not freed, so the real usage decides when there is room.
-    const roomMade = () => { dropUnusedPieces(vaultId); return storageUsage(vaultId) + extra <= quotaFor(vaultId); };
+    const roomMade = () => { dropUnusedPieces(vaultId); return extra <= roomIn(vaultId); };
     for (const note of trashed) {
       run('DELETE FROM revisions WHERE vaultId=? AND id=?', vaultId, note.id);
       run('DELETE FROM envelopes WHERE vaultId=? AND id=?', vaultId, note.id);
@@ -636,16 +685,24 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     }
     return roomMade();
   }
+  // Members write only while a space is alive and fits the owner's storage; a space that no longer fits is read-only for everyone.
+  function requireWritable(vaultId, deviceId, id) {
+    const space = spaceRow(vaultId);
+    if (!space) return;
+    if (space.frozenAt) fail(403, 'This shared space is read-only.', { code: 'space-frozen' });
+    if (!fits(vaultId, 0, deviceId, id)) fail(507, 'Cloud storage is full. Your local files remain available.', { code: 'storage-full' });
+  }
   /** `pieces`: for a v2 save, the names of its encrypted pieces, already uploaded (none for a small file); a stored envelope keeps its own. */
   function append(vaultId, deviceId, id, baseRevision, envelope, deleted, pieces = null) {
     return transaction(() => {
-      requireActiveDevice(vaultId, deviceId);
+      requireAccess(vaultId, deviceId);
       pruneUploads(vaultId);
       const current = latest(vaultId, id);
       // A v2 save is idempotent like a resumable upload: immutable history is the receipt when the answer was lost,
       // even when newer versions exist.
       const receipt = pieces && one('SELECT r.revision,c.sequence FROM revisions r JOIN changes c USING(vaultId,id,revision) WHERE r.vaultId=? AND r.deviceId=? AND r.id=? AND r.revision=? AND r.envelopeHash=? ORDER BY c.sequence LIMIT 1', vaultId, deviceId, id, baseRevision + 1, hash(envelope));
       if (receipt) return { id, ...receipt };
+      requireWritable(vaultId, deviceId, id);
       if ((current?.revision || 0) !== baseRevision) fail(409, 'Another version was saved. Review both versions.', { currentRevision: current?.revision || 0 });
       if (deleted) { if (!current) fail(404, 'File not found'); envelope = current.envelope; }
       let size = envelopeSize(envelope);
@@ -666,7 +723,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         run('INSERT INTO envelopes(vaultId,id,envelopeHash,envelope,size,pieces) VALUES(?,?,?,?,?,?)', vaultId, id, envelopeHash, envelope, size, pieces ? 1 : 0);
         for (const name of new Set(pieces ?? [])) {
           run('INSERT INTO envelope_chunks VALUES(?,?,?,?)', vaultId, id, envelopeHash, name);
-          run('UPDATE chunks SET claimed=1 WHERE vaultId=? AND name=?', vaultId, name);
+          run('UPDATE chunks SET claimed=1,deviceId=NULL WHERE vaultId=? AND name=?', vaultId, name);
         }
       }
       // A version's size is its real size: the manifest plus its pieces.
@@ -731,13 +788,13 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     const now = clock();
     // ponytail: sums the storage of every matching account per page; keep per-vault counters if the account list grows large.
     const rows = all(`SELECT a.email,a.createdAt,a.authHash<>'' AS hasPassword,a.totpSecret IS NOT NULL AS hasAuthenticator,(SELECT group_concat(provider,',') FROM (SELECT provider FROM identities WHERE accountId=a.id ORDER BY provider)) AS providers,
-      ${plusUntilSql} AS plusUntil,EXISTS${runningSql} AS subscribed,(SELECT COALESCE(SUM(size),0) FROM envelopes WHERE vaultId=a.vaultId)+(SELECT COALESCE(SUM(size),0) FROM chunks WHERE vaultId=a.vaultId) AS usedBytes,(SELECT COUNT(*) FROM devices WHERE vaultId=a.vaultId AND revoked=0) AS activeDevices,
+      ${plusUntilSql} AS plusUntil,EXISTS${runningSql} AS subscribed,(SELECT COALESCE(SUM(size),0) FROM envelopes WHERE vaultId IN (SELECT a.vaultId UNION ALL SELECT id FROM spaces WHERE ownerAccountId=a.id AND ownerGoneAt IS NULL))+(SELECT COALESCE(SUM(size),0) FROM chunks WHERE vaultId IN (SELECT a.vaultId UNION ALL SELECT id FROM spaces WHERE ownerAccountId=a.id AND ownerGoneAt IS NULL)) AS usedBytes,(SELECT COUNT(*) FROM spaces WHERE ownerAccountId=a.id AND ownerGoneAt IS NULL) AS spaces,(SELECT COUNT(*) FROM devices WHERE vaultId=a.vaultId AND revoked=0) AS activeDevices,
       (SELECT MAX(lastSeenAt) FROM devices WHERE vaultId=a.vaultId) AS lastActiveAt,EXISTS(SELECT 1 FROM newsletter WHERE accountId=a.id) AS newsletter
       FROM accounts a WHERE instr(a.email,?)>0 ORDER BY ${ADMIN_SORT[sort]} ${order} NULLS LAST,a.email LIMIT ? OFFSET ?`, ...RUNNING, search, pageSize, (page - 1) * pageSize);
     return { accounts: rows.map((row) => {
       const plus = row.plusUntil > now;
       return { email: row.email, createdAt: row.createdAt, hasPassword: Boolean(row.hasPassword), hasAuthenticator: Boolean(row.hasAuthenticator), providers: row.providers ? row.providers.split(',') : [], plan: plus ? 'plus' : 'free',
-        plusUntil: row.plusUntil ? new Date(row.plusUntil).toISOString() : null, subscribed: Boolean(row.subscribed), usedBytes: row.usedBytes, quotaBytes: plus ? plusQuotaBytes : quotaBytes, activeDevices: row.activeDevices, lastActiveAt: row.lastActiveAt ?? null, newsletter: Boolean(row.newsletter) };
+        plusUntil: row.plusUntil ? new Date(row.plusUntil).toISOString() : null, subscribed: Boolean(row.subscribed), usedBytes: row.usedBytes, quotaBytes: plus ? plusQuotaBytes : quotaBytes, spaces: row.spaces, activeDevices: row.activeDevices, lastActiveAt: row.lastActiveAt ?? null, newsletter: Boolean(row.newsletter) };
     }), total: one('SELECT COUNT(*) AS count FROM accounts WHERE instr(email,?)>0', search).count, page, pageSize };
   }
   const adminAssets = new Map([['/', [join(adminRoot, 'index.html'), 'text/html']], ['/admin.js', [join(adminRoot, 'admin.js'), 'text/javascript']], ['/admin.css', [join(adminRoot, 'admin.css'), 'text/css']]]);
@@ -766,6 +823,242 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     if (method === 'GET' && pathname === '/api/admin/summary') { adminSession(req); reply(200, adminSummary()); return; }
     if (method === 'GET' && pathname === '/api/admin/accounts') { adminSession(req); reply(200, adminAccounts(url.searchParams)); return; }
     fail(404, 'Not found');
+  }
+  // A space being replaced until the old one is frozen: only its owner is in it and nobody can join yet.
+  const unfinished = (space) => { const old = space.replaces && spaceRow(space.replaces); return Boolean(old) && old.replacedBy !== space.id; };
+  const unfinishedSql = 'EXISTS (SELECT 1 FROM spaces o WHERE o.id=s.replaces AND o.replacedBy IS NOT s.id)';
+  const liveSpaces = (accountId) => one(`SELECT COUNT(*) AS count FROM spaces s WHERE s.ownerAccountId=? AND s.frozenAt IS NULL AND NOT ${unfinishedSql}`, accountId).count;
+  const memberCount = (spaceId) => one('SELECT COUNT(*) AS count FROM space_members WHERE spaceId=?', spaceId).count;
+  const memberships = (accountId) => one('SELECT COUNT(*) AS count FROM space_members WHERE accountId=?', accountId).count;
+  function deleteSpace(spaceId) {
+    const next = one('SELECT * FROM spaces WHERE replaces=?', spaceId);
+    if (next && unfinished(next)) deleteSpace(next.id);
+    for (const table of ['revisions', 'envelope_chunks', 'chunks', 'retired_envelopes', 'envelopes', 'changes']) run(`DELETE FROM ${table} WHERE vaultId=?`, spaceId);
+    for (const table of ['space_members', 'space_keys', 'space_invites']) run(`DELETE FROM ${table} WHERE spaceId=?`, spaceId);
+    run('UPDATE spaces SET replacedBy=NULL WHERE replacedBy=?', spaceId);
+    run('DELETE FROM spaces WHERE id=?', spaceId);
+    run('DELETE FROM vaults WHERE id=?', spaceId);
+  }
+  function removeMember(spaceId, accountId) {
+    run('DELETE FROM space_members WHERE spaceId=? AND accountId=?', spaceId, accountId);
+    run('DELETE FROM space_keys WHERE spaceId=? AND accountId=?', spaceId, accountId);
+    run('DELETE FROM space_invites WHERE spaceId=? AND claimedBy=?', spaceId, accountId);
+    run('DELETE FROM chunks WHERE vaultId=? AND claimed=0 AND deviceId IN (SELECT d.id FROM devices d JOIN accounts a ON a.vaultId=d.vaultId WHERE a.id=?)', spaceId, accountId);
+  }
+  // The owner left, deleted their account or started over: frozen until a member takes over, or removed when nobody is left.
+  function ownerGone(space) {
+    removeMember(space.id, space.ownerAccountId);
+    const next = one('SELECT * FROM spaces WHERE replaces=?', space.id);
+    if (next && unfinished(next)) deleteSpace(next.id);
+    if (!memberCount(space.id)) { deleteSpace(space.id); return; }
+    run('UPDATE spaces SET ownerGoneAt=?,frozenAt=COALESCE(frozenAt,?) WHERE id=?', clock(), clock(), space.id);
+    run('DELETE FROM space_invites WHERE spaceId=? AND claimedBy IS NULL', space.id);
+  }
+  // Before the account's devices go: what they wrote stays with the others, without pointing at a device that no longer exists.
+  function leaveAllSpaces(account) {
+    for (const table of ['revisions', 'changes']) run(`UPDATE ${table} SET deviceId='removed' WHERE vaultId IN (SELECT id FROM spaces) AND deviceId IN (SELECT id FROM devices WHERE vaultId=?)`, account.vaultId);
+    for (const space of all('SELECT * FROM spaces WHERE ownerAccountId=? AND ownerGoneAt IS NULL', account.id)) ownerGone(space);
+    for (const { spaceId } of all('SELECT spaceId FROM space_members WHERE accountId=?', account.id)) {
+      removeMember(spaceId, account.id);
+      if (!memberCount(spaceId)) deleteSpace(spaceId);
+    }
+  }
+  function sweepSpaces() {
+    transaction(() => {
+      const now = clock();
+      run('DELETE FROM space_invites WHERE expiresAt<=?', now);
+      // An older server may have run for a while and deleted accounts without knowing about spaces.
+      for (const table of ['space_members', 'space_keys']) run(`DELETE FROM ${table} WHERE accountId NOT IN (SELECT id FROM accounts)`);
+      run('UPDATE spaces SET ownerGoneAt=?,frozenAt=COALESCE(frozenAt,?) WHERE ownerGoneAt IS NULL AND ownerAccountId NOT IN (SELECT id FROM accounts)', now, now);
+      const finished = all(`SELECT s.id FROM spaces s WHERE s.frozenAt<=? OR (s.createdAt<=? AND ${unfinishedSql}) OR NOT EXISTS (SELECT 1 FROM space_members m WHERE m.spaceId=s.id)`, now - FROZEN_SPACE_LIFETIME, now - UNFINISHED_SPACE_LIFETIME);
+      for (const { id } of finished) deleteSpace(id);
+    });
+  }
+  // The same answer for a space that does not exist and one the asker is not in.
+  const memberSpace = (spaceId, accountId) => one('SELECT s.* FROM spaces s JOIN space_members m ON m.spaceId=s.id WHERE s.id=? AND m.accountId=?', spaceId, accountId) ?? fail(404, 'Shared space not found');
+  function ownedSpace(spaceId, accountId) {
+    const space = memberSpace(spaceId, accountId);
+    if (space.ownerAccountId !== accountId) fail(403, 'Only the owner of this space can do that.', { code: 'not-owner' });
+    return space;
+  }
+  function requireJoinable(space) {
+    if (space.frozenAt) fail(409, 'This shared space is read-only.', { code: 'space-frozen' });
+    if (unfinished(space)) fail(409, 'This shared space is still being replaced.', { code: 'space-unfinished' });
+  }
+  // The longest-standing member may take over at once, any member after a week.
+  const mayTakeOver = (space, accountId) => one('SELECT accountId FROM space_members WHERE spaceId=? ORDER BY joinedAt,accountId LIMIT 1', space.id)?.accountId === accountId || space.ownerGoneAt + TAKEOVER_WAIT <= clock();
+  const isoTime = (time) => time ? new Date(time).toISOString() : null;
+  function spaceView(space, account) {
+    const owner = space.ownerAccountId === account.id, key = one('SELECT wrapped,prefs FROM space_keys WHERE accountId=? AND spaceId=?', account.id, space.id);
+    const members = all('SELECT m.accountId,m.nameEnvelope,m.joinedAt,a.email FROM space_members m LEFT JOIN accounts a ON a.id=m.accountId WHERE m.spaceId=? ORDER BY m.joinedAt,m.accountId', space.id);
+    return { id: space.id, role: owner ? 'owner' : 'member', nameEnvelope: space.nameEnvelope, frozen: Boolean(space.frozenAt), replacedBy: space.replacedBy, replaces: space.replaces, unfinished: unfinished(space), ownerGoneAt: isoTime(space.ownerGoneAt), canTakeOver: Boolean(space.ownerGoneAt) && !space.replacedBy && mayTakeOver(space, account.id), usedBytes: storageUsage(space.id),
+      // Display names are for everyone in the space; only the owner sees email addresses and open invitations.
+      members: members.map((member) => ({ accountId: member.accountId, nameEnvelope: member.nameEnvelope, joinedAt: isoTime(member.joinedAt), role: member.accountId === space.ownerAccountId ? 'owner' : 'member', ...(owner ? { email: member.email } : {}) })),
+      // The key is only ever handed to the account it is wrapped for.
+      me: { accountId: account.id, wrapped: key?.wrapped ?? null, prefs: key?.prefs ?? null, nameEnvelope: members.find((member) => member.accountId === account.id)?.nameEnvelope ?? null },
+      ...(owner ? { invites: all('SELECT id,expiresAt,claimedBy FROM space_invites WHERE spaceId=? ORDER BY expiresAt', space.id).map((invite) => ({ id: invite.id, expiresAt: isoTime(invite.expiresAt), claimed: Boolean(invite.claimedBy) })) } : {}) };
+  }
+  // Managing who is in a space, with the asker's own cloud in X-JotDrop-Vault. The files of a space use the ordinary routes.
+  async function spaceRequest(req, reply, method, route, vaultId, deviceId, ip) {
+    const account = one('SELECT id,email,vaultId FROM accounts WHERE vaultId=?', vaultId) ?? fail(403, 'Sharing needs an account. Add one to this cloud first.', { code: 'account-required' });
+    const change = (action) => transaction(() => { requireAccess(vaultId, deviceId); return action(); });
+    const claim = /^\/invites\/([0-9a-f-]+)\/claim$/.exec(route);
+    if (method === 'POST' && claim) {
+      limit(`invite:${ip}`, 10);
+      requireValue(validId(claim[1]), 'Invalid invitation');
+      const value = await body(req, MAX_METADATA_BODY);
+      reply(200, change(() => {
+        const invite = one('SELECT * FROM space_invites WHERE id=?', claim[1]);
+        if (!validToken(value.claimToken) || !invite || !equal(hash(value.claimToken), invite.claimTokenHash)) fail(404, 'This invitation is not valid.');
+        if (invite.expiresAt <= clock()) fail(410, 'This invitation has expired.');
+        if (invite.claimedBy) {
+          // A crash between claiming and saving the key must not lose the key: the same account may ask again until then.
+          if (invite.claimedBy === account.id && invite.envelope) return { spaceId: invite.spaceId, envelope: invite.envelope };
+          if (invite.claimedBy === account.id) fail(409, 'You are already in this shared space.', { code: 'already-member' });
+          fail(409, 'This invitation was already used.', { code: 'invite-used' });
+        }
+        requireJoinable(spaceRow(invite.spaceId));
+        if (one('SELECT 1 FROM space_members WHERE spaceId=? AND accountId=?', invite.spaceId, account.id)) fail(409, 'You are already in this shared space.', { code: 'already-member' });
+        if (memberCount(invite.spaceId) >= MAX_SPACE_MEMBERS) fail(409, `A shared space can have ${MAX_SPACE_MEMBERS} people at most.`, { code: 'space-full' });
+        if (memberships(account.id) >= MAX_MEMBERSHIPS) fail(409, `You can be in ${MAX_MEMBERSHIPS} shared spaces at most.`, { code: 'too-many-spaces' });
+        run('INSERT INTO space_members(spaceId,accountId,joinedAt) VALUES(?,?,?)', invite.spaceId, account.id, clock());
+        run('UPDATE space_invites SET claimedBy=?,claimedAt=? WHERE id=?', account.id, clock(), invite.id);
+        return { spaceId: invite.spaceId, envelope: invite.envelope };
+      })); return;
+    }
+    if (route === '/spaces' && method === 'GET') {
+      reply(200, { spaces: all('SELECT s.id,s.frozenAt,s.replacedBy,(SELECT COALESCE(MAX(c.sequence),0) FROM changes c WHERE c.vaultId=s.id) AS sequence FROM space_members m JOIN spaces s ON s.id=m.spaceId WHERE m.accountId=? ORDER BY s.createdAt,s.id', account.id).map((space) => ({ id: space.id, sequence: space.sequence, frozen: Boolean(space.frozenAt), replacedBy: space.replacedBy })) }); return;
+    }
+    if (route === '/spaces' && method === 'POST') {
+      limit(`space:${vaultId}`, 30);
+      const value = await body(req, MAX_METADATA_BODY);
+      requireValue(validId(value.id) && (value.replaces === undefined || validId(value.replaces)), 'Invalid shared space');
+      envelopeSize(value.nameEnvelope, 4096);
+      envelopeSize(value.wrapped, 1024);
+      const result = change(() => {
+        if (one('SELECT 1 FROM spaces WHERE id=? AND ownerAccountId=?', value.id, account.id)) return { id: value.id, created: false };
+        if (value.replaces) {
+          // A replacement must stay possible on any plan, or nobody could be removed from a group after Plus ended.
+          // It is limited instead: one per space, of a live space of your own, and never of an unfinished replacement.
+          const old = spaceRow(value.replaces);
+          if (!old || old.ownerAccountId !== account.id || old.ownerGoneAt) fail(404, 'Shared space not found');
+          if (old.frozenAt) fail(409, 'This shared space is read-only.', { code: 'space-frozen' });
+          const running = one('SELECT id FROM spaces WHERE replaces=?', old.id);
+          if (running) return { id: running.id, created: false };
+          if (unfinished(old)) fail(409, 'This shared space is still being replaced.', { code: 'space-unfinished' });
+        } else {
+          const live = liveSpaces(account.id);
+          if (!isPlus(vaultId) && live >= 1) fail(402, 'The free plan shares one note. JotDrop Plus shares more.', { code: 'plus-required' });
+          if (live >= MAX_OWN_SPACES) fail(409, `You can own ${MAX_OWN_SPACES} shared spaces at most.`, { code: 'too-many-spaces' });
+          if (memberships(account.id) >= MAX_MEMBERSHIPS) fail(409, `You can be in ${MAX_MEMBERSHIPS} shared spaces at most.`, { code: 'too-many-spaces' });
+        }
+        if (one('SELECT 1 FROM vaults WHERE id=?', value.id)) fail(409, 'Choose another ID for this shared space.');
+        run('INSERT INTO vaults VALUES(?,?,?)', value.id, hash(randomBytes(32)), 'space');
+        run('INSERT INTO spaces(id,ownerAccountId,nameEnvelope,createdAt,replaces) VALUES(?,?,?,?,?)', value.id, account.id, value.nameEnvelope, clock(), value.replaces ?? null);
+        run('INSERT INTO space_members(spaceId,accountId,joinedAt) VALUES(?,?,?)', value.id, account.id, clock());
+        run('INSERT INTO space_keys(accountId,spaceId,wrapped) VALUES(?,?,?)', account.id, value.id, value.wrapped);
+        return { id: value.id, created: true };
+      });
+      reply(result.created ? 201 : 200, result); return;
+    }
+    const match = /^\/spaces\/([0-9a-f-]+)(?:\/(key|invites|members|leave|takeover|replace)(?:\/([0-9a-f-]+))?)?$/.exec(route);
+    if (!match) fail(404, 'Not found');
+    const [, spaceId, action, target] = match;
+    requireValue(validId(spaceId) && (target === undefined || validId(target)), 'Invalid shared space');
+    if (!action && !target && method === 'GET') { reply(200, spaceView(memberSpace(spaceId, account.id), account)); return; }
+    if (!action && !target && method === 'DELETE') {
+      change(() => deleteSpace(ownedSpace(spaceId, account.id).id));
+      reply(200, { deleted: true }); return;
+    }
+    if (action === 'key' && !target && method === 'PUT') {
+      const value = await body(req, 2 * MAX_SPACE_PREFS);
+      requireValue(value.wrapped !== undefined || value.prefs !== undefined || value.nameEnvelope !== undefined, 'Nothing to save');
+      if (value.wrapped !== undefined) envelopeSize(value.wrapped, 1024);
+      if (value.prefs !== undefined) envelopeSize(value.prefs, MAX_SPACE_PREFS);
+      if (value.nameEnvelope !== undefined) envelopeSize(value.nameEnvelope, 4096);
+      change(() => {
+        memberSpace(spaceId, account.id);
+        if (value.wrapped !== undefined) run('INSERT INTO space_keys(accountId,spaceId,wrapped) VALUES(?,?,?) ON CONFLICT(accountId,spaceId) DO UPDATE SET wrapped=excluded.wrapped', account.id, spaceId, value.wrapped);
+        if (value.prefs !== undefined && run('UPDATE space_keys SET prefs=? WHERE accountId=? AND spaceId=?', value.prefs, account.id, spaceId).changes !== 1) fail(409, 'Save the key first.');
+        if (value.nameEnvelope !== undefined) run('UPDATE space_members SET nameEnvelope=? WHERE spaceId=? AND accountId=?', value.nameEnvelope, spaceId, account.id);
+        // The key is safe under the member's own cloud now: the sealed copy can go.
+        if (value.wrapped !== undefined) run('UPDATE space_invites SET envelope=NULL WHERE spaceId=? AND claimedBy=?', spaceId, account.id);
+      });
+      reply(200, { ok: true }); return;
+    }
+    if (action === 'invites' && !target && method === 'POST') {
+      limit(`space:${vaultId}`, 30);
+      const value = await body(req, MAX_METADATA_BODY);
+      requireValue(validId(value.id) && validHash(value.claimTokenHash), 'Invalid invitation');
+      envelopeSize(value.envelope, 4096);
+      const expiresAt = clock() + INVITE_LIFETIME;
+      change(() => {
+        const space = ownedSpace(spaceId, account.id);
+        requireJoinable(space);
+        if (memberCount(space.id) >= MAX_SPACE_MEMBERS) fail(409, `A shared space can have ${MAX_SPACE_MEMBERS} people at most.`, { code: 'space-full' });
+        run('DELETE FROM space_invites WHERE spaceId=? AND expiresAt<=?', space.id, clock());
+        if (one('SELECT COUNT(*) AS count FROM space_invites WHERE spaceId=? AND claimedBy IS NULL', space.id).count >= MAX_OPEN_INVITES) fail(409, 'Too many open invitations. Withdraw one first.', { code: 'too-many-invites' });
+        if (one('SELECT 1 FROM space_invites WHERE id=?', value.id)) fail(409, 'Choose another ID for this invitation.');
+        run('INSERT INTO space_invites(id,spaceId,claimTokenHash,envelope,expiresAt) VALUES(?,?,?,?,?)', value.id, space.id, value.claimTokenHash, value.envelope, expiresAt);
+      });
+      reply(201, { id: value.id, expiresAt: isoTime(expiresAt) }); return;
+    }
+    if (action === 'invites' && target && method === 'DELETE') {
+      change(() => {
+        const space = ownedSpace(spaceId, account.id);
+        if (run('DELETE FROM space_invites WHERE id=? AND spaceId=? AND claimedBy IS NULL', target, space.id).changes !== 1) fail(404, 'Invitation not found');
+      });
+      reply(200, { ok: true }); return;
+    }
+    if (action === 'members' && target && method === 'DELETE') {
+      const members = change(() => {
+        const space = ownedSpace(spaceId, account.id);
+        if (target === account.id) fail(400, 'Leave the space to remove yourself.');
+        if (!one('SELECT 1 FROM space_members WHERE spaceId=? AND accountId=?', space.id, target)) fail(404, 'Member not found');
+        removeMember(space.id, target);
+        return memberCount(space.id);
+      });
+      reply(200, { ok: true, members }); return;
+    }
+    if (action === 'leave' && !target && method === 'POST') {
+      change(() => {
+        const space = memberSpace(spaceId, account.id);
+        if (space.ownerAccountId === account.id) { ownerGone(space); return; }
+        removeMember(space.id, account.id);
+        if (!memberCount(space.id)) deleteSpace(space.id);
+      });
+      reply(200, { ok: true }); return;
+    }
+    if (action === 'takeover' && !target && method === 'POST') {
+      change(() => {
+        const space = memberSpace(spaceId, account.id);
+        if (!space.ownerGoneAt || space.replacedBy) fail(409, 'This shared space cannot be taken over.', { code: 'not-available' });
+        if (!mayTakeOver(space, account.id)) fail(403, 'Another member can take over first. You can after a week.', { code: 'not-yet' });
+        const live = liveSpaces(account.id);
+        if (!isPlus(vaultId) && live >= 1) fail(402, 'The free plan shares one note. JotDrop Plus shares more.', { code: 'plus-required' });
+        if (live >= MAX_OWN_SPACES) fail(409, `You can own ${MAX_OWN_SPACES} shared spaces at most.`, { code: 'too-many-spaces' });
+        if (storageUsage(space.id) > roomForSpaces(account)) fail(507, 'This shared space does not fit in your storage.', { code: 'storage-full' });
+        run('UPDATE spaces SET ownerAccountId=?,ownerGoneAt=NULL,frozenAt=NULL WHERE id=?', account.id, space.id);
+        run('DELETE FROM space_invites WHERE spaceId=? AND claimedBy IS NULL', space.id);
+      });
+      reply(200, { ok: true }); return;
+    }
+    if (action === 'replace' && !target && method === 'POST') {
+      const value = await body(req, MAX_METADATA_BODY);
+      requireValue(validId(value.newSpaceId) && Number.isSafeInteger(value.expectedSequence) && value.expectedSequence >= 0, 'Invalid replacement');
+      change(() => {
+        const space = ownedSpace(spaceId, account.id), next = spaceRow(value.newSpaceId);
+        if (!next || next.replaces !== space.id || next.ownerAccountId !== account.id) fail(404, 'Shared space not found');
+        if (space.replacedBy === next.id) return;
+        if (space.frozenAt) fail(409, 'This shared space is read-only.', { code: 'space-frozen' });
+        const { sequence } = one('SELECT COALESCE(MAX(sequence),0) AS sequence FROM changes WHERE vaultId=?', space.id);
+        if (sequence !== value.expectedSequence) fail(409, 'The space changed while it was being copied.', { code: 'space-changed', sequence });
+        run('UPDATE spaces SET frozenAt=?,replacedBy=? WHERE id=?', clock(), next.id, space.id);
+        run('DELETE FROM space_invites WHERE spaceId=? AND claimedBy IS NULL', space.id);
+      });
+      reply(200, { ok: true }); return;
+    }
+    fail(405, 'Method not allowed');
   }
   const assets = new Map([['/',[join(webRoot, 'index.html'), 'text/html']], ['/app.js', [join(webRoot, 'app.js'), 'text/javascript']], ['/style.css', [join(webRoot, 'style.css'), 'text/css']], ['/export.mjs', [join(webRoot, 'export.mjs'), 'text/javascript']], ['/note.mjs', [join(webRoot, 'note.mjs'), 'text/javascript']], ['/shared/crypto.mjs', [join(directory, 'shared/crypto.mjs'), 'text/javascript']], ['/shared/client.mjs', [join(directory, 'shared/client.mjs'), 'text/javascript']]]);
   assets.set('/ocr-worker.js', [join(webRoot, 'ocr-worker.js'), 'text/javascript']);
@@ -846,7 +1139,8 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         const value = await body(req, MAX_METADATA_BODY);
         deviceName(value.deviceName);
         requireValue(validId(value.vaultId) && validHash(value.deviceTokenHash), 'Invalid recovery request');
-        const vault = one('SELECT recoveryHash FROM vaults WHERE id=?', value.vaultId);
+        // A space is only reachable through membership, never with a recovery code.
+        const vault = one("SELECT recoveryHash FROM vaults WHERE id=? AND enrollmentHash<>'space'", value.vaultId);
         if (!validToken(value.recoveryToken) || !vault || !equal(hash(value.recoveryToken), vault.recoveryHash)) fail(401, 'Invalid recovery code');
         reply(201, transaction(() => addDevice(value.vaultId, value.deviceName, value.deviceTokenHash, value.replaceDeviceId))); return;
       }
@@ -894,7 +1188,10 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           if (one('SELECT id FROM accounts WHERE email=?', email)) fail(409, 'This email address already has an account');
           run('DELETE FROM signups WHERE email=?', email);
           let vaultId = signup.vaultId, deviceId;
-          if (vaultId) { if (one('SELECT id FROM accounts WHERE vaultId=?', vaultId)) fail(409, 'This cloud already has an account'); }
+          if (vaultId) {
+            if (one('SELECT id FROM accounts WHERE vaultId=?', vaultId)) fail(409, 'This cloud already has an account');
+            if (one("SELECT 1 FROM vaults WHERE id=? AND enrollmentHash='space'", vaultId)) fail(403, 'A shared space cannot have an account.');
+          }
           else {
             vaultId = randomUUID();
             run('INSERT INTO vaults VALUES(?,?,?)', vaultId, signup.recoveryHash, 'account');
@@ -1027,6 +1324,8 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         const next = await newDeviceCredentials(value);
         reply(201, redeem('resets', 'id', value.resetId, (reset) => `reset:${reset.accountId}`, emailCode(`reset:${value.resetId}`, value.code), (reset) => {
           const account = one('SELECT id,vaultId FROM accounts WHERE id=?', reset.accountId), vaultId = randomUUID();
+          // The vault key changes, so the wrapped space keys can no longer be opened.
+          leaveAllSpaces(account);
           run('INSERT INTO vaults VALUES(?,?,?)', vaultId, value.recoveryTokenHash, 'account');
           run('UPDATE accounts SET vaultId=? WHERE id=?', vaultId, account.id);
           // The subscription belongs to the person, not to the deleted ciphertext.
@@ -1153,13 +1452,20 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       const vaultId = req.headers['x-jotdrop-vault'], deviceId = req.headers['x-jotdrop-device'];
       const token = /^Bearer (.+)$/.exec(req.headers.authorization || '')?.[1];
       if (!validId(vaultId) || !validId(deviceId) || !validToken(token)) fail(401, 'Device authorization required');
-      const device = one('SELECT * FROM devices WHERE id=? AND vaultId=?', deviceId, vaultId);
+      const device = one('SELECT * FROM devices WHERE id=?', deviceId);
       if (!device || device.revoked || !equal(hash(token), device.tokenHash)) fail(401, 'Device access denied');
+      // A device belongs to its own cloud, and reaches a space when its account is a member.
+      const inSpace = device.vaultId !== vaultId;
+      if (inSpace && !memberOf(vaultId, device.vaultId)) fail(401, 'Device access denied');
       try { run('UPDATE devices SET lastSeenAt=? WHERE id=?', new Date(clock()).toISOString(), deviceId); }
       catch (error) {
         // Optional activity metadata must not deny access when storage cannot be written.
         if (![5, 6, 8, 10, 13].includes(sqliteCode(error))) throw error; // BUSY, LOCKED, READONLY, IOERR, FULL.
       }
+      // Without this list a member could delete the space with /account/delete, add a device with /pairings or set /recovery.
+      if (inSpace && !SPACE_ROUTES.some(([verb, pattern]) => verb === method && pattern.test(route))) fail(403, 'This is not available in a shared space.');
+      // Members do not see each other's devices.
+      const withoutDevice = (entry) => { if (!inSpace) return entry; const { deviceId: _hidden, ...rest } = entry; return rest; };
       if (route === '/account' && method === 'GET') {
         const account = accountFor(vaultId);
         reply(200, { email: account.email, totp: Boolean(account.totpSecret), password: Boolean(account.authHash), providers: all('SELECT provider FROM identities WHERE accountId=? ORDER BY provider', account.id).map((row) => row.provider) }); return;
@@ -1202,7 +1508,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         if (method === 'POST') requireValue(typeof value.envelope === 'string' && value.envelope.length <= 2048, 'Invalid approval envelope');
         const account = accountFor(vaultId);
         transaction(() => {
-          requireActiveDevice(vaultId, deviceId);
+          requireAccess(vaultId, deviceId);
           const where = 'id=? AND accountId=? AND envelope IS NULL AND expiresAt>?';
           const changed = method === 'POST' ? run(`UPDATE device_approvals SET envelope=? WHERE ${where}`, value.envelope, approve[1], account.id, clock()) : run(`DELETE FROM device_approvals WHERE ${where}`, approve[1], account.id, clock());
           if (changed.changes !== 1) fail(404, 'Approval request not found');
@@ -1228,12 +1534,13 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         const next = await credentialValue(value);
         await requirePassword(account, value.currentAuthKey);
         transaction(() => {
-          requireActiveDevice(vaultId, deviceId);
+          requireAccess(vaultId, deviceId);
           if (run('UPDATE accounts SET kdf=?,authHash=?,wrappedVaultKey=?,passwordChangedAt=? WHERE id=? AND authHash=?', next.kdf, next.authHash, next.wrappedVaultKey, new Date(clock()).toISOString(), account.id, account.authHash).changes !== 1) fail(409, 'The password was changed elsewhere. Try again.');
           run('DELETE FROM login_challenges WHERE accountId=?', account.id);
           if (value.signOutOtherDevices === true) {
             run('UPDATE devices SET revoked=1 WHERE vaultId=? AND id<>?', vaultId, deviceId);
             run('DELETE FROM uploads WHERE vaultId=? AND deviceId<>?', vaultId, deviceId);
+            run('DELETE FROM chunks WHERE claimed=0 AND deviceId IN (SELECT id FROM devices WHERE vaultId=? AND id<>?)', vaultId, deviceId);
           }
         });
         reply(200, { ok: true }); return;
@@ -1257,8 +1564,9 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           if (!cancelled) fail(502, 'Could not cancel JotDrop Plus. Try again later, or cancel it at link.com first.');
         }
         transaction(() => {
-          requireActiveDevice(vaultId, deviceId);
+          requireAccess(vaultId, deviceId);
           if (account) {
+            leaveAllSpaces(account);
             for (const table of ['identities', 'newsletter', 'login_challenges', 'resets', 'device_approvals']) run(`DELETE FROM ${table} WHERE accountId=?`, account.id);
             run('DELETE FROM code_failures WHERE scope IN (?,?,?)', `login:${account.id}`, `reset:${account.id}`, `signup:${account.email}`);
             run('DELETE FROM accounts WHERE id=?', account.id);
@@ -1281,7 +1589,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         const account = one('SELECT * FROM accounts WHERE vaultId=?', vaultId);
         if (account) await requirePassword(account, value.currentAuthKey);
         transaction(() => {
-          requireActiveDevice(vaultId, deviceId);
+          requireAccess(vaultId, deviceId);
           run('UPDATE vaults SET recoveryHash=? WHERE id=?', value.recoveryTokenHash, vaultId);
         });
         if (account) sendMailLater({ to: account.email, kind: 'recovery-changed' });
@@ -1289,7 +1597,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       }
       if (route === '/account/trial' && method === 'POST') {
         const plusUntil = transaction(() => {
-          requireActiveDevice(vaultId, deviceId);
+          requireAccess(vaultId, deviceId);
           const plan = planRow(vaultId);
           if (plan.trialUsed) fail(409, 'The free trial was already used.');
           if (plan.plusUntil > clock()) fail(409, 'This cloud already has JotDrop Plus.');
@@ -1318,9 +1626,15 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         } catch { fail(502, 'Could not start the payment. Try again later.'); }
         reply(200, { url: session.url }); return;
       }
+      if (route === '/spaces' || route.startsWith('/spaces/') || route.startsWith('/invites/')) { await spaceRequest(req, reply, method, route, vaultId, deviceId, ip); return; }
+      if (method === 'GET' && route === '/status' && inSpace) {
+        // What a member needs to read and write; the owner's billing and own usage stay private.
+        const plus = isPlus(vaultId);
+        reply(200, { usedBytes: storageUsage(vaultId), quotaBytes: Math.floor(quotaFor(vaultId) / 2), plan: { name: plus ? 'plus' : 'free', historyDays: plus ? null : FREE_HISTORY / DAY }, sequence: one('SELECT COALESCE(MAX(sequence),0) AS sequence FROM changes WHERE vaultId=?', vaultId).sequence, pieces: { version: 1, pieceBytes: PIECE_BYTES, maxFileBytes: maxFileFor(vaultId), legacy: 0 } }); return;
+      }
       if (method === 'GET' && route === '/status') {
-        const plan = planRow(vaultId), plus = plan.plusUntil > clock();
-        reply(200, { usedBytes: one('SELECT (SELECT COALESCE(SUM(size),0) FROM envelopes WHERE vaultId=?) + (SELECT COALESCE(SUM(size),0) FROM chunks WHERE vaultId=?) AS size', vaultId, vaultId).size, quotaBytes: quotaFor(vaultId), plan: { name: plus ? 'plus' : 'free', plusUntil: plan.plusUntil ? new Date(plan.plusUntil).toISOString() : null, trialAvailable: !plan.trialUsed && !plus, deviceLimit: plus ? null : freeDeviceLimit, historyDays: plus ? null : FREE_HISTORY / DAY, subscribed: subscribed(vaultId), checkout: Boolean(stripe), founderPrice: founderPrice() }, sequence: one('SELECT COALESCE(MAX(sequence),0) AS sequence FROM changes WHERE vaultId=?', vaultId).sequence, history: historyUsage(vaultId), transport: { version: 1, chunkBytes: TRANSFER_CHUNK_BYTES, reservedBytes: one('SELECT COALESCE(SUM(reservedBytes),0) AS size FROM uploads WHERE vaultId=?', vaultId).size }, pieces: { version: 1, pieceBytes: PIECE_BYTES, maxFileBytes: maxFileFor(vaultId), legacy: one('SELECT COUNT(*) AS count FROM envelopes WHERE vaultId=? AND pieces=0 AND size>?', vaultId, LEGACY_ENVELOPE_BYTES).count } }); return;
+        const plan = planRow(vaultId), plus = plan.plusUntil > clock(), owner = one('SELECT id FROM accounts WHERE vaultId=?', vaultId);
+        reply(200, { usedBytes: one('SELECT (SELECT COALESCE(SUM(size),0) FROM envelopes WHERE vaultId=?) + (SELECT COALESCE(SUM(size),0) FROM chunks WHERE vaultId=?) AS size', vaultId, vaultId).size + (owner ? liveSpaceBytes(owner.id) : 0), quotaBytes: quotaFor(vaultId), plan: { name: plus ? 'plus' : 'free', plusUntil: plan.plusUntil ? new Date(plan.plusUntil).toISOString() : null, trialAvailable: !plan.trialUsed && !plus, deviceLimit: plus ? null : freeDeviceLimit, historyDays: plus ? null : FREE_HISTORY / DAY, subscribed: subscribed(vaultId), checkout: Boolean(stripe), founderPrice: founderPrice() }, sequence: one('SELECT COALESCE(MAX(sequence),0) AS sequence FROM changes WHERE vaultId=?', vaultId).sequence, history: historyUsage(vaultId), transport: { version: 1, chunkBytes: TRANSFER_CHUNK_BYTES, reservedBytes: one('SELECT COALESCE(SUM(reservedBytes),0) AS size FROM uploads WHERE vaultId=?', vaultId).size }, pieces: { version: 1, pieceBytes: PIECE_BYTES, maxFileBytes: maxFileFor(vaultId), legacy: one('SELECT COUNT(*) AS count FROM envelopes WHERE vaultId=? AND pieces=0 AND size>?', vaultId, LEGACY_ENVELOPE_BYTES).count } }); return;
       }
       if (method === 'GET' && route === '/changes') {
         const after = Number(url.searchParams.get('after') || 0);
@@ -1328,7 +1642,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         const changes = all('SELECT sequence,id,revision,deleted,size,updatedAt,deviceId FROM changes WHERE vaultId=? AND sequence>? ORDER BY sequence LIMIT 501', vaultId, after);
         const hasMore = changes.length > 500;
         if (hasMore) changes.pop();
-        reply(200, { changes: changes.map((entry) => ({ ...entry, deleted: Boolean(entry.deleted) })), cursor: changes.at(-1)?.sequence ?? after, hasMore }); return;
+        reply(200, { changes: changes.map((entry) => withoutDevice({ ...entry, deleted: Boolean(entry.deleted) })), cursor: changes.at(-1)?.sequence ?? after, hasMore }); return;
       }
       if (method === 'GET' && route === '/snapshot') {
         // Each file as it was at a moment: its last version saved at or before it, deleted ones included.
@@ -1351,12 +1665,13 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       const revoke = /^\/devices\/([0-9a-f-]+)$/.exec(route);
       if (method === 'DELETE' && revoke) {
         transaction(() => {
-          requireActiveDevice(vaultId, deviceId);
+          requireAccess(vaultId, deviceId);
           const target = one('SELECT * FROM devices WHERE vaultId=? AND id=?', vaultId, revoke[1]);
           if (!target) fail(404, 'Device not found');
           if (!target.revoked && one('SELECT COUNT(*) AS count FROM devices WHERE vaultId=? AND revoked=0', vaultId).count <= 1) fail(409, 'Cannot revoke the only active device');
           run('UPDATE devices SET revoked=1 WHERE id=? AND vaultId=?', target.id, vaultId);
           run('DELETE FROM uploads WHERE vaultId=? AND deviceId=?', vaultId, target.id);
+          dropDevicePieces(target.id);
         });
         reply(200, { ok: true }); return;
       }
@@ -1367,7 +1682,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         requireValue(validHash(value.deviceTokenHash) && validHash(value.claimTokenHash), 'Invalid pairing token hashes');
         envelopeSize(value.envelope, 8192);
         const result = transaction(() => {
-          requireActiveDevice(vaultId, deviceId);
+          requireAccess(vaultId, deviceId);
           // Say so before the code is scanned, not after.
           const active = devicesAtLimit(vaultId);
           if (active.length) deviceLimitReached(active);
@@ -1402,13 +1717,16 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         const bytes = await bodyBytes(req, PIECE_BYTES + 28);
         requireValue(bytes.length >= 28 && hash(bytes) === piece[1], 'Encrypted piece hash mismatch');
         transaction(() => {
-          requireActiveDevice(vaultId, deviceId);
+          requireAccess(vaultId, deviceId);
           pruneUploads(vaultId);
           if (one('SELECT 1 FROM chunks WHERE vaultId=? AND name=?', vaultId, piece[1])) return;
+          requireWritable(vaultId, deviceId, '');
           // Enough for the largest file twice over; a piece no version uses is cleared after a day.
-          if (one('SELECT COUNT(*) AS count FROM chunks WHERE vaultId=? AND claimed=0', vaultId).count >= 2 * MAX_PIECES) fail(507, 'Cloud pending upload limit reached');
+          // In a space the limit is per device, so one member's unfinished uploads cannot block the others.
+          const pending = inSpace ? one('SELECT COUNT(*) AS count FROM chunks WHERE vaultId=? AND claimed=0 AND deviceId=?', vaultId, deviceId).count : one('SELECT COUNT(*) AS count FROM chunks WHERE vaultId=? AND claimed=0', vaultId).count;
+          if (pending >= (inSpace ? MAX_PIECES : 2 * MAX_PIECES)) fail(507, 'Cloud pending upload limit reached');
           if (!fits(vaultId, bytes.length, deviceId, '')) fail(507, 'Cloud storage is full. Your local files remain available.', { code: 'storage-full' });
-          run('INSERT INTO chunks(vaultId,name,size,data,createdAt) VALUES(?,?,?,?,?)', vaultId, piece[1], bytes.length, bytes, clock());
+          run('INSERT INTO chunks(vaultId,name,size,data,createdAt,deviceId) VALUES(?,?,?,?,?,?)', vaultId, piece[1], bytes.length, bytes, clock(), inSpace ? deviceId : null);
         });
         reply(200, { ok: true }); return;
       }
@@ -1448,7 +1766,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           const reservedBytes = Buffer.byteLength(JSON.stringify({ v: 1, iv: 'A'.repeat(16), ciphertext: '' })) + Math.ceil((value.size - 12) * 4 / 3);
           requireValue(reservedBytes <= 8 * 1024 * 1024, 'Invalid envelope size');
           const result = transaction(() => {
-            requireActiveDevice(vaultId, deviceId);
+            requireAccess(vaultId, deviceId);
             const saved = receipt();
             if (saved) return saved;
             pruneUploads(vaultId);
@@ -1470,7 +1788,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           const offset = Number(offsetText), bytes = await bodyBytes(req, TRANSFER_CHUNK_BYTES);
           requireValue(Number.isSafeInteger(offset) && bytes.length > 0, 'Invalid upload chunk');
           const result = transaction(() => {
-            requireActiveDevice(vaultId, deviceId);
+            requireAccess(vaultId, deviceId);
             const saved = receipt();
             if (saved) return saved;
             const row = pending();
@@ -1488,7 +1806,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         if (method === 'POST' && commit) {
           await body(req, MAX_METADATA_BODY);
           const result = transaction(() => {
-            requireActiveDevice(vaultId, deviceId);
+            requireAccess(vaultId, deviceId);
             const saved = receipt();
             if (saved) return saved;
             const row = pending(), bytes = Buffer.from(row.data);
@@ -1501,7 +1819,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           reply(200, result); return;
         }
         if (method === 'DELETE' && !commit) {
-          transaction(() => { requireActiveDevice(vaultId, deviceId); pending(); run(`DELETE FROM uploads WHERE ${where}`, ...key); });
+          transaction(() => { requireAccess(vaultId, deviceId); pending(); run(`DELETE FROM uploads WHERE ${where}`, ...key); });
           reply(200, { ok: true }); return;
         }
         fail(405, 'Method not allowed');
@@ -1519,7 +1837,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         reply(200, { versions: all('SELECT revision,deleted,size,updatedAt,deviceId FROM revisions WHERE vaultId=? AND id=? ORDER BY revision DESC LIMIT 100', vaultId, id).map((entry) => {
           const locked = replacedEarlier;
           replacedEarlier ||= Boolean(cutoff) && entry.updatedAt < cutoff;
-          return { ...entry, deleted: Boolean(entry.deleted), locked };
+          return withoutDevice({ ...entry, deleted: Boolean(entry.deleted), locked });
         }) }); return;
       }
       if (method === 'POST' && action === 'convert') {
@@ -1529,7 +1847,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         const value = await body(req, MAX_BODY);
         requireValue(validHash(value.from) && (value.envelope === undefined || Array.isArray(value.chunks) && value.chunks.length > 0 && value.chunks.length <= MAX_PIECES && value.chunks.every(validHash)), 'Invalid conversion');
         const result = transaction(() => {
-          requireActiveDevice(vaultId, deviceId);
+          requireAccess(vaultId, deviceId);
           pruneUploads(vaultId);
           const old = one('SELECT envelope,size,pieces FROM envelopes WHERE vaultId=? AND id=? AND envelopeHash=?', vaultId, id, value.from);
           if (!old) {
@@ -1565,7 +1883,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         }
         const entry = revision === undefined ? current : one(`${revisionQuery} WHERE vaultId=? AND id=? AND revision=?`, vaultId, id, revision);
         if (!entry) fail(404, 'File not found');
-        reply(200, { id, revision: entry.revision, deleted: Boolean(entry.deleted), envelope: entry.envelope, updatedAt: entry.updatedAt, deviceId: entry.deviceId }); return;
+        reply(200, withoutDevice({ id, revision: entry.revision, deleted: Boolean(entry.deleted), envelope: entry.envelope, updatedAt: entry.updatedAt, deviceId: entry.deviceId })); return;
       }
       if ((method === 'PUT' || method === 'DELETE') && !action || method === 'POST' && action === 'restore') {
         const value = await body(req, method === 'PUT' ? MAX_BODY : MAX_METADATA_BODY);
@@ -1595,11 +1913,13 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   });
   server.requestTimeout = 30000;
   server.headersTimeout = 10000;
+  sweepSpaces();
   await new Promise((done, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', done); });
   // The privacy policy promises these are gone on time, so do not wait for the next sign-up to remove them.
   const sweep = setInterval(() => {
     run('DELETE FROM signup_addresses WHERE createdAt<=?', clock() - DAY);
     run('DELETE FROM signups WHERE expiresAt<=?', clock());
+    sweepSpaces();
   }, sweepEvery);
   sweep.unref();
   let closing;
