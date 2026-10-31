@@ -254,6 +254,8 @@ export class CloudClient {
   }
 
   async discardWrite(prepared) {
+    // Only a v1 draft has an open upload on the server; pieces stay until the cloud's own clean-up.
+    if (Array.isArray(prepared.chunks)) return;
     try { await this.call(await uploadPath(prepared), 'DELETE'); }
     catch (error) { if (![404, 410].includes(error.status)) throw error; }
   }

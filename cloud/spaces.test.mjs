@@ -375,7 +375,7 @@ test('invitations stop at 7 days, at a frozen space, and at the member limit', a
   const ana = await signUp(app, 'ana');
   const expired = await invite(owner, space);
   app.advance(7 * DAY + 1);
-  assert.equal((await ana.call(`/invites/${expired.id}/claim`, { claimToken: expired.claimToken })).status, 410);
+  assert.ok([404, 410].includes((await ana.call(`/invites/${expired.id}/claim`, { claimToken: expired.claimToken })).status), 'The sweep may have cleared it already');
   // Twenty open at most.
   const open = [];
   for (let index = 0; index < 20; index++) open.push(await invite(owner, space));
@@ -554,6 +554,23 @@ test('a finished replacement does not block the owner\'s own notes, and a chain 
   const third = await newSpace(owner, { replaces: next.id });
   assert.equal(third.status, 201);
   await assert.rejects(owner.files(third).write('attachments/big.bin', large, 0), (error) => error.status === 507 && error.code === 'storage-full');
+});
+
+test('deleting a replacement takes the frozen group it replaced with it', async (t) => {
+  const app = await fixture(t);
+  const { owner, space, members: [ana] } = await group(app, 'owner', 'ana');
+  await owner.files(space).write('notes/a.md', text('kept for now'), 0);
+  const next = await newSpace(owner, { replaces: space.id });
+  assert.equal((await owner.call(`/spaces/${space.id}/replace`, { newSpaceId: next.id, expectedSequence: await sequenceOf(owner, space) })).status, 200);
+  assert.equal((await ana.call(`/spaces/${space.id}`)).body.replacedBy, next.id);
+  // Someone from the old group is not in the new one, and cannot delete it.
+  assert.equal((await ana.call(`/spaces/${next.id}`, undefined, 'DELETE')).status, 404);
+  assert.equal((await owner.call(`/spaces/${next.id}`, undefined, 'DELETE')).status, 200);
+  assert.deepEqual((await owner.call('/spaces')).body.spaces, []);
+  assert.deepEqual((await ana.call('/spaces')).body.spaces, []);
+  const db = app.database();
+  for (const table of ['spaces', 'space_members', 'space_keys', 'envelopes']) assert.equal(db.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE ${table.startsWith('space_') ? 'spaceId' : table === 'spaces' ? 'id' : 'vaultId'}=?`).get(space.id).count, 0, table);
+  db.close();
 });
 
 test('storage: own cloud and spaces count together, spaces get half, and members cannot crowd out the owner', async (t) => {

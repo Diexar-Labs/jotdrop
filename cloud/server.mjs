@@ -967,7 +967,12 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     requireValue(validId(spaceId) && (target === undefined || validId(target)), 'Invalid shared space');
     if (!action && !target && method === 'GET') { reply(200, spaceView(memberSpace(spaceId, account.id), account)); return; }
     if (!action && !target && method === 'DELETE') {
-      change(() => deleteSpace(ownedSpace(spaceId, account.id).id));
+      change(() => {
+        const space = ownedSpace(spaceId, account.id), old = space.replaces ? spaceRow(space.replaces) : undefined;
+        // The frozen copy it replaced holds the same notes: whoever deletes the group expects those gone too.
+        if (old?.replacedBy === space.id && old.ownerAccountId === account.id) deleteSpace(old.id);
+        deleteSpace(space.id);
+      });
       reply(200, { deleted: true }); return;
     }
     if (action === 'key' && !target && method === 'PUT') {
@@ -1069,7 +1074,9 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   // The house fonts (SIL Open Font License), served from here like everything else the page loads.
   for (const name of ['instrument-sans.woff2', 'bricolage-grotesque.woff2', 'caveat.woff2']) assets.set(`/fonts/${name}`, [join(webRoot, 'fonts', name), 'font/woff2']);
   assets.set('/import.mjs', [join(webRoot, 'import.mjs'), 'text/javascript']);
-  for (const name of ['account.mjs', 'words.mjs']) assets.set(`/shared/${name}`, [join(directory, 'shared', name), 'text/javascript']);
+  // An invitation link opens the app on its own path: /# is for the way back from Google or GitHub.
+  assets.set('/join', [join(webRoot, 'index.html'), 'text/html']);
+  for (const name of ['account.mjs', 'words.mjs', 'merge.mjs', 'spaces.mjs']) assets.set(`/shared/${name}`, [join(directory, 'shared', name), 'text/javascript']);
   assets.set('/vendor/hash-wasm.mjs', [join(directory, '../node_modules/hash-wasm/dist/index.esm.min.js'), 'text/javascript']);
   // The page's only inline script is its import map; allow exactly that content.
   const importMap = /<script type="importmap">([^<]*)<\/script>/.exec(readFileSync(join(webRoot, 'index.html'), 'utf8'))?.[1];

@@ -144,6 +144,10 @@
           <div class="sidebar-labels-heading"><span id="labels-heading">Labels</span><button id="edit-labels" type="button">Edit labels</button></div>
           <div id="label-list"></div>
         </div>
+        <div id="sidebar-spaces" class="sidebar-labels" role="group" aria-labelledby="spaces-heading" hidden>
+          <div class="sidebar-labels-heading"><span id="spaces-heading">Shared</span></div>
+          <div id="space-list"></div>
+        </div>
         <button data-view="archive">Archive</button>
         <button data-view="files">Files</button>
         <button data-view="trash">Trash</button>
@@ -168,9 +172,10 @@
         <button id="new-photo-text" type="button">Text from photo</button>
         <button id="new-voice" type="button">Voice memo</button>
         <label class="upload-button" for="upload">Upload files<input id="upload" type="file" multiple></label>
-        <label class="upload-button" for="import-notes" title="Google Keep (Takeout zip), Evernote (.enex), Apple Notes and other Markdown exports">Import notes<input id="import-notes" type="file" multiple></label>
+        <label id="import-label" class="upload-button" for="import-notes" title="Google Keep (Takeout zip), Evernote (.enex), Apple Notes and other Markdown exports">Import notes<input id="import-notes" type="file" multiple></label>
       </header>
       <div class="workspace-heading"><div><h1 id="view-title">Notes</h1><p id="view-description">psst, only you can read these</p></div><div class="sync-state"><p id="sync-status" role="status" aria-live="polite">Connecting...</p><progress id="upload-progress" aria-label="Encrypted upload" hidden></progress><button id="resolve-now" class="primary" type="button" hidden>Resolve now</button></div></div>
+      <section id="space-panel" class="space-panel" aria-label="Shared group" hidden></section>
       <section id="timeline" aria-label="Time machine" hidden>
         <label for="timeline-range">Slide back to see your notes as they were</label>
         <input id="timeline-range" type="range" min="0" max="0" step="1" value="0">
@@ -185,6 +190,7 @@
       <section id="devices-panel" hidden aria-label="Devices and recovery">
         <h2>Connected devices</h2><p>Revoking access prevents future cloud requests. It cannot erase files already downloaded.</p>
         <div id="device-list"></div>
+        <div id="old-shared-copies" hidden></div>
         <form id="pair-form"><label for="pair-name">Name of the new device</label><input id="pair-name" maxlength="80" placeholder="My phone" required><button type="submit">Create one-time pairing code</button></form>
         <p>Pairing codes expire after 10 minutes. Treat them like a password and send them only to your own device.</p>
         <label for="pair-code">Pairing code</label><textarea id="pair-code" rows="4" readonly spellcheck="false"></textarea>
@@ -318,6 +324,43 @@
     <form id="new-label-form" class="label-row"><label class="search-label" for="new-label">New label name</label><input id="new-label" placeholder="Create new label" maxlength="100" autocomplete="off"><button type="submit">Create</button></form>
     <ul id="label-rows" class="label-rows"></ul>
     <p id="labels-message" class="message" role="status" aria-live="polite"></p>
+  </dialog>
+
+  <dialog id="share-dialog" aria-labelledby="share-title">
+    <form id="share-form">
+      <h2 id="share-title">Share this note</h2>
+      <p class="dialog-note">The note moves to a shared group. Everyone in the group can read and change all of its notes. JotDrop's server cannot read them.</p>
+      <label for="share-group">Group</label><select id="share-group"></select>
+      <div id="share-new"><label for="share-name">Name of the new group</label><input id="share-name" maxlength="80" autocomplete="off"></div>
+      <label for="share-me">Your name for the others</label><input id="share-me" maxlength="80" required autocomplete="off">
+      <p class="dialog-note">Pin, labels and order stay yours and do not go along.</p>
+      <p id="share-reminder" class="dialog-note" hidden>The reminder on this note is taken off: it would go off for everyone.</p>
+      <p id="share-message" class="message" role="status" aria-live="polite"></p>
+      <div class="dialog-actions"><button id="share-cancel" type="button">Cancel</button><button class="primary" type="submit">Share</button></div>
+    </form>
+  </dialog>
+  <dialog id="invite-dialog" aria-labelledby="invite-title">
+    <h2 id="invite-title">Invite someone</h2>
+    <p>Send this link yourself, to one person. It works once and expires after 7 days. They need a free JotDrop account.</p>
+    <label for="invite-link">Invitation link</label><textarea id="invite-link" rows="3" readonly spellcheck="false"></textarea>
+    <p id="invite-message" role="status" aria-live="polite"></p>
+    <div class="dialog-actions"><button id="invite-copy" type="button">Copy link</button><a id="invite-mail" class="upload-button">Send by email</a><button id="invite-send" type="button" hidden>Send with an app</button><button id="invite-close" class="primary" type="button">Done</button></div>
+  </dialog>
+  <dialog id="join-dialog" aria-labelledby="join-title">
+    <form id="join-form">
+      <h2 id="join-title">You are invited to a shared group</h2>
+      <p>Accept only a link from someone you know. The people in the group can read and change its notes. Joining sends none of your own notes.</p>
+      <p>The owner of the group can see your email address. The others see the name you choose here.</p>
+      <label for="join-name">Your name for the others</label><input id="join-name" maxlength="80" required autocomplete="off">
+      <p id="join-message" class="message" role="status" aria-live="polite"></p>
+      <div class="dialog-actions"><button id="join-later" type="button">Not now</button><button id="join-accept" class="primary" type="submit">Join</button></div>
+    </form>
+  </dialog>
+  <dialog id="gone-dialog" aria-labelledby="gone-title">
+    <h2 id="gone-title">No longer in this group</h2>
+    <p>You can no longer reach this group. This browser still has a copy of its notes.</p>
+    <p id="gone-message" class="message" role="status" aria-live="polite"></p>
+    <div class="dialog-actions"><button id="gone-later" type="button">Later</button><button id="gone-remove" class="danger" type="button">Remove from this browser</button><button id="gone-keep" class="primary" type="button">Keep a copy in my notes</button></div>
   </dialog>
 
   <dialog id="secure-dialog" aria-labelledby="secure-title">

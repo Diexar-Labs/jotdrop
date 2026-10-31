@@ -1,4 +1,6 @@
 import { CloudClient } from '/shared/client.mjs';
+import { mergeNote } from '/shared/merge.mjs';
+import { acceptInvite, createSpace, deleteSpace, leaveSpace, listSpaces, makeInvite, readInvite, removeMember, replaceSpace, saveSpacePrefs, setMemberName, spaceClient, spaceDetails, takeOverSpace, unreadableFile, withdrawInvite, writeUnderFreeName } from '/shared/spaces.mjs';
 import { accountInfo, approveDevice, attachAccount, availableProviders, changePassword, checkApproval, completeApproval, confirmLogin, confirmSignup, deleteAccount, disableTotp, enableTotp, listApprovals, logIn, newRecoveryCode, personCheckKey, providerApproval, providerRecover, providerSignUp, providerTicket, rejectDevice, requestApproval, resetWithRecoveryCode, setupTotp, signUp, startOver, startProviderSignIn, startReset } from '/shared/account.mjs';
 import { base64ToBytes, bytesToBase64, decodeRecovery, decryptEnvelope, encryptEnvelope, isSpacePath, objectId, sealLocal, unsealLocal } from '/shared/crypto.mjs';
 import { exportZip } from '/export.mjs';
@@ -32,6 +34,14 @@ const stamps = new Map();
 let justPinned;
 let justStruck;
 let client;
+// `client` is the cloud on screen; this one is always the account's own.
+let ownClient;
+let activeSpace;
+let spacePlan;
+let spacePeopleOpen = false;
+let refreshingSpaces;
+const spaces = new Map();
+const goneSpaces = new Map();
 let view = 'notes';
 let labelFilter = '';
 let localLabels = [];
@@ -98,6 +108,13 @@ async function store(action, key, value) {
           values.delete(key.replace('pending:', 'upload:'));
         }
       };
+    } else if (action === 'replace') {
+      // Only when the draft is still the one this was based on: a newer draft stays.
+      const request = values.get(key);
+      request.onsuccess = () => {
+        result = request.result?.queueId === value.queueId;
+        if (result) values.put(value.record, key);
+      };
     } else if (action === 'delete' && Array.isArray(key)) {
       for (const item of key) values.delete(item);
     } else {
@@ -138,11 +155,14 @@ function showPlusNudge() {
 function offerPlus(reason) { plusReason = reason; showPlusNudge(); }
 function fileTooLarge(text) { offerPlus(filePlus); return new Error(text); }
 const errorText = (error) => {
+  // The owner's plan and storage: a member cannot do anything about those.
+  if (activeSpace && error?.code === 'storage-full') return 'The storage of this group is full. Your change stays on this browser and goes along as soon as there is room.';
+  if (activeSpace && activeSpace.role !== 'owner' && error?.code === 'plus-required') return error.message;
   if (error?.code === 'storage-full') offerPlus('JotDrop Plus has 10 GB of cloud storage.');
   else if (error?.code === 'plus-required') offerPlus(error.status === 413 ? filePlus : 'JotDrop Plus keeps every version and deleted note.');
   return errorMessage(error);
 };
-const errorMessage = (error) => error?.status === 401 ?'This device no longer has access. Lock the workspace and reconnect using another device or your recovery code.' : error?.message || 'The operation failed. Your local files have not been changed.';
+const errorMessage = (error) => activeSpace && error?.status === 401 ? 'You no longer have access to this group.' : error?.status === 401 ?'This device no longer has access. Lock the workspace and reconnect using another device or your recovery code.' : error?.message || 'The operation failed. Your local files have not been changed.';
 const message = (text = '') => { $('workspace-message').textContent = text; };
 
 function button(text, action, className) {
@@ -163,6 +183,7 @@ const icons = {
   pencil: '<path d="M21.17 6.81a1 1 0 0 0-3.99-3.99L3.84 16.17a2 2 0 0 0-.5.83l-1.32 4.35a.5.5 0 0 0 .62.62l4.35-1.32a2 2 0 0 0 .83-.5z"/><path d="m15 5 4 4"/>',
   more: '<circle cx="12" cy="5" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="12" cy="19" r="1"/>',
   check: '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
+  people: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
   lock: '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
 };
 
@@ -469,6 +490,10 @@ function render() {
   $('tag-filter').hidden = true;
   $('selection-bar').hidden = true;
   const labelName = renderLabelList();
+  renderSpaceList();
+  renderSpacePanel();
+  $('time-machine').hidden = $('import-label').hidden = Boolean(activeSpace);
+  document.querySelector('.sidebar-labels').hidden = Boolean(activeSpace);
   const descriptions = {
     notes: labelFilter ? [labelName, 'Notes with this label.'] : ['Notes', 'psst, only you can read these'],
     archive: ['Archive', 'Kept notes, out of your everyday list.'],
@@ -476,9 +501,9 @@ function render() {
     trash: ['Trash', 'Deleted files stay recoverable. Restoring adds a new cloud version.'],
     devices: ['Devices & recovery', 'You control which devices can access this workspace.'],
   };
-  $('view-title').textContent = descriptions[view][0];
-  $('view-description').textContent = descriptions[view][1];
-  $('note-count').textContent = String([...files.values()].filter((entry) => !entry.deleted && isMarkdown(entry.file.path) && !isSpacePath(entry.file.path) && !/^notes\/(Archive|Trash)\//.test(entry.file.path)).length);
+  $('view-title').textContent = activeSpace ? spaceName(activeSpace) : descriptions[view][0];
+  $('view-description').textContent = activeSpace ? `${sharedWith(activeSpace)}. The server cannot read these.` : descriptions[view][1];
+  if (!activeSpace) $('note-count').textContent = String([...files.values()].filter((entry) => !entry.deleted && isMarkdown(entry.file.path) && !isSpacePath(entry.file.path) && !/^notes\/(Archive|Trash)\//.test(entry.file.path)).length);
   if (view === 'devices') return releaseMedia();
   const source = moment ? moment.files : files;
   const query = $('search').value.toLowerCase().trim();
@@ -516,7 +541,7 @@ function render() {
     return !query || entry.file.path.toLowerCase().includes(query) || (isMarkdown(entry.file.path) && noteText(entry.file).toLowerCase().includes(query));
   }).sort(compare);
   // Dragging counts the notes a search or filter hides too, so clearing it never reshuffles them.
-  const draggable = $('sort').value === 'manual' && !moment && (view === 'notes' || view === 'archive');
+  const draggable = $('sort').value === 'manual' && !moment && !activeSpace && (view === 'notes' || view === 'archive');
   const viewNotes = draggable ? [...source.values()].filter((entry) => inView(entry) && isMarkdown(entry.file.path)).sort(compare) : [];
   if (!matching.length) {
     const empty = document.createElement('div');
@@ -536,7 +561,7 @@ function render() {
   }
   navOrder = matching.filter((entry) => !entry.deleted && isMarkdown(entry.file.path)).map((entry) => entry.id);
   // Like Keep: notes can be chosen together; a note that left this view is no longer chosen.
-  selectableIds = new Set(moment || view === 'files' ? [] : matching.filter((entry) => isMarkdown(entry.file.path)).map((entry) => entry.id));
+  selectableIds = new Set(moment || view === 'files' || activeSpace ? [] : matching.filter((entry) => isMarkdown(entry.file.path)).map((entry) => entry.id));
   for (const id of selectedIds) if (!selectableIds.has(id)) selectedIds.delete(id);
   renderSelectionBar();
   const sections = view === 'notes' && matching.some((entry) => isMarkdown(entry.file.path) && noteParts(noteText(entry.file), entry.file.path).pinned);
@@ -607,7 +632,7 @@ function render() {
         flush();
         const row = document.createElement('label'); row.className = 'task-row';
         const input = document.createElement('input'); input.type = 'checkbox'; input.checked = task[1] !== ' ';
-        input.disabled = entry.conflict || $('editor').open || Boolean(moment);
+        input.disabled = entry.conflict || $('editor').open || Boolean(moment) || Boolean(activeSpace?.frozen);
         // Busy instead of disabled while saving: a disabled box loses keyboard focus.
         let saving = false;
         input.addEventListener('click', (event) => { if (saving) event.preventDefault(); });
@@ -693,6 +718,7 @@ function render() {
     if (waiting) card.append(paragraph('Encrypted draft on this browser. Waiting for cloud.', 'note-meta'));
     if (entry.conflict) card.append(paragraph('Another device saved a different version. Review both before choosing.', 'message'));
     if (markdown) appendLinkChips(card, noteUrls(noteText(entry.file)), entry.id);
+    if (markdown && activeSpace) card.append(paragraph(sharedWith(activeSpace), 'card-shared'));
     if (markdown) {
       // Labels first, then #tags; at most four on a card and the rest as "+N", which opens the note (Eric, 29 Oct).
       const chips = [...parts.labels.map((label) => button(label, () => showLabel(label.toLowerCase()), 'label-chip is-label')),
@@ -721,7 +747,7 @@ function render() {
     if (entry.deleted) actions.append(button('Restore', () => restoreEntry(entry)));
     else if (markdown && view !== 'trash') {
       // The plugin's card bar: edit, color, labels, archive and a menu with the rest.
-      if (view === 'notes' && !moment) {
+      if (view === 'notes' && !moment && !activeSpace) {
         const pin = iconButton('pin', parts.pinned ? 'Unpin' : 'Pin', () => {
           justPinned = { path: entry.file.path, pinned: !parts.pinned };
           return changeNote(entry, { pinned: parts.pinned ? null : true });
@@ -743,9 +769,11 @@ function render() {
       ]));
       const more = iconButton('more', 'More', () => showMenu(more, [
         { label: 'Download', action: save },
-        { label: 'Move to trash', action: () => deleteEntry(entry) },
+        ...(activeSpace ? [{ label: activeSpace.frozen ? 'Copy to my notes' : 'Move to my notes', action: () => moveToOwn(entry) }] : view === 'notes' ? [{ label: 'Share…', action: () => showShare(entry) }] : []),
+        ...(activeSpace?.frozen ? [] : [{ label: 'Move to trash', action: () => deleteEntry(entry) }]),
       ]));
-      actions.append(iconButton('pencil', 'Open note', () => openEditor(entry)), color, labels,
+      if (activeSpace) actions.append(iconButton('pencil', 'Open note', () => openEditor(entry)), color, more);
+      else actions.append(iconButton('pencil', 'Open note', () => openEditor(entry)), color, labels,
         iconButton('archive', view === 'archive' ? 'Unarchive' : 'Archive', () => moveArchive(entry), 'archive-note'), more);
     } else {
       if (markdown) actions.append(button('Open note', () => openEditor(entry)), button('Restore note', () => moveArchive(entry), 'archive-note'));
@@ -920,7 +948,7 @@ function renderLabelList() {
     return item;
   }));
   for (const item of document.querySelectorAll('[data-view]')) {
-    if (item.dataset.view === view && !labelFilter) item.setAttribute('aria-current', 'page');
+    if (item.dataset.view === view && !labelFilter && !activeSpace) item.setAttribute('aria-current', 'page');
     else item.removeAttribute('aria-current');
   }
   return counts.get(labelFilter)?.label;
@@ -1032,6 +1060,9 @@ async function loadLocal() {
 async function queueFile(path, bytes, expectedRevision, modifiedAt = new Date().toISOString()) {
   const activeClient = client, activeGeneration = generation;
   if (!activeClient) throw new Error('Unlock the workspace before saving.');
+  if (activeSpace?.frozen) throw new Error('This group is read-only.');
+  // The server cannot tell notes from attachments in a group, so the free plan's one note is kept here.
+  if (activeSpace && expectedRevision === undefined && isMarkdown(path) && spacePlan && spacePlan.name !== 'plus' && [...files.values()].some((entry) => !entry.deleted && isMarkdown(entry.file.path))) throw new Error('The free plan shares one note. JotDrop Plus shares more.');
   const prepared = await activeClient.prepareWrite(path, bytes, 0, modifiedAt);
   if (generation !== activeGeneration) throw new Error('Workspace changed before saving. Reopen the original workspace.');
   const current = files.get(prepared.id);
@@ -1050,6 +1081,7 @@ async function queueFile(path, bytes, expectedRevision, modifiedAt = new Date().
 }
 
 async function deleteEntry(entry, ask = true) {
+  if (activeSpace?.frozen) throw new Error('This group is read-only.');
   if (ask && !confirm(`Move "${entry.file.path}" to trash?`)) return;
   if (syncing) await syncing;
   entry = files.get(entry.id);
@@ -1093,6 +1125,12 @@ async function moveArchive(entry, ask = true) {
 async function showPlan(activeClient, activeGeneration) {
   const status = await activeClient.status();
   if (activeGeneration !== generation) return;
+  // The sidebar keeps showing your own storage and plan; a group has the plan of its owner.
+  if (activeSpace) {
+    if (status.pieces?.maxFileBytes) maxFileBytes = status.pieces.maxFileBytes;
+    spacePlan = status.plan;
+    return status;
+  }
   $('storage-usage').classList.remove('checking');
   $('storage-usage').textContent = `${(status.usedBytes / 1048576).toFixed(1)} / ${(status.quotaBytes / 1048576).toFixed(0)} MiB encrypted storage`;
   if (status.pieces?.maxFileBytes) maxFileBytes = status.pieces.maxFileBytes;
@@ -1107,19 +1145,42 @@ async function showPlan(activeClient, activeGeneration) {
   return status;
 }
 
+/** Another device or person saved first. Changes that do not overlap become one note, which goes up with the next sync. */
+async function mergeWithCloud(activeClient, key, uploadKey, uploading, remote) {
+  const latest = await store('get', key);
+  if (!latest || latest.deleted) return false;
+  const { id } = uploading.prepared, vault = activeClient.credentials.vaultKey, objectAad = `jotdrop:object:v1:${activeClient.credentials.vaultId}:${id}`;
+  const mine = await decryptEnvelope(vault, JSON.parse(latest.local ?? latest.prepared.envelope), objectAad);
+  if (remote.deleted || remote.file.path !== mine.path || !isMarkdown(mine.path)) return false;
+  // A version that cannot be read any more (locked or cleared) means no merge: both versions stay, as before.
+  const base = uploading.prepared.baseRevision ? await activeClient.read(id, uploading.prepared.baseRevision).then((old) => (old.deleted ? null : old.file.bytes), (error) => { if (error.status >= 400 && error.status < 500) return null; throw error; }) : null;
+  const note = mergeNote(base, base64ToBytes(mine.content), remote.file.bytes);
+  if (!note) return false;
+  const modifiedAt = new Date().toISOString();
+  const prepared = await activeClient.prepareWrite(mine.path, note, remote.revision, modifiedAt);
+  const local = JSON.stringify(await encryptEnvelope(vault, { path: mine.path, content: bytesToBase64(note), modifiedAt }, objectAad));
+  // A newer draft came in while this ran: that one goes next and merges in its turn.
+  if (!await store('replace', key, { queueId: latest.queueId, record: { prepared, local, deleted: false, queueId: crypto.randomUUID() } })) return true;
+  await activeClient.discardWrite(uploading.prepared).catch(() => {});
+  await store('delete', uploadKey);
+  files.set(id, { id, revision: remote.revision, deleted: false, pending: true, queuedAt: Date.now(), file: { path: mine.path, content: bytesToBase64(note), modifiedAt } });
+  return true;
+}
+
 async function performSync(signal) {
   if (!client) return;
   const { credentials, fetcher } = client;
   const activeClient = new CloudClient({ ...credentials, fetcher: (url, options) => fetcher(url, { ...options, signal: AbortSignal.any([signal, options.signal]) }) });
   const activeGeneration = generation;
-  let changed = false;
+  let changed = false, mergedAgain = false, unreadable = 0;
   $('sync-status').textContent = 'Syncing encrypted changes...';
   $('sync-status').classList.add('checking');
   // Storage and Plus first, so one slow or failing note does not hide them.
   const legacy = (await showPlan(activeClient, activeGeneration))?.pieces?.legacy;
   if (activeGeneration !== generation) return;
   const keyPrefix = pendingPrefix();
-  for (const [key, pending] of await store('entries', keyPrefix)) {
+  // A read-only group takes nothing more; what was not sent is copied to your own notes.
+  for (const [key, pending] of activeSpace?.frozen ? [] : await store('entries', keyPrefix)) {
     if (activeGeneration !== generation) return;
     signal.throwIfAborted();
     if (files.get(pending.prepared.id)?.conflict) continue;
@@ -1159,7 +1220,10 @@ async function performSync(signal) {
       }
       const expected = await decryptEnvelope(activeClient.credentials.vaultKey, JSON.parse(uploading.local ?? uploading.prepared.envelope), `jotdrop:object:v1:${activeClient.credentials.vaultId}:${uploading.prepared.id}`);
       if (remote.deleted === uploading.deleted && remote.file.path === expected.path && remote.file.content === expected.content) result = { revision: remote.revision };
-      else {
+      else if (!uploading.deleted && await mergeWithCloud(activeClient, key, uploadKey, uploading, remote)) {
+        changed = mergedAgain = true;
+        continue;
+      } else {
         const entry = files.get(pending.prepared.id);
         if (entry) { entry.conflict = true; changed = true; }
         continue;
@@ -1203,6 +1267,8 @@ async function performSync(signal) {
       let entry;
       try { entry = await activeClient.read(change.id); }
       catch (error) {
+        // In a group someone else writes the files: one that does not open is left out, and nobody's sync stops.
+        if (activeSpace && unreadableFile(error)) { unreadable++; continue; }
         if (error.status !== 404) throw error;
         // A full free cloud clears notes that sat in the trash for 30 days.
         if (activeGeneration !== generation) return;
@@ -1229,7 +1295,10 @@ async function performSync(signal) {
   if (activeGeneration !== generation) return;
   const pending = await store('entries', keyPrefix);
   const conflicts = [...files.values()].filter((entry) => entry.conflict).length;
-  $('sync-status').textContent = conflicts ? `${conflicts === 1 ? '1 note was' : `${conflicts} notes were`} changed in two places. Both versions are kept: select Resolve now.` : pending.length ? `${pending.length} encrypted change(s) waiting to upload.` : `Cloud copy up to date at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`;
+  if (unreadable) message(`${unreadable} file(s) in this group could not be opened and are left out.`);
+  // The merged note goes up right after this sync.
+  if (mergedAgain) setTimeout(() => { if (activeGeneration === generation) void sync(); }, 0);
+  $('sync-status').textContent = activeSpace?.frozen ? 'This group is read-only.' : conflicts ? `${conflicts === 1 ? '1 note was' : `${conflicts} notes were`} changed in two places. Both versions are kept: select Resolve now.` : pending.length ? `${pending.length} encrypted change(s) waiting to upload.` : `Cloud copy up to date at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`;
   if (changed) render();
 }
 
@@ -1244,6 +1313,8 @@ async function sync() {
   const showPause = setTimeout(() => { if (syncController === controller) $('pause-sync').hidden = false; }, 1000);
   syncing = performSync(controller.signal).catch((error) => {
     if (activeGeneration !== generation) return;
+    // Removed from a group or the group went read-only: that goes for this group only.
+    if (activeSpace && (error.status === 401 || error.code === 'space-frozen' || error.code === 'space-unfinished')) void refreshSpaces();
     $('sync-status').textContent = syncPaused ? 'Sync paused. Encrypted drafts stay on this browser. Select Resume sync to continue.' : 'Cloud unavailable. Encrypted drafts stay on this browser.';
     if (!syncPaused) message(errorText(error));
     render();
@@ -1265,6 +1336,7 @@ async function sync() {
 function openEditor(entry) {
   discardVoice();
   resetPhoto();
+  $('editor').classList.toggle('in-space', Boolean(activeSpace));
   editing = entry;
   editingRevision = entry?.revision;
   $('note-path').value = entry?.file.path || `notes/${new Date().toISOString().replace(/[:.]/g, '-')}-${crypto.randomUUID().slice(0, 8)}.md`;
@@ -1715,6 +1787,7 @@ async function reviewConflict(entry) {
 }
 
 async function renderDevices() {
+  renderOldCopies();
   const result = await client.devices();
   $('device-list').replaceChildren();
   for (const device of result.devices) {
@@ -1752,6 +1825,11 @@ async function openWorkspace(connected) {
   // Signed in with Google or GitHub and no password: nothing could unlock a locked browser, so only Log out.
   $('lock').hidden = Boolean(remembered?.provider);
   client = connected;
+  ownClient = connected;
+  activeSpace = undefined;
+  spacePlan = undefined;
+  spaces.clear();
+  goneSpaces.clear();
   syncPaused = false;
   $('sync').textContent = 'Sync now';
   generation++;
@@ -1777,15 +1855,16 @@ async function openWorkspace(connected) {
     history.replaceState(null, '', '/');
     message('Thank you. JotDrop Plus turns on as soon as Stripe confirms your payment.');
   }
+  void refreshSpaces().then(offerInvitation);
   await sync();
 }
 
 // A browser that is not remembered signs in as a new device next time, so it gives its device slot back when it closes.
 let forgetOnClose = false;
 function releaseDevice() {
-  if (!client || !forgetOnClose) return;
+  if (!ownClient || !forgetOnClose) return;
   forgetOnClose = false;
-  const c = client.credentials;
+  const c = ownClient.credentials;
   void fetch(`${c.url}/api/v1/devices/${c.deviceId}`, { method: 'DELETE', keepalive: true, headers: { Authorization: `Bearer ${c.token}`, 'X-JotDrop-Vault': c.vaultId, 'X-JotDrop-Device': c.deviceId } }).catch(() => {});
 }
 // A page kept for the back button can come back, so it keeps its device.
@@ -1800,6 +1879,13 @@ function lock(notice = '') {
   syncController?.abort();
   generation++;
   client = undefined;
+  ownClient = undefined;
+  activeSpace = undefined;
+  spacePlan = undefined;
+  spaces.clear();
+  goneSpaces.clear();
+  for (const id of ['share-dialog', 'invite-dialog', 'join-dialog', 'gone-dialog']) $(id).close();
+  $('invite-link').value = '';
   files.clear();
   moments.clear();
   closeMoment();
@@ -2190,6 +2276,7 @@ workspaceForm('delete-account-form', async () => {
   if (!confirm('Delete your account and everything in your JotDrop Cloud? This cannot be undone.')) return;
   const field = $('delete-password');
   await deleteAccount(client, field.required ? { password: field.value } : {});
+  for (const [key] of await store('entries', recordPrefix())) await forgetSpace(key.slice(recordPrefix().length));
   // The cloud is gone: forget this browser's connection and its encrypted copies of it.
   for (const prefix of [cachePrefix(), pendingPrefix()]) for (const [key] of await store('entries', prefix)) await store('delete', key);
   await store('delete', 'connection');
@@ -2274,7 +2361,7 @@ $('log-out').addEventListener('click', async () => {
 });
 async function startTrial() {
   try {
-    await client.call('/account/trial', 'POST', {});
+    await ownClient.call('/account/trial', 'POST', {});
     plusReason = '';
     message('JotDrop Plus is on for 14 days. No payment details needed.');
     await sync();
@@ -2292,7 +2379,7 @@ $('get-plus').addEventListener('click', showPlusOffer);
 $('plus-not-now').addEventListener('click', () => { plusReason = ''; plusQuiet = true; showPlusNudge(); });
 // Stripe shows the payment page and is the seller; Plus turns on when Stripe confirms the payment to the server.
 for (const [id, interval] of [['buy-month', 'month'], ['buy-year', 'year']]) $(id).addEventListener('click', async () => {
-  try { location.assign((await client.call('/account/checkout', 'POST', { interval })).url); }
+  try { location.assign((await ownClient.call('/account/checkout', 'POST', { interval })).url); }
   catch (error) { message(errorText(error)); }
 });
 $('sync').addEventListener('click', () => { syncPaused = false; $('sync').textContent = 'Sync now'; message(); void sync(); });
@@ -2591,7 +2678,8 @@ async function writeImport({ items, files: sources, failed: unreadable }) {
   await sync();
   void sync();
 }
-for (const navigation of document.querySelectorAll('[data-view]')) navigation.addEventListener('click', () => {
+for (const navigation of document.querySelectorAll('[data-view]')) navigation.addEventListener('click', async () => {
+  await goHome();
   view = navigation.dataset.view;
   labelFilter = '';
   selectedIds.clear();
@@ -2622,6 +2710,498 @@ document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && selectedIds.size && !openMenu && !document.querySelector('dialog[open]')) { selectedIds.clear(); render(); }
 });
 // The sidebar folds away like Keep's menu; this browser remembers the choice.
+// Shared groups. The screen shows one cloud at a time: your own, or a group with its own key. Cards, the editor, versions
+// and the trash work the same in both, because each cloud keeps its files under its own id in this browser.
+const recordPrefix = () => `space-key:${ownClient.credentials.vaultId}:`;
+const seenKey = (id) => `space-seen:${ownClient.credentials.vaultId}:${id}`;
+const localAad = (id) => `jotdrop:space-local:v1:${id}`;
+const spaceName = (space) => space.name || 'Shared group';
+const personName = (member) => member.name || 'Someone';
+const isMe = (space, member) => member.accountId === space.me.accountId;
+function sharedWith(space) {
+  const names = space.members.filter((member) => !isMe(space, member)).map(personName);
+  return names.length ? `Shared with ${names.join(', ')}` : 'Only you so far';
+}
+// What the others already know you as, for the next group.
+const myName = () => [...spaces.values()].flatMap((space) => space.members.filter((member) => isMe(space, member) && member.name))[0]?.name ?? '';
+
+// One at a time and in order: an answer from before a group was deleted must not bring it back.
+function refreshSpaces() {
+  const run = (refreshingSpaces ?? Promise.resolve()).then(refreshSpacesNow, refreshSpacesNow);
+  refreshingSpaces = run.catch(() => {});
+  return run;
+}
+async function refreshSpacesNow() {
+  const own = ownClient;
+  if (!own) return;
+  let list;
+  // No account on this cloud, or no connection: what is known stays as it is. A revoked device shows on the own cloud.
+  try { list = await listSpaces(own); } catch (error) { if (error?.status === 401) await goHome(); return; }
+  if (own !== ownClient) return;
+  const listed = new Set(list.map((item) => item.id));
+  let changed = false;
+  for (const item of list) {
+    const known = spaces.get(item.id);
+    if (known && known.frozen === item.frozen && known.replacedBy === item.replacedBy && item.id !== activeSpace?.id) { known.sequence = item.sequence; continue; }
+    const details = await spaceDetails(own, item.id).catch(() => undefined);
+    if (own !== ownClient) return;
+    // Still without its key: the invitation has not been finished, so there is nothing to open yet.
+    if (!details?.key) continue;
+    // An owner's replaced group goes by itself: nothing to decide about when it is gone.
+    if (!known && !(details.role === 'owner' && details.replacedBy)) {
+      await store('put', `${recordPrefix()}${item.id}`, JSON.stringify(await encryptEnvelope(own.credentials.vaultKey, { key: details.key, name: details.name }, localAad(item.id))));
+    }
+    const before = known?.frozen;
+    spaces.set(item.id, { ...details, sequence: item.sequence, seen: known?.seen ?? await store('get', seenKey(item.id)) ?? 0 });
+    if (before !== item.frozen) changed = true;
+  }
+  for (const id of [...spaces.keys()]) if (!listed.has(id)) spaces.delete(id);
+  goneSpaces.clear();
+  for (const [key, sealed] of await store('entries', recordPrefix())) {
+    const id = key.slice(recordPrefix().length);
+    if (listed.has(id)) continue;
+    const record = await decryptEnvelope(own.credentials.vaultKey, JSON.parse(sealed), localAad(id)).catch(() => undefined);
+    if (record) goneSpaces.set(id, { id, ...record });
+  }
+  if (activeSpace) {
+    const current = spaces.get(activeSpace.id);
+    if (!current) {
+      const gone = goneSpaces.get(activeSpace.id);
+      await goHome();
+      if (gone) showGone(gone);
+      return;
+    }
+    activeSpace = current;
+    current.seen = current.sequence;
+    await store('put', seenKey(current.id), current.sequence);
+    if (current.frozen) await rescueUnsent(current);
+  }
+  if (changed) render();
+  else { renderSpaceList(); renderSpacePanel(); }
+}
+
+function renderSpaceList() {
+  const rows = [];
+  for (const space of spaces.values()) {
+    // An owner's replaced group goes by itself; an unfinished new one is not there yet.
+    if (space.unfinished || (space.role === 'owner' && space.replacedBy)) continue;
+    const row = button('', () => enterSpace(space.id), 'label-nav');
+    row.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${icons.people}</svg>`;
+    const name = document.createElement('span');
+    name.className = 'label-name';
+    name.textContent = spaceName(space);
+    row.title = spaceName(space);
+    row.append(name);
+    const mark = space.frozen ? 'read-only' : space.prefs.finishRemoval ? 'to finish' : space.id !== activeSpace?.id && space.sequence > space.seen ? 'new' : '';
+    if (mark) { const note = document.createElement('span'); note.className = 'space-mark'; note.textContent = mark; row.append(note); }
+    if (space.id === activeSpace?.id) row.setAttribute('aria-current', 'page');
+    rows.push(row);
+  }
+  for (const gone of goneSpaces.values()) {
+    const row = button('', () => showGone(gone), 'label-nav');
+    row.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${icons.people}</svg>`;
+    const name = document.createElement('span');
+    name.className = 'label-name';
+    name.textContent = gone.name || 'Shared group';
+    const note = document.createElement('span');
+    note.className = 'space-mark';
+    note.textContent = 'no access';
+    row.append(name, note);
+    rows.push(row);
+  }
+  $('space-list').replaceChildren(...rows);
+  $('sidebar-spaces').hidden = !rows.length;
+}
+
+function renderSpacePanel() {
+  const panel = $('space-panel'), space = activeSpace;
+  panel.hidden = !space;
+  if (!space) { panel.replaceChildren(); return; }
+  const owner = space.role === 'owner';
+  const tabs = document.createElement('div');
+  tabs.className = 'space-tabs';
+  for (const [name, label] of [['notes', 'Notes'], ['files', 'Files'], ['trash', 'Trash']]) {
+    const tab = button(label, () => { view = name; message(); render(); });
+    if (view === name) tab.setAttribute('aria-current', 'page');
+    tabs.append(tab);
+  }
+  const shown = [tabs];
+  const notice = space.replacedBy ? 'The owner made a new group for this. Ask them for a new link. This one is read-only and goes away after 30 days.'
+    : space.ownerGoneAt ? 'The owner left, so this group is read-only. It goes away after 30 days unless someone takes it over.'
+      : space.frozen ? 'This group is read-only.' : '';
+  if (notice) shown.push(paragraph(notice, 'space-notice'));
+  if (space.canTakeOver) shown.push(button('Take over this group', async () => {
+    await takeOverSpace(ownClient, space.id);
+    await refreshSpaces();
+    message('This group is yours now. Its storage counts for your plan.');
+  }));
+  if (space.prefs.finishRemoval) shown.push(button('Finish removing the person', () => finishRemoval(space), 'primary'));
+  const people = document.createElement('details');
+  people.open = spacePeopleOpen;
+  people.addEventListener('toggle', () => { spacePeopleOpen = people.open; });
+  const summary = document.createElement('summary');
+  summary.textContent = `People (${space.members.length})`;
+  people.append(summary);
+  for (const member of space.members) {
+    const row = document.createElement('div');
+    row.className = 'space-person';
+    const who = [personName(member), isMe(space, member) ? '(you)' : '', member.role === 'owner' ? '(owner)' : '', member.email ? `- ${member.email}` : ''].filter(Boolean).join(' ');
+    row.append(paragraph(who));
+    if (owner && !isMe(space, member) && !space.frozen) row.append(button('Remove', () => removePerson(space, member), 'danger'));
+    people.append(row);
+  }
+  for (const invite of (space.invites ?? []).filter((item) => !item.claimed)) {
+    const row = document.createElement('div');
+    row.className = 'space-person';
+    row.append(paragraph(`Link not used yet, until ${new Date(invite.expiresAt).toLocaleDateString()}`));
+    row.append(button('Withdraw', async () => { await withdrawInvite(ownClient, space.id, invite.id); await refreshSpaces(); }));
+    people.append(row);
+  }
+  people.append(paragraph(`${(space.usedBytes / 1048576).toFixed(1)} MiB in this group, counted for the owner.`, 'dialog-note'));
+  const actions = document.createElement('div');
+  actions.className = 'space-actions';
+  if (owner && !space.frozen) actions.append(button('Invite someone', () => showInvite(space), 'primary'));
+  if (!space.replacedBy) actions.append(button('Leave group', () => leaveGroup(space)));
+  if (owner) actions.append(button('Delete group', () => deleteGroup(space), 'danger'));
+  people.append(actions);
+  shown.push(people);
+  panel.replaceChildren(...shown);
+}
+
+let switching;
+function switchCloud(nextClient, space) {
+  const run = (switching ?? Promise.resolve()).then(async () => {
+    // What was not sent yet goes first; a download can simply stop and carry on next time.
+    if ((await store('entries', pendingPrefix())).length) await (syncing ?? sync());
+    generation++;
+    syncController?.abort();
+    if (syncing) await syncing;
+    client = nextClient;
+    activeSpace = space;
+    generation++;
+    cursor = 0;
+    view = 'notes';
+    labelFilter = '';
+    spacePlan = undefined;
+    files.clear();
+    moments.clear();
+    selectedIds.clear();
+    selectedTags.clear();
+    releaseMedia(true);
+    closeMoment();
+    await loadLocal();
+    await loadLocalLabels();
+    render();
+    void sync();
+  });
+  switching = run.catch(() => {});
+  return run;
+}
+async function enterSpace(id) {
+  const space = spaces.get(id);
+  if (!space?.key) return;
+  message();
+  await switchCloud(spaceClient(ownClient, id, space.key), space);
+  space.seen = space.sequence;
+  await store('put', seenKey(id), space.sequence);
+  renderSpaceList();
+  if (space.frozen) await rescueUnsent(space);
+}
+async function goHome() {
+  await switching;
+  if (activeSpace) await switchCloud(ownClient);
+}
+
+/** In a group that went read-only nothing more goes up: unsent notes get a copy in your own notes, once per version. */
+async function rescueUnsent(space) {
+  const prefix = `pending:${space.id}:`;
+  for (const [key, record] of await store('entries', prefix)) {
+    if (record.deleted || !record.local) continue;
+    const mark = `rescued:${space.id}:${record.queueId}`;
+    if (await store('get', mark)) continue;
+    const id = key.slice(prefix.length);
+    const file = await decryptEnvelope(space.key, JSON.parse(record.local), `jotdrop:object:v1:${space.id}:${id}`);
+    const name = file.path.split('/').pop();
+    await writeUnderFreeName(ownClient, isMarkdown(file.path) ? `notes/Not sent - ${name}` : file.path, base64ToBytes(file.content));
+    await store('put', mark, true);
+    message('Changes that could not be sent to this group are now in your own notes, named "Not sent".');
+  }
+}
+
+/** The note with its attachments, attachments first, so the note never points at what is not there yet. */
+async function copyNote(target, entry, text) {
+  const available = [...files.values()].filter((item) => !item.deleted && !isMarkdown(item.file.path));
+  const attachments = noteAttachments(entry, noteParts(noteText(entry.file), entry.file.path), available);
+  for (const attachment of attachments) {
+    const written = await writeUnderFreeName(target, attachment.file.path, base64ToBytes(attachment.file.content));
+    const before = attachment.file.path.split('/').pop(), after = written.split('/').pop();
+    if (before !== after) for (const [from, to] of [[encodeURI(before), encodeURI(after)], [before, after]]) {
+      text = text.replace(new RegExp(`(^|[/(\\[])${from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?=[)\\]|#\\s]|$)`, 'gm'), (_all, start) => `${start}${to}`);
+    }
+  }
+  await writeUnderFreeName(target, entry.file.path, encoder.encode(text));
+  return attachments;
+}
+/** Out of this cloud, once the other one has it. An attachment another note still shows stays. */
+async function removeMoved(entry, attachments) {
+  const otherNotes = [...files.values()].filter((item) => item !== entry && !item.deleted && isMarkdown(item.file.path));
+  for (const attachment of attachments) {
+    if (!otherNotes.some((other) => noteAttachments(other, noteParts(noteText(other.file), other.file.path), [attachment]).length)) await deleteEntry(attachment, false);
+  }
+  await deleteEntry(entry, false);
+}
+async function countNotes(target) {
+  const latest = new Map();
+  for (let page = { cursor: 0, hasMore: true }; page.hasMore;) {
+    page = await target.listChanges(page.cursor);
+    for (const change of page.changes) latest.set(change.id, change);
+  }
+  let notes = 0;
+  for (const change of latest.values()) {
+    if (change.deleted) continue;
+    try { if (isMarkdown((await target.readManifest(change.id)).manifest.path)) notes++; }
+    catch (error) { if (!unreadableFile(error)) throw error; }
+  }
+  return notes;
+}
+
+let shareEntry;
+function showShare(entry) {
+  shareEntry = entry;
+  const groups = [...spaces.values()].filter((space) => !space.frozen && !space.unfinished && !space.replacedBy);
+  const options = groups.map((space) => { const option = document.createElement('option'); option.value = space.id; option.textContent = `${spaceName(space)} (${sharedWith(space)})`; return option; });
+  const fresh = document.createElement('option');
+  fresh.value = '';
+  fresh.textContent = 'New group';
+  $('share-group').replaceChildren(fresh, ...options);
+  $('share-group').value = '';
+  $('share-new').hidden = false;
+  const parts = noteParts(noteText(entry.file), entry.file.path);
+  $('share-name').value = plainPreviewText(parts.title || '').slice(0, 80);
+  $('share-me').value = myName();
+  $('share-reminder').hidden = !parts.reminder;
+  $('share-message').textContent = '';
+  $('share-dialog').showModal();
+}
+$('share-group').addEventListener('change', () => { $('share-new').hidden = Boolean($('share-group').value); });
+$('share-cancel').addEventListener('click', () => $('share-dialog').close());
+$('share-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const submit = event.submitter;
+  submit.disabled = true;
+  $('share-message').textContent = 'Encrypting and sending...';
+  try {
+    if (syncing) await syncing;
+    const entry = shareEntry;
+    if (files.get(entry.id) !== entry || entry.pending || entry.conflict || entry.deleted) throw new Error('Sync and resolve this note before sharing it.');
+    // Metadata that is per person, and a reminder that would go off for everyone, stay behind. Checked before anything is made.
+    const text = updateMetadata(noteText(entry.file), { pinned: null, jotdrop_labels: null, order: null, reminder: null, reminder_repeat: null, reminder_until: null, reminder_limit: null, reminder_done: null });
+    const me = $('share-me').value.trim();
+    let space = spaces.get($('share-group').value);
+    if (!space) {
+      if (!$('share-name').value.trim()) throw new Error('Give the group a name.');
+      const made = await createSpace(ownClient, $('share-name').value, { memberName: me });
+      await refreshSpaces();
+      space = spaces.get(made.id);
+    } else if (!space.members.find((member) => isMe(space, member))?.name) await setMemberName(ownClient, space, me);
+    const target = spaceClient(ownClient, space.id, space.key);
+    if ((await target.status()).plan?.name !== 'plus' && await countNotes(target) >= 1) {
+      if (space.role === 'owner') offerPlus('JotDrop Plus shares as many notes as you like.');
+      throw new Error('The free plan shares one note.');
+    }
+    const attachments = await copyNote(target, entry, text);
+    await removeMoved(entry, attachments);
+    $('share-dialog').close();
+    await enterSpace(space.id);
+    await refreshSpaces();
+    if (activeSpace?.role === 'owner' && activeSpace.members.length < 2) await showInvite(activeSpace);
+  } catch (error) { $('share-message').textContent = errorText(error); }
+  finally { submit.disabled = false; }
+});
+
+async function moveToOwn(entry) {
+  if (syncing) await syncing;
+  if (files.get(entry.id) !== entry || entry.pending || entry.conflict || entry.deleted) throw new Error('Sync and resolve this note before moving it.');
+  const attachments = await copyNote(ownClient, entry, noteText(entry.file));
+  if (!activeSpace?.frozen) await removeMoved(entry, attachments);
+  message(activeSpace?.frozen ? 'A copy is in your own notes.' : 'Moved to your own notes.');
+}
+
+async function showInvite(space) {
+  const invite = await makeInvite(ownClient, space, myName() || 'Someone', location.origin);
+  $('invite-link').value = invite.link;
+  $('invite-message').textContent = '';
+  // In the app or address of your own choice: the link never goes through a website of someone else.
+  const subject = `Join my list on JotDrop`, body = `I would like to share notes with you on JotDrop. This link works once:\n\n${invite.link}`;
+  $('invite-mail').href = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  $('invite-send').hidden = !navigator.share;
+  $('invite-dialog').showModal();
+  await refreshSpaces();
+}
+$('invite-copy').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText($('invite-link').value); $('invite-message').textContent = 'Link copied.'; }
+  catch { $('invite-message').textContent = 'Clipboard unavailable. Select and copy the link yourself.'; }
+});
+$('invite-send').addEventListener('click', () => navigator.share({ title: 'JotDrop', url: $('invite-link').value }).catch(() => {}));
+$('invite-close').addEventListener('click', () => { $('invite-link').value = ''; $('invite-dialog').close(); });
+
+async function removePerson(space, member) {
+  const titles = [...files.values()].filter((entry) => !entry.deleted && isMarkdown(entry.file.path)).map((entry) => noteParts(noteText(entry.file), entry.file.path).title);
+  const rest = space.members.length - 2;
+  if (!confirm(`Remove ${personName(member)} from "${spaceName(space)}"? They lose access right away to all ${titles.length} note(s) here: ${titles.slice(0, 5).join(', ')}${titles.length > 5 ? ', ...' : ''}. What they already downloaded stays with them.${rest ? ' The group gets a new key: the others need a new link from you, and old versions stay behind.' : ' You are then the only one left, so the notes move to your own notes.'}`)) return;
+  // Remembered under your own key before anything happens: on any device, a crash shows "Finish removing".
+  await saveSpacePrefs(ownClient, space.id, { ...space.prefs, finishRemoval: true });
+  await removeMember(ownClient, space.id, member.accountId);
+  space.prefs = { ...space.prefs, finishRemoval: true };
+  await finishRemoval(space);
+}
+async function finishRemoval(space) {
+  message('Working securely on this device...');
+  // What this browser did not send yet goes first; what cannot go gets a copy in your own notes.
+  if (syncing) await syncing;
+  await sync();
+  await rescueUnsent(space);
+  const details = await spaceDetails(ownClient, space.id);
+  if (details.members.length <= 1) {
+    const from = spaceClient(ownClient, space.id, details.key);
+    const latest = new Map();
+    for (let page = { cursor: 0, hasMore: true }; page.hasMore;) {
+      page = await from.listChanges(page.cursor);
+      for (const change of page.changes) latest.set(change.id, change);
+    }
+    for (const change of latest.values()) {
+      if (change.deleted) continue;
+      let file;
+      try { ({ file } = await from.read(change.id)); }
+      catch (error) { if (unreadableFile(error)) continue; throw error; }
+      await writeUnderFreeName(ownClient, file.path, file.bytes);
+    }
+    await deleteSpace(ownClient, space.id);
+    await forgetSpace(space.id);
+    await goHome();
+    await refreshSpaces();
+    message('The person is removed. The notes are back in your own notes.');
+    return;
+  }
+  const next = await replaceSpace(ownClient, details, { memberName: myName() || 'Someone' });
+  await forgetSpace(space.id);
+  await refreshSpaces();
+  await enterSpace(next.id);
+  await refreshSpaces();
+  message(`The person is removed. Send the others a new link: ${details.members.filter((member) => !isMe(details, member)).map(personName).join(', ')}.`);
+}
+async function leaveGroup(space) {
+  const alone = space.members.length < 2;
+  if (!confirm(alone ? `Leave "${spaceName(space)}"? You are the only one in it, so it is deleted from the cloud. You can keep a copy of the notes next.` : `Leave "${spaceName(space)}"? You lose access, and can keep a copy of the notes next.`)) return;
+  await leaveSpace(ownClient, space.id);
+  await refreshSpaces();
+}
+async function deleteGroup(space) {
+  if (!confirm(`Delete "${spaceName(space)}" and all of its notes for everyone? This cannot be undone. Move notes you want to keep to your own notes first.`)) return;
+  await rescueUnsent(space);
+  await deleteSpace(ownClient, space.id);
+  await forgetSpace(space.id);
+  await goHome();
+  await refreshSpaces();
+  message('The group is deleted.');
+}
+async function forgetSpace(id) {
+  for (const prefix of [`cache:${id}:`, `pending:${id}:`, `upload:${id}:`, `rescued:${id}:`]) for (const [key] of await store('entries', prefix)) await store('delete', key);
+  await store('delete', `${recordPrefix()}${id}`);
+  await store('delete', seenKey(id));
+  await store('delete', `labels:${id}`);
+  spaces.delete(id);
+  goneSpaces.delete(id);
+}
+
+let goneShown;
+function showGone(gone) {
+  goneShown = gone;
+  $('gone-title').textContent = `No longer in "${gone.name || 'Shared group'}"`;
+  $('gone-message').textContent = '';
+  if (!$('gone-dialog').open) $('gone-dialog').showModal();
+}
+$('gone-later').addEventListener('click', () => $('gone-dialog').close());
+$('gone-remove').addEventListener('click', async () => {
+  if (!confirm('Remove the copy of these notes from this browser?')) return;
+  await forgetSpace(goneShown.id);
+  $('gone-dialog').close();
+  renderSpaceList();
+});
+$('gone-keep').addEventListener('click', async () => {
+  const { id, key } = goneShown, kept = new Map();
+  $('gone-message').textContent = 'Encrypting and saving...';
+  try {
+    const open = (record, envelope, objectKey) => decryptEnvelope(key, JSON.parse(envelope), `jotdrop:object:v1:${id}:${objectKey}`);
+    for (const [itemKey, record] of await store('entries', `cache:${id}:`)) { const objectKey = itemKey.slice(`cache:${id}:`.length); if (!record.deleted) kept.set(objectKey, await open(record, record.prepared.envelope, objectKey)); }
+    // Your own unsent changes are the newest you have.
+    for (const [itemKey, record] of await store('entries', `pending:${id}:`)) { const objectKey = itemKey.slice(`pending:${id}:`.length); if (!record.deleted && record.local) kept.set(objectKey, await open(record, record.local, objectKey)); }
+    for (const file of kept.values()) await writeUnderFreeName(ownClient, file.path, base64ToBytes(file.content));
+    await forgetSpace(id);
+    $('gone-dialog').close();
+    renderSpaceList();
+    message(`${kept.size} file(s) kept in your own notes.`);
+    if (!activeSpace) { cursor = 0; void sync(); }
+  } catch (error) { $('gone-message').textContent = errorText(error); }
+});
+
+// An invitation link opens here. It leaves the address bar at once; this tab keeps it through signing in or signing up.
+let invitation;
+function takeInvitation() {
+  try {
+    if (location.pathname === '/join') {
+      invitation = location.hash.slice(1);
+      history.replaceState(null, '', '/');
+      sessionStorage.setItem('jotdrop-invitation', invitation);
+    } else invitation = sessionStorage.getItem('jotdrop-invitation') ?? undefined;
+  } catch { /* It still works in this page. */ }
+}
+function dropInvitation() {
+  invitation = undefined;
+  try { sessionStorage.removeItem('jotdrop-invitation'); } catch { /* Nothing was kept. */ }
+}
+function offerInvitation() {
+  if (!invitation || !ownClient || $('join-dialog').open || $('recovery-dialog').open || $('secure-dialog').open) return;
+  $('join-name').value = myName();
+  $('join-message').textContent = '';
+  $('join-accept').disabled = false;
+  $('join-dialog').showModal();
+}
+$('join-later').addEventListener('click', () => { dropInvitation(); $('join-dialog').close(); });
+$('join-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  $('join-accept').disabled = true;
+  $('join-message').textContent = 'Working securely on this device...';
+  try {
+    const joined = await acceptInvite(ownClient, readInvite(invitation), $('join-name').value);
+    dropInvitation();
+    $('join-dialog').close();
+    await refreshSpaces();
+    await enterSpace(joined.id);
+    await refreshSpaces();
+    message(joined.inviterName ? `You joined. ${joined.inviterName} can see you in this group.` : 'You joined this group.');
+  } catch (error) {
+    // Used, expired or withdrawn: this link will not work later either.
+    if (error.status && error.status !== 429) dropInvitation();
+    $('join-message').textContent = error.code === 'account-required' ? 'Sharing needs an account. Add one in Devices & recovery, then open the link again.' : error.message || 'Could not join. Try again.';
+    if (!error.status || error.status === 429) $('join-accept').disabled = false;
+  }
+});
+
+/** Old versions of the apps can have put a group's folder in your own cloud. Nothing shows it, but it takes up storage. */
+function renderOldCopies() {
+  const copies = [...files.values()].filter((entry) => !entry.deleted && isSpacePath(entry.file.path));
+  $('old-shared-copies').hidden = !copies.length;
+  $('old-shared-copies').replaceChildren(...(copies.length ? [
+    paragraph(`${copies.length} old cop${copies.length === 1 ? 'y' : 'ies'} of shared notes, made by an older app, take up storage in your own cloud.`),
+    button('Remove old copies', async () => {
+      if (!confirm('Move these old copies to the trash? The shared notes themselves are not touched.')) return;
+      for (const entry of copies) await deleteEntry(entry, false);
+      renderOldCopies();
+    }),
+  ] : []));
+}
+
 function showSidebar(open) {
   $('sidebar').hidden = !open;
   $('workspace').classList.toggle('sidebar-hidden', !open);
@@ -2666,7 +3246,7 @@ $('recovery-saved').addEventListener('change', () => { $('finish-recovery').disa
 $('finish-recovery').addEventListener('click', () => {
   $('recovery-dialog').close();
   $('recovery-code').value = '';
-  if (secureOffer === undefined) return;
+  if (secureOffer === undefined) { offerInvitation(); return; }
   $('secure-choice').hidden = false;
   $('secure-form').hidden = true;
   $('secure-dialog').showModal();
@@ -2677,6 +3257,7 @@ $('secure-dialog').addEventListener('close', () => {
   secureOffer = undefined;
   $('secure-secret').value = $('secure-code').value = $('secure-message').textContent = '';
   $('secure-qr').replaceChildren();
+  offerInvitation();
 });
 $('secure-start').addEventListener('click', async () => {
   $('secure-start').disabled = true;
@@ -2713,12 +3294,14 @@ setInterval(() => {
   if (!client || document.hidden) return;
   void sync();
   // Someone who forgot their password waits for this device to approve.
-  void listApprovals(client).then((approvals) => {
+  void refreshSpaces();
+  void listApprovals(ownClient).then((approvals) => {
     if (!approvals.length) return;
     if (view === 'devices') void renderApprovals();
     else message('A new device asks for access to your notes. Open Devices & recovery to approve or reject it.');
   }, () => {});
 }, 30000);
+takeInvitation();
 try {
   const credentials = (await providerReturn().catch((error) => { $('access-message').textContent = accessError(error); return true; })) ? undefined : await signedInCredentials().catch(() => undefined);
   // A connection that no longer opens is forgotten and says why; the password still unlocks this browser.
@@ -2726,4 +3309,10 @@ try {
   else if ($('provider-step').hidden && unlockable(await store('get', 'connection'))) showUnlock();
 } catch (error) { $('access-message').textContent = errorText(error); $('connect-form').querySelector('button[type="submit"]').disabled = true; }
 // Not signed in after all: now the login shows, never before (a refresh would otherwise flash it).
-finally { $('opening').hidden = true; if ($('workspace').hidden) $('access').hidden = false; }
+finally {
+  $('opening').hidden = true;
+  if ($('workspace').hidden) {
+    $('access').hidden = false;
+    if (invitation && !$('access-message').textContent) $('access-message').textContent = 'Log in or create a free account to join the shared group.';
+  }
+}

@@ -348,3 +348,18 @@ html { scrollbar-color: color-mix(in srgb, var(--ink) 35%, transparent) transpar
   .note-card.is-dropped, .note-card.just-pinned .card-tape::before { animation: fade-in .2s ease-out; }
   .card-stamp { animation: stamp-fade 1.8s ease-out forwards; }
 }
+
+/* Shared groups */
+#space-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: .2rem; margin-top: .3rem; }
+.space-mark { color: var(--muted); font-size: .75rem; font-weight: 600; }
+.space-panel { margin: 0 0 1rem; display: grid; gap: .6rem; }
+.space-tabs, .space-actions, .space-person { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.space-tabs button[aria-current] { background: var(--selected); text-decoration: underline; }
+.space-panel details { border: 1.5px solid var(--line); border-radius: 10px; padding: .6rem .9rem; }
+.space-panel summary { cursor: pointer; font-weight: 600; }
+.space-panel p { margin: 0; }
+.space-person { justify-content: space-between; margin-top: .5rem; }
+.space-notice { border-inline-start: 4px solid var(--edge); padding: .4rem .8rem; }
+.note-card .card-shared { color: var(--muted); font-size: .75rem; margin: .5rem 0 0; }
+.note-card .card-shared::before { content: "👥 " / ""; }
+#editor.in-space :is(#note-pinned, .reminder-row, #repeat-editor, #note-order, label[for="note-order"], .chip-field:has(#label-input)) { display: none; }
