@@ -13,7 +13,7 @@ See it in action on [jotdrop.net, the private Google Keep alternative](https://j
 
 [**Website**](https://jotdrop.net/) · [**Web app**](https://app.jotdrop.net/) · [**Get it**](#get-jotdrop) · [**Features**](#features) · [**Switch from Keep**](#switch-from-google-keep) · [**JotDrop Cloud**](#jotdrop-cloud) · [**Joplin**](#jotdrop-for-joplin) · [**FAQ**](#faq)
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-f4c458.svg)](LICENSE) [![Obsidian plugin](https://img.shields.io/badge/Obsidian-plugin-14213d)](https://community.obsidian.md/plugins/jotdrop) [![Android APK](https://img.shields.io/badge/Android-APK-14213d)](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.28/jotdrop.apk) [![Chrome clipper](https://img.shields.io/badge/Chrome-clipper-14213d)](https://chromewebstore.google.com/detail/jotdrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo) [![Joplin plugin](https://img.shields.io/badge/Joplin-plugin-14213d)](https://github.com/Diexar-Labs/joplin-plugin-jotdrop) [![Build](https://github.com/Diexar-Labs/jotdrop/actions/workflows/android-build.yml/badge.svg)](https://github.com/Diexar-Labs/jotdrop/actions/workflows/android-build.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-f4c458.svg)](LICENSE) [![Obsidian plugin](https://img.shields.io/badge/Obsidian-plugin-14213d)](https://community.obsidian.md/plugins/jotdrop) [![Android APK](https://img.shields.io/badge/Android-APK-14213d)](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.28/jotdrop.apk) [![Chrome clipper](https://img.shields.io/badge/Chrome-clipper-14213d)](https://chromewebstore.google.com/detail/jotdrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo) [![Joplin plugin](https://img.shields.io/badge/Joplin-plugin-14213d)](https://joplinapp.org/plugins/plugin/net.jotdrop.joplin/) [![Build](https://github.com/Diexar-Labs/jotdrop/actions/workflows/android-build.yml/badge.svg)](https://github.com/Diexar-Labs/jotdrop/actions/workflows/android-build.yml)
 
 </div>
 
@@ -81,7 +81,7 @@ Already on Joplin? [JotDrop for Joplin](#jotdrop-for-joplin) turns the notes you
 | **Android** | Download the APK and open it on your phone | [JotDrop 0.28.28 APK](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.28/jotdrop.apk) |
 | **Web** | Open the web app and sign in with Google, GitHub or email | [app.jotdrop.net](https://app.jotdrop.net/) |
 | **Chrome** | One click from the Chrome Web Store; works together with the Obsidian desktop plugin | [JotDrop Web Clipper](https://chromewebstore.google.com/detail/jotdrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo) |
-| **Joplin** | Tools → Options → Plugins → search **JotDrop** → Install; on Android, first Configuration → Plugins → Enable plugin support | [JotDrop for Joplin](https://github.com/Diexar-Labs/joplin-plugin-jotdrop) |
+| **Joplin** | Tools → Options → Plugins → search **JotDrop** → Install; on Android, first Configuration → Plugins → Enable plugin support | [JotDrop for Joplin](https://joplinapp.org/plugins/plugin/net.jotdrop.joplin/) |
 
 Step-by-step instructions for each part are under [Install](#install).
 
