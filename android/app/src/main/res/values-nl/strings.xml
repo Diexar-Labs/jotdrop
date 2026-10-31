@@ -61,8 +61,9 @@
 
     <string name="loading">Laden…</string>
     <string name="welcome_title">Welkom bij JotDrop</string>
-    <string name="welcome_text">Je notities, foto\'s en spraakmemo\'s, als gewone bestanden op deze telefoon. Ga verder met Google voor een gratis versleutelde cloud met 250 MB, zodat je ze op al je apparaten hebt.</string>
+    <string name="welcome_text">Je notities, foto\'s en spraakmemo\'s, als gewone bestanden op deze telefoon. Ga verder met Google of GitHub voor een gratis versleutelde cloud met 250 MB, zodat je ze op al je apparaten hebt.</string>
     <string name="welcome_google">Doorgaan met Google</string>
+    <string name="welcome_github">Doorgaan met GitHub</string>
     <string name="welcome_local">Gebruiken zonder cloud</string>
     <string name="welcome_folder_hint">Eerst kies je een map voor je notities. Tip: maak een nieuwe map met de naam JotDrop. Gebruik je Obsidian al? Kies dan je vault.</string>
     <string name="empty_no_notes">Nog geen notities. Tik op + om te beginnen.</string>
@@ -306,4 +307,13 @@
     <string name="card_menu">Notitieacties</string>
     <string name="toast_restored">Notitie teruggezet</string>
     <string name="action_delete_forever">Definitief verwijderen</string>
+    <string name="action_share_note">Delen…</string>
+    <string name="action_group">Gedeelde groep…</string>
+    <string name="action_move_to_mine">Naar mijn notities</string>
+    <string name="toast_moved_to_mine">Naar je eigen notities verplaatst</string>
+    <string name="shared_with">Gedeeld met %1$s</string>
+    <string name="shared_only_you">Gedeeld, alleen jij tot nu toe</string>
+    <string name="shared_read_only">Gedeeld, alleen-lezen</string>
+    <string name="shared_delete_message">Hiermee verwijder je de notitie voor iedereen in de groep. Er gaat een kopie naar je prullenbak; als je die terugzet, komt hij bij je eigen notities.</string>
+    <string name="shared_no_access">Gedeeld, geen toegang meer</string>
 </resources>

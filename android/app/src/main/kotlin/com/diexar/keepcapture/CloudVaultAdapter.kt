@@ -16,11 +16,14 @@ class CloudVaultAdapter(
     private val afterMutation: () -> Unit = {},
     // Only for saving recovery copies: one local file, like a captured note, never two sync systems.
     private val allowOtherSync: Boolean = false,
+    // A shared space: its notes and attachments together in notes/Shared/<id>/, under the same cloud paths as a vault.
+    private val spaceId: String? = null,
 ) : CloudSyncLocal {
     private val treeUri = requireNotNull(Storage.getVaultUri(context)) { "Choose a local vault in Settings first" }
-    private val notes = CloudCrypto.safePath(Storage.getSubfolder(context))
-    private val assets = CloudCrypto.safePath(Storage.resolveAssetsFolder(context))
-    private val legacyAssets = "$notes/.attachments"
+    private val vaultNotes = CloudCrypto.safePath(Storage.getSubfolder(context))
+    private val notes = if (spaceId != null) "$vaultNotes/Shared/$spaceId" else vaultNotes
+    private val assets = if (spaceId != null) "$notes/attachments" else CloudCrypto.safePath(Storage.resolveAssetsFolder(context))
+    private val legacyAssets = if (spaceId != null) assets else "$notes/.attachments"
     private val tree = requireNotNull(DocumentFile.fromTreeUri(context, treeUri)) { "Local vault is unavailable" }
     val binding = listOf(treeUri.toString(), notes, assets).joinToString("\n")
 
@@ -39,7 +42,7 @@ class CloudVaultAdapter(
     }
 
     fun validateBinding() {
-        check(Storage.getVaultUri(context) == treeUri && Storage.getSubfolder(context) == notes && Storage.resolveAssetsFolder(context) == assets) { "Vault settings changed. Pause and re-enable cloud sync for the intended folder" }
+        check(Storage.getVaultUri(context) == treeUri && Storage.getSubfolder(context) == vaultNotes && (spaceId != null || Storage.resolveAssetsFolder(context) == assets)) { "Vault settings changed. Pause and re-enable cloud sync for the intended folder" }
     }
 
     fun validate() {
@@ -71,6 +74,9 @@ class CloudVaultAdapter(
         }
         return current
     }
+
+    /** False when this folder itself is gone, so a file missing from it says nothing about that file. */
+    fun hasFolder(): Boolean = folder(notes, false) != null
 
     private fun localPath(path: String): String {
         CloudSyncEngine.path(path, allowPreserved = true)
@@ -159,6 +165,8 @@ class CloudVaultAdapter(
                         continue
                     }
                     val path = "$prefix/$name"
+                    // A space keeps its attachments inside its note folder; they are listed once, as attachments.
+                    if (spaceId != null && !attachments && depth == 0 && child.directory && name == "attachments") continue
                     if (child.directory) walk(child.file, path, attachments, depth + 1)
                     else if (attachments || name.endsWith(".md", true)) {
                         CloudSyncEngine.path(path)

@@ -489,6 +489,7 @@ class CloudPreviewStore(context: Context) {
     // Large vaults keep large indexes; nothing else in a sync state grows with the number of files.
     fun syncState(scope: String): JSONObject? = load("sync-$scope", 32 * 1024 * 1024)
     fun saveSyncState(scope: String, value: JSONObject) = save("sync-$scope", value)
+    fun clearSyncState(scope: String) = synchronized(lock) { AtomicFile(File(folder, "sync-$scope")).delete() }
     private fun uploadName(scope: String, deviceId: String): String {
         require(scope.matches(Regex("[A-Za-z0-9_-]{43}"))) { "Invalid sync scope" }
         UUID.fromString(deviceId)
@@ -528,6 +529,9 @@ class CloudPreviewStore(context: Context) {
     fun providerStart(): JSONObject? = load("provider-start")
     fun saveProviderStart(value: JSONObject) = save("provider-start", value)
     fun clearProviderStart() = synchronized(lock) { AtomicFile(File(folder, "provider-start")).delete() }
+    /** Shared spaces by id, with their key: known here until the person decides what to do with the folder. */
+    fun spaces(): JSONObject = load("spaces") ?: JSONObject()
+    fun saveSpaces(value: JSONObject) = save("spaces", value)
     fun settings(): JSONObject = load("sync-settings") ?: JSONObject()
     fun saveSettings(value: JSONObject) = save("sync-settings", value)
 }

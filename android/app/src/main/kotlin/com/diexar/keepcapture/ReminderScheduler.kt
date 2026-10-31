@@ -70,6 +70,8 @@ object ReminderScheduler {
         val now = System.currentTimeMillis()
         var changed = false
         for (note in notes) {
+            // It would go off for everyone, and its next date would be written into the note they share.
+            if (note.space != null) continue
             val reminder = note.meta.reminder ?: continue
             val whenMillis = parseToEpochMillis(reminder) ?: continue
             if (whenMillis > now) {
