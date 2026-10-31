@@ -1,5 +1,6 @@
 import { Notice, TFile, normalizePath } from "obsidian";
 import type JotDropPlugin from "./main";
+import { isSpacePath } from "../cloud/shared/crypto.mjs";
 import { LightboxModal } from "./lightbox";
 import { EditNoteModal } from "./edit";
 import { parseReminderMs, readMeta, updateMeta } from "./metadata";
@@ -38,6 +39,9 @@ export class ReminderScheduler {
 
   scheduleFile(file: TFile): void {
     this.cancelFile(file.path);
+    // A note in a shared group: it would go off for everyone, and its next date would be written into the note they share.
+    const notes = normalizePath(this.plugin.settings.notesFolder);
+    if (file.path.startsWith(`${notes}/`) && isSpacePath(`notes/${file.path.slice(notes.length + 1)}`)) return;
     // Archived notes never fire — parity with the Android app, which cancels
     // the alarm on archive. Covers load, modify AND rename-into-archive.
     const archive = normalizePath(this.plugin.settings.archiveFolder);

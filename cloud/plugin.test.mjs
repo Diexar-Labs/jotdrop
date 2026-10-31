@@ -10,6 +10,7 @@ import { createCloudServer } from './server.mjs';
 import { CloudClient } from './shared/client.mjs';
 import { accountInfo, confirmSignup, providerSignUp, signUp } from './shared/account.mjs';
 import { bytesToBase64, encryptEnvelope, objectId, randomToken } from './shared/crypto.mjs';
+import { acceptInvite, createSpace, makeInvite, readInvite, removeMember, replaceSpace, spaceClient, spaceDetails } from './shared/spaces.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 // Obsidian's requestUrl answers every status without throwing, like `throw: false`. A test can hold an answer with `afterRequest`.
@@ -51,7 +52,7 @@ function vault() {
     if (!times.has(bytes)) times.set(bytes, ++clock);
     return { type: 'file', size: bytes.length, mtime: times.get(bytes) };
   };
-  const file = (path) => (files.has(path) ? { path, extension: path.split('.').pop(), isTestFile: true, stat: stat(path) } : null);
+  const file = (path) => (files.has(path) ? { path, name: path.split('/').pop(), basename: path.split('/').pop().replace(/\.[^.]*$/, ''), extension: path.split('.').pop(), isTestFile: true, stat: stat(path) } : null);
   const plugin = {
     settings: { notesFolder: 'Mini Notes', archiveFolder: 'Mini Notes/Archive', cloudServer: '' },
     resolveAssetsFolder: () => 'Mini Notes/.attachments',
@@ -61,7 +62,18 @@ function vault() {
       // The Sync core plugin is on by default without a remote vault, as in a fresh vault.
       internalPlugins: { plugins: { sync: { enabled: true, instance: { vaultId: null } } } },
       workspace: { onLayoutReady() {} },
-      fileManager: { async trashFile(entry) { trashed.push([entry.path, files.get(entry.path)]); files.delete(entry.path); } },
+      fileManager: {
+        async trashFile(entry) { trashed.push([entry.path, files.get(entry.path)]); files.delete(entry.path); },
+        // Enough of Obsidian's frontmatter handling for the fields a shared note leaves behind.
+        async processFrontMatter(entry, change) {
+          const content = decode(files.get(entry.path)), match = /^---\n([\s\S]*?)\n---\n/.exec(content);
+          const fields = Object.fromEntries((match?.[1].split('\n') ?? []).map((line) => [line.slice(0, line.indexOf(':')), line.slice(line.indexOf(':') + 2)]));
+          change(fields);
+          const lines = Object.entries(fields).map(([key, value]) => `${key}: ${value}`);
+          files.set(entry.path, text(`${lines.length ? `---\n${lines.join('\n')}\n---\n` : ''}${match ? content.slice(match[0].length) : content}`));
+        },
+      },
+      metadataCache: { getFirstLinkpathDest(link) { const path = [...files.keys()].find((entry) => entry.split('/').pop() === link); return path ? { path, name: link, extension: link.split('.').pop(), isTestFile: true } : null; } },
       vault: {
         getName: () => 'Test',
         on() {},
@@ -69,6 +81,9 @@ function vault() {
         async process(entry, change) { files.set(entry.path, text(change(decode(files.get(entry.path))))); },
         async modifyBinary(entry, data) { files.set(entry.path, new Uint8Array(data)); },
         async createBinary(path, data) { if (files.has(path)) throw new Error('exists'); addParents(path); files.set(path, new Uint8Array(data)); },
+        async create(path, content) { if (files.has(path)) throw new Error('exists'); addParents(path); files.set(path, text(content)); return file(path); },
+        async read(entry) { return decode(files.get(entry.path)); },
+        async readBinary(entry) { return files.get(entry.path).slice().buffer; },
         adapter: {
           async exists(path) { return files.has(path) || folders.has(path); },
           async list(path) {
@@ -79,6 +94,7 @@ function vault() {
           async readBinary(path) { return files.get(path).slice().buffer; },
           async writeBinary(path, data) { addParents(path); files.set(path, new Uint8Array(data)); },
           async mkdir(path) { addParents(`${path}/x`); },
+          async rmdir(path) { for (const entry of [...files.keys()]) if (entry.startsWith(`${path}/`)) files.delete(entry); for (const entry of [...folders]) if (entry === path || entry.startsWith(`${path}/`)) folders.delete(entry); },
           async trashLocal(path) { trashed.push([path, files.get(path)]); files.delete(path); },
         },
       },
@@ -274,6 +290,180 @@ test('a sync that only sends changes up leaves the cards alone; one that brings 
   assert.match(cloud.status, /changed in two places/);
   assert.equal(redraws, 3);
 });
+
+test('shared groups: a group syncs in its own folder, a bad file or being removed stops nothing, and notes can be kept', async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'jotdrop-plugin-spaces-'));
+  const mails = [];
+  let now = Date.parse('2026-11-02T08:00:00Z');
+  const app = await createCloudServer({ dataDir, enrollmentToken: randomToken(), mailer: async (mail) => { mails.push(mail); }, serverKey: randomToken(), clock: () => now, freeDeviceLimit: 100, signupsPerAddress: 1000 });
+  t.after(async () => { await app.close(); await rm(dataDir, { recursive: true, force: true }); });
+  const url = `http://127.0.0.1:${app.port}`;
+  const account = async (email) => {
+    now += 61000;
+    const pending = await signUp({ url, email, password: 'correct horse battery', deviceName: 'Test' });
+    return (await confirmSignup(pending, mails.filter((mail) => mail.to === email && mail.kind === 'verify').at(-1).code)).client;
+  };
+  const v = vault();
+  v.put('Mini Notes/Mine.md', 'My own note');
+  const cloud = new CloudController(v.plugin, v.store);
+  await cloud.finishSignIn(await account('plugin@example.com'), 'plugin@example.com');
+  await cloud.setEnabled(true);
+  await cloud.syncNow();
+  const own = cloud.connection;
+
+  // Someone else makes a group; a link brings it in here. The key is wrapped for this account, so other devices get it too.
+  const eric = await account('eric@example.com');
+  const space = await createSpace(eric, 'Family', { memberName: 'Eric' });
+  const files = spaceClient(eric, space.id, space.key);
+  await files.write('notes/Groceries.md', text('- [ ] milk\n- [ ] bread\n'), 0);
+  await files.write('attachments/x.png', new Uint8Array([9, 9]), 0);
+  now += 61000;
+  await cloud.join((await makeInvite(eric, space, 'Eric')).link, 'Ana');
+  const local = `Mini Notes/Shared/${space.id}/Groceries.md`;
+  assert.equal(decode(v.files.get(local)), '- [ ] milk\n- [ ] bread\n');
+  assert.deepEqual([...v.files.get(`Mini Notes/Shared/${space.id}/attachments/x.png`)], [9, 9]);
+  assert.equal(cloud.spaceOf(local).name, 'Family');
+  assert.deepEqual(cloud.spaceOf(local).others, ['Eric']);
+  assert.equal(cloud.spaceOf('Mini Notes/Mine.md'), undefined);
+  // Nothing of the group goes into the own vault.
+  await cloud.syncNow();
+  const { changes } = await own.listChanges(0);
+  assert.equal(changes.filter((change) => !change.deleted).length, 1, 'Only Mine.md');
+
+  // Both ways, and both ticks in one note.
+  v.put(local, '- [x] milk\n- [ ] bread\n');
+  const id = await objectId(space.key, 'notes/Groceries.md');
+  const before = await files.read(id);
+  await files.write('notes/Groceries.md', text('- [ ] milk\n- [x] bread\n'), before.revision);
+  await cloud.syncNow();
+  const merged = '- [x] milk\n- [x] bread\n';
+  assert.equal(decode(v.files.get(local)), merged);
+  assert.equal(decode((await files.read(id)).file.bytes), merged);
+
+  // A file that does not open, and a note where the attachments are: left out, and the rest still syncs.
+  const evil = await files.prepareWrite('notes/Other.md', text('bad'), 0);
+  await files.commitWrite({ ...evil, id: await objectId(space.key, 'notes/Evil.md') }, { source: text('bad') });
+  await files.write('notes/attachments/trick.md', text('in the wrong place'), 0);
+  await files.write('notes/Second.md', text('Second'), 0);
+  await files.write('notes/Spare.md', text('Spare'), 0);
+  await cloud.syncNow();
+  assert.equal(decode(v.files.get(`Mini Notes/Shared/${space.id}/Second.md`)), 'Second');
+  assert.ok(![...v.files.keys()].some((path) => /Evil|Other|trick/.test(path)));
+
+  // Someone overwrites a note this device tracks with what does not open: the rest keeps syncing, the note stays.
+  const spare = `Mini Notes/Shared/${space.id}/Spare.md`, spareId = await objectId(space.key, 'notes/Spare.md');
+  const broken = await spaceClient(eric, space.id, randomToken()).prepareWrite('notes/Spare.md', text('bad'), (await files.read(spareId)).revision);
+  await files.commitWrite({ ...broken, id: spareId }, { source: text('bad') });
+  await files.write('notes/Third.md', text('Third'), 0);
+  await cloud.syncNow();
+  assert.equal(decode(v.files.get(spare)), 'Spare');
+  assert.equal(decode(v.files.get(`Mini Notes/Shared/${space.id}/Third.md`)), 'Third', 'Everything else still syncs');
+  // A change on top of it repairs the note for everyone.
+  v.put(spare, 'Spare, repaired');
+  await cloud.syncNow();
+  assert.equal(decode((await files.read(spareId)).file.bytes), 'Spare, repaired');
+
+  // The folder disappears, by hand or otherwise: that is not "deleted for everyone", the notes simply come back.
+  await v.plugin.app.vault.adapter.rmdir(`Mini Notes/Shared/${space.id}`, true);
+  await cloud.syncNow();
+  assert.equal(decode(v.files.get(local)), merged);
+  assert.equal(decode((await files.read(id)).file.bytes), merged, 'Nothing was deleted in the cloud');
+
+  // Removed from the group: nothing is deleted without asking, and the own vault keeps syncing.
+  const me = (await spaceDetails(eric, space.id)).members.find((member) => member.name === 'Ana');
+  await removeMember(eric, space.id, me.accountId);
+  v.put('Mini Notes/After.md', 'Written after being removed');
+  await cloud.syncNow();
+  assert.ok(cloud.enabled);
+  assert.equal(cloud.spaceOf(local).gone, true);
+  assert.ok(v.files.has(local));
+  assert.equal((await own.listChanges(0)).changes.filter((change) => !change.deleted).length, 2);
+  await cloud.release(cloud.spaceOf(local), true);
+  assert.equal(decode(v.files.get('Mini Notes/Groceries.md')), merged);
+  assert.deepEqual([...v.files.get('Mini Notes/.attachments/x.png')], [9, 9]);
+  assert.ok(!v.files.has(local));
+  assert.equal(cloud.spaces.length, 0);
+
+  // Invited again after keeping a copy, with something already in the folder: the notes come back, and nobody loses them.
+  v.put(`Mini Notes/Shared/${space.id}/Back.md`, 'Back');
+  now += 61000;
+  await cloud.join((await makeInvite(eric, space, 'Eric')).link, 'Ana');
+  assert.equal(decode(v.files.get(local)), merged);
+  assert.equal(decode((await files.read(id)).file.bytes), merged, 'Nothing was deleted in the cloud');
+  await cloud.leave(cloud.spaceOf(local));
+  await cloud.release(cloud.spaceOf(local), false);
+
+  // Sharing: to a new group with its photo; pin, labels and a reminder stay behind, the colour goes along.
+  v.put('Mini Notes/Trip.md', '---\npinned: true\ncolor: blue\nreminder: 2027-01-01T10:00\n---\nPacking\n\n![[x.png]]\n');
+  await cloud.syncNow();
+  await cloud.share(v.plugin.app.vault.getAbstractFileByPath('Mini Notes/Trip.md'), null, 'Holiday', 'Ana');
+  await cloud.syncNow();
+  const holiday = cloud.spaces[0];
+  assert.equal(decode(v.files.get(`Mini Notes/Shared/${holiday.id}/Trip.md`)), '---\ncolor: blue\n---\nPacking\n\n![[x.png]]\n');
+  assert.ok(v.files.has(`Mini Notes/Shared/${holiday.id}/attachments/x.png`));
+  assert.ok(!v.files.has('Mini Notes/Trip.md'));
+  const peer = await account('peer@example.com');
+  now += 61000;
+  const link = await cloud.invite(holiday.id, 'Ana');
+  const joined = await acceptInvite(peer, readInvite(link), 'Peer');
+  const seen = spaceClient(peer, joined.id, joined.key);
+  assert.match(decode((await seen.read(await objectId(joined.key, 'notes/Trip.md'))).file.bytes), /Packing/);
+  // The free plan shares one note.
+  v.put('Mini Notes/Two.md', 'Two');
+  await cloud.syncNow();
+  await assert.rejects(cloud.share(v.plugin.app.vault.getAbstractFileByPath('Mini Notes/Two.md'), holiday.id, '', 'Ana'), /free plan/);
+  assert.ok(v.files.has('Mini Notes/Two.md'));
+
+  // An unsent change in a group that goes read-only comes back as an own note, and the group's copy stays as it was.
+  await cloud.syncNow();
+  const three = await account('three@example.com');
+  now += 61000;
+  await acceptInvite(three, readInvite(await cloud.invite(holiday.id, 'Ana')), 'Three');
+  v.put(`Mini Notes/Shared/${holiday.id}/Trip.md`, '---\ncolor: blue\n---\nPacking unsent\n\n![[x.png]]\n');
+  const message = await removeThroughOwner(cloud, holiday, 'Three');
+  assert.match(message, /new link: Peer/);
+  const next = cloud.spaces.find((item) => item.id !== holiday.id);
+  assert.ok(next && next.key !== holiday.key, 'A new group with a new key');
+  assert.ok(!v.files.has(`Mini Notes/Shared/${holiday.id}/Trip.md`), 'The old folder is gone');
+  assert.match(decode(v.files.get(`Mini Notes/Shared/${next.id}/Trip.md`)), /Packing unsent/, 'It was sent before the copy was made');
+  await assert.rejects(spaceClient(three, next.id, next.key).listChanges(0), (error) => error.status === 401);
+
+  // The same owner replaces the group from another device: this device shows the old one as read-only, keeps what it did not send, and gets the new one.
+  v.put(`Mini Notes/Shared/${next.id}/Trip.md`, '---\ncolor: blue\n---\nPacking from this device\n\n![[x.png]]\n');
+  const again = await replaceSpace(cloud.connection, await spaceDetails(cloud.connection, next.id), { memberName: 'Ana' });
+  await cloud.syncNow();
+  assert.equal(cloud.spaces.find((item) => item.id === next.id).frozen, true);
+  assert.match(decode(v.files.get('Mini Notes/Not sent - Trip.md')), /Packing from this device/);
+  assert.match(decode(v.files.get(`Mini Notes/Shared/${again.id}/Trip.md`)), /Packing unsent/);
+
+  // As a member: what could not be sent before the owner replaced the group comes back as an own note, once.
+  now += 61000;
+  await cloud.join((await makeInvite(eric, space, 'Eric')).link, 'Ana');
+  const family = `Mini Notes/Shared/${space.id}/Second.md`;
+  assert.equal(decode(v.files.get(family)), 'Second');
+  v.put(family, 'Second, changed here');
+  const fourth = await account('fourth@example.com');
+  now += 61000;
+  await acceptInvite(fourth, readInvite((await makeInvite(eric, space, 'Eric')).link), 'Fourth');
+  await replaceSpace(eric, await spaceDetails(eric, space.id), { memberName: 'Eric' });
+  await cloud.syncNow();
+  await cloud.syncNow();
+  assert.equal(decode(v.files.get('Mini Notes/Not sent - Second.md')), 'Second, changed here');
+  assert.equal(decode(v.files.get(family)), 'Second, changed here', 'Copied, never moved');
+  assert.equal(cloud.spaceOf(family).frozen, true);
+  // Put aside, it stays away while the server still lists it.
+  await cloud.release(cloud.spaceOf(family), false);
+  await cloud.syncNow();
+  assert.equal(cloud.spaceOf(family), undefined);
+  assert.ok(!v.files.has(family));
+  assert.equal((await spaceClient(eric, space.id, space.key).read(await objectId(space.key, 'notes/Second.md'))).revision, 1, 'Nothing went up to the frozen group');
+  assert.ok(![...v.files.keys()].some((path) => path.includes('Not sent - Second 2')), 'Once per version');
+});
+
+const removeThroughOwner = async (cloud, space, name) => {
+  const details = await cloud.details(space.id);
+  return cloud.removePerson(space, details.members.find((member) => member.name === name).accountId);
+};
 
 test('the archive must sit inside the notes folder, like on the website and Android', async () => {
   const v = vault();

@@ -1,7 +1,8 @@
-import { FileSystemAdapter, Modal, Notice, Platform, Setting, TFile, normalizePath, requestUrl } from "obsidian";
+import { type App, FileSystemAdapter, Modal, Notice, Platform, Setting, TFile, normalizePath, requestUrl } from "obsidian";
 import type JotDropPlugin from "./main";
 import { ConfirmModal } from "./confirmModal";
 import { CloudClient } from "../cloud/shared/client.mjs";
+import { acceptInvite, createSpace, deleteSpace, leaveSpace, listSpaces, makeInvite, readInvite, removeMember, replaceSpace, saveSpacePrefs, setMemberName, spaceClient, spaceDetails, takeOverSpace, withdrawInvite } from "../cloud/shared/spaces.mjs";
 import { availableProviders, checkApproval, completeApproval, confirmLogin, confirmSignup, logIn, personCheckKey, providerApproval, providerRecover, providerSignUp, providerTicket, requestApproval, resetWithRecoveryCode, signUp, startOver, startProviderSignIn, startReset } from "../cloud/shared/account.mjs";
 import { AuthenticatorModal, RecoveryCodeModal } from "./cloudAccount";
 import { ConflictReviewModal, TimeMachineModal } from "./cloudReview";
@@ -37,6 +38,9 @@ const decoder = new TextDecoder("utf-8", { fatal: true });
 type Base = { revision: number; hash: string; deleted: boolean };
 type Prepared = { id: string; baseRevision: number; envelope: string };
 type RemoteIndex = { cursor: number; objects: Record<string, { path: string; revision: number; deleted: boolean; hash: string }>; pending?: Record<string, number> };
+/** A shared group as this device knows it, also after access ended: its folder stays until the person decides. */
+export type KnownSpace = { id: string; key: string; name: string; others: string[]; frozen: boolean; gone: boolean; owner: boolean };
+type SpaceState = { tracked: Record<string, Base>; index: RemoteIndex; seen: Record<string, { size: number; modified: number; hash: string }>; upload?: Prepared; rescued: Record<string, string> };
 type SyncState = {
   vaultId: string; enabled: boolean; binding: string; tracked: Record<string, Base>; index: RemoteIndex;
   seen?: Record<string, { size: number; modified: number; hash: string }>; upload?: Prepared; lastSynced?: string; message: string; conflicts: number;
@@ -94,12 +98,12 @@ class CloudStore implements KeyValues {
 }
 
 // Signed in until Log out, like Keep: the connection is sealed with a key this device keeps but cannot export.
-async function seal(value: Session): Promise<Sealed> {
+async function seal(value: unknown): Promise<Sealed> {
   const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
   const iv = crypto.getRandomValues(new Uint8Array(12));
   return { key, iv, data: await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, encoder.encode(JSON.stringify(value))) };
 }
-async function unseal(saved: Sealed): Promise<Session> {
+async function unseal<T = Session>(saved: Sealed): Promise<T> {
   return JSON.parse(decoder.decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: new Uint8Array(saved.iv) }, saved.key, saved.data)));
 }
 
@@ -113,12 +117,15 @@ class VaultFolder {
   readonly legacy: string;
   readonly binding: string;
 
-  constructor(private plugin: JotDropPlugin, private editing: Set<string>) {
+  /** `spaceId`: a shared group, with its notes and attachments together in notes/Shared/<id>/, under the same cloud paths. */
+  constructor(private plugin: JotDropPlugin, private editing: Set<string>, private spaceId?: string) {
     const { settings } = plugin;
-    this.notes = normalizePath(settings.notesFolder).replace(/\/+$/, "");
-    this.assets = plugin.resolveAssetsFolder().replace(/\/+$/, "");
-    this.legacy = `${this.notes}/.attachments`;
+    const vaultNotes = normalizePath(settings.notesFolder).replace(/\/+$/, "");
+    this.notes = spaceId ? `${vaultNotes}/Shared/${spaceId}` : vaultNotes;
+    this.assets = spaceId ? `${this.notes}/attachments` : plugin.resolveAssetsFolder().replace(/\/+$/, "");
+    this.legacy = spaceId ? this.assets : `${this.notes}/.attachments`;
     this.binding = [this.notes, this.assets].join("\n");
+    if (spaceId) return;
     if (!this.notes || this.notes === "/") throw new Error("Choose a notes folder before turning on cloud sync.");
     if (normalizePath(settings.archiveFolder) !== `${this.notes}/Archive`) throw new Error(`Cloud sync keeps archived notes in ${this.notes}/Archive, like the website and Android. Set the archive folder to that first.`);
     if (this.assets === this.notes || this.notes.startsWith(`${this.assets}/`) || this.assets === `${this.notes}/Archive` || this.assets === `${this.notes}/Trash`) throw new Error("The notes and attachments folders overlap. Choose separate folders.");
@@ -182,6 +189,8 @@ class VaultFolder {
       for (const child of listing.folders) {
         const name = child.split("/").pop() || "";
         if (SYNCTHING.includes(name.toLowerCase())) throw syncthing();
+        // A group keeps its attachments inside its note folder; they are listed once, as attachments.
+        if (this.spaceId && !attachments && depth === 0 && name === "attachments") continue;
         if (!name.startsWith(".")) await walk(child, `${prefix}/${name}`, attachments, depth + 1);
       }
       for (const file of listing.files) {
@@ -368,6 +377,7 @@ export class CloudController {
     const plugin = this.plugin;
     plugin.addCommand({ id: "cloud-sync-now", name: "JotDrop Cloud: sync now", callback: () => { void this.syncNow().catch((error) => new Notice(error instanceof Error ? error.message : String(error))); } });
     plugin.addCommand({ id: "cloud-review-conflicts", name: "JotDrop Cloud: review conflicts", callback: () => new ConflictReviewModal(plugin.app, this).open() });
+    plugin.addCommand({ id: "cloud-shared-groups", name: "JotDrop Cloud: shared groups", callback: () => new SharedGroupsModal(plugin.app, this).open() });
     plugin.addCommand({ id: "cloud-time-machine", name: "JotDrop Cloud: time machine", callback: () => new TimeMachineModal(plugin.app, this).open() });
     const touched = (path: string) => {
       if (!this.enabled) return;
@@ -425,6 +435,9 @@ export class CloudController {
     this.email = session.email;
     this.state = await this.store.get<SyncState>("state");
     if (this.state?.vaultId !== this.client.credentials.vaultId) this.state = undefined;
+    const spaces = await this.store.get<Sealed>("spaces");
+    this.spaces = spaces ? await unseal<KnownSpace[]>(spaces) : [];
+    this.putAside = await this.store.get<string[]>("spaces-aside") ?? [];
     this.status = this.state?.message || "Signed in. Cloud sync is off.";
     this.changed();
   }
@@ -600,6 +613,8 @@ export class CloudController {
       await save();
       this.status = state.message;
       if (report.conflicts) this.conflictNotice(report.conflicts);
+      // The own vault is done; a group that fails says so itself and never stops this.
+      if (await this.syncSpaces(client, active, abort.signal)) redraw = true;
     } catch (error) {
       if (this.generation !== generation) return;
       const status = (error as { status?: number }).status;
@@ -615,6 +630,273 @@ export class CloudController {
       this.changed();
       if (redraw) this.plugin.refreshViews();
     }
+  }
+
+  /** The groups this device knows, for the mark on a card and the groups window. */
+  spaces: KnownSpace[] = [];
+  // Read-only groups this device let go; the server lists them for up to 30 days more.
+  private putAside: string[] = [];
+  spaceOf(path: string): KnownSpace | undefined {
+    const notes = normalizePath(this.plugin.settings.notesFolder).replace(/\/+$/, "");
+    return this.spaces.find((space) => path.startsWith(`${notes}/Shared/${space.id}/`));
+  }
+  // The keys of the groups, sealed like the session.
+  private async saveSpaces(): Promise<void> { await this.store.put("spaces", await seal(this.spaces)); }
+
+  /** Every group with its own state. A 401 here means this group, not this device; nothing here stops the own vault. */
+  private async syncSpaces(client: CloudClient, active: () => void, signal: AbortSignal): Promise<boolean> {
+    let items;
+    try { items = await listSpaces(client); } catch { return false; }
+    let changed = false;
+    const listed = new Set(items.map((item: { id: string }) => item.id));
+    for (const item of items) {
+      active();
+      try {
+        const details = await spaceDetails(client, item.id);
+        const known = this.spaces.find((space) => space.id === item.id);
+        const key = details.key ?? known?.key;
+        // Nothing to open yet, or read-only and not on this device. A group someone can still take over does show on a device that never had it.
+        if (!key || details.unfinished || (item.frozen && !known && (this.putAside.includes(item.id) || !details.canTakeOver))) continue;
+        const next: KnownSpace = { id: item.id, key, name: details.name ?? "", others: details.members.filter((m: { accountId: string }) => m.accountId !== details.me.accountId).map((m: { name: string | null }) => m.name || "Someone"), frozen: item.frozen, gone: false, owner: details.role === "owner" };
+        if (!known || JSON.stringify(known) !== JSON.stringify(next)) changed = true;
+        this.spaces = [...this.spaces.filter((space) => space.id !== item.id), next];
+        await this.saveSpaces();
+        if (item.frozen) { if (await this.rescueUnsent(next)) changed = true; }
+        else if (await this.syncSpace(client, next, active, signal)) changed = true;
+      } catch (error) {
+        if ((error as { name?: string }).name === "AbortError") throw error;
+        console.warn("JotDrop: shared group not synced", (error as Error).name);
+        const known = this.spaces.find((space) => space.id === item.id);
+        if ((error as { status?: number }).status === 401 && known && !known.gone) { known.gone = true; changed = true; await this.saveSpaces(); }
+      }
+    }
+    // Not in the list any more: nothing is removed here without asking.
+    for (const space of this.spaces) if (!listed.has(space.id) && !space.gone) { space.gone = true; changed = true; }
+    if (changed) await this.saveSpaces();
+    if (this.putAside.some((id) => !listed.has(id))) { this.putAside = this.putAside.filter((id) => listed.has(id)); await this.store.put("spaces-aside", this.putAside); }
+    return changed;
+  }
+
+  private async syncSpace(own: CloudClient, space: KnownSpace, active: () => void, signal: AbortSignal): Promise<boolean> {
+    const client = spaceClient(own, space.id, space.key) as CloudClient;
+    const folder = new VaultFolder(this.plugin, this.editing, space.id);
+    const key = `space:${space.id}`;
+    const state: SpaceState = await this.store.get<SpaceState>(key) ?? { tracked: {}, index: { cursor: 0, objects: {}, pending: {} }, seen: {}, rescued: {} };
+    const save = () => this.store.put(key, state);
+    // The folder itself is gone, whatever took it. That says nothing about the notes: starting over brings them back,
+    // while reading it as deletions would remove them for everyone.
+    if (Object.keys(state.tracked).length && !await this.plugin.app.vault.adapter.exists(folder.notes)) { state.tracked = {}; await save(); }
+    const { vaultKey, vaultId } = client.credentials;
+    if (state.upload) {
+      const prepared = state.upload;
+      const file = await decryptEnvelope(vaultKey, JSON.parse(prepared.envelope), `jotdrop:object:v1:${vaultId}:${prepared.id}`);
+      const path = syncPath(file.path);
+      let bytes: Uint8Array | null = typeof file.content === "string" ? base64ToBytes(file.content) : null;
+      if (!bytes) { const local = await folder.read(path).catch(() => null); if (local && await sha256Hex(local) === file.hash) bytes = local; }
+      try {
+        const saved = await client.commitWrite(prepared, { resumable: true, signal, source: bytes ?? undefined });
+        const fingerprint = bytes ? await hash(bytes) : fromHex(file.hash);
+        if ((state.tracked[path]?.revision ?? 0) < saved.revision) state.tracked[path] = { revision: saved.revision, hash: fingerprint, deleted: false };
+      } catch (error) {
+        if ((error as { status?: number }).status === 409) { if (bytes) await folder.recover(path, bytes); }
+        else if (!(!bytes && error instanceof Error && /file is needed/.test(error.message))) throw error;
+      }
+      state.upload = undefined;
+      await save();
+    }
+    const remote = {
+      list: () => remoteFiles(client, state.index, { checkActive: active, save, skipBad: (path: string) => path.startsWith("notes/attachments/") }),
+      write: async (path: string, bytes: Uint8Array, baseRevision: number) => {
+        active();
+        const prepared = state.upload = await client.prepareWrite(path, bytes, baseRevision);
+        await save();
+        const saved = await client.commitWrite(prepared, { resumable: true, signal, source: bytes });
+        state.upload = undefined;
+        const object = { path, revision: saved.revision, deleted: false, hash: await hash(bytes) };
+        state.index.objects[prepared.id] = object;
+        return object;
+      },
+      delete: async (path: string, baseRevision: number) => {
+        active();
+        const id = await objectId(vaultKey, path);
+        const saved = await client.remove(id, baseRevision);
+        const object = { path, revision: saved.revision, deleted: true, hash: state.index.objects[id]?.hash ?? "" };
+        state.index.objects[id] = object;
+        return object;
+      },
+      base: async (path: string, revision: number) => {
+        active();
+        const id = await objectId(vaultKey, path);
+        try { const { manifest } = await client.readManifest(id, revision); return await client.readPieces(id, manifest); }
+        catch (error) {
+          const { status, name } = error as { status?: number; name?: string };
+          // An old version that does not open is no base to merge from.
+          if (status !== undefined ? status >= 400 && status < 500 : !(error instanceof TypeError) && name !== "AbortError" && name !== "TimeoutError") return null;
+          throw error;
+        }
+      },
+    };
+    const maxFileBytes: number = (await client.status()).pieces?.maxFileBytes ?? MAX_FILE_BYTES;
+    const report = await syncFolder(remote, folder, state.tracked, (next: Record<string, Base>) => this.store.put(key, { ...state, tracked: next }), { checkActive: active, seen: state.seen, maxFileBytes });
+    await save();
+    return report.downloaded > 0 || report.deleted > 0;
+  }
+
+  /**
+   * A read-only group takes nothing more. What differs from the last synced state is copied to the own notes as an
+   * ordinary note, once per version; nothing in the group's folder is moved, so a group that comes back loses nothing.
+   */
+  private async rescueUnsent(space: KnownSpace): Promise<boolean> {
+    const folder = new VaultFolder(this.plugin, this.editing, space.id), own = new VaultFolder(this.plugin, this.editing);
+    const key = `space:${space.id}`;
+    const state = await this.store.get<SpaceState>(key);
+    if (!state) return false;
+    let rescued = false;
+    const mine = await own.list();
+    for (const path of (await folder.list()).keys()) {
+      const bytes = await folder.read(path), fingerprint = await hash(bytes);
+      const base = state.tracked[path];
+      if ((base && !base.deleted && base.hash === fingerprint) || state.rescued?.[path] === fingerprint) continue;
+      const name = path.split("/").pop() as string;
+      const wanted = path.startsWith("notes/") ? `notes/Not sent - ${name}` : `attachments/${name}`;
+      let free = wanted;
+      for (let copy = 2; mine.has(free); copy++) free = copyName(wanted, ` ${copy}`);
+      if (!await own.compareAndSet(free, null, bytes)) throw new Error("Could not save an unsent change. It is still in the shared folder.");
+      (state.rescued ??= {})[path] = fingerprint;
+      await this.store.put(key, state);
+      rescued = true;
+    }
+    if (rescued) new Notice("Changes that could not be sent to a shared group are now in your own notes, named \"Not sent\".");
+    return rescued;
+  }
+
+  private async withClient<T>(action: (client: CloudClient) => Promise<T>): Promise<T> {
+    await this.ready;
+    if (!this.client) throw new Error("Log in to JotDrop Cloud first.");
+    return this.exclusive(() => action(this.client!));
+  }
+  details(id: string) { return this.withClient((client) => spaceDetails(client, id)); }
+  invite(id: string, name: string) { return this.withClient(async (client) => (await makeInvite(client, this.spaces.find((space) => space.id === id) as KnownSpace, name, client.credentials.url)).link as string); }
+  withdraw(id: string, inviteId: string) { return this.withClient((client) => withdrawInvite(client, id, inviteId)); }
+  takeOver(id: string) { return this.withClient((client) => takeOverSpace(client, id)); }
+
+  /** Takes effect on the next sync, which brings the group's notes. Joining sends none of your own notes. */
+  async join(link: string, name: string): Promise<string> {
+    await this.withClient((client) => acceptInvite(client, readInvite(link), name));
+    await this.syncNow();
+    return "You joined this group.";
+  }
+
+  /** Into the group's folder, destination first. What is per person stays behind, and a reminder too: it would go off for everyone. */
+  async share(file: TFile, spaceId: string | null, groupName: string, me: string): Promise<void> {
+    const app = this.plugin.app;
+    const target = await this.withClient(async (client) => {
+      if (spaceId) { await setMemberName(client, this.spaces.find((space) => space.id === spaceId) as KnownSpace, me); return spaceId; }
+      const made = await createSpace(client, groupName, { memberName: me });
+      this.spaces = [...this.spaces, { id: made.id, key: made.key, name: groupName, others: [], frozen: false, gone: false, owner: true }];
+      await this.saveSpaces();
+      return made.id as string;
+    });
+    const space = this.spaces.find((item) => item.id === target) as KnownSpace;
+    const files = await this.withClient(async (client) => (await spaceClient(client, space.id, space.key).status()).plan?.name);
+    const folder = new VaultFolder(this.plugin, this.editing, target);
+    const existing = await folder.list();
+    if (files !== "plus" && [...existing.keys()].some((path) => path.startsWith("notes/"))) throw new Error("The free plan shares one note. JotDrop Plus shares more.");
+    await folder.guard();
+    const adapter = app.vault.adapter;
+    if (!await adapter.exists(`${folder.notes.split("/Shared/")[0]}/Shared`)) await adapter.mkdir(`${folder.notes.split("/Shared/")[0]}/Shared`);
+    if (!await adapter.exists(folder.notes)) await adapter.mkdir(folder.notes);
+    if (!await adapter.exists(folder.assets)) await adapter.mkdir(folder.assets);
+    const text = await app.vault.read(file);
+    for (const match of text.matchAll(/!\[\[([^\]|#]+)|!\[[^\]]*\]\(([^)#]+)\)/g)) {
+      const link = decodeURI((match[1] ?? match[2]).trim());
+      const source = app.metadataCache.getFirstLinkpathDest(link, file.path);
+      if (!source || source.extension === "md") continue;
+      const copy = `${folder.assets}/${source.name}`;
+      if (!await adapter.exists(copy)) await adapter.writeBinary(copy, await app.vault.readBinary(source));
+    }
+    let target_path = `${folder.notes}/${file.name}`;
+    for (let copy = 2; await adapter.exists(target_path); copy++) target_path = `${folder.notes}/${file.basename} ${copy}.md`;
+    const created = await app.vault.create(target_path, text);
+    await app.fileManager.processFrontMatter(created, (fm: Record<string, unknown>) => {
+      for (const field of ["pinned", "jotdrop_labels", "order", "reminder", "reminder_repeat", "reminder_until", "reminder_limit", "reminder_done"]) delete fm[field];
+    });
+    await app.fileManager.trashFile(file);
+    this.request(0);
+  }
+
+  /** A note out of its group, into the own notes. A read-only group keeps its copy. */
+  async moveToMine(file: TFile): Promise<void> {
+    const space = this.spaceOf(file.path);
+    if (!space) return;
+    const app = this.plugin.app, notes = normalizePath(this.plugin.settings.notesFolder).replace(/\/+$/, "");
+    let target = `${notes}/${file.name}`;
+    for (let copy = 2; await app.vault.adapter.exists(target); copy++) target = `${notes}/${file.basename} ${copy}.md`;
+    await app.vault.create(target, await app.vault.read(file));
+    if (!space.frozen && !space.gone) await app.fileManager.trashFile(file);
+    this.request(0);
+  }
+
+  /** Keep the notes of a group as own notes, or remove its folder. Asked first, in the window. */
+  async release(space: KnownSpace, keep: boolean): Promise<void> {
+    await this.exclusive(async () => {
+      const app = this.plugin.app, folder = new VaultFolder(this.plugin, this.editing, space.id), adapter = app.vault.adapter;
+      if (keep) {
+        const own = new VaultFolder(this.plugin, this.editing), mine = await own.list();
+        for (const path of (await folder.list()).keys()) {
+          let free = path;
+          for (let copy = 2; mine.has(free); copy++) free = copyName(path, ` ${copy}`);
+          await own.compareAndSet(free, null, await folder.read(path));
+        }
+      }
+      if (await adapter.exists(folder.notes)) await adapter.rmdir(folder.notes, true);
+      this.spaces = this.spaces.filter((item) => item.id !== space.id);
+      await this.saveSpaces();
+      await this.store.put(`space:${space.id}`, undefined);
+      this.putAside = [...this.putAside.filter((id) => id !== space.id), space.id];
+      await this.store.put("spaces-aside", this.putAside);
+    });
+    this.plugin.refreshViews();
+    this.changed();
+  }
+
+  async leave(space: KnownSpace): Promise<void> {
+    await this.withClient((client) => leaveSpace(client, space.id));
+    space.gone = true;
+    await this.saveSpaces();
+    this.changed();
+  }
+  async deleteGroup(space: KnownSpace): Promise<void> {
+    await this.rescueUnsent(space);
+    await this.withClient((client) => deleteSpace(client, space.id));
+    await this.release(space, false);
+  }
+
+  /** Removing a person. The mark goes first, under your own key, so a crash shows "Finish removing" on any device. */
+  async removePerson(space: KnownSpace, accountId: string): Promise<string> {
+    const details = await this.details(space.id);
+    await this.withClient(async (client) => { await saveSpacePrefs(client, space.id, { ...details.prefs, finishRemoval: true }); await removeMember(client, space.id, accountId); });
+    return this.finishRemoval(space);
+  }
+  async finishRemoval(space: KnownSpace): Promise<string> {
+    // What this device did not send yet goes first.
+    await this.syncNow().catch(() => {});
+    const details = await this.details(space.id);
+    if (details.members.length <= 1) {
+      // In this order, because a failure in between then leaves a group without access whose notes are still here, to keep.
+      await this.withClient((client) => deleteSpace(client, space.id));
+      await this.release(space, true);
+      this.request(0);
+      return "The person is removed. The notes are back in your own notes.";
+    }
+    const me = details.members.find((m: { accountId: string }) => m.accountId === details.me.accountId)?.name ?? "Someone";
+    const others = details.members.filter((m: { accountId: string }) => m.accountId !== details.me.accountId).map((m: { name: string | null }) => m.name || "Someone").join(", ");
+    await this.withClient((client) => replaceSpace(client, details, { memberName: me }));
+    // Right before the folder goes: what was changed since the sync gets a copy in the own notes.
+    await this.exclusive(() => this.rescueUnsent(space));
+    await this.release(space, false);
+    await this.syncNow();
+    return `The person is removed. Send the others a new link: ${others}.`;
   }
 
   /** An upload that survives a restart: the next sync finishes it, or keeps it as a copy when the cloud moved on. */
@@ -825,6 +1107,10 @@ export class CloudController {
     this.email = "";
     this.state = undefined;
     await this.store.delete("session");
+    await this.store.delete("spaces");
+    this.spaces = [];
+    await this.store.delete("spaces-aside");
+    this.putAside = [];
     await this.store.delete("state");
     this.status = status;
     this.changed();
@@ -863,6 +1149,96 @@ type Pending = Awaited<ReturnType<typeof logIn>> & { secondFactor?: string };
 type LimitError = { code?: string; message?: string; devices?: Array<{ id: string; name: string; lastSeenAt: string }> };
 
 /** Log in or create an account, with the email code, the free device limit, the recovery code and "forgot password". */
+/** The groups on this device, the people in them, and using an invitation link. */
+export class SharedGroupsModal extends Modal {
+  private open_?: string;
+  constructor(app: App, private cloud: CloudController, private note?: TFile) { super(app); }
+  onOpen(): void { void this.draw(); }
+  onClose(): void { this.contentEl.empty(); }
+
+  private act(action: () => Promise<unknown>, done?: (result: unknown) => void): void {
+    action().then((result) => { if (typeof result === "string") new Notice(result); done?.(result); void this.draw(); }, (error) => new Notice((error as Error).message));
+  }
+
+  private async myName(): Promise<string> {
+    for (const space of this.cloud.spaces.filter((item) => !item.gone)) {
+      const details = await this.cloud.details(space.id).catch(() => null);
+      const name = details?.members.find((m: { accountId: string }) => m.accountId === details.me.accountId)?.name;
+      if (name) return name;
+    }
+    return "";
+  }
+
+  private async draw(): Promise<void> {
+    const el = this.contentEl;
+    el.empty();
+    if (this.note) { await this.drawShare(el, this.note); return; }
+    this.titleEl.setText("Shared groups");
+    el.createEl("p", { text: "Share a note from the menu on its card. Everyone in a group can read and change its notes. JotDrop's server cannot read them." });
+    for (const space of this.cloud.spaces) {
+      const state = space.gone ? "No access any more" : space.frozen ? "Read-only" : space.others.length ? `Shared with ${space.others.join(", ")}` : "Only you so far";
+      new Setting(el).setName(space.name || "Shared group").setDesc(state).addButton((button) => button.setButtonText(this.open_ === space.id ? "Close" : "Open").onClick(() => { this.open_ = this.open_ === space.id ? undefined : space.id; void this.draw(); }));
+      if (this.open_ === space.id) await this.drawGroup(el, space);
+    }
+    let link = "", name = await this.myName();
+    el.createEl("h4", { text: "Use an invitation link" });
+    // Obsidian plugins can run code from a note, so what others write is worth a thought before joining.
+    el.createEl("p", { text: "Accept only a link from someone you know. These people write in your vault: plugins such as Dataview JS or Templater can run code from a note. The owner can see your email address; the others see the name below." });
+    new Setting(el).setName("Invitation link").addText((input) => input.onChange((value) => { link = value; }));
+    new Setting(el).setName("Your name for the others").addText((input) => input.setValue(name).onChange((value) => { name = value; }));
+    new Setting(el).addButton((button) => button.setButtonText("Join").setCta().onClick(() => this.act(() => this.cloud.join(link, name))));
+  }
+
+  private async drawGroup(el: HTMLElement, space: KnownSpace): Promise<void> {
+    if (space.gone || space.frozen) {
+      el.createEl("p", { text: space.gone ? "You can no longer reach this group. This device still has a copy of its notes." : "Ask the owner for a new link. This group goes away after 30 days. What you changed and could not send is in your own notes, named \"Not sent\"." });
+      new Setting(el).addButton((button) => button.setButtonText("Keep a copy in my notes").onClick(() => this.act(() => this.cloud.release(space, true))))
+        .addButton((button) => button.setButtonText("Remove from this device").setWarning().onClick(() => this.confirmThen(`The notes of "${space.name}" are removed from this device.`, () => this.cloud.release(space, false))));
+      if (space.gone) return;
+    }
+    const details = await this.cloud.details(space.id).catch(() => null);
+    if (!details) return;
+    if (details.canTakeOver) new Setting(el).addButton((button) => button.setButtonText("Take over this group").setCta().onClick(() => this.act(() => this.cloud.takeOver(space.id).then(() => this.cloud.syncNow()))));
+    if (details.prefs.finishRemoval) new Setting(el).addButton((button) => button.setButtonText("Finish removing the person").setCta().onClick(() => this.act(() => this.cloud.finishRemoval(space))));
+    const owner = details.role === "owner";
+    const mine = details.members.find((m: { accountId: string }) => m.accountId === details.me.accountId)?.name ?? "Someone";
+    for (const member of details.members) {
+      const me = member.accountId === details.me.accountId;
+      const row = new Setting(el).setName([member.name || "Someone", me ? "(you)" : "", member.role === "owner" ? "(owner)" : ""].filter(Boolean).join(" ")).setDesc(member.email ?? "");
+      if (owner && !me && !details.frozen) row.addButton((button) => button.setButtonText("Remove").setWarning().onClick(() => this.confirmThen(`${member.name || "This person"} loses access right away to all notes in this group. What they already downloaded stays with them.`, () => this.cloud.removePerson(space, member.accountId))));
+    }
+    for (const invite of (details.invites ?? []).filter((item: { claimed: boolean }) => !item.claimed)) new Setting(el).setName("Link not used yet").addButton((button) => button.setButtonText("Withdraw").onClick(() => this.act(() => this.cloud.withdraw(space.id, invite.id))));
+    const actions = new Setting(el);
+    if (owner && !details.frozen) actions.addButton((button) => button.setButtonText("Invite someone").setCta().onClick(() => this.act(async () => {
+      const link = await this.cloud.invite(space.id, mine);
+      await navigator.clipboard.writeText(link);
+      return "Invitation link copied. Send it yourself, to one person. It works once and expires after 7 days.";
+    })));
+    if (!details.frozen && !details.replacedBy) actions.addButton((button) => button.setButtonText("Leave group").onClick(() => this.confirmThen("You lose access, and can keep a copy of the notes next.", () => this.cloud.leave(space))));
+    if (owner) actions.addButton((button) => button.setButtonText("Delete group").setWarning().onClick(() => this.confirmThen("The group and all of its notes are deleted for everyone. This cannot be undone. Move notes you want to keep to your own notes first.", () => this.cloud.deleteGroup(space))));
+  }
+
+  private confirmThen(text: string, action: () => Promise<unknown>): void {
+    new ConfirmModal(this.app, { title: "Are you sure?", message: text, confirmLabel: "Continue" }, () => this.act(action)).open();
+  }
+
+  private async drawShare(el: HTMLElement, note: TFile): Promise<void> {
+    this.titleEl.setText("Share this note");
+    el.createEl("p", { text: "The note moves to a shared group. Pin, labels, order and a reminder stay behind. Everyone in the group can read and change it." });
+    let choice = "", name = note.basename.slice(0, 80), me = await this.myName();
+    new Setting(el).setName("Group").addDropdown((list) => {
+      list.addOption("", "New group");
+      for (const space of this.cloud.spaces.filter((item) => !item.gone && !item.frozen)) list.addOption(space.id, space.name || "Shared group");
+      list.onChange((value) => { choice = value; });
+    });
+    new Setting(el).setName("Name of the new group").addText((input) => input.setValue(name).onChange((value) => { name = value; }));
+    new Setting(el).setName("Your name for the others").addText((input) => input.setValue(me).onChange((value) => { me = value; }));
+    new Setting(el).addButton((button) => button.setButtonText("Share").setCta().onClick(() => {
+      this.cloud.share(note, choice || null, name, me).then(() => { new Notice("The note is shared. Invite someone with \"JotDrop Cloud: shared groups\"."); this.close(); }, (error) => new Notice((error as Error).message));
+    }));
+  }
+}
+
 class CloudSignInModal extends Modal {
   private message!: HTMLElement;
 

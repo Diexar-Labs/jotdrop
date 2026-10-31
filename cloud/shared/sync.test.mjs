@@ -310,3 +310,50 @@ test('the time machine steps per minute and restores a moment as new versions', 
   assert.throws(() => restorePlan(current, locked), /Plus/);
   assert.equal(unavailable(current, [{ id: 'a', revision: null, deleted: false, locked: true, cleared: true }]).length, 1);
 });
+
+test('in a shared space a bad newest version stops nobody: the note stays, and a change on top of it repairs it', async () => {
+  const files = new Map([['notes/List.md', text('mine')], ['notes/Other.md', text('other')]]);
+  const local = {
+    list: async () => new Map([...files].map(([name, bytes]) => [name, { size: bytes.length, modified: -1 }])),
+    read: async (name) => files.get(name),
+    compareAndSet: async (name, expected, replacement) => { if (replacement) files.set(name, replacement); else files.delete(name); return true; },
+    conflict: async () => { throw new Error('No conflict here'); },
+  };
+  const [listHash, otherHash] = [await hash(text('mine')), await hash(text('other'))];
+  const tracked = { 'notes/List.md': { revision: 1, hash: listHash, deleted: false }, 'notes/Other.md': { revision: 1, hash: otherHash, deleted: false } };
+  // The index as it is after someone overwrote List.md with something that does not open: the revision moved on, the rest is the last good one.
+  const entry = (path, revision, fingerprint, bad) => ({ path, revision, deleted: false, hash: fingerprint, bad, bytes: async () => { throw new Error('Must not be read'); } });
+  let cloud = [entry('notes/List.md', 2, listHash, true), entry('notes/Other.md', 1, otherHash, false)];
+  const writes = [];
+  const remote = {
+    list: async () => cloud,
+    write: async (path, bytes, baseRevision) => { writes.push([path, baseRevision]); return { path, revision: baseRevision + 1, deleted: false, hash: await hash(bytes) }; },
+    delete: async () => { throw new Error('Nothing is deleted'); },
+  };
+  const persist = async () => {};
+  assert.equal((await syncFolder(remote, local, tracked, persist)).uploaded, 0);
+  assert.deepEqual(writes, []);
+  assert.equal(decode(files.get('notes/List.md')), 'mine');
+  assert.equal(tracked['notes/List.md'].revision, 2);
+  files.set('notes/List.md', text('changed here'));
+  cloud = [entry('notes/List.md', 2, listHash, true), entry('notes/Other.md', 1, otherHash, false)];
+  await syncFolder(remote, local, tracked, persist);
+  assert.deepEqual(writes, [['notes/List.md', 2]]);
+  // Changed here at the moment the bad version arrives: the same, without trying to read or merge what does not open.
+  files.set('notes/Other.md', text('other, changed'));
+  cloud = [entry('notes/List.md', 3, await hash(text('changed here')), false), entry('notes/Other.md', 2, otherHash, true)];
+  await syncFolder(remote, local, tracked, persist);
+  assert.deepEqual(writes.at(-1), ['notes/Other.md', 2]);
+});
+
+test('reading the changes feed in a shared space keeps a known file whose newest version does not open', async () => {
+  const index = { cursor: 0, objects: { good: { path: 'notes/List.md', revision: 1, deleted: false, hash: 'h1' } }, pending: {} };
+  const client = {
+    listChanges: async () => ({ changes: [{ id: 'good', revision: 2 }, { id: 'new', revision: 1 }], cursor: 2, hasMore: false }),
+    readManifest: async () => { throw new Error('Does not open'); },
+  };
+  const entries = await remoteFiles(client, index, { skipBad: () => false });
+  assert.deepEqual(entries.map(({ path, revision, bad }) => [path, revision, bad]), [['notes/List.md', 2, true]]);
+  assert.deepEqual(index.pending, {});
+  assert.ok(!index.objects.new);
+});

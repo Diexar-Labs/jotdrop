@@ -29,6 +29,7 @@ import {
 import { discoverLabels, assignLabel, removeLabel, createLabel as managerCreateLabel, renameLabel as managerRenameLabel, deleteLabel as managerDeleteLabel, LabelInfo } from "./labelManager";
 import { voidAsync } from "./asyncUtil";
 import { ConflictReviewModal, NoteHistoryModal } from "./cloudReview";
+import { SharedGroupsModal } from "./cloud";
 import { betweenRank, rankForManualOrder, respaceRanks } from "./manualOrder";
 import { t } from "./i18n";
 
@@ -654,6 +655,7 @@ export class JotDropView extends ItemView {
   }
 
   private enterSelection(initialPath: string): void {
+    if (this.plugin.cloud?.spaceOf(initialPath)) return;
     this.selectionMode = true;
     this.selectedPaths = new Set([initialPath]);
     this.normalToolbarEl.toggleClass("is-hidden", true);
@@ -674,6 +676,7 @@ export class JotDropView extends ItemView {
   }
 
   private toggleSelect(path: string): void {
+    if (this.plugin.cloud?.spaceOf(path)) return;
     if (this.selectedPaths.has(path)) this.selectedPaths.delete(path);
     else this.selectedPaths.add(path);
     if (this.selectedPaths.size === 0) {
@@ -697,7 +700,8 @@ export class JotDropView extends ItemView {
 
   private selectAllFiltered(): void {
     if (this.lastFiltered.length === 0) return;
-    const allPaths = this.lastFiltered.map((c) => c.file.path);
+    // Out of a group's folder means gone for everyone in it, so the bulk actions are for own notes.
+    const allPaths = this.lastFiltered.map((c) => c.file.path).filter((path) => !this.plugin.cloud?.spaceOf(path));
     const allSelected = allPaths.every((p) => this.selectedPaths.has(p));
     if (allSelected) {
       for (const p of allPaths) this.selectedPaths.delete(p);
@@ -1244,6 +1248,8 @@ export class JotDropView extends ItemView {
     const target = this.lastFiltered.find((c) => c.file.path === targetPath);
     if (!dragged || !target) return;
     if (dragged.meta.pinned !== target.meta.pinned) return;
+    // The order is per person and a shared note has one file for everyone, so dragging leaves shared notes alone.
+    if (this.plugin.cloud?.spaceOf(dragged.file.path)) return;
 
     // Keep hidden cards in the rank calculation so filtering does not move a
     // reordered card past unrelated notes when the filter is cleared.
@@ -1264,7 +1270,7 @@ export class JotDropView extends ItemView {
       final.splice(k, 0, dragged);
       const ranks = respaceRanks(final.length);
       for (let i = 0; i < final.length; i++) {
-        if (final[i].meta.order !== ranks[i]) {
+        if (final[i].meta.order !== ranks[i] && !this.plugin.cloud?.spaceOf(final[i].file.path)) {
           await updateMeta(this.app, final[i].file, { order: ranks[i] });
           final[i].meta.order = ranks[i];
         }
@@ -1993,7 +1999,10 @@ export class JotDropView extends ItemView {
     // Pinning is a primary card action: keep it directly available instead of
     // hiding it in the hover-only action row. The icon changes shape as well as
     // state, so the distinction does not rely on colour.
-    if (!this.showTrash) {
+    const space = this.plugin.cloud?.spaceOf(file.path);
+    // Words, never only a colour: who else is in this note. Pin is per person and not in a shared note.
+    if (space) cardEl.createDiv({ cls: "jotdrop-card-shared", text: space.gone ? "Shared, no access any more" : space.frozen ? "Shared, read-only" : space.others.length ? `Shared with ${space.others.join(", ")}` : "Shared, only you so far" });
+    if (!this.showTrash && !space) {
       const quickPinBtn = cardEl.createEl("button", {
         cls: `jotdrop-card-quick-pin${meta.pinned ? " is-active" : ""}`,
         attr: {
@@ -2103,12 +2112,15 @@ export class JotDropView extends ItemView {
     if (file.name.includes(".cloud-conflict-") && this.plugin.cloud?.enabled) {
       const conflict = body.createDiv({ cls: "jotdrop-card-conflict" });
       conflict.createEl("p", { text: "Changed in two places: this is the other version." });
-      const review = conflict.createEl("button", { cls: "mod-cta", text: "Resolve now" });
-      review.addEventListener("click", (e) => {
-        e.stopPropagation();
-        if (this.selectionMode) { this.toggleSelect(file.path); return; }
-        new ConflictReviewModal(this.app, this.plugin.cloud, file.path).open();
-      });
+      // In a group the other version is simply a note here; the comparison only knows the own cloud.
+      if (!this.plugin.cloud?.spaceOf(file.path)) {
+        const review = conflict.createEl("button", { cls: "mod-cta", text: "Resolve now" });
+        review.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (this.selectionMode) { this.toggleSelect(file.path); return; }
+          new ConflictReviewModal(this.app, this.plugin.cloud, file.path).open();
+        });
+      }
     }
 
     if (previewText) {
@@ -2251,15 +2263,18 @@ export class JotDropView extends ItemView {
       this.openEditModal(file, openedAttachment);
     });
 
-    const archiveBtn = actions.createEl("button", {
-      cls: "jotdrop-card-action",
-      attr: { "aria-label": archived ? t("action_unarchive") : t("action_archive") },
-    });
-    setIcon(archiveBtn, archived ? "archive-restore" : "archive");
-    archiveBtn.addEventListener("click", voidAsync(async (e) => {
-      e.stopPropagation();
-      await this.toggleArchive(file, archived);
-    }));
+    const inGroup = this.plugin.cloud?.spaceOf(file.path);
+    if (!inGroup) {
+      const archiveBtn = actions.createEl("button", {
+        cls: "jotdrop-card-action",
+        attr: { "aria-label": archived ? t("action_unarchive") : t("action_archive") },
+      });
+      setIcon(archiveBtn, archived ? "archive-restore" : "archive");
+      archiveBtn.addEventListener("click", voidAsync(async (e) => {
+        e.stopPropagation();
+        await this.toggleArchive(file, archived);
+      }));
+    }
 
     const moreBtn = actions.createEl("button", {
       cls: "jotdrop-card-action",
@@ -2269,6 +2284,13 @@ export class JotDropView extends ItemView {
     moreBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       const menu = new Menu();
+      const cloud = this.plugin.cloud;
+      if (cloud?.signedIn && !this.showTrash && !archived) {
+        const shared = cloud.spaceOf(file.path);
+        menu.addItem((i) => shared
+          ? i.setTitle(shared.frozen || shared.gone ? "Copy to my notes" : "Move to my notes").setIcon("user").onClick(() => { void cloud.moveToMine(file); })
+          : i.setTitle("Share…").setIcon("users").onClick(() => new SharedGroupsModal(this.app, cloud, file).open()));
+      }
       menu.addItem((i) =>
         i
           .setTitle(t("action_open_in_tab"))
@@ -2277,7 +2299,7 @@ export class JotDropView extends ItemView {
             await this.app.workspace.getLeaf("tab").openFile(file);
           })
       );
-      menu.addItem((i) =>
+      if (!inGroup) menu.addItem((i) =>
         i
           .setTitle(t("action_move_to_folder"))
           .setIcon("folder-output")
@@ -2289,7 +2311,7 @@ export class JotDropView extends ItemView {
             ).open();
           })
       );
-      menu.addItem((i) =>
+      if (!inGroup) menu.addItem((i) =>
         i
           .setTitle(t("action_copy_to_folder"))
           .setIcon("copy")
@@ -2301,7 +2323,7 @@ export class JotDropView extends ItemView {
             ).open();
           })
       );
-      if (this.plugin.cloud?.enabled && !file.name.includes(".cloud-conflict-")) {
+      if (this.plugin.cloud?.enabled && !file.name.includes(".cloud-conflict-") && !inGroup) {
         menu.addItem((i) =>
           i
             .setTitle("Version history")
@@ -2315,16 +2337,29 @@ export class JotDropView extends ItemView {
           .setTitle(t("action_move_to_trash"))
           .setIcon("trash-2")
           .onClick(async () => {
-            await this.moveToFolder(file, this.trashFolder(), "notice_trashed");
+            // A conflict copy is only on this device; any other note in a group is the group's.
+            if (!inGroup || file.name.includes(".cloud-conflict-")) { await this.moveToFolder(file, this.trashFolder(), "notice_trashed"); return; }
+            new ConfirmModal(
+              this.app,
+              {
+                title: t("action_move_to_trash"),
+                message: "This removes the note for everyone in the group. A copy goes to your Trash; restoring it puts it in your own notes.",
+                confirmLabel: t("action_move_to_trash"),
+                destructive: true,
+              },
+              () => void this.moveToFolder(file, this.trashFolder(), "notice_trashed"),
+            ).open();
           })
       );
-      menu.addSeparator();
-      menu.addItem((i) =>
-        i
-          .setTitle(t("label_picker_open"))
-          .setIcon("folder-plus")
-          .onClick(() => { void this.promptAssignLabel(file); })
-      );
+      if (!inGroup) {
+        menu.addSeparator();
+        menu.addItem((i) =>
+          i
+            .setTitle(t("label_picker_open"))
+            .setIcon("folder-plus")
+            .onClick(() => { void this.promptAssignLabel(file); })
+        );
+      }
       menu.showAtMouseEvent(e);
     });
   }

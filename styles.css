@@ -1937,3 +1937,9 @@ button.jotdrop-provider-github:not(.clickable-icon):hover { background: #32383f;
   .jotdrop-card.is-dropped, .jotdrop-card.just-pinned.is-pinned .jotdrop-card-tape::before { animation: jotdrop-fade-in 0.2s ease-out var(--jotdrop-since, 0ms); }
   .jotdrop-card-stamp { animation: jotdrop-stamp-fade 1.8s ease-out var(--jotdrop-since, 0ms) forwards; }
 }
+
+.jotdrop-card-shared {
+  color: var(--text-muted);
+  font-size: var(--font-ui-smaller);
+  order: 1;
+}
