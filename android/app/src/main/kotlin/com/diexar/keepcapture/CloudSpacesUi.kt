@@ -55,7 +55,9 @@ internal object CloudSpacesFlow {
     private fun remember(context: Context, id: String, key: String, name: String, owner: Boolean) {
         val store = CloudPreviewStore(context)
         val spaces = store.spaces()
-        spaces.put(id, (spaces.optJSONObject(id) ?: JSONObject()).put("key", key).put("name", name).put("owner", owner).put("gone", false).put("frozen", false))
+        // A group that comes back stays marked until the sync has forgotten what it knew of it.
+        val returning = spaces.optJSONObject(id)?.optBoolean("gone") == true
+        spaces.put(id, (spaces.optJSONObject(id) ?: JSONObject()).put("key", key).put("name", name).put("owner", owner).put("gone", returning).put("frozen", false))
         store.saveSpaces(spaces)
     }
 
