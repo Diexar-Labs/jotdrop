@@ -343,7 +343,10 @@ export class EditNoteModal extends Modal {
     }
 
     // Pin toggle — save immediately
+    // Pin and reminder are per person; in the group's file they would land with everyone.
+    const inGroup = !!this.plugin.cloud?.spaceOf(this.file.path);
     const pinWrap = parent.createDiv({ cls: "jotdrop-edit-row" });
+    if (inGroup) pinWrap.hide();
     const pinBtn = pinWrap.createEl("button", {
       cls: `jotdrop-edit-pin${this.state.pinned ? " is-active" : ""}`,
       text: this.state.pinned ? t("action_unpin_btn") : t("action_pin_btn"),
@@ -385,6 +388,7 @@ export class EditNoteModal extends Modal {
 
     // Reminder
     const reminderRow = parent.createDiv({ cls: "jotdrop-edit-row jotdrop-reminder-row" });
+    if (inGroup) reminderRow.hide();
     reminderRow.createSpan({ text: t("label_reminder"), cls: "jotdrop-edit-label" });
     const reminderInput = reminderRow.createEl("input", {
       cls: "jotdrop-edit-reminder",
@@ -420,7 +424,7 @@ export class EditNoteModal extends Modal {
       }
     }));
 
-    this.renderRepeatControls(parent);
+    if (!inGroup) this.renderRepeatControls(parent);
 
     // Tags + chip input — input lives inside the chips container so it always
     // follows the last chip, even when chips wrap to a new line.
@@ -646,11 +650,13 @@ export class EditNoteModal extends Modal {
       await updateMeta(this.app, this.file, {
         color: this.state.color,
         tags: this.state.tags,
-        pinned: this.state.pinned,
-        reminder: this.state.reminder,
-        reminderRepeat: this.state.reminder ? this.state.reminderRepeat : null,
-        reminderUntil: this.state.reminder ? this.state.reminderUntil : null,
-        reminderLimit: this.state.reminder ? this.state.reminderLimit : null,
+        ...(this.plugin.cloud?.spaceOf(this.file.path) ? {} : {
+          pinned: this.state.pinned,
+          reminder: this.state.reminder,
+          reminderRepeat: this.state.reminder ? this.state.reminderRepeat : null,
+          reminderUntil: this.state.reminder ? this.state.reminderUntil : null,
+          reminderLimit: this.state.reminder ? this.state.reminderLimit : null,
+        }),
       });
       if (bodyChanged) {
         // Re-read so our new frontmatter is preserved

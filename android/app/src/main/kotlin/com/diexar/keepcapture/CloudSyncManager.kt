@@ -325,6 +325,11 @@ object CloudSyncManager {
                     store.saveSpaces(known)
                     continue
                 }
+                // Back after losing access: what was thrown away here meanwhile must not read as a deletion for everyone.
+                if (saved?.optBoolean("gone") == true && !item.frozen) {
+                    val scope = scope(CloudSpaces.files(client, item.id, key), CloudVaultAdapter(context, spaceId = item.id).binding)
+                    store.syncState(scope)?.let { state -> state.remove("tracked"); store.saveSyncState(scope, state) }
+                }
                 val next = (saved ?: JSONObject()).put("key", key).put("frozen", item.frozen).put("replacedBy", item.replacedBy.orEmpty()).put("sequence", item.sequence).put("gone", false)
                 next.put("name", details.name.orEmpty()).put("owner", details.owner).put("others", JSONArray(details.members.filter { it.accountId != details.accountId }.map { it.name ?: "Someone" }))
                 known.put(item.id, next)

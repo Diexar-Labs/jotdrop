@@ -95,7 +95,11 @@ function vault() {
           async writeBinary(path, data) { addParents(path); files.set(path, new Uint8Array(data)); },
           async mkdir(path) { addParents(`${path}/x`); },
           async rmdir(path) { for (const entry of [...files.keys()]) if (entry.startsWith(`${path}/`)) files.delete(entry); for (const entry of [...folders]) if (entry === path || entry.startsWith(`${path}/`)) folders.delete(entry); },
-          async trashLocal(path) { trashed.push([path, files.get(path)]); files.delete(path); },
+          async trashLocal(path) {
+            trashed.push([path, files.get(path)]);
+            for (const entry of [...files.keys()]) if (entry === path || entry.startsWith(`${path}/`)) files.delete(entry);
+            for (const entry of [...folders]) if (entry === path || entry.startsWith(`${path}/`)) folders.delete(entry);
+          },
         },
       },
     },
@@ -464,6 +468,107 @@ const removeThroughOwner = async (cloud, space, name) => {
   const details = await cloud.details(space.id);
   return cloud.removePerson(space, details.members.find((member) => member.name === name).accountId);
 };
+
+// One account in Obsidian, invited to a group of Eric's with two notes and a photo.
+async function groupSetup(t) {
+  const dataDir = await mkdtemp(join(tmpdir(), 'jotdrop-plugin-groups-'));
+  const mails = [];
+  let now = Date.parse('2026-11-02T08:00:00Z');
+  const app = await createCloudServer({ dataDir, enrollmentToken: randomToken(), mailer: async (mail) => { mails.push(mail); }, serverKey: randomToken(), clock: () => now, freeDeviceLimit: 100, signupsPerAddress: 1000 });
+  t.after(async () => { await app.close(); await rm(dataDir, { recursive: true, force: true }); });
+  const url = `http://127.0.0.1:${app.port}`;
+  const account = async (email) => {
+    now += 61000;
+    const pending = await signUp({ url, email, password: 'correct horse battery', deviceName: 'Test' });
+    return (await confirmSignup(pending, mails.filter((mail) => mail.to === email && mail.kind === 'verify').at(-1).code)).client;
+  };
+  const v = vault();
+  v.put('Mini Notes/Mine.md', 'My own note');
+  const cloud = new CloudController(v.plugin, v.store);
+  await cloud.finishSignIn(await account('plugin@example.com'), 'plugin@example.com');
+  await cloud.setEnabled(true);
+  await cloud.syncNow();
+  const eric = await account('eric@example.com');
+  const space = await createSpace(eric, 'Family', { memberName: 'Eric' });
+  const files = spaceClient(eric, space.id, space.key);
+  await files.write('notes/Groceries.md', text('- [ ] milk\n![[photo.png]]\n'), 0);
+  await files.write('notes/Second.md', text('Second'), 0);
+  await files.write('attachments/photo.png', text('photo bytes'), 0);
+  const invite = async () => { now += 61000; return (await makeInvite(eric, space, 'Eric')).link; };
+  await cloud.join(await invite(), 'Ana');
+  const deleted = async (path) => (await files.read(await objectId(space.key, path))).deleted === true;
+  return { v, cloud, eric, space, invite, deleted, local: `Mini Notes/Shared/${space.id}` };
+}
+
+test('shared groups: the conflict review of the own vault leaves a group alone', async (t) => {
+  const { v, cloud, local, deleted } = await groupSetup(t);
+  v.put(`${local}/Groceries.cloud-conflict-r1.md`, 'the other version');
+  assert.deepEqual(await cloud.conflicts(), []);
+  await cloud.syncNow();
+  assert.equal(await deleted('notes/Groceries.md'), false);
+});
+
+test('shared groups: invited again after a removal, what was thrown away here comes back and stays for the others', async (t) => {
+  const { v, cloud, eric, space, invite, deleted, local } = await groupSetup(t);
+  const me = (await spaceDetails(eric, space.id)).members.find((member) => member.name === 'Ana');
+  await removeMember(eric, space.id, me.accountId);
+  await cloud.syncNow();
+  assert.equal(cloud.spaceOf(`${local}/Groceries.md`).gone, true);
+  v.files.delete(`${local}/Groceries.md`);
+  await cloud.join(await invite(), 'Ana');
+  assert.equal(await deleted('notes/Groceries.md'), false);
+  assert.ok(v.files.has(`${local}/Groceries.md`));
+  assert.equal(cloud.spaceOf(`${local}/Groceries.md`).gone, false);
+});
+
+test('shared groups: with cloud sync off nothing moves into a group and a link is not used up', async (t) => {
+  const { v, cloud, eric, space, invite } = await groupSetup(t);
+  const link = await invite();
+  await cloud.setEnabled(false);
+  v.put('Mini Notes/Trip.md', 'Packing');
+  await assert.rejects(cloud.share(v.plugin.app.vault.getAbstractFileByPath('Mini Notes/Trip.md'), null, 'Holiday', 'Ana'), /Turn on cloud sync/);
+  assert.ok(v.files.has('Mini Notes/Trip.md'));
+  assert.equal(cloud.spaces.some((item) => item.name === 'Holiday'), false);
+  await assert.rejects(cloud.join(link, 'Ana'), /Turn on cloud sync/);
+  assert.equal((await spaceDetails(eric, space.id)).invites.filter((item) => !item.claimed).length, 1);
+});
+
+test('shared groups: removing a group from this device goes through the trash', async (t) => {
+  const { v, cloud, local } = await groupSetup(t);
+  await cloud.release(cloud.spaces[0], false);
+  assert.ok(!v.files.has(`${local}/Groceries.md`));
+  assert.ok(v.trashed.some(([path]) => path === local));
+});
+
+test('shared groups: a note moved to the own notes takes its attachments along', async (t) => {
+  const { v, cloud, local } = await groupSetup(t);
+  await cloud.moveToMine(v.plugin.app.vault.getAbstractFileByPath(`${local}/Groceries.md`));
+  assert.ok(v.files.has('Mini Notes/Groceries.md'));
+  assert.equal(decode(v.files.get('Mini Notes/.attachments/photo.png')), 'photo bytes');
+});
+
+test('shared groups: a missing attachments folder removes nothing for the others', async (t) => {
+  const { v, cloud, local, deleted } = await groupSetup(t);
+  const adapter = v.plugin.app.vault.adapter;
+  await adapter.rmdir(`${local}/attachments`, true);
+  await cloud.syncNow();
+  assert.equal(await deleted('attachments/photo.png'), false);
+  assert.equal(decode(v.files.get(`${local}/attachments/photo.png`)), 'photo bytes');
+});
+
+test('shared groups: a group that does not sync says so in the status, and stops saying it once it works', async (t) => {
+  const { cloud, space } = await groupSetup(t);
+  const real = globalThis.fetch;
+  t.after(() => { globalThis.fetch = real; });
+  globalThis.fetch = async (url, options) => (String(url).endsWith('/status') && JSON.stringify(options?.headers ?? {}).includes(space.id)
+    ? new Response(JSON.stringify({ error: 'The owner has no storage left.' }), { status: 402, headers: { 'Content-Type': 'application/json' } })
+    : real(url, options));
+  await cloud.syncNow();
+  assert.match(cloud.status, /"Family" did not sync/);
+  globalThis.fetch = real;
+  await cloud.syncNow();
+  assert.doesNotMatch(cloud.status, /did not sync/);
+});
 
 test('the archive must sit inside the notes folder, like on the website and Android', async () => {
   const v = vault();

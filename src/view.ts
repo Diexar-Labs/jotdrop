@@ -2285,10 +2285,18 @@ export class JotDropView extends ItemView {
       e.stopPropagation();
       const menu = new Menu();
       const cloud = this.plugin.cloud;
-      if (cloud?.signedIn && !this.showTrash && !archived) {
-        const shared = cloud.spaceOf(file.path);
-        menu.addItem((i) => shared
-          ? i.setTitle(shared.frozen || shared.gone ? "Copy to my notes" : "Move to my notes").setIcon("user").onClick(() => { void cloud.moveToMine(file); })
+      const sharedNote = cloud?.spaceOf(file.path);
+      // A conflict copy is only on this device: in a group's folder it would never go up.
+      if (cloud?.signedIn && cloud.enabled && !this.showTrash && !archived && (sharedNote || !file.name.includes(".cloud-conflict-"))) {
+        menu.addItem((i) => sharedNote
+          ? i.setTitle(sharedNote.frozen || sharedNote.gone ? "Copy to my notes" : "Move to my notes").setIcon("user").onClick(() => {
+            if (sharedNote.frozen || sharedNote.gone) { void cloud.moveToMine(file); return; }
+            new ConfirmModal(
+              this.app,
+              { title: "Move to my notes", message: "This removes the note for everyone in the group. You keep it in your own notes.", confirmLabel: "Move to my notes", destructive: true },
+              () => void cloud.moveToMine(file),
+            ).open();
+          })
           : i.setTitle("Share…").setIcon("users").onClick(() => new SharedGroupsModal(this.app, cloud, file).open()));
       }
       menu.addItem((i) =>
