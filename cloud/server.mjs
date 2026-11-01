@@ -199,9 +199,11 @@ async function body(req, maximum = MAX_BODY) {
 }
 
 /** Loopback-only server behind a trusted HTTPS proxy. Accounts need a mailer; no billing or provider credentials. `quotaBytes` and `freeDeviceLimit` are the free plan's limits. */
-export async function createCloudServer({ dataDir, enrollmentToken, mailer, newsletter, serverKey, stripe, oauth = {}, fetcher = globalThis.fetch, quotaBytes = 250 * 1024 * 1024, plusQuotaBytes = 10 * 1024 * 1024 * 1024, maxFileBytes = 25 * 1024 * 1024, plusMaxFileBytes = 200 * 1024 * 1024, freeDeviceLimit = 2, maxHistoryEntries = 100000, maxDeviceEntries = 1000, maxPairingEntries = 128, maxConcurrentRequests = 16, signupsPerAddress = 5, turnstile, webRoot = join(directory, 'web'), corsOrigins = [], publicOrigin, adminOrigin, adminPasswordHash, adminTotpSecret, adminRoot = join(directory, 'admin'), port = 0, enrollmentLimit = 1, sweepEvery = 60 * 60 * 1000, clock = Date.now }) {
+export async function createCloudServer({ dataDir, enrollmentToken, mailer, newsletter, serverKey, stripe, reviewLogin, oauth = {}, fetcher = globalThis.fetch, quotaBytes = 250 * 1024 * 1024, plusQuotaBytes = 10 * 1024 * 1024 * 1024, maxFileBytes = 25 * 1024 * 1024, plusMaxFileBytes = 200 * 1024 * 1024, freeDeviceLimit = 2, maxHistoryEntries = 100000, maxDeviceEntries = 1000, maxPairingEntries = 128, maxConcurrentRequests = 16, signupsPerAddress = 5, turnstile, webRoot = join(directory, 'web'), corsOrigins = [], publicOrigin, adminOrigin, adminPasswordHash, adminTotpSecret, adminRoot = join(directory, 'admin'), port = 0, enrollmentLimit = 1, sweepEvery = 60 * 60 * 1000, clock = Date.now }) {
   if (!dataDir || (enrollmentToken !== undefined && !validToken(enrollmentToken)) || [quotaBytes, plusQuotaBytes, freeDeviceLimit].some((value) => !Number.isSafeInteger(value) || value < 1)) throw new Error('Provide a data directory, random 32-byte enrollment token and positive quota.');
   if (mailer !== undefined && typeof mailer !== 'function') throw new Error('Provide the mailer as a function.');
+  // Google Play reviewers cannot receive email codes: this one address confirms with a fixed code and gets no mail. The password stays required.
+  if (reviewLogin && !(typeof reviewLogin.email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(reviewLogin.email) && reviewLogin.email === reviewLogin.email.toLowerCase() && validCode(reviewLogin.code))) throw new Error('Provide the review login as a lowercase email address and a six-digit code.');
   // `newsletter(email)` adds someone who ticked "Email me news about JotDrop" to the mailing list (Brevo).
   if (newsletter !== undefined && typeof newsletter !== 'function') throw new Error('Provide the newsletter as a function.');
   if (serverKey !== undefined && !validToken(serverKey)) throw new Error('Provide the server key as 32 random bytes.');
@@ -429,11 +431,13 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     return { vaultId, deviceId: id };
   }
   const requireAccounts = () => { if (!mailer || !serverKey) fail(503, 'Email sign-in is not available on this server'); };
+  const codeFor = (email) => email === reviewLogin?.email ? reviewLogin.code : newCode();
   async function sendMail(mail) {
+    if (mail.to === reviewLogin?.email) return;
     try { await mailer(mail); } catch { fail(503, 'Could not send the email. Try again later.'); }
   }
   // Used where waiting for the mail provider would reveal whether an address has an account.
-  const sendMailLater = (mail) => { Promise.resolve().then(() => mailer(mail)).catch((error) => console.error(`Mail delivery failed: ${error.message}`)); };
+  const sendMailLater = (mail) => { if (mail.to === reviewLogin?.email) return; Promise.resolve().then(() => mailer(mail)).catch((error) => console.error(`Mail delivery failed: ${error.message}`)); };
   // Persistent per account or address, so new codes, many IPs or a restart do not reset the guessing budget.
   const codesLocked = (scope) => (one('SELECT lockedUntil FROM code_failures WHERE scope=?', scope)?.lockedUntil ?? 0) > clock();
   // A wrong code commits its attempt before failing; a right code is consumed together with its action.
@@ -575,7 +579,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       .catch((error) => console.warn(`Could not add a new account to the mailing list: ${error.message}`));
   }
   async function startSignup(email, signup) {
-    const code = newCode(), now = clock(), signupId = randomUUID();
+    const code = codeFor(email), now = clock(), signupId = randomUUID();
     const taken = transaction(() => {
       run('DELETE FROM signups WHERE expiresAt<=?', now);
       if (signup.vaultId && one('SELECT id FROM accounts WHERE vaultId=?', signup.vaultId)) fail(409, 'This cloud already has an account');
@@ -1237,7 +1241,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           });
           fail(401, 'Invalid email or password');
         }
-        const challengeId = randomUUID(), code = newCode(), factor = account.totpSecret ? 'totp' : 'email';
+        const challengeId = randomUUID(), code = codeFor(email), factor = account.totpSecret ? 'totp' : 'email';
         transaction(() => {
           run('UPDATE accounts SET failedLogins=0 WHERE id=?', account.id);
           run('DELETE FROM login_challenges WHERE expiresAt<=?', clock());
@@ -1957,7 +1961,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   // The owner's dashboard needs all three; cloud/admin-setup.mjs prints the hash and the authenticator secret.
   const [adminOrigin, adminPasswordHash, adminTotpSecret] = ['ORIGIN', 'PASSWORD_HASH', 'TOTP_SECRET'].map((name) => process.env[`JOTDROP_CLOUD_ADMIN_${name}`] || undefined);
   if ((adminOrigin || adminPasswordHash || adminTotpSecret) && !(adminOrigin && adminPasswordHash && adminTotpSecret)) console.warn('Admin dashboard off: set JOTDROP_CLOUD_ADMIN_ORIGIN, JOTDROP_CLOUD_ADMIN_PASSWORD_HASH and JOTDROP_CLOUD_ADMIN_TOTP_SECRET together.');
-  const app = await createCloudServer({ dataDir: process.env.JOTDROP_CLOUD_DATA_DIR, adminOrigin, adminPasswordHash, adminTotpSecret, enrollmentToken, mailer, newsletter, serverKey, stripe, oauth: { google: provider('GOOGLE'), github: provider('GITHUB') }, maxHistoryEntries: Number(process.env.JOTDROP_CLOUD_MAX_HISTORY_ENTRIES ?? 100000), maxDeviceEntries: Number(process.env.JOTDROP_CLOUD_MAX_DEVICE_ENTRIES ?? 1000), maxPairingEntries: Number(process.env.JOTDROP_CLOUD_MAX_PAIRING_ENTRIES ?? 128), maxConcurrentRequests: Number(process.env.JOTDROP_CLOUD_MAX_CONCURRENT_REQUESTS ?? 16), signupsPerAddress: Number(process.env.JOTDROP_CLOUD_SIGNUPS_PER_ADDRESS ?? 5), turnstile, publicOrigin: process.env.JOTDROP_CLOUD_PUBLIC_ORIGIN, port: Number(process.env.JOTDROP_CLOUD_PORT || 8787), corsOrigins: (process.env.JOTDROP_CLOUD_CORS_ORIGINS || '').split(',').map((entry) => entry.trim()).filter(Boolean) });
+  const reviewLogin = process.env.JOTDROP_CLOUD_REVIEW_EMAIL || process.env.JOTDROP_CLOUD_REVIEW_CODE ? { email: process.env.JOTDROP_CLOUD_REVIEW_EMAIL, code: process.env.JOTDROP_CLOUD_REVIEW_CODE } : undefined;
+  const app = await createCloudServer({ dataDir: process.env.JOTDROP_CLOUD_DATA_DIR, reviewLogin, adminOrigin, adminPasswordHash, adminTotpSecret, enrollmentToken, mailer, newsletter, serverKey, stripe, oauth: { google: provider('GOOGLE'), github: provider('GITHUB') }, maxHistoryEntries: Number(process.env.JOTDROP_CLOUD_MAX_HISTORY_ENTRIES ?? 100000), maxDeviceEntries: Number(process.env.JOTDROP_CLOUD_MAX_DEVICE_ENTRIES ?? 1000), maxPairingEntries: Number(process.env.JOTDROP_CLOUD_MAX_PAIRING_ENTRIES ?? 128), maxConcurrentRequests: Number(process.env.JOTDROP_CLOUD_MAX_CONCURRENT_REQUESTS ?? 16), signupsPerAddress: Number(process.env.JOTDROP_CLOUD_SIGNUPS_PER_ADDRESS ?? 5), turnstile, publicOrigin: process.env.JOTDROP_CLOUD_PUBLIC_ORIGIN, port: Number(process.env.JOTDROP_CLOUD_PORT || 8787), corsOrigins: (process.env.JOTDROP_CLOUD_CORS_ORIGINS || '').split(',').map((entry) => entry.trim()).filter(Boolean) });
   console.log(`JotDrop Cloud listening on http://127.0.0.1:${app.port}.`);
   if (!process.env.JOTDROP_CLOUD_ENROLLMENT_TOKEN) console.log(`Single-use local enrollment token: ${enrollmentToken}`);
   for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { void app.close().then(() => process.exit(0)); });

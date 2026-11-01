@@ -534,3 +534,39 @@ test('with Turnstile on, an email account needs a passed person check, and the s
   const plain = await fixture(t);
   assert.equal((await plain.api('/auth/providers')).body.turnstileSiteKey, null);
 });
+
+test('the Google Play review address alone uses its fixed code, and nothing is emailed to it', async (t) => {
+  const review = { email: 'play-review@example.com', code: '482913' };
+  const app = await fixture(t, { reviewLogin: review });
+  const started = await app.api('/accounts', { email: review.email, ...await credentials(PASSWORD, generateVaultKey()), recoveryTokenHash: await hashToken(randomToken()), deviceName: 'Phone', deviceTokenHash: await hashToken(randomToken()) });
+  assert.equal(started.status, 202);
+  assert.equal((await app.api('/accounts/verify', { signupId: started.body.signupId, code: review.code })).status, 201);
+
+  const { kdf } = (await app.api('/auth/prelogin', { email: review.email })).body;
+  const { authKey } = derive(PASSWORD, kdf);
+  const login = async (email = review.email, key = authKey) => app.api('/auth/login', { email, authKey: key, deviceName: 'Review', deviceTokenHash: await hashToken(randomToken()) });
+  const first = await login();
+  assert.equal(first.status, 202);
+  assert.equal((await app.api('/auth/login/verify', { challengeId: first.body.challengeId, code: '000000' })).status, 401);
+  assert.equal((await app.api('/auth/login/verify', { challengeId: first.body.challengeId, code: review.code })).status, 201);
+  // The code is reusable for a new sign-in, but the password stays required.
+  assert.equal((await login(review.email, derive('wrong password here', kdf).authKey)).status, 401);
+  const again = await login();
+  assert.equal((await app.api('/auth/login/verify', { challengeId: again.body.challengeId, code: review.code })).status, 201);
+  assert.equal(app.mails.filter((mail) => mail.to === review.email).length, 0);
+
+  // Everyone else still gets a random code by email, and the review code does not work for them.
+  await signUp(app, 'other@example.com');
+  const other = (await app.api('/auth/prelogin', { email: 'other@example.com' })).body;
+  const theirs = await login('other@example.com', derive(PASSWORD, other.kdf).authKey);
+  const sent = app.lastCode('other@example.com', 'login');
+  assert.ok(sent);
+  if (sent !== review.code) assert.equal((await app.api('/auth/login/verify', { challengeId: theirs.body.challengeId, code: review.code })).status, 401);
+  assert.equal((await app.api('/auth/login/verify', { challengeId: theirs.body.challengeId, code: sent })).status, 201);
+});
+
+test('the review login needs both a valid address and a six-digit code', async (t) => {
+  for (const reviewLogin of [{ email: 'play-review@example.com' }, { code: '482913' }, { email: 'play-review@example.com', code: '123' }, { email: 'Not An Address', code: '482913' }]) {
+    await assert.rejects(fixture(t, { reviewLogin }), /review/i);
+  }
+});

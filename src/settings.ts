@@ -314,20 +314,6 @@ export class JotDropSettingTab extends PluginSettingTab {
     );
 
     this.displayCloud(containerEl.createDiv({ cls: "jotdrop-cloud-settings" }));
-
-    // "About JotDrop" — unobtrusive, dismisses itself if the user has no
-    // interest. No popups, no "premium" features. Open source +
-    // optional thank-you button.
-    const support = containerEl.createDiv({ cls: "jotdrop-support" });
-    new Setting(support).setName(t("section_support")).setHeading();
-    support.createEl("p", { text: t("support_blurb") });
-    const buttonRow = support.createDiv({ cls: "jotdrop-support-buttons" });
-    const kofiLink = buttonRow.createEl("a", {
-      cls: "jotdrop-support-button",
-      attr: { href: "https://ko-fi.com/L3L11ZETB9", target: "_blank", rel: "noopener noreferrer" },
-    });
-    kofiLink.setText(t("support_kofi"));
-    // GitHub Sponsors will be added once the application is approved.
   }
 
   /** JotDrop Cloud: the same account as the website and the Android app. */

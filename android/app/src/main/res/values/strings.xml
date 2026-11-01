@@ -149,10 +149,7 @@
     <string name="action_remove_tag">Remove tag</string>
 
     <string name="section_support">About JotDrop</string>
-    <string name="support_blurb">JotDrop is free and open-source. Found it useful? A coffee or sponsorship makes my day — no obligations, no lock-ins.</string>
-    <string name="support_kofi">☕ Buy me a Ko-fi</string>
     <string name="privacy_policy">Privacy policy</string>
-    <string name="support_sponsors">❤ Sponsor on GitHub</string>
 
     <string name="action_ocr_camera">Text from photo (camera)</string>
     <string name="action_ocr_gallery">Text from photo (gallery)</string>

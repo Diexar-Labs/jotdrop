@@ -79,15 +79,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        binding.kofiButton.setOnClickListener {
-            openExternalUrl("https://ko-fi.com/L3L11ZETB9")
-        }
-        // Google Play does not allow a direct link to a payment page outside its billing system.
-        if (UpdateChecker.isPlayInstall(this)) {
-            binding.supportHeading.visibility = View.GONE
-            binding.supportBlurb.visibility = View.GONE
-            binding.kofiButton.visibility = View.GONE
-        }
         binding.privacyButton.setOnClickListener {
             openExternalUrl("https://github.com/Diexar-Labs/jotdrop/blob/main/docs/android-privacy-policy.md")
         }

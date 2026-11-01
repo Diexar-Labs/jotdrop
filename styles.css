@@ -1587,23 +1587,6 @@
   line-height: 1.5;
 }
 
-/* Over/Steun-sectie in settings tab — discreet, geen CTA-knal */
-.jotdrop-support {
-  margin-top: 28px;
-  padding-top: 20px;
-  border-top: 1px solid var(--background-modifier-border);
-}
-.jotdrop-support h3 {
-  margin: 0 0 8px;
-  font-size: var(--font-ui-medium);
-  color: var(--text-normal);
-}
-.jotdrop-support p {
-  margin: 0 0 12px;
-  color: var(--text-muted);
-  font-size: var(--font-ui-small);
-  line-height: 1.5;
-}
 .jotdrop-support-buttons {
   display: flex;
   gap: 8px;

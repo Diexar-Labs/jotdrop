@@ -42,6 +42,11 @@ assert(assignment.includes('Storage.addLabel'), 'Create labels inline without le
 assert(source('EditorActivity').includes('LabelAssignmentSheet('), 'Individual notes need a direct labels picker');
 const editor = source('EditorActivity');
 const editorBody = editor.slice(editor.indexOf('private fun EditorBody('), editor.indexOf('private fun EditorNavHeader('));
+for (const name of ['google', 'github']) assert(list.includes(`ProviderButton("${name}", stringResource(R.string.welcome_${name})`), `The welcome screen must offer ${name}`);
+// Back arrow + 6 buttons of 48dp fit on a 360dp phone; a seventh slides over the back arrow.
+const editorActions = editor.slice(editor.indexOf('actions = {', editor.indexOf('geen titel')), editor.indexOf('R.string.action_save)', editor.indexOf('geen titel')));
+assert((editorActions.match(/IconButton\(/g) || []).length <= 6, 'The editor bar must not hold more than 6 buttons, or they cover the back arrow');
+for (const name of ['action_color', 'action_link']) assert.match(editorActions, new RegExp(`DropdownMenuItem\\([^]*?R\\.string\\.${name}`), `${name} must stay reachable in the More menu`);
 assert(editor.includes('mutableStateOf(initialUri == null)'), 'New notes must remain directly editable');
 assert.match(editor, /bodyText = TextFieldValue\(loadedBody\)\s+bodyEditing = false/, 'Navigation must reset the link reading view');
 assert(editorBody.includes('renderPreviewAnnotated(value.text, foreground, underlineLinks = false)'), 'Reuse the renderer with calm editor styling without changing the source body');
