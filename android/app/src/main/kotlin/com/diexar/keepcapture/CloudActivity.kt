@@ -44,7 +44,7 @@ class CloudActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         if (savedInstanceState == null) {
-            CloudAccountFlow.startGoogle = intent.getBooleanExtra(EXTRA_WELCOME, false)
+            CloudAccountFlow.startProvider = intent.getStringExtra(EXTRA_PROVIDER)
             takeProviderReturn(intent)
         }
         val welcome = intent.getBooleanExtra(EXTRA_WELCOME, false)
@@ -53,8 +53,10 @@ class CloudActivity : ComponentActivity() {
     }
 
     companion object {
-        /** From the welcome screen: Google sign-in opens at once, and the screen closes once sync runs. */
+        /** From the welcome screen: the screen closes once sync runs. */
         const val EXTRA_WELCOME = "welcome"
+        /** From the welcome screen: "google" or "github", whose sign-in opens at once. */
+        const val EXTRA_PROVIDER = "provider"
         /** From a conflict copy's card: the file name of the note it belongs to, whose comparison opens at once. */
         const val EXTRA_RESOLVE = "resolve"
     }

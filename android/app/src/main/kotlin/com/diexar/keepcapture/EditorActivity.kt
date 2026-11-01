@@ -841,12 +841,6 @@ private fun EditorScreen(
                                 tint = if (pinned) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                             )
                         }
-                        IconButton(onClick = { showColorPicker = true }) {
-                            Icon(Icons.Filled.Palette, contentDescription = stringResource(R.string.action_color))
-                        }
-                        IconButton(onClick = { showLinkPicker = true }) {
-                            Icon(Icons.Filled.Link, contentDescription = stringResource(R.string.action_link))
-                        }
                         IconButton(onClick = { toggleOrInsertChecklist() }) {
                             Icon(Icons.Filled.CheckBox, contentDescription = stringResource(R.string.action_checklist))
                         }
@@ -900,6 +894,16 @@ private fun EditorScreen(
                                 Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.more_options))
                             }
                             DropdownMenu(expanded = editorMenuOpen, onDismissRequest = { editorMenuOpen = false }) {
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.action_color)) },
+                                    leadingIcon = { Icon(Icons.Filled.Palette, null) },
+                                    onClick = { editorMenuOpen = false; showColorPicker = true },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.action_link)) },
+                                    leadingIcon = { Icon(Icons.Filled.Link, null) },
+                                    onClick = { editorMenuOpen = false; showLinkPicker = true },
+                                )
                                 DropdownMenuItem(
                                     text = { Text(stringResource(R.string.nav_labels)) },
                                     leadingIcon = { Icon(Icons.Filled.Label, null) },

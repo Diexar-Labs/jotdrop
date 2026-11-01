@@ -295,8 +295,8 @@ class NotesListActivity : ComponentActivity() {
         if (uri != null) saveCapturedImage(uri, deleteSourceAfter = null, withOcr = ocr)
     }
 
-    // Welcome: the notes folder first; with Google, the cloud sign-in follows straight away.
-    private var welcomeGoogle = false
+    // Welcome: the notes folder first; with Google or GitHub, the cloud sign-in follows straight away.
+    private var welcomeProvider: String? = null
     private val pickVaultLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
@@ -304,25 +304,25 @@ class NotesListActivity : ComponentActivity() {
         Storage.persistUriPermission(this, uri)
         Storage.saveVaultUri(this, uri)
         reload(rescheduleReminders = true)
-        if (welcomeGoogle) startActivity(Intent(this, CloudActivity::class.java).putExtra(CloudActivity.EXTRA_WELCOME, true))
+        welcomeProvider?.let { startActivity(Intent(this, CloudActivity::class.java).putExtra(CloudActivity.EXTRA_WELCOME, true).putExtra(CloudActivity.EXTRA_PROVIDER, it)) }
     }
 
-    private fun startWelcome(google: Boolean) {
-        welcomeGoogle = google
+    private fun startWelcome(provider: String?) {
+        welcomeProvider = provider
         // Opens in Documents, where "New folder" makes the suggested JotDrop folder.
         pickVaultLauncher.launch(DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", "primary:Documents"))
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
         super.onSaveInstanceState(outState)
-        outState.putBoolean("welcomeGoogle", welcomeGoogle)
+        outState.putString("welcomeProvider", welcomeProvider)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        welcomeGoogle = savedInstanceState?.getBoolean("welcomeGoogle") ?: false
+        welcomeProvider = savedInstanceState?.getString("welcomeProvider")
         VoiceMemoRecordingService.restorePending(this)
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -797,7 +797,7 @@ private fun NotesListScreen(
     onRefresh: () -> Unit,
     onPullRefresh: suspend () -> Unit,
     onOpenSettings: () -> Unit,
-    onWelcome: (google: Boolean) -> Unit,
+    onWelcome: (provider: String?) -> Unit,
     onNewNote: (String?) -> Unit,
     onTakePhoto: () -> Unit,
     onPickPhoto: () -> Unit,
@@ -1306,7 +1306,7 @@ private fun NotesListScreen(
         ) {
             when (val s = state) {
                 NotesUiState.Loading -> LoadingSpinner()
-                NotesUiState.NoVault -> WelcomeState(onGoogle = { onWelcome(true) }, onLocal = { onWelcome(false) })
+                NotesUiState.NoVault -> WelcomeState(onProvider = { onWelcome(it) }, onLocal = { onWelcome(null) })
                 is NotesUiState.Error -> EmptyState(
                     text = stringResource(R.string.error_with_message, s.message),
                     actionLabel = stringResource(R.string.retry),
@@ -3128,9 +3128,9 @@ private fun EmptyState(text: String, actionLabel: String, onAction: () -> Unit) 
     }
 }
 
-/** First start: a folder for the notes, and with Google a free cloud in the same few taps (Eric: Play Store, Google, free account). */
+/** First start: a folder for the notes, and with Google or GitHub a free cloud in the same few taps (Eric: many Obsidian users are on GitHub). */
 @Composable
-private fun WelcomeState(onGoogle: () -> Unit, onLocal: () -> Unit) {
+private fun WelcomeState(onProvider: (String) -> Unit, onLocal: () -> Unit) {
     Box(modifier = Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -3140,7 +3140,8 @@ private fun WelcomeState(onGoogle: () -> Unit, onLocal: () -> Unit) {
             Text(stringResource(R.string.welcome_title), style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onBackground, textAlign = TextAlign.Center)
             Text(stringResource(R.string.welcome_text), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onBackground, textAlign = TextAlign.Center)
             Spacer(Modifier.height(4.dp))
-            ProviderButton("google", stringResource(R.string.welcome_google), enabled = true, onClick = onGoogle)
+            ProviderButton("google", stringResource(R.string.welcome_google), enabled = true, onClick = { onProvider("google") })
+            ProviderButton("github", stringResource(R.string.welcome_github), enabled = true, onClick = { onProvider("github") })
             OutlinedButton(onClick = onLocal, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(stringResource(R.string.welcome_local)) }
             Text(stringResource(R.string.welcome_folder_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onBackground, textAlign = TextAlign.Center)
         }
