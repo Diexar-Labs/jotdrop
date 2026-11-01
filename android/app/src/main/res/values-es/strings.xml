@@ -41,4 +41,8 @@
     <string name="shared_read_only">Compartida, solo lectura</string>
     <string name="shared_delete_message">Esto elimina la nota para todas las personas del grupo. Una copia va a tu Papelera; si la restauras, pasa a tus propias notas.</string>
     <string name="shared_no_access">Compartida, sin acceso</string>
+    <plurals name="notes_count">
+        <item quantity="one">%d nota</item>
+        <item quantity="other">%d notas</item>
+    </plurals>
 </resources>

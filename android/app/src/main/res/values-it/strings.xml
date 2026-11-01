@@ -41,4 +41,8 @@
     <string name="shared_read_only">Condivisa, sola lettura</string>
     <string name="shared_delete_message">Così la nota viene rimossa per tutti nel gruppo. Una copia finisce nel tuo Cestino; se la ripristini, torna tra le tue note.</string>
     <string name="shared_no_access">Condivisa, nessun accesso</string>
+    <plurals name="notes_count">
+        <item quantity="one">%d nota</item>
+        <item quantity="other">%d note</item>
+    </plurals>
 </resources>

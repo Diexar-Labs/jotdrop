@@ -75,7 +75,65 @@ assert(list.includes('Storage.refreshLabels('), 'Discovery must use the coordina
 const restoreAction = list.slice(list.indexOf('val toRestore ='), list.indexOf('onDelete = { showBulkDeleteDialog'));
 assert(restoreAction.includes('ReminderScheduler.rescheduleAll(context)'), 'Restore must schedule Notes even while Archive or Trash is displayed');
 assert(list.includes('LabelNames.matchesSelection(note.meta.allTags, selectedTags)'), 'Tag filtering must match label case-folding');
+// First run: only people who came through the welcome screen get the short tour, never someone updating.
+const tutorial = source(path.join('ui', 'FirstRunTutorial'));
+const vaultPicked = list.slice(list.indexOf('private val pickVaultLauncher'), list.indexOf('private fun startWelcome('));
+assert(vaultPicked.includes('Storage.setTutorialPending(this, true)'), 'Choosing a folder on the welcome screen must start the tour');
+assert.equal((list.match(/setTutorialPending\([^)]*true\)/g) || []).length, 1, 'The welcome screen must be the only way into the tour, or people updating would get it');
+for (const name of ['NEW_NOTE', 'VOICE_MEMO', 'PHOTO', 'PIN']) assert(list.includes(`TutorialTarget.${name}`), `A balloon must point at ${name}`);
+assert(list.includes('FirstRunTutorial('), 'The notes screen must show the tour');
+assert(list.includes('gesturesEnabled = !selectionMode && !isRecording && !tutorialActive'), 'The drawer must not slide open during the tour');
+assert(tutorial.includes('R.string.tutorial_skip'), 'Skipping must be possible');
+assert(tutorial.includes('BackHandler'), 'Back must end the tour');
+assert(tutorial.includes('tutorial_sample'), 'Without cards the pin balloon points at an example card');
+for (const folder of ['values', 'values-nl']) {
+  const strings = fs.readFileSync(path.join(root, 'res', folder, 'strings.xml'), 'utf8');
+  const lines = strings.split('\n').filter(line => line.includes('name="tutorial_'));
+  assert.equal(lines.length, 9, `${folder} must hold all tour texts`);
+  assert(!lines.some(line => line.includes('—')), `${folder}: no em-dashes in the tour`);
+}
+// Just signed in: straight to the notes, wherever the sign-in started; someone already signed in stays on the screen.
+const cloudActivity = source('CloudActivity');
+assert(cloudActivity.includes('var justSignedIn by rememberSaveable { mutableStateOf(welcome) }'), 'The welcome route counts as signing in, and rotating must not forget it');
+assert.match(cloudActivity, /if \(wasConnected == false && connected\) justSignedIn = true/, 'Only a change from signed out to signed in may return to the notes');
+const signedInReturn = cloudActivity.slice(cloudActivity.indexOf('if (justSignedIn) LaunchedEffect'), cloudActivity.indexOf('// From a conflict copy'));
+for (const name of ['status?.enabled == true', 'CloudAccountFlow.recoveryCode == null', 'CloudAccountFlow.secureOffer == null', '!CloudAccountFlow.totpTurnedOn', 'onSignedIn()']) assert(signedInReturn.includes(name), `Return to the notes needs ${name}: the recovery code must not fall away`);
+assert(!/if \(welcome\) LaunchedEffect/.test(cloudActivity), 'The return must not depend on the welcome route alone');
+// The number of notes next to the name, handwritten and a little askew, like the board in Joplin (Eric, 1 Nov).
+const titleBar = list.slice(list.indexOf('TopAppBar(', list.indexOf('SelectionTopBar(')), list.indexOf('actions = {', list.indexOf('TopAppBar(', list.indexOf('SelectionTopBar('))));
+assert(titleBar.includes('R.plurals.notes_count'), 'The top bar must show the number of notes');
+assert(titleBar.includes('fontFamily = Handwriting'), 'The number must be in the handwriting of the Joplin board');
+assert(titleBar.includes('rotationZ = -2f'), 'The number must sit a little askew, like in Joplin');
+assert.match(titleBar, /Modifier\.weight\(1f, fill = false\)\.alignByBaseline\(\)\.graphicsLayer/, 'On a narrow phone the number gives way, never the name');
+assert.equal((titleBar.match(/Modifier\.weight\(/g) || []).length, 1, 'Only the number may give way');
+for (const folder of ['values', 'values-nl', 'values-de', 'values-es', 'values-fr', 'values-it']) {
+  assert(fs.readFileSync(path.join(root, 'res', folder, 'strings.xml'), 'utf8').includes('<plurals name="notes_count">'), `${folder} must say how many notes there are`);
+}
 const manifest = fs.readFileSync(path.join(root, 'AndroidManifest.xml'), 'utf8');
+// Holding the app icon starts a voice memo. A launcher shortcut closes every open screen of its task,
+// and the editor saves only on the way back: the shortcut needs its own task, or unsaved text is lost.
+const launcherActivity = manifest.slice(manifest.indexOf('android:name=".NotesListActivity"'), manifest.indexOf('android:name=".EditorActivity"'));
+assert(launcherActivity.includes('android:resource="@xml/shortcuts"'), 'The launcher activity must publish the voice memo shortcut');
+const shortcutEntry = manifest.slice(manifest.indexOf('android:name=".VoiceMemoShortcutActivity"'), manifest.indexOf('android:name=".ShareActivity"'));
+assert(shortcutEntry.includes('android:exported="false"'), 'Other apps must not be able to start the microphone');
+assert(shortcutEntry.includes('android:taskAffinity=""'), 'The shortcut must not share a task with the editor');
+assert(shortcutEntry.includes('android:excludeFromRecents="true"'), 'The shortcut screen must not show in recents');
+assert(!shortcutEntry.includes('singleInstance'), 'The microphone permission result needs a normal launch mode');
+const shortcuts = fs.readFileSync(path.join(root, 'res', 'xml', 'shortcuts.xml'), 'utf8');
+assert(shortcuts.includes('android:targetClass="com.diexar.keepcapture.VoiceMemoShortcutActivity"'), 'The shortcut must open the voice memo screen');
+assert(shortcuts.includes('android:shortcutShortLabel="@string/shortcut_voice_memo"'), 'The shortcut label must be translatable');
+const shortcutActivity = source('VoiceMemoShortcutActivity');
+for (const name of ['Storage.getVaultUri(this)', 'VoiceMemoRecordingService.recording.value', 'VoiceMemoRecordingService.pending.value', 'VoiceMemoRecordingService.restorePending(this)']) assert(shortcutActivity.includes(name), `Check ${name} before recording: no folder, a running recording or an unsaved memo must only open the app`);
+assert(shortcutActivity.includes('Manifest.permission.RECORD_AUDIO'), 'A first use must ask for the microphone');
+assert(shortcutActivity.includes('Intent.FLAG_ACTIVITY_REORDER_TO_FRONT'), 'Show the board without closing an open editor');
+assert(!shortcutActivity.includes('CLEAR_TASK'), 'Never close the screens of the app');
+assert(list.includes('!selectionMode && !isRecording && pendingMemo == null && !drawerState.isOpen'), 'The tour must not cover the stop button or the save dialog');
+for (const [folder, hint] of [['values', 'Voice memo'], ['values-nl', 'Spraakmemo']]) {
+  const strings = fs.readFileSync(path.join(root, 'res', folder, 'strings.xml'), 'utf8');
+  assert(strings.includes(`<string name="shortcut_voice_memo">${hint}</string>`), `${folder}: the shortcut needs its label`);
+  const balloon = strings.split('\n').find(line => line.includes('name="tutorial_voice_memo"'));
+  assert(balloon.includes(hint), `${folder}: the microphone balloon must explain the shortcut, with the label people see`);
+}
 assert(manifest.includes('android:foregroundServiceType="microphone"'));
 assert(manifest.includes('android.permission.FOREGROUND_SERVICE_MICROPHONE'));
 assert(manifest.includes('android.permission.WAKE_LOCK'));

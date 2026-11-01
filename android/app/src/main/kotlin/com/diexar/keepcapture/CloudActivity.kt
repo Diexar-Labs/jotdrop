@@ -51,7 +51,11 @@ class CloudActivity : ComponentActivity() {
         }
         val welcome = intent.getBooleanExtra(EXTRA_WELCOME, false)
         val resolve = intent.getStringExtra(EXTRA_RESOLVE)
-        setContent { JotDropTheme { CloudScreen(welcome, resolve, onBack = { finish() }, onSettings = { startActivity(Intent(this, MainActivity::class.java)) }) } }
+        setContent { JotDropTheme { CloudScreen(welcome, resolve, onBack = { finish() }, onSignedIn = {
+            // Also from Settings: whoever just signed in wants to write a note.
+            startActivity(Intent(this, NotesListActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+            finish()
+        }, onSettings = { startActivity(Intent(this, MainActivity::class.java)) }) } }
     }
 
     companion object {
@@ -82,7 +86,7 @@ class CloudActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun CloudScreen(welcome: Boolean, resolve: String?, onBack: () -> Unit, onSettings: () -> Unit) {
+private fun CloudScreen(welcome: Boolean, resolve: String?, onBack: () -> Unit, onSignedIn: () -> Unit, onSettings: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
     var status by remember { mutableStateOf<CloudSyncStatus?>(null) }
@@ -193,17 +197,19 @@ private fun CloudScreen(welcome: Boolean, resolve: String?, onBack: () -> Unit, 
     }
     // Just signed in here: an empty notes folder starts syncing at once, a folder with files asks first (Eric).
     var wasConnected by remember { mutableStateOf<Boolean?>(null) }
+    var justSignedIn by rememberSaveable { mutableStateOf(welcome) }
     LaunchedEffect(status?.connected) {
         val connected = status?.connected ?: return@LaunchedEffect
+        if (wasConnected == false && connected) justSignedIn = true
         if (wasConnected == false && connected && status?.enabled == false && Storage.getVaultUri(context) != null) {
             snapshotFlow { busy }.first { !it }
             if (CloudSyncManager.localFolderEmpty(context)) run { CloudSyncManager.setEnabled(context, true) } else confirmEnable = true
         }
         wasConnected = connected
     }
-    // From the welcome screen: back to the notes once sync runs and the recovery code is saved.
-    if (welcome) LaunchedEffect(status?.enabled, CloudAccountFlow.recoveryCode, CloudAccountFlow.secureOffer) {
-        if (status?.enabled == true && CloudAccountFlow.recoveryCode == null && CloudAccountFlow.secureOffer == null) onBack()
+    // Just signed in, from anywhere: to the notes once sync runs and the recovery code is saved.
+    if (justSignedIn) LaunchedEffect(status?.enabled, CloudAccountFlow.recoveryCode, CloudAccountFlow.secureOffer, CloudAccountFlow.totpTurnedOn) {
+        if (status?.enabled == true && CloudAccountFlow.recoveryCode == null && CloudAccountFlow.secureOffer == null && !CloudAccountFlow.totpTurnedOn) onSignedIn()
     }
     // From a conflict copy's card: straight into the comparison of its note, like "Resolve now" on the card in Obsidian.
     var resolveOpened by rememberSaveable { mutableStateOf(false) }

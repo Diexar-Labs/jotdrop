@@ -48,6 +48,7 @@ object Storage {
     private const val KEY_SPEECH_LANG = "speech_language"
     private const val KEY_DOWNLOAD_IMAGES = "download_images"
     private const val KEY_SORT_MODE = "sort_mode"
+    private const val KEY_TUTORIAL_PENDING = "first_run_tutorial_pending"
     private const val JOURNAL_SEPARATOR = '\n'.code.toByte()
     // Journaal v2: magic + uri + separator + inhoud + CRC32. Oude journalen beginnen met "content:".
     private val JOURNAL_MAGIC = "JDJ2".toByteArray(Charsets.US_ASCII)
@@ -82,6 +83,14 @@ object Storage {
             .edit()
             .putString(KEY_VAULT_URI, uri.toString())
             .apply()
+    }
+
+    /** Set only on the welcome screen, so someone updating the app never gets the first-run tour. */
+    fun isTutorialPending(context: Context): Boolean =
+        PreferenceManager.getDefaultSharedPreferences(context).getBoolean(KEY_TUTORIAL_PENDING, false)
+
+    fun setTutorialPending(context: Context, pending: Boolean) {
+        PreferenceManager.getDefaultSharedPreferences(context).edit().putBoolean(KEY_TUTORIAL_PENDING, pending).apply()
     }
 
     fun getSubfolder(context: Context): String {

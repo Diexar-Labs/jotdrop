@@ -41,4 +41,8 @@
     <string name="shared_read_only">Geteilt, nur lesen</string>
     <string name="shared_delete_message">Damit wird die Notiz für alle in der Gruppe entfernt. Eine Kopie kommt in Ihren Papierkorb; wenn Sie sie wiederherstellen, landet sie bei Ihren eigenen Notizen.</string>
     <string name="shared_no_access">Geteilt, kein Zugriff mehr</string>
+    <plurals name="notes_count">
+        <item quantity="one">%d Notiz</item>
+        <item quantity="other">%d Notizen</item>
+    </plurals>
 </resources>

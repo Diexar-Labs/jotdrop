@@ -108,6 +108,11 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.FloatingActionButton
+import com.diexar.keepcapture.ui.TutorialTarget
+import com.diexar.keepcapture.ui.FirstRunTutorial
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ModalBottomSheet
@@ -140,6 +145,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -296,6 +302,14 @@ class NotesListActivity : ComponentActivity() {
         if (uri != null) saveCapturedImage(uri, deleteSourceAfter = null, withOcr = ocr)
     }
 
+    // First-run tour: only while this screen is in front, so it waits behind the cloud sign-in.
+    private val tutorialPending = MutableStateFlow(false)
+
+    override fun onPause() {
+        super.onPause()
+        tutorialPending.value = false
+    }
+
     // Welcome: the notes folder first; with Google or GitHub, the cloud sign-in follows straight away.
     private var welcomeProvider: String? = null
     private val pickVaultLauncher = registerForActivityResult(
@@ -304,6 +318,7 @@ class NotesListActivity : ComponentActivity() {
         if (uri == null) return@registerForActivityResult
         Storage.persistUriPermission(this, uri)
         Storage.saveVaultUri(this, uri)
+        Storage.setTutorialPending(this, true)
         reload(rescheduleReminders = true)
         welcomeProvider?.let { startActivity(Intent(this, CloudActivity::class.java).putExtra(CloudActivity.EXTRA_WELCOME, true).putExtra(CloudActivity.EXTRA_PROVIDER, it)) }
     }
@@ -370,6 +385,11 @@ class NotesListActivity : ComponentActivity() {
                         startActivity(Intent(this, MainActivity::class.java))
                     },
                     onWelcome = ::startWelcome,
+                    tutorialPendingFlow = tutorialPending.asStateFlow(),
+                    onTutorialDone = {
+                        Storage.setTutorialPending(this, false)
+                        tutorialPending.value = false
+                    },
                     onNewNote = { label ->
                         if (requireVaultOrPromptSettings()) {
                             startActivity(EditorActivity.newNoteIntent(this, label))
@@ -499,6 +519,7 @@ class NotesListActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        tutorialPending.value = Storage.isTutorialPending(this)
         reload(rescheduleReminders = true)
         CloudSyncManager.request(this)
     }
@@ -801,6 +822,8 @@ private fun NotesListScreen(
     onPullRefresh: suspend () -> Unit,
     onOpenSettings: () -> Unit,
     onWelcome: (provider: String?) -> Unit,
+    tutorialPendingFlow: StateFlow<Boolean>,
+    onTutorialDone: () -> Unit,
     onNewNote: (String?) -> Unit,
     onTakePhoto: () -> Unit,
     onPickPhoto: () -> Unit,
@@ -820,6 +843,9 @@ private fun NotesListScreen(
 ) {
     val isRecording by isRecordingFlow.collectAsState()
     val pendingMemo by pendingMemoFlow.collectAsState()
+    val tutorialPending by tutorialPendingFlow.collectAsState()
+    val tutorialAnchors = remember { mutableStateMapOf<TutorialTarget, Rect>() }
+    var tutorialStep by rememberSaveable { mutableStateOf(0) }
     val isSavingMemo by isSavingMemoFlow.collectAsState()
     val state by stateFlow.collectAsState()
     val folder by folderFlow.collectAsState()
@@ -1052,9 +1078,11 @@ private fun NotesListScreen(
         }
     }
 
+    val tutorialActive = tutorialPending && state is NotesUiState.Loaded && folder == NoteFolder.NOTES &&
+        !remindersOnly && !selectionMode && !isRecording && pendingMemo == null && !drawerState.isOpen
     ModalNavigationDrawer(
         drawerState = drawerState,
-        gesturesEnabled = !selectionMode && !isRecording,
+        gesturesEnabled = !selectionMode && !isRecording && !tutorialActive,
         drawerContent = {
             JotDropDrawer(
                 labels = allLabels,
@@ -1123,13 +1151,29 @@ private fun NotesListScreen(
                         }
                     },
                     title = {
-                        Text(
-                            screenTitle,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.SemiBold,
-                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text(
+                                screenTitle,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.alignByBaseline(),
+                            )
+                            // The number of notes shown, handwritten and a little askew, like the board in Joplin.
+                            // On a narrow phone this gives way, not the name.
+                            if (state is NotesUiState.Loaded) Text(
+                                pluralStringResource(R.plurals.notes_count, filtered.size, filtered.size),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                softWrap = false,
+                                fontFamily = Handwriting,
+                                fontWeight = FontWeight.SemiBold,
+                                fontSize = 21.sp,
+                                color = if (isSystemInDarkTheme()) PlayfulAmber else Color(0xFF8A5A00),
+                                modifier = Modifier.weight(1f, fill = false).alignByBaseline().graphicsLayer { rotationZ = -2f },
+                            )
+                        }
                     },
                     actions = {
                         Box {
@@ -1224,6 +1268,7 @@ private fun NotesListScreen(
                 // de mic-knop dezelfde kleur heeft als de foto- en plus-FAB.
                 SmallFloatingActionButton(
                     onClick = onToggleRecord,
+                    modifier = Modifier.onGloballyPositioned { tutorialAnchors[TutorialTarget.VOICE_MEMO] = it.boundsInRoot() },
                     containerColor = if (isRecording) {
                         MaterialTheme.colorScheme.errorContainer
                     } else {
@@ -1245,7 +1290,10 @@ private fun NotesListScreen(
                 Spacer(Modifier.height(12.dp))
                 var photoMenuExpanded by remember { mutableStateOf(false) }
                 Box {
-                    SmallFloatingActionButton(onClick = { photoMenuExpanded = true }) {
+                    SmallFloatingActionButton(
+                        onClick = { photoMenuExpanded = true },
+                        modifier = Modifier.onGloballyPositioned { tutorialAnchors[TutorialTarget.PHOTO] = it.boundsInRoot() },
+                    ) {
                         Icon(Icons.Filled.AddAPhoto, contentDescription = stringResource(R.string.action_add_photo))
                     }
                     DropdownMenu(
@@ -1304,7 +1352,8 @@ private fun NotesListScreen(
                         .drawBehind {
                             if (!newNotePressed) translate(3.dp.toPx(), 3.dp.toPx()) { drawOutline(newNoteShape.createOutline(size, layoutDirection, this), edge) }
                         }
-                        .border(1.5.dp, edge, newNoteShape),
+                        .border(1.5.dp, edge, newNoteShape)
+                        .onGloballyPositioned { tutorialAnchors[TutorialTarget.NEW_NOTE] = it.boundsInRoot() },
                 ) {
                     Icon(Icons.Filled.Add, contentDescription = stringResource(R.string.action_new_note))
                 }
@@ -1371,6 +1420,7 @@ private fun NotesListScreen(
                                 } else {
                                     NotesGrid(
                                         notes = filtered,
+                                        firstPinModifier = Modifier.onGloballyPositioned { tutorialAnchors[TutorialTarget.PIN] = it.boundsInRoot() },
                                         selectionMode = selectionMode,
                                         selectedUris = selectedNoteUris,
                                         manualMode = sortMode == NoteSortMode.MANUAL && folder != NoteFolder.TRASH,
@@ -1395,6 +1445,14 @@ private fun NotesListScreen(
                 }
             }
         }
+    }
+    if (tutorialActive) {
+        FirstRunTutorial(
+            anchors = if (filtered.isEmpty()) tutorialAnchors - TutorialTarget.PIN else tutorialAnchors,
+            step = tutorialStep,
+            onStep = { tutorialStep = it },
+            onFinish = onTutorialDone,
+        )
     }
     if (tagSheetOpen) {
         TagPickerSheet(
@@ -1644,6 +1702,7 @@ private suspend fun bulkPerform(
 @Composable
 private fun NotesGrid(
     notes: List<NoteSummary>,
+    firstPinModifier: Modifier,
     selectionMode: Boolean,
     selectedUris: Set<Uri>,
     manualMode: Boolean,
@@ -1821,6 +1880,7 @@ private fun NotesGrid(
     ) {
         val pinned = ordered.filter { it.meta.pinned }
         val rest = ordered.filter { !it.meta.pinned }
+        val firstCard = pinned.firstOrNull() ?: rest.firstOrNull()
         if (pinned.isNotEmpty()) {
             item(span = StaggeredGridItemSpan.FullLine, key = "label-pinned") {
                 SectionLabel(stringResource(R.string.section_pinned))
@@ -1840,6 +1900,7 @@ private fun NotesGrid(
                     onClick = { onCardClick(note) },
                     onLongClick = { onCardLongClick(note) },
                     onPinClick = { onTogglePin(note) },
+                    pinModifier = if (note === firstCard) firstPinModifier else Modifier,
                     onChecklistClick = { index -> onToggleChecklist(note, index) },
                     onUrlClick = onUrlClick,
                     onLabelClick = onLabelClick,
@@ -1871,6 +1932,7 @@ private fun NotesGrid(
                 onClick = { onCardClick(note) },
                 onLongClick = { onCardLongClick(note) },
                 onPinClick = { onTogglePin(note) },
+                pinModifier = if (note === firstCard) firstPinModifier else Modifier,
                 onChecklistClick = { index -> onToggleChecklist(note, index) },
                 onUrlClick = onUrlClick,
                 onLabelClick = onLabelClick,
@@ -2375,6 +2437,7 @@ private fun NoteCard(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onPinClick: () -> Unit,
+    pinModifier: Modifier = Modifier,
     onChecklistClick: (Int) -> Unit,
     onUrlClick: (String) -> Unit,
     onLabelClick: (String) -> Unit = {},
@@ -2684,7 +2747,8 @@ private fun NoteCard(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(4.dp)
-                        .size(28.dp),
+                        .size(28.dp)
+                        .then(pinModifier),
                 ) {
                     Icon(
                         imageVector = if (note.meta.pinned) Icons.Filled.PushPin else Icons.Outlined.PushPin,

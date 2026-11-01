@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="voice_memo"
+        android:enabled="true"
+        android:icon="@mipmap/ic_shortcut_voice_memo"
+        android:shortcutShortLabel="@string/shortcut_voice_memo">
+        <intent
+            android:action="com.diexar.keepcapture.action.VOICE_MEMO_SHORTCUT"
+            android:targetPackage="com.diexar.keepcapture"
+            android:targetClass="com.diexar.keepcapture.VoiceMemoShortcutActivity" />
+    </shortcut>
+</shortcuts>

@@ -60,6 +60,16 @@
     <string name="save_conflict_use_saved">Opgeslagen versie gebruiken</string>
 
     <string name="loading">Laden…</string>
+    <string name="tutorial_new_note">Tik op + om een notitie te schrijven.</string>
+    <string name="tutorial_voice_memo">Liever praten? Neem hier een spraakmemo op. Sneller: houd het JotDrop-icoon op je startscherm ingedrukt en tik op Spraakmemo.</string>
+    <string name="shortcut_voice_memo">Spraakmemo</string>
+    <string name="tutorial_photo">Voeg hier een foto toe, of laat JotDrop de tekst eruit halen.</string>
+    <string name="tutorial_pin">Zet een notitie vast, dan blijft hij bovenaan.</string>
+    <string name="tutorial_sample">Voorbeeldnotitie</string>
+    <string name="tutorial_progress">%1$d van %2$d</string>
+    <string name="tutorial_next">Volgende</string>
+    <string name="tutorial_skip">Overslaan</string>
+    <string name="tutorial_done">Begrepen</string>
     <string name="welcome_title">Welkom bij JotDrop</string>
     <string name="welcome_text">Je notities, foto\'s en spraakmemo\'s, als gewone bestanden op deze telefoon. Ga verder met Google of GitHub voor een gratis versleutelde cloud met 250 MB, zodat je ze op al je apparaten hebt.</string>
     <string name="welcome_google">Doorgaan met Google</string>
@@ -313,4 +323,8 @@
     <string name="shared_read_only">Gedeeld, alleen-lezen</string>
     <string name="shared_delete_message">Hiermee verwijder je de notitie voor iedereen in de groep. Er gaat een kopie naar je prullenbak; als je die terugzet, komt hij bij je eigen notities.</string>
     <string name="shared_no_access">Gedeeld, geen toegang meer</string>
+    <plurals name="notes_count">
+        <item quantity="one">%d notitie</item>
+        <item quantity="other">%d notities</item>
+    </plurals>
 </resources>

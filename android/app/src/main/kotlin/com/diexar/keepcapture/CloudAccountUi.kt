@@ -73,6 +73,8 @@ internal object CloudAccountFlow {
     var startProvider by mutableStateOf<String?>(null)
     /** Signed up with a password: the authenticator offer follows the recovery code, then this is dropped. */
     var secureOffer by mutableStateOf<CloudSecureOffer?>(null)
+    /** The confirmation is still on screen, so the screen must not close under it. */
+    var totpTurnedOn by mutableStateOf(false)
     /** An authenticator being set up, in settings or in the offer, until it is turned on or cancelled. */
     var totpSetup by mutableStateOf<CloudTotpSetup?>(null)
     /** Bumped when the offer changed the account, so the account section loads it again. */
@@ -773,11 +775,10 @@ internal fun CloudSecureOfferDialog(cloud: suspend () -> CloudClient) {
     var working by remember { mutableStateOf(false) }
     var problem by remember { mutableStateOf<String?>(null) }
     var code by remember { mutableStateOf("") }
-    var turnedOn by remember { mutableStateOf(false) }
     val offer = flow.secureOffer
-    if (flow.recoveryCode != null || (offer == null && !turnedOn)) return
+    if (flow.recoveryCode != null || (offer == null && !flow.totpTurnedOn)) return
     val setup = flow.totpSetup
-    fun close() { flow.secureOffer = null; flow.totpSetup = null; code = ""; problem = null; turnedOn = false }
+    fun close() { flow.secureOffer = null; flow.totpSetup = null; code = ""; problem = null; flow.totpTurnedOn = false }
     fun attempt(action: suspend () -> Unit) {
         if (working) return
         working = true
@@ -811,7 +812,7 @@ internal fun CloudSecureOfferDialog(cloud: suspend () -> CloudClient) {
             else TextButton(onClick = { attempt {
                 val client = cloud()
                 io { CloudAccount.enableTotp(client, offer, code) }
-                flow.secureOffer = null; flow.totpSetup = null; code = ""; turnedOn = true
+                flow.secureOffer = null; flow.totpSetup = null; code = ""; flow.totpTurnedOn = true
                 flow.accountChanged++
             } }, enabled = !working && code.length == 6) { Text("Turn on") }
         },

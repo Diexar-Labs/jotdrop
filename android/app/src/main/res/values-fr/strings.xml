@@ -41,4 +41,8 @@
     <string name="shared_read_only">Partagée, lecture seule</string>
     <string name="shared_delete_message">Cela supprime la note pour tout le monde dans le groupe. Une copie va dans votre Corbeille ; si vous la restaurez, elle rejoint vos propres notes.</string>
     <string name="shared_no_access">Partagée, plus d\'accès</string>
+    <plurals name="notes_count">
+        <item quantity="one">%d note</item>
+        <item quantity="other">%d notes</item>
+    </plurals>
 </resources>
