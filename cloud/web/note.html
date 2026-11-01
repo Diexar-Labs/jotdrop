@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>A note shared with JotDrop</title>
+  <link rel="icon" href="/logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="note-link-page">
+  <main class="note-link">
+    <p id="note-state" role="status">Opening...</p>
+    <article id="note-article" hidden>
+      <h1 id="note-title"></h1>
+      <div id="note-body"></div>
+      <p id="note-until" class="dialog-note"></p>
+    </article>
+    <aside class="note-link-about">
+      <p>Encrypted on the sender's device. Only people with this link can read it, and we cannot.</p>
+      <p><a href="https://jotdrop.net/">Make your own private notes with JotDrop</a></p>
+    </aside>
+    <details id="note-report-box" hidden>
+      <summary>Report this note</summary>
+      <form id="note-report">
+        <label for="note-report-reason">Why</label>
+        <select id="note-report-reason" required>
+          <option value="abuse">Abuse or harassment</option>
+          <option value="illegal">Illegal content</option>
+          <option value="spam">Spam</option>
+          <option value="other">Something else</option>
+        </select>
+        <label for="note-report-details">What is wrong? Paste the part it is about: we cannot read the note ourselves.</label>
+        <textarea id="note-report-details" rows="4" maxlength="2000"></textarea>
+        <button class="primary" type="submit">Send report</button>
+        <p id="note-report-message" role="status"></p>
+      </form>
+    </details>
+  </main>
+  <script type="module" src="/note-link.js"></script>
+</body>
+</html>

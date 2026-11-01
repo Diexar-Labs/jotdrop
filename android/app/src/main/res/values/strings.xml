@@ -324,6 +324,7 @@
     <string name="toast_restored">Note restored</string>
     <string name="action_delete_forever">Delete forever</string>
     <string name="action_share_note">Share…</string>
+    <string name="action_share_link">Share by link…</string>
     <string name="action_group">Shared group…</string>
     <string name="action_move_to_mine">Move to my notes</string>
     <string name="toast_moved_to_mine">Moved to your own notes</string>
@@ -336,4 +337,15 @@
         <item quantity="one">%d note</item>
         <item quantity="other">%d notes</item>
     </plurals>
+    <string name="widget_name">Quick capture</string>
+    <string name="widget_description">New note, voice memo or photo in one tap.</string>
+    <string name="widget_note">Note</string>
+    <string name="widget_voice">Voice memo</string>
+    <string name="widget_photo">Photo</string>
+    <string name="widget_note_name">Note or list</string>
+    <string name="widget_note_description">One note or list on your home screen. Tick items right there.</string>
+    <string name="widget_note_pick">Choose a note</string>
+    <string name="widget_note_gone">This note moved or is gone. Tap to choose another.</string>
+    <string name="widget_note_empty">This note is empty.</string>
+    <string name="widget_note_none">No notes yet. Make one first.</string>
 </resources>

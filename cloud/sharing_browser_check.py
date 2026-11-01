@@ -213,6 +213,94 @@ def check_sharing(browser, url, codes, directory):
     ana.locator("#editor-message").filter(has_text="free plan").wait_for()
     ana.locator("#editor").evaluate("(dialog) => dialog.close()")
 
+    # --- Sharing a second note: the offer is about sharing, and the trial finishes what you were doing.
+    frida = open_page()
+    sign_up(frida, "frida@example.com")
+    new_note(frida, "First list", "- [ ] one")
+    card(frida, "First list").wait_for()
+    synced(frida)
+    menu(frida, "First list", "Share…")
+    frida.locator("#share-dialog").wait_for()
+    frida.locator("#share-me").fill("Frida")
+    frida.locator('#share-form button[type="submit"]').click()
+    take_link(frida)
+    frida.locator('button[data-view="notes"]').click()
+    new_note(frida, "Second list", "- [ ] two")
+    card(frida, "Second list").wait_for()
+    synced(frida)
+    menu(frida, "Second list", "Share…")
+    frida.locator("#share-dialog").wait_for()
+    assert frida.locator("#share-plus").is_hidden()
+    frida.locator("#share-group").select_option("")
+    frida.locator("#share-name").fill("Second group")
+    frida.locator('#share-form button[type="submit"]').click()
+    frida.locator("#share-plus").filter(has_text="shares as many notes").wait_for()
+    frida.locator("#share-message").filter(has_text="free plan").wait_for()
+    assert "keeps every version" not in frida.locator("#plus-reason").inner_text()
+    assert frida.locator("#share-buy").is_hidden()
+    frida.locator("#share-trial").click()
+    take_link(frida)
+    assert frida.locator("#view-title").inner_text() == "Second group"
+    frida.context.close()
+
+    # --- Share by link: someone without an account reads it, what the sender wrote stays text.
+    gina = open_page()
+    sign_up(gina, "gina@example.com")
+    new_note(gina, "Trip <img src=x onerror=window.hacked=1>", "- [ ] passport\n- [x] tickets\n\n<script>window.hacked=1</script>\n\n![[photo.png]]")
+    card(gina, "passport").wait_for()
+    synced(gina)
+    menu(gina, "passport", "Share by link…")
+    gina.locator("#link-dialog").wait_for()
+    assert gina.locator("#link-days").input_value() == "7"
+    gina.locator("#link-create").click()
+    gina.locator("#link-made").wait_for()
+    address = gina.locator("#link-address").input_value()
+    assert re.fullmatch(re.escape(url) + r"/n/[0-9a-f-]{36}#[\w-]{43}", address), address
+    gina.locator("#link-copy").click()
+    gina.locator("#link-message").filter(has_text="Link copied").wait_for()
+    assert gina.evaluate("navigator.clipboard.readText()") == address
+    gina.locator("#link-list .history-row").first.wait_for()
+
+    stranger = browser.new_context(viewport={"width": 390, "height": 800})
+    reader = stranger.new_page()
+    reader.on("pageerror", lambda error: errors.append(str(error)))
+    requests = []
+    reader.on("request", lambda request: requests.append(request.url))
+    reader.goto(address, wait_until="networkidle")
+    reader.locator("#note-article").wait_for()
+    assert "<img" in reader.locator("#note-title").inner_text() and reader.locator("#note-title img").count() == 0
+    assert reader.locator(".note-link-task").first.inner_text().startswith("☐ passport")
+    assert reader.locator(".note-link-task.done").first.inner_text().startswith("☑ tickets")
+    assert "photo.png" not in reader.locator("#note-body").inner_text()
+    assert reader.locator("#note-body script").count() == 0 and reader.evaluate("window.hacked") is None
+    assert "This link ends on" in reader.locator("#note-until").inner_text()
+    assert not any("#" in request and "/n/" not in request for request in requests) and not any(address.split("#")[1] in request.split("#")[0] for request in requests)
+    assert reader.get_by_role("link", name="Make your own private notes with JotDrop").count() == 1
+    reader.locator("#note-report-box summary").click()
+    reader.locator("#note-report-details").fill("This is about the trip")
+    reader.locator('#note-report button[type="submit"]').click()
+    reader.locator("#note-report-message").filter(has_text="Thanks").wait_for()
+
+    # A second link on the free plan: the offer, and the trial finishes the link.
+    gina.locator("#link-days").select_option("0")
+    gina.locator("#link-close").click()
+    menu(gina, "passport", "Share by link…")
+    gina.locator("#link-create").click()
+    gina.locator("#link-plus").filter(has_text="JotDrop Plus keeps more links").wait_for()
+    assert "one link" in gina.locator("#link-message").inner_text()
+    gina.locator("#link-days").select_option("0")
+    gina.locator("#link-trial").click()
+    gina.locator("#link-made").wait_for()
+    assert gina.locator("#link-list .history-row").filter(has_text="until you remove it").count() == 1
+    # Removing the first link stops it for everyone.
+    gina.locator("#link-list .history-row").filter(has_text="ends ").get_by_role("button", name="Remove").click()
+    gina.locator("#link-message").filter(has_text="no longer works").wait_for()
+    reader.reload(wait_until="networkidle")
+    reader.locator("#note-state").filter(has_text="This link has ended").wait_for()
+    assert reader.locator("#note-article").is_hidden()
+    stranger.close()
+    gina.context.close()
+
     # --- What a member writes is untrusted on the other screen.
     menu_target = card(ana, "Groceries")
     menu_target.hover()

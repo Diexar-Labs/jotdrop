@@ -120,6 +120,7 @@ $('log-out').addEventListener('click', async () => {
 // Typed in full, because neither can be undone.
 for (const [form, field, path, key, word, done] of [
   ['group-form', 'group-id', '/api/admin/delete-group', 'spaceId', 'DELETE GROUP', 'The group is deleted and its people were told.'],
+  ['link-form', 'link-id', '/api/admin/delete-link', 'linkId', 'DELETE LINK', 'The link is deleted and its owner was told.'],
   ['close-form', 'close-email', '/api/admin/close-account', 'email', 'CLOSE ACCOUNT', 'The account is closed and its owner was told.'],
 ]) $(form).addEventListener('submit', async (event) => {
   event.preventDefault();

@@ -40,10 +40,16 @@ import org.json.JSONObject
 internal class KnownSpace(val id: String, val key: String, val name: String, val others: List<String>, val frozen: Boolean, val gone: Boolean, val owner: Boolean)
 
 internal object CloudSpacesFlow {
+    // No link and no price: Google allows telling people where to upgrade, not sending them there.
+    private const val FREE_SHARES_ONE = "The free plan shares one note. JotDrop Plus shares more, and you can try it free for 14 days on our website."
+
     /** From an invitation link, until it is used or put aside. */
     var invitation by mutableStateOf<String?>(null)
     /** The note a card's menu wants to share. */
     var shareNote by mutableStateOf<Uri?>(null)
+
+    /** The note a card's menu wants to share by link. */
+    var linkNote by mutableStateOf<Uri?>(null)
 
     fun known(context: Context): List<KnownSpace> {
         val spaces = CloudPreviewStore(context).spaces()
@@ -71,10 +77,15 @@ internal object CloudSpacesFlow {
     /** Moves the note to the group's folder; the next sync does the rest. Reminders, pin, labels and order stay behind. */
     fun share(context: Context, client: CloudClient, note: Uri, spaceId: String?, newName: String, me: String): String {
         val (id, key) = if (spaceId != null) spaceId to known(context).first { it.id == spaceId }.key
-            else CloudSpaces.create(client, newName, me).also { remember(context, it.first, it.second, newName, true) }
+            else try {
+                CloudSpaces.create(client, newName, me).also { remember(context, it.first, it.second, newName, true) }
+            } catch (error: CloudRequestException) {
+                if (error.code == "plus-required") throw CloudSyncException(FREE_SHARES_ONE)
+                throw error
+            }
         if (spaceId != null) runCatching { CloudSpaces.setMemberName(client, id, key, me) }
         val files = CloudSpaces.files(client, id, key)
-        if (files.call("/status").optJSONObject("plan")?.optString("name") != "plus" && Storage.noteCountInSpace(context, id) >= 1) throw CloudSyncException("The free plan shares one note. JotDrop Plus shares more; see our website.")
+        if (files.call("/status").optJSONObject("plan")?.optString("name") != "plus" && Storage.noteCountInSpace(context, id) >= 1) throw CloudSyncException(FREE_SHARES_ONE)
         Storage.moveNoteToSpace(context, note, id).getOrThrow()
         return id
     }
@@ -277,6 +288,54 @@ internal fun SharedGroups(busy: Boolean, run: (suspend () -> Unit) -> Unit, clie
                 }
             }, enabled = name.isNotBlank() && !busy) { Text("Join") } },
             dismissButton = { TextButton(onClick = { CloudSpacesFlow.invitation = null }) { Text("Not now") } })
+    }
+    CloudSpacesFlow.linkNote?.let { note ->
+        var days by remember { mutableStateOf(7) }
+        var made by remember { mutableStateOf<String?>(null) }
+        var said by remember { mutableStateOf("") }
+        var links by remember { mutableStateOf<List<CloudNoteLinks.Link>>(emptyList()) }
+        val load: suspend () -> Unit = { val own = client(); links = withContext(Dispatchers.IO) { CloudNoteLinks.list(own) } }
+        LaunchedEffect(note) { runCatching { load() } }
+        AlertDialog(onDismissRequest = { CloudSpacesFlow.linkNote = null }, title = { Text("Share by link") },
+            text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                val link = made
+                if (link == null) {
+                    Text("Anyone with this link can read a copy of this note, without an account. Later changes do not go along. Photos and files stay out.", style = MaterialTheme.typography.bodySmall)
+                    for ((value, label) in listOf(1 to "After 1 day", 7 to "After 7 days", 30 to "After 30 days", 0 to "When I remove it")) Row(verticalAlignment = Alignment.CenterVertically) {
+                        RadioButton(selected = days == value, onClick = { days = value })
+                        Text(label)
+                    }
+                    TermsNotice("sharing")
+                } else {
+                    Text("Send this link yourself. It holds the key, so we never see it.", style = MaterialTheme.typography.bodySmall)
+                    Text(link, style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = { context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, link), null)) }) { Text("Send link") }
+                }
+                if (said.isNotEmpty()) Text(said, style = MaterialTheme.typography.bodySmall)
+                if (links.isNotEmpty()) Text("Your links", style = MaterialTheme.typography.titleSmall)
+                for (item in links) Column {
+                    Text("${item.title.ifBlank { "Untitled note" }} - ${item.expiresAt?.let { "ends ${it.take(10)}" } ?: "until you remove it"}", style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = { run { val own = client(); withContext(Dispatchers.IO) { CloudNoteLinks.remove(own, item.id) }; said = "The link no longer works."; if (made == item.address) made = null; load() } }, enabled = !busy) { Text("Remove") }
+                }
+            } },
+            confirmButton = { if (made == null) TextButton(onClick = {
+                run {
+                    val own = client()
+                    try {
+                        made = withContext(Dispatchers.IO) {
+                            val (title, text) = CloudNoteLinks.parts(Storage.readNote(context, note).getOrThrow())
+                            CloudNoteLinks.create(own, title, text, days)
+                        }
+                        said = ""
+                        load()
+                    } catch (error: CloudRequestException) {
+                        // No link and no price: Google allows telling people where to upgrade, not sending them there.
+                        if (error.code != "plus-required") throw error
+                        said = "${error.serverMessage} You can try it free for 14 days on our website."
+                    }
+                }
+            }, enabled = !busy) { Text("Make link") } },
+            dismissButton = { TextButton(onClick = { CloudSpacesFlow.linkNote = null }) { Text("Close") } })
     }
     CloudSpacesFlow.shareNote?.let { note ->
         var choice by remember { mutableStateOf<String?>(null) }

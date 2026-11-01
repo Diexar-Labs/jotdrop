@@ -14,6 +14,8 @@ const MAX_BODY = 12 * 1024 * 1024;
 const MAX_METADATA_BODY = 16 * 1024;
 const REPORT_ADDRESS = 'hello@jotdrop.net';
 const REPORT_REASONS = ['abuse', 'illegal', 'spam', 'other'];
+// A note anyone with its link can read. Text only: the key stays in the link, so nobody here can read or moderate it.
+const LINK_DAYS = [1, 7, 30, 0], LINK_FREE_DAYS = 7, MAX_LINK_BYTES = 64 * 1024, MAX_LINKS = 100;
 const MAX_REPORTS_A_DAY = 10;
 const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const TRANSFER_CHUNK_BYTES = 64 * 1024;
@@ -35,6 +37,8 @@ const DAY = 24 * 60 * 60 * 1000;
 const FREE_HISTORY = 30 * DAY;
 const PLUS_GRACE = 90 * DAY;
 const TRIAL_TIME = 14 * DAY;
+// The family plan: the person who pays and five others, invited with a link that works once, for a week.
+const FAMILY_SEATS = 6, FAMILY_INVITE_TIME = 7 * DAY;
 // Managed Payments needs this API version or later.
 const STRIPE_VERSION = '2025-03-31.basil';
 // A past-due renewal is not paid yet; it still counts as a running subscription.
@@ -303,7 +307,14 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         CREATE TABLE IF NOT EXISTS space_blocks(accountId TEXT NOT NULL, blockedAccountId TEXT NOT NULL, createdAt INTEGER NOT NULL, PRIMARY KEY(accountId,blockedAccountId));
         CREATE INDEX IF NOT EXISTS space_blocks_by_blocked ON space_blocks(blockedAccountId);
         CREATE TABLE IF NOT EXISTS space_reports(accountId TEXT NOT NULL, createdAt INTEGER NOT NULL);
-        CREATE INDEX IF NOT EXISTS space_reports_by_account ON space_reports(accountId);`);
+        CREATE INDEX IF NOT EXISTS space_reports_by_account ON space_reports(accountId);
+        CREATE TABLE IF NOT EXISTS note_links(id TEXT PRIMARY KEY, accountId TEXT NOT NULL, envelope TEXT NOT NULL, ownerEnvelope TEXT NOT NULL, createdAt INTEGER NOT NULL, expiresAt INTEGER);
+        CREATE INDEX IF NOT EXISTS note_links_by_account ON note_links(accountId);
+        CREATE TABLE IF NOT EXISTS family_subscriptions(subscriptionId TEXT PRIMARY KEY);
+        CREATE TABLE IF NOT EXISTS family_members(accountId TEXT PRIMARY KEY, ownerAccountId TEXT NOT NULL, joinedAt INTEGER NOT NULL);
+        CREATE INDEX IF NOT EXISTS family_members_by_owner ON family_members(ownerAccountId);
+        CREATE TABLE IF NOT EXISTS family_invites(tokenHash TEXT PRIMARY KEY, ownerAccountId TEXT NOT NULL, expiresAt INTEGER NOT NULL);
+        CREATE INDEX IF NOT EXISTS family_invites_by_owner ON family_invites(ownerAccountId);`);
       // Who uploaded a piece that no version uses yet; only set in a space, so one member cannot block the others.
       if (!all('PRAGMA table_info(chunks)').some((column) => column.name === 'deviceId')) db.exec('ALTER TABLE chunks ADD COLUMN deviceId TEXT;');
       db.exec('CREATE INDEX IF NOT EXISTS chunks_by_device ON chunks(deviceId) WHERE deviceId IS NOT NULL;');
@@ -372,8 +383,18 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       vaultId = owner.vaultId;
     }
     const plan = one('SELECT plusUntil,trialUsed FROM plans WHERE vaultId=?', vaultId) ?? { plusUntil: 0, trialUsed: 0 };
-    return { ...plan, plusUntil: Math.max(plan.plusUntil, one('SELECT COALESCE(MAX(paidUntil),0) AS until FROM subscriptions WHERE vaultId=?', vaultId).until) };
+    // A family member has Plus as long as the family plan they are in.
+    const payer = one('SELECT o.vaultId FROM family_members m JOIN accounts a ON a.id=m.accountId JOIN accounts o ON o.id=m.ownerAccountId WHERE a.vaultId=?', vaultId);
+    return { ...plan, plusUntil: Math.max(plan.plusUntil, one('SELECT COALESCE(MAX(paidUntil),0) AS until FROM subscriptions WHERE vaultId=?', vaultId).until, payer ? familyUntil(payer.vaultId) : 0) };
   }
+  const familyPrices = stripe?.familyMonthPrice && stripe?.familyYearPrice ? [stripe.familyMonthPrice, stripe.familyYearPrice, stripe.familyFounderYearPrice].filter(Boolean) : [];
+  const familyUntil = (vaultId) => one('SELECT COALESCE(MAX(s.paidUntil),0) AS until FROM subscriptions s JOIN family_subscriptions f ON f.subscriptionId=s.subscriptionId WHERE s.vaultId=?', vaultId).until;
+  const ownsFamily = (account) => familyUntil(account.vaultId) > clock();
+  const familyMember = (account) => one('SELECT m.joinedAt,o.id,o.email,o.vaultId FROM family_members m JOIN accounts o ON o.id=m.ownerAccountId WHERE m.accountId=?', account.id);
+  // A family whose plan ended is no family any more: someone in it can pay for their own.
+  const activeMember = (account) => { const payer = familyMember(account); return payer && ownsFamily(payer) ? payer : null; };
+  // Someone who pays for a family is its owner, whatever family they were in before.
+  const familyRole = (account) => !account ? null : ownsFamily(account) ? 'owner' : activeMember(account) ? 'member' : null;
   const isPlus = (vaultId) => planRow(vaultId).plusUntil > clock();
   const subscribed = (vaultId) => Boolean(one(`SELECT 1 FROM subscriptions WHERE vaultId=? AND status IN (${RUNNING.map(() => '?').join(',')})`, vaultId, ...RUNNING));
   // Abandoned payments do not use a founder place.
@@ -412,6 +433,14 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       // Paid: until the period ends plus a day of grace for the renewal. Past due: no further. Ended: no later than the end.
       const paidUntil = PAID.includes(status) && Number.isSafeInteger(periodEnd) ? Math.max(previous, periodEnd + DAY) : status === 'past_due' ? previous : Math.min(previous, endedAt);
       run('INSERT INTO subscriptions VALUES(?,?,?,?) ON CONFLICT(subscriptionId) DO UPDATE SET status=excluded.status,paidUntil=excluded.paidUntil', id, vaultId, status, paidUntil);
+      // The price says which plan was bought.
+      if (familyPrices.includes(subscription.items?.data?.[0]?.price?.id)) {
+        run('INSERT INTO family_subscriptions VALUES(?) ON CONFLICT DO NOTHING', id);
+        // Paying for a family of your own ends a place in someone else's.
+        if (PAID.includes(status)) run('DELETE FROM family_members WHERE accountId IN (SELECT id FROM accounts WHERE vaultId=?)', vaultId);
+      }
+      // Without family prices configured nothing is known: keep what was marked before.
+      else if (familyPrices.length) run('DELETE FROM family_subscriptions WHERE subscriptionId=?', id);
     });
   }
   // The active devices of a free cloud at its device limit; empty when another device fits.
@@ -779,7 +808,8 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     return token;
   }
   // Plus as planRow works it out, for each account in one query.
-  const plusUntilSql = '(MAX(COALESCE((SELECT plusUntil FROM plans WHERE vaultId=a.vaultId),0),(SELECT COALESCE(MAX(paidUntil),0) FROM subscriptions WHERE vaultId=a.vaultId)))';
+  const plusUntilSql = '(MAX(COALESCE((SELECT plusUntil FROM plans WHERE vaultId=a.vaultId),0),(SELECT COALESCE(MAX(paidUntil),0) FROM subscriptions WHERE vaultId=a.vaultId),' +
+    '(SELECT COALESCE(MAX(s.paidUntil),0) FROM family_members m JOIN accounts o ON o.id=m.ownerAccountId JOIN subscriptions s ON s.vaultId=o.vaultId JOIN family_subscriptions f ON f.subscriptionId=s.subscriptionId WHERE m.accountId=a.id)))';
   const runningSql = `(SELECT 1 FROM subscriptions WHERE vaultId=a.vaultId AND status IN (${RUNNING.map(() => '?').join(',')}))`;
   // Counts and sizes only: never note content, envelopes, keys, hashes, tokens or authenticator secrets.
   function adminSummary() {
@@ -849,6 +879,18 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       for (const to of emails) sendMailLater({ to, kind: 'group-removed' });
       reply(200, { deleted: true, told: emails.length }); return;
     }
+    if (method === 'POST' && pathname === '/api/admin/delete-link') {
+      adminSession(req);
+      const value = await body(req, MAX_METADATA_BODY);
+      requireValue(value.confirm === 'DELETE LINK' && validId(value.linkId), 'Confirm deleting the link');
+      const email = transaction(() => {
+        const link = one('SELECT l.id,a.email FROM note_links l LEFT JOIN accounts a ON a.id=l.accountId WHERE l.id=?', value.linkId) ?? fail(404, 'Link not found');
+        run('DELETE FROM note_links WHERE id=?', link.id);
+        return link.email;
+      });
+      if (email) sendMailLater({ to: email, kind: 'link-removed' });
+      reply(200, { deleted: true }); return;
+    }
     if (method === 'POST' && pathname === '/api/admin/close-account') {
       adminSession(req);
       const value = await body(req, MAX_METADATA_BODY);
@@ -908,6 +950,8 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   function wipeCloud(vaultId, account) {
     if (account) {
       leaveAllSpaces(account);
+      run('DELETE FROM family_members WHERE accountId=? OR ownerAccountId=?', account.id, account.id);
+      run('DELETE FROM family_invites WHERE ownerAccountId=?', account.id);
       for (const table of ['identities', 'newsletter', 'login_challenges', 'resets', 'device_approvals']) run(`DELETE FROM ${table} WHERE accountId=?`, account.id);
       run('DELETE FROM code_failures WHERE scope IN (?,?,?)', `login:${account.id}`, `reset:${account.id}`, `signup:${account.email}`);
       run('DELETE FROM accounts WHERE id=?', account.id);
@@ -921,6 +965,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       .catch((error) => console.warn(`Could not remove a deleted account from the mailing list: ${error.message}`));
   }
   function leaveAllSpaces(account) {
+    run('DELETE FROM note_links WHERE accountId=?', account.id);
     run('DELETE FROM space_blocks WHERE accountId=? OR blockedAccountId=?', account.id, account.id);
     for (const table of ['revisions', 'changes']) run(`UPDATE ${table} SET deviceId='removed' WHERE vaultId IN (SELECT id FROM spaces) AND deviceId IN (SELECT id FROM devices WHERE vaultId=?)`, account.vaultId);
     for (const space of all('SELECT * FROM spaces WHERE ownerAccountId=? AND ownerGoneAt IS NULL', account.id)) ownerGone(space);
@@ -933,9 +978,13 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     transaction(() => {
       const now = clock();
       run('DELETE FROM space_invites WHERE expiresAt<=?', now);
+      run('DELETE FROM note_links WHERE expiresAt<=? OR accountId NOT IN (SELECT id FROM accounts)', now);
       // An older server may have run for a while and deleted accounts without knowing about spaces.
       for (const table of ['space_members', 'space_keys', 'space_blocks']) run(`DELETE FROM ${table} WHERE accountId NOT IN (SELECT id FROM accounts)`);
       run('DELETE FROM space_blocks WHERE blockedAccountId NOT IN (SELECT id FROM accounts)');
+      run('DELETE FROM family_invites WHERE expiresAt<=? OR ownerAccountId NOT IN (SELECT id FROM accounts)', now);
+      run('DELETE FROM family_members WHERE accountId NOT IN (SELECT id FROM accounts) OR ownerAccountId NOT IN (SELECT id FROM accounts)');
+      run('DELETE FROM family_subscriptions WHERE subscriptionId NOT IN (SELECT subscriptionId FROM subscriptions)');
       run('DELETE FROM space_reports WHERE createdAt<=? OR accountId NOT IN (SELECT id FROM accounts)', now - 24 * 60 * 60 * 1000);
       run('UPDATE spaces SET ownerGoneAt=?,frozenAt=COALESCE(frozenAt,?) WHERE ownerGoneAt IS NULL AND ownerAccountId NOT IN (SELECT id FROM accounts)', now, now);
       const finished = all(`SELECT s.id FROM spaces s WHERE s.frozenAt<=? OR (s.createdAt<=? AND ${unfinishedSql}) OR NOT EXISTS (SELECT 1 FROM space_members m WHERE m.spaceId=s.id)`, now - FROZEN_SPACE_LIFETIME, now - UNFINISHED_SPACE_LIFETIME);
@@ -965,6 +1014,128 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       // The key is only ever handed to the account it is wrapped for.
       me: { accountId: account.id, wrapped: key?.wrapped ?? null, prefs: key?.prefs ?? null, nameEnvelope: members.find((member) => member.accountId === account.id)?.nameEnvelope ?? null },
       ...(owner ? { invites: all('SELECT id,expiresAt,claimedBy FROM space_invites WHERE spaceId=? ORDER BY expiresAt', space.id).map((invite) => ({ id: invite.id, expiresAt: isoTime(invite.expiresAt), claimed: Boolean(invite.claimedBy) })) } : {}) };
+  }
+  // Plus can keep a link longer; when Plus ends, a link older than the free period stops, and comes back with Plus.
+  function linkEnd(link, vaultId) {
+    if (isPlus(vaultId)) return link.expiresAt;
+    const free = link.createdAt + LINK_FREE_DAYS * DAY;
+    return link.expiresAt === null ? free : Math.min(link.expiresAt, free);
+  }
+  async function linkRequest(req, reply, method, route, account, vaultId, deviceId) {
+    const change = (action) => transaction(() => { requireAccess(vaultId, deviceId); return action(); });
+    if (route === '/links' && method === 'GET') {
+      reply(200, { links: change(() => all('SELECT * FROM note_links WHERE accountId=? ORDER BY createdAt DESC', account.id)).map((link) => ({ id: link.id, ownerEnvelope: link.ownerEnvelope, createdAt: isoTime(link.createdAt), expiresAt: isoTime(linkEnd(link, vaultId)) })) });
+      return;
+    }
+    if (route === '/links' && method === 'POST') {
+      limit(`link:${vaultId}`, 30);
+      const value = await body(req, 4 * MAX_LINK_BYTES);
+      requireValue(validId(value.id) && LINK_DAYS.includes(value.days), 'Invalid link');
+      if (typeof value.envelope === 'string' && Buffer.byteLength(value.envelope) > MAX_LINK_BYTES) fail(413, 'This note is too long for a link.');
+      envelopeSize(value.envelope, MAX_LINK_BYTES);
+      envelopeSize(value.ownerEnvelope, 4096);
+      const expiresAt = change(() => {
+        const now = clock(), plus = isPlus(vaultId), live = all('SELECT createdAt,expiresAt FROM note_links WHERE accountId=?', account.id).filter((link) => { const end = linkEnd(link, vaultId); return end === null || end > now; }).length;
+        if (!plus && value.days !== LINK_FREE_DAYS) fail(402, 'On the free plan a link lasts 7 days. JotDrop Plus chooses how long.', { code: 'plus-required' });
+        if (!plus && live >= 1) fail(402, 'The free plan has one link at a time. JotDrop Plus has more.', { code: 'plus-required' });
+        if (live >= MAX_LINKS) fail(409, `You can have ${MAX_LINKS} links at most.`, { code: 'too-many-links' });
+        if (one('SELECT 1 FROM note_links WHERE id=?', value.id)) fail(409, 'Choose another ID for this link.');
+        const end = value.days === 0 ? null : now + value.days * DAY;
+        run('INSERT INTO note_links(id,accountId,envelope,ownerEnvelope,createdAt,expiresAt) VALUES(?,?,?,?,?,?)', value.id, account.id, value.envelope, value.ownerEnvelope, now, end);
+        return end;
+      });
+      reply(201, { id: value.id, expiresAt: isoTime(expiresAt) });
+      return;
+    }
+    const target = /^\/links\/([0-9a-f-]+)$/.exec(route);
+    if (target && method === 'DELETE') {
+      requireValue(validId(target[1]), 'Invalid link');
+      change(() => {
+        if (!one('SELECT 1 FROM note_links WHERE id=? AND accountId=?', target[1], account.id)) fail(404, 'Link not found');
+        run('DELETE FROM note_links WHERE id=?', target[1]);
+      });
+      reply(200, { ok: true });
+      return;
+    }
+    fail(404, 'Not found');
+  }
+  // The owner sees who is in the family; a member only sees who pays. Nobody sees anyone's notes.
+  function familyView(account) {
+    if (!ownsFamily(account)) {
+      const payer = activeMember(account);
+      return payer ? { role: 'member', seats: FAMILY_SEATS, accountId: account.id, owner: payer.email, until: isoTime(familyUntil(payer.vaultId)), joinedAt: isoTime(payer.joinedAt) } : { role: null, seats: FAMILY_SEATS };
+    }
+    return { role: 'owner', seats: FAMILY_SEATS, until: isoTime(familyUntil(account.vaultId)),
+      members: all('SELECT m.accountId,a.email,m.joinedAt FROM family_members m JOIN accounts a ON a.id=m.accountId WHERE m.ownerAccountId=? ORDER BY m.joinedAt,m.accountId', account.id).map((member) => ({ accountId: member.accountId, email: member.email, joinedAt: isoTime(member.joinedAt) })),
+      openInvites: one('SELECT COUNT(*) AS count FROM family_invites WHERE ownerAccountId=? AND expiresAt>?', account.id, clock()).count };
+  }
+  async function familyRequest(req, reply, method, route, account, vaultId, deviceId) {
+    const change = (action) => transaction(() => { requireAccess(vaultId, deviceId); return action(); });
+    if (route === '/family' && method === 'GET') { reply(200, change(() => familyView(account))); return; }
+    if (route === '/family/invites' && method === 'POST') {
+      limit(`family:${vaultId}`, 20);
+      const token = randomBytes(32).toString('base64url');
+      const expiresAt = change(() => {
+        if (!ownsFamily(account)) fail(402, 'Inviting people needs the JotDrop family plan.', { code: 'family-required' });
+        run('DELETE FROM family_invites WHERE ownerAccountId=? AND expiresAt<=?', account.id, clock());
+        // Open invitations hold a seat, so six links cannot bring in seven people.
+        const taken = one('SELECT (SELECT COUNT(*) FROM family_members WHERE ownerAccountId=?)+(SELECT COUNT(*) FROM family_invites WHERE ownerAccountId=?) AS count', account.id, account.id).count;
+        if (taken >= FAMILY_SEATS - 1) fail(409, `The family plan has room for ${FAMILY_SEATS} people, you included.`, { code: 'family-full' });
+        run('INSERT INTO family_invites VALUES(?,?,?)', hash(token), account.id, clock() + FAMILY_INVITE_TIME);
+        return clock() + FAMILY_INVITE_TIME;
+      });
+      reply(201, { token, expiresAt: isoTime(expiresAt) }); return;
+    }
+    if (route === '/family/join' && method === 'POST') {
+      limit(`family-join:${vaultId}`, 10);
+      const value = await body(req, MAX_METADATA_BODY);
+      requireValue(validToken(value.token), 'Invalid invitation');
+      const owner = change(() => {
+        const gone = () => fail(404, 'This invitation does not work any more. Ask for a new one.');
+        const invite = one('SELECT * FROM family_invites WHERE tokenHash=? AND expiresAt>?', hash(value.token), clock()) ?? gone();
+        if (invite.ownerAccountId === account.id) fail(409, 'This is your own family.', { code: 'own-family' });
+        const current = familyMember(account);
+        // A family whose plan ended does not hold anyone back.
+        if (ownsFamily(account) || (current && ownsFamily(current))) fail(409, 'You are already in a JotDrop family. Leave it first.', { code: 'in-family' });
+        const payer = one('SELECT * FROM accounts WHERE id=?', invite.ownerAccountId);
+        if (!payer || !ownsFamily(payer)) gone();
+        run('DELETE FROM family_invites WHERE tokenHash=?', invite.tokenHash);
+        run('INSERT INTO family_members VALUES(?,?,?) ON CONFLICT(accountId) DO UPDATE SET ownerAccountId=excluded.ownerAccountId,joinedAt=excluded.joinedAt', account.id, payer.id, clock());
+        return payer.email;
+      });
+      reply(200, { owner }); return;
+    }
+    const target = /^\/family\/members\/([0-9a-f-]+)$/.exec(route);
+    if (target && method === 'DELETE') {
+      requireValue(validId(target[1]), 'Invalid family member');
+      // A member leaves; the owner removes anyone. Plus ends at once.
+      change(() => { if (!run('DELETE FROM family_members WHERE accountId=? AND (accountId=? OR ownerAccountId=?)', target[1], account.id, account.id).changes) fail(404, 'Family member not found'); });
+      reply(200, { ok: true }); return;
+    }
+    fail(404, 'Not found');
+  }
+  // No account: the link is all someone has. What comes back is sealed.
+  async function publicLinkRequest(req, reply, method, route, ip) {
+    const match = /^\/public-links\/([^/]+)(\/report)?$/.exec(route);
+    if (!match) fail(404, 'Not found');
+    requireValue(validId(match[1]), 'Invalid link');
+    const link = one('SELECT l.*,a.vaultId,a.email FROM note_links l JOIN accounts a ON a.id=l.accountId WHERE l.id=?', match[1]) ?? fail(404, 'This link has ended.');
+    if (method === 'GET' && !match[2]) {
+      limit(`open-link:${ip}`, 120);
+      const end = linkEnd(link, link.vaultId);
+      if (end !== null && end <= clock()) fail(410, 'This link has ended.');
+      reply(200, { envelope: link.envelope, expiresAt: isoTime(end) });
+      return;
+    }
+    if (method === 'POST' && match[2]) {
+      limit(`link-report:${ip}`, 5);
+      const value = await body(req, MAX_METADATA_BODY);
+      requireValue(REPORT_REASONS.includes(value.reason) && (value.details === undefined || (typeof value.details === 'string' && value.details.length <= 2000)), 'Invalid report');
+      await sendMail({ to: REPORT_ADDRESS, kind: 'link-report', report: { reason: value.reason, owner: link.email, linkId: link.id, details: value.details ?? '' } });
+      reply(200, { ok: true });
+      return;
+    }
+    fail(404, 'Not found');
   }
   // Managing who is in a space, with the asker's own cloud in X-JotDrop-Vault. The files of a space use the ordinary routes.
   async function spaceRequest(req, reply, method, route, vaultId, deviceId, ip) {
@@ -1170,13 +1341,15 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   assets.set('/.well-known/assetlinks.json', [join(webRoot, 'assetlinks.json'), 'application/json']);
   assets.set('/human', [join(webRoot, 'human.html'), 'text/html']);
   assets.set('/human.js', [join(webRoot, 'human.js'), 'text/javascript']);
+  assets.set('/note-link.js', [join(webRoot, 'note-link.js'), 'text/javascript']);
   assets.set('/logo.svg', [join(webRoot, 'logo.svg'), 'image/svg+xml']);
   // The house fonts (SIL Open Font License), served from here like everything else the page loads.
   for (const name of ['instrument-sans.woff2', 'bricolage-grotesque.woff2', 'caveat.woff2']) assets.set(`/fonts/${name}`, [join(webRoot, 'fonts', name), 'font/woff2']);
   assets.set('/import.mjs', [join(webRoot, 'import.mjs'), 'text/javascript']);
   // An invitation link opens the app on its own path: /# is for the way back from Google or GitHub.
   assets.set('/join', [join(webRoot, 'index.html'), 'text/html']);
-  for (const name of ['account.mjs', 'words.mjs', 'merge.mjs', 'spaces.mjs']) assets.set(`/shared/${name}`, [join(directory, 'shared', name), 'text/javascript']);
+  assets.set('/family', [join(webRoot, 'index.html'), 'text/html']);
+  for (const name of ['account.mjs', 'words.mjs', 'merge.mjs', 'diff.mjs', 'spaces.mjs', 'links.mjs']) assets.set(`/shared/${name}`, [join(directory, 'shared', name), 'text/javascript']);
   assets.set('/vendor/hash-wasm.mjs', [join(directory, '../node_modules/hash-wasm/dist/index.esm.min.js'), 'text/javascript']);
   // The page's only inline script is its import map; allow exactly that content.
   const importMap = /<script type="importmap">([^<]*)<\/script>/.exec(readFileSync(join(webRoot, 'index.html'), 'utf8'))?.[1];
@@ -1225,8 +1398,16 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         const [filename, type] = assets.get(pathname);
         res.setHeader('Content-Type', type); res.end(readFileSync(filename)); return;
       }
+      // The page for a link is the same for every link: the note arrives sealed and opens with the key after the #.
+      if ((method === 'GET' || method === 'HEAD') && /^\/n\/[0-9a-f-]{36}$/.test(pathname)) {
+        res.setHeader('Content-Type', 'text/html');
+        res.setHeader('X-Robots-Tag', 'noindex');
+        res.end(readFileSync(join(webRoot, 'note.html')));
+        return;
+      }
       if (!pathname.startsWith('/api/v1/')) fail(404, 'Not found');
       const route = pathname.slice('/api/v1'.length);
+      if (route.startsWith('/public-links/')) { await publicLinkRequest(req, reply, method, route, clientAddress(req)); return; }
       if (method === 'POST' && route === '/vaults') {
         limit(`enroll:${clientAddress(req)}`, 10);
         if (!enrollmentToken || !equal(req.headers.authorization || '', `Bearer ${enrollmentToken}`)) fail(401, 'Invalid enrollment token');
@@ -1699,11 +1880,16 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         if (!stripe) fail(503, 'Payments are not available on this server.');
         limit(`checkout:${vaultId}`, 10);
         const value = await body(req, MAX_METADATA_BODY);
-        requireValue(['month', 'year'].includes(value.interval), 'Choose a monthly or yearly plan');
+        requireValue(['month', 'year'].includes(value.interval) && [undefined, 'plus', 'family'].includes(value.plan), 'Choose a monthly or yearly plan');
+        const family = value.plan === 'family';
+        if (family && !familyPrices.length) fail(503, 'The family plan is not available on this server.');
         if (subscribed(vaultId)) fail(409, 'This cloud already has a JotDrop Plus subscription. Manage it at link.com.');
         const origin = publicOrigin ?? `http://${req.headers.host}`, account = one('SELECT id,email FROM accounts WHERE vaultId=?', vaultId);
+        if (family && !account) fail(403, 'The family plan needs an account. Add one to this cloud first.', { code: 'account-required' });
+        const price = family ? (value.interval === 'month' ? stripe.familyMonthPrice : founderPrice() && stripe.familyFounderYearPrice ? stripe.familyFounderYearPrice : stripe.familyYearPrice)
+          : value.interval === 'month' ? stripe.monthPrice : founderPrice() ? stripe.founderYearPrice : stripe.yearPrice;
         // The session expires after 30 minutes (Stripe's minimum), so an old open one is not paid next to a newer one.
-        const form = new URLSearchParams({ mode: 'subscription', 'managed_payments[enabled]': 'true', 'line_items[0][price]': value.interval === 'month' ? stripe.monthPrice : founderPrice() ? stripe.founderYearPrice : stripe.yearPrice,
+        const form = new URLSearchParams({ mode: 'subscription', 'managed_payments[enabled]': 'true', 'line_items[0][price]': price,
           'line_items[0][quantity]': '1', client_reference_id: vaultId, 'subscription_data[metadata][vaultId]': vaultId, success_url: `${origin}/?plus=welcome`, cancel_url: `${origin}/`, expires_at: String(Math.floor(clock() / 1000) + 30 * 60) });
         if (account) { form.set('subscription_data[metadata][accountId]', account.id); form.set('customer_email', account.email); }
         let session;
@@ -1715,14 +1901,24 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         reply(200, { url: session.url }); return;
       }
       if (route === '/spaces' || route.startsWith('/spaces/') || route.startsWith('/invites/')) { await spaceRequest(req, reply, method, route, vaultId, deviceId, ip); return; }
+      if (route === '/links' || route.startsWith('/links/')) {
+        const account = one('SELECT id,email,vaultId FROM accounts WHERE vaultId=?', vaultId) ?? fail(403, 'Links need an account. Add one to this cloud first.', { code: 'account-required' });
+        await linkRequest(req, reply, method, route, account, vaultId, deviceId);
+        return;
+      }
+      if (route === '/family' || route.startsWith('/family/')) {
+        const account = one('SELECT id,email,vaultId FROM accounts WHERE vaultId=?', vaultId) ?? fail(403, 'The family plan needs an account. Add one to this cloud first.', { code: 'account-required' });
+        await familyRequest(req, reply, method, route, account, vaultId, deviceId);
+        return;
+      }
       if (method === 'GET' && route === '/status' && inSpace) {
         // What a member needs to read and write; the owner's billing and own usage stay private.
         const plus = isPlus(vaultId);
         reply(200, { usedBytes: storageUsage(vaultId), quotaBytes: Math.floor(quotaFor(vaultId) / 2), plan: { name: plus ? 'plus' : 'free', historyDays: plus ? null : FREE_HISTORY / DAY }, sequence: one('SELECT COALESCE(MAX(sequence),0) AS sequence FROM changes WHERE vaultId=?', vaultId).sequence, pieces: { version: 1, pieceBytes: PIECE_BYTES, maxFileBytes: maxFileFor(vaultId), legacy: 0 } }); return;
       }
       if (method === 'GET' && route === '/status') {
-        const plan = planRow(vaultId), plus = plan.plusUntil > clock(), owner = one('SELECT id FROM accounts WHERE vaultId=?', vaultId);
-        reply(200, { usedBytes: one('SELECT (SELECT COALESCE(SUM(size),0) FROM envelopes WHERE vaultId=?) + (SELECT COALESCE(SUM(size),0) FROM chunks WHERE vaultId=?) AS size', vaultId, vaultId).size + (owner ? liveSpaceBytes(owner.id) : 0), quotaBytes: quotaFor(vaultId), plan: { name: plus ? 'plus' : 'free', plusUntil: plan.plusUntil ? new Date(plan.plusUntil).toISOString() : null, trialAvailable: !plan.trialUsed && !plus, deviceLimit: plus ? null : freeDeviceLimit, historyDays: plus ? null : FREE_HISTORY / DAY, subscribed: subscribed(vaultId), checkout: Boolean(stripe), founderPrice: founderPrice() }, sequence: one('SELECT COALESCE(MAX(sequence),0) AS sequence FROM changes WHERE vaultId=?', vaultId).sequence, history: historyUsage(vaultId), transport: { version: 1, chunkBytes: TRANSFER_CHUNK_BYTES, reservedBytes: one('SELECT COALESCE(SUM(reservedBytes),0) AS size FROM uploads WHERE vaultId=?', vaultId).size }, pieces: { version: 1, pieceBytes: PIECE_BYTES, maxFileBytes: maxFileFor(vaultId), legacy: one('SELECT COUNT(*) AS count FROM envelopes WHERE vaultId=? AND pieces=0 AND size>?', vaultId, LEGACY_ENVELOPE_BYTES).count } }); return;
+        const plan = planRow(vaultId), plus = plan.plusUntil > clock(), owner = one('SELECT id,vaultId FROM accounts WHERE vaultId=?', vaultId);
+        reply(200, { usedBytes: one('SELECT (SELECT COALESCE(SUM(size),0) FROM envelopes WHERE vaultId=?) + (SELECT COALESCE(SUM(size),0) FROM chunks WHERE vaultId=?) AS size', vaultId, vaultId).size + (owner ? liveSpaceBytes(owner.id) : 0), quotaBytes: quotaFor(vaultId), plan: { name: plus ? 'plus' : 'free', plusUntil: plan.plusUntil ? new Date(plan.plusUntil).toISOString() : null, trialAvailable: !plan.trialUsed && !plus, deviceLimit: plus ? null : freeDeviceLimit, historyDays: plus ? null : FREE_HISTORY / DAY, subscribed: subscribed(vaultId), checkout: Boolean(stripe), founderPrice: founderPrice(), familyCheckout: familyPrices.length > 0, family: familyRole(owner) }, sequence: one('SELECT COALESCE(MAX(sequence),0) AS sequence FROM changes WHERE vaultId=?', vaultId).sequence, history: historyUsage(vaultId), transport: { version: 1, chunkBytes: TRANSFER_CHUNK_BYTES, reservedBytes: one('SELECT COALESCE(SUM(reservedBytes),0) AS size FROM uploads WHERE vaultId=?', vaultId).size }, pieces: { version: 1, pieceBytes: PIECE_BYTES, maxFileBytes: maxFileFor(vaultId), legacy: one('SELECT COUNT(*) AS count FROM envelopes WHERE vaultId=? AND pieces=0 AND size>?', vaultId, LEGACY_ENVELOPE_BYTES).count } }); return;
       }
       if (method === 'GET' && route === '/changes') {
         const after = Number(url.searchParams.get('after') || 0);
@@ -2029,7 +2225,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   // Without a fixed key, pending codes and authenticator setups stop working after a restart.
   const serverKey = process.env.JOTDROP_CLOUD_SERVER_KEY || randomBytes(32).toString('base64url');
   const env = (name) => process.env[`JOTDROP_CLOUD_STRIPE_${name}`];
-  const stripe = env('SECRET_KEY') ? { secretKey: env('SECRET_KEY'), webhookSecret: env('WEBHOOK_SECRET'), monthPrice: env('PRICE_MONTH'), yearPrice: env('PRICE_YEAR'), founderYearPrice: env('PRICE_FOUNDER_YEAR') || undefined } : undefined;
+  const stripe = env('SECRET_KEY') ? { secretKey: env('SECRET_KEY'), webhookSecret: env('WEBHOOK_SECRET'), monthPrice: env('PRICE_MONTH'), yearPrice: env('PRICE_YEAR'), founderYearPrice: env('PRICE_FOUNDER_YEAR') || undefined,
+    familyMonthPrice: env('PRICE_FAMILY_MONTH') || undefined, familyYearPrice: env('PRICE_FAMILY_YEAR') || undefined, familyFounderYearPrice: env('PRICE_FAMILY_FOUNDER_YEAR') || undefined } : undefined;
   const provider = (name) => process.env[`JOTDROP_CLOUD_${name}_CLIENT_ID`] ? { clientId: process.env[`JOTDROP_CLOUD_${name}_CLIENT_ID`], clientSecret: process.env[`JOTDROP_CLOUD_${name}_CLIENT_SECRET`] } : undefined;
   // Without Brevo settings the tick is still recorded, and nobody is added to a list.
   const newsletter = process.env.JOTDROP_CLOUD_BREVO_API_KEY ? createBrevoList({ apiKey: process.env.JOTDROP_CLOUD_BREVO_API_KEY, listId: Number(process.env.JOTDROP_CLOUD_BREVO_LIST_ID) }) : undefined;

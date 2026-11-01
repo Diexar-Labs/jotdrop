@@ -196,6 +196,12 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .device-row, .history-row, .history-plus { padding: 1rem 0; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; justify-content: space-between; }
 .device-row p, .history-row p, .history-plus p { margin: 0; }
 .history-row.locked { color: var(--muted); }
+.history-diff { flex-basis: 100%; font-size: .9rem; }
+.history-diff p { margin: 0 0 .5rem; color: var(--muted); }
+.diff-line { white-space: pre-wrap; overflow-wrap: anywhere; font-family: ui-monospace, Consolas, monospace; padding: .1rem .4rem; }
+.diff-line.added { background: color-mix(in srgb, var(--amber, #f4c458) 25%, transparent); font-weight: 600; }
+.diff-line.removed { text-decoration: line-through; color: var(--muted); }
+.diff-line.gap { color: var(--muted); font-family: inherit; font-style: italic; }
 #timeline { display: grid; gap: .6rem; margin: 0 0 1rem; padding: 1rem; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
 #timeline label { font-weight: 600; }
 #timeline input[type="range"] { padding: 0; border: 0; accent-color: var(--accent); }
@@ -363,3 +369,10 @@ html { scrollbar-color: color-mix(in srgb, var(--ink) 35%, transparent) transpar
 .note-card .card-shared { color: var(--muted); font-size: .75rem; margin: .5rem 0 0; }
 .note-card .card-shared::before { content: "👥 " / ""; }
 #editor.in-space :is(#note-pinned, .reminder-row, #repeat-editor, #note-order, label[for="note-order"], .chip-field:has(#label-input)) { display: none; }
+
+.note-link { max-width: 42rem; margin: 0 auto; padding: 2rem 1rem; display: grid; gap: 1.2rem; }
+.note-link h1 { margin: 0 0 1rem; overflow-wrap: anywhere; }
+.note-link p, .note-link-task { overflow-wrap: anywhere; white-space: pre-wrap; margin: .3rem 0; }
+.note-link-task.done { text-decoration: line-through; color: var(--muted); }
+.note-link-about { border-top: 1px solid var(--line); padding-top: 1rem; color: var(--muted); }
+#note-report { display: grid; gap: .5rem; margin-top: .75rem; }

@@ -33,6 +33,7 @@
     <string name="empty_hint_new_note">scrivi la prima con +</string>
     <string name="stamp_sealed">Sigillata</string>
     <string name="action_share_note">Condividi…</string>
+    <string name="action_share_link">Condividi con link…</string>
     <string name="action_group">Gruppo condiviso…</string>
     <string name="action_move_to_mine">Sposta nelle mie note</string>
     <string name="toast_moved_to_mine">Spostata nelle tue note</string>
@@ -45,4 +46,15 @@
         <item quantity="one">%d nota</item>
         <item quantity="other">%d note</item>
     </plurals>
+    <string name="widget_name">Cattura rapida</string>
+    <string name="widget_description">Nuova nota, memo vocale o foto con un tocco.</string>
+    <string name="widget_note">Nota</string>
+    <string name="widget_voice">Memo vocale</string>
+    <string name="widget_photo">Foto</string>
+    <string name="widget_note_name">Nota o lista</string>
+    <string name="widget_note_description">Una nota o lista nella schermata Home. Spunta direttamente lì.</string>
+    <string name="widget_note_pick">Scegli una nota</string>
+    <string name="widget_note_gone">Questa nota è stata spostata o non c\'è più. Tocca per sceglierne un\'altra.</string>
+    <string name="widget_note_empty">Questa nota è vuota.</string>
+    <string name="widget_note_none">Ancora nessuna nota. Creane prima una.</string>
 </resources>

@@ -148,6 +148,9 @@ object CloudSyncManager {
         }
     }
 
+    /** A note changed outside the open screens, such as a tick on the home screen. */
+    fun notifyNotesChanged() { changed.value++ }
+
     fun request(context: Context) {
         try {
             WorkManager.getInstance(context).enqueueUniqueWork(IMMEDIATE, ExistingWorkPolicy.KEEP,
@@ -657,6 +660,7 @@ class CloudSyncWorker(context: Context, parameters: WorkerParameters) : Coroutin
         return try {
             if (!withContext(Dispatchers.IO) { CloudSyncManager.status(applicationContext).enabled }) return Result.success()
             CloudSyncManager.sync(applicationContext)
+            HomeWidgets.refresh(applicationContext)
             Result.success()
         } catch (error: CancellationException) { throw error }
         catch (_: Exception) { if (runAttemptCount < 5) Result.retry() else Result.failure() }

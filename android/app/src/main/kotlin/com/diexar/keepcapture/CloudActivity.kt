@@ -5,7 +5,9 @@ import android.net.Uri
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -18,11 +20,15 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
 import com.diexar.keepcapture.ui.JotDropTheme
 import kotlinx.coroutines.CancellationException
@@ -48,6 +54,7 @@ class CloudActivity : ComponentActivity() {
             CloudAccountFlow.startProvider = intent.getStringExtra(EXTRA_PROVIDER)
             takeProviderReturn(intent)
             intent.getStringExtra(EXTRA_SHARE)?.let { CloudSpacesFlow.shareNote = Uri.parse(it) }
+            intent.getStringExtra(EXTRA_LINK)?.let { CloudSpacesFlow.linkNote = Uri.parse(it) }
         }
         val welcome = intent.getBooleanExtra(EXTRA_WELCOME, false)
         val resolve = intent.getStringExtra(EXTRA_RESOLVE)
@@ -67,6 +74,7 @@ class CloudActivity : ComponentActivity() {
         const val EXTRA_RESOLVE = "resolve"
         /** From a card's menu: the note to share. */
         const val EXTRA_SHARE = "share"
+        const val EXTRA_LINK = "link"
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -101,6 +109,7 @@ private fun CloudScreen(welcome: Boolean, resolve: String?, onBack: () -> Unit, 
     var selected by remember { mutableStateOf<CloudListedFile?>(null) }
     var preview by remember { mutableStateOf<String?>(null) }
     var versions by remember { mutableStateOf<List<JSONObject>>(emptyList()) }
+    var compared by remember { mutableStateOf<Pair<Int, List<CloudVersionDiff.Line>?>?>(null) }
     var confirmEnable by remember { mutableStateOf(false) }
     var confirmDisconnect by remember { mutableStateOf(false) }
     var revoke by remember { mutableStateOf<JSONObject?>(null) }
@@ -150,6 +159,7 @@ private fun CloudScreen(welcome: Boolean, resolve: String?, onBack: () -> Unit, 
             versions = List(array.length()) { array.getJSONObject(it) }
             preview = if (file.path.endsWith(".md", true) && !file.deleted) String(client.read(file.id).bytes, Charsets.UTF_8).take(1024) else null
         }
+        compared = null
         selected = file
     }
     fun loadDevices() = run {
@@ -300,6 +310,7 @@ private fun CloudScreen(welcome: Boolean, resolve: String?, onBack: () -> Unit, 
                     Text("Your plan sets the maximum per file and the total storage. No automatic merging or cleanup of recovery copies.", style = MaterialTheme.typography.bodySmall)
                     Button(onClick = { run { CloudSyncManager.sync(context) } }, enabled = !busy && status!!.enabled, modifier = Modifier.padding(top = 12.dp)) { Text("Sync now") }
                 }
+                item(key = "backup") { BackupSection(busy) { action -> run(true, action) } }
                 item(key = "account") { CloudAccountSection(busy, ::accountRun) { cloud() } }
                 item {
                     TabRow(selectedTabIndex = tab) {
@@ -403,8 +414,26 @@ private fun CloudScreen(welcome: Boolean, resolve: String?, onBack: () -> Unit, 
                 TextButton(onClick = { resolveLocal = false }, enabled = !busy && status?.enabled == true) { Text("Use current cloud version") }
             }
             items(versions, key = { it.getInt("revision") }) { version ->
-                Text("Revision ${version.getInt("revision")} | ${version.optString("updatedAt")}${if (version.optBoolean("deleted")) " | Deleted" else ""}")
-                TextButton(onClick = { restore = version.getInt("revision") }, enabled = !busy && !version.optBoolean("deleted")) { Text("Restore this version") }
+                val revision = version.getInt("revision")
+                Text("Revision $revision | ${version.optString("updatedAt")}${if (version.optBoolean("deleted")) " | Deleted" else ""}")
+                if (version.optBoolean("locked")) {
+                    // No link and no price: Google allows telling people where to upgrade, not sending them there.
+                    Text("Replaced more than 30 days ago. JotDrop Plus restores it; see our website.", style = MaterialTheme.typography.bodySmall)
+                } else {
+                    if (revision != file.revision && !version.optBoolean("deleted") && !file.deleted && file.path.endsWith(".md", true)) {
+                        TextButton(onClick = {
+                            if (compared?.first == revision) compared = null
+                            else run {
+                                val client = cloud()
+                                compared = revision to withContext(Dispatchers.IO) {
+                                    CloudVersionDiff.lines(String(client.read(file.id, revision).bytes, Charsets.UTF_8), String(client.read(file.id).bytes, Charsets.UTF_8))
+                                }
+                            }
+                        }, enabled = !busy) { Text("Compare with current") }
+                    }
+                    compared?.takeIf { it.first == revision }?.let { VersionDiff(it.second) }
+                    TextButton(onClick = { restore = revision }, enabled = !busy && !version.optBoolean("deleted")) { Text("Restore this version") }
+                }
             }
         } }, confirmButton = { TextButton(onClick = { selected = null }, enabled = !busy) { Text("Close") } }) }
     restore?.let { version -> AlertDialog(onDismissRequest = { restore = null }, title = { Text("Restore revision $version?") },
@@ -456,6 +485,63 @@ private fun CloudScreen(welcome: Boolean, resolve: String?, onBack: () -> Unit, 
 }
 
 private data class MomentEntry(val id: String, val path: String, val preview: String?)
+/** A weekly ZIP in a folder of your choice, for JotDrop Plus. */
+@Composable
+private fun BackupSection(busy: Boolean, run: (suspend () -> Unit) -> Unit) {
+    val context = LocalContext.current
+    var plus by remember { mutableStateOf<Boolean?>(null) }
+    var folder by remember { mutableStateOf(CloudBackup.folder(context)) }
+    var said by remember { mutableStateOf(CloudBackup.lastMessage(context)) }
+    LaunchedEffect(Unit) { plus = withContext(Dispatchers.IO) { runCatching { CloudBackup.hasPlus(context) }.getOrNull() } }
+    val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val notes = Storage.getVaultUri(context)
+        if (notes != null && CloudBackup.insideNotes(notes, uri)) { said = "Choose a backup folder outside your notes folder."; return@rememberLauncherForActivityResult }
+        CloudBackup.setFolder(context, uri)
+        folder = uri
+        said = "A backup goes to this folder every week."
+    }
+    Column(Modifier.padding(top = 12.dp)) {
+        Text("Automatic backup", style = MaterialTheme.typography.titleMedium)
+        when (plus) {
+            null -> Unit
+            // No link and no price: Google allows telling people where to upgrade, not sending them there.
+            false -> Text("A weekly copy of your notes in a folder of your choice is part of JotDrop Plus. See our website.", style = MaterialTheme.typography.bodySmall)
+            true -> {
+                Text("Every week a ZIP of your notes goes to a folder you choose. Drive and Dropbox work if their apps offer a folder here. The ZIP is not encrypted: anyone who can open that folder can read it.", style = MaterialTheme.typography.bodySmall)
+                val chosen = folder
+                if (chosen != null) Text("Folder: ${androidx.documentfile.provider.DocumentFile.fromTreeUri(context, chosen)?.name ?: "chosen"}", style = MaterialTheme.typography.bodySmall)
+                TextButton(onClick = { pick.launch(null) }, enabled = !busy) { Text(if (chosen == null) "Choose a folder" else "Change folder") }
+                if (chosen != null) {
+                    TextButton(onClick = { run { said = withContext(Dispatchers.IO) { CloudBackup.run(context) } } }, enabled = !busy) { Text("Back up now") }
+                    TextButton(onClick = { CloudBackup.setFolder(context, null); folder = null; said = "Backups stopped. Your earlier backups stay in the folder." }, enabled = !busy) { Text("Stop backups") }
+                }
+            }
+        }
+        if (said.isNotEmpty()) Text(said, style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+/** Signs and a line through removed text, so the difference does not depend on colour. */
+@Composable
+private fun VersionDiff(lines: List<CloudVersionDiff.Line>?) {
+    Column {
+        when {
+            lines == null -> Text("This note is too long to compare here.", style = MaterialTheme.typography.bodySmall)
+            lines.all { it.kind == CloudVersionDiff.Kind.SAME } -> Text("This version is the same as the current note.", style = MaterialTheme.typography.bodySmall)
+            else -> {
+                Text("From this version to the current note: + was added, - was removed.", style = MaterialTheme.typography.bodySmall)
+                for (line in CloudVersionDiff.fold(lines)) when (line.kind) {
+                    CloudVersionDiff.Kind.GAP -> Text("${line.count} unchanged ${if (line.count == 1) "line" else "lines"}", style = MaterialTheme.typography.bodySmall)
+                    CloudVersionDiff.Kind.SAME -> Text("  ${line.text}", style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                    CloudVersionDiff.Kind.ADDED -> Text("+ ${line.text}", style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                    CloudVersionDiff.Kind.REMOVED -> Text("- ${line.text}", style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, textDecoration = TextDecoration.LineThrough)
+                }
+            }
+        }
+    }
+}
+
 private data class TimeMoment(val at: String, val then: List<CloudMomentFile>, val files: List<MomentEntry>, val trashed: Int, val locked: Int, val cleared: Int)
 
 private fun momentLabel(at: String): String = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM).withZone(ZoneId.systemDefault()).format(Instant.parse(at))

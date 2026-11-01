@@ -68,6 +68,28 @@ tasks.register<JavaExec>("checkListEditor") {
     mainClass.set("com.diexar.keepcapture.ListEditorCheckKt")
 }
 
+val versionDiffClasses = layout.buildDirectory.dir("version-diff-check")
+val versionDiffSources = files("app/src/main/kotlin/com/diexar/keepcapture/CloudVersionDiff.kt", "checks/VersionDiffCheck.kt")
+val versionDiffCompile = tasks.register<JavaExec>("versionDiffCompile") {
+    inputs.files(versionDiffSources)
+    outputs.dir(versionDiffClasses)
+    classpath(buildscript.configurations.getByName("classpath"))
+    mainClass.set("org.jetbrains.kotlin.cli.jvm.K2JVMCompiler")
+    doFirst {
+        args("-Xdisable-default-scripting-plugin", "-no-stdlib", "-no-reflect", "-jvm-target", "17", "-classpath",
+            project(":app").configurations.getByName("debugCompileClasspath").asPath,
+            "-d", versionDiffClasses.get().asFile.absolutePath)
+        args(versionDiffSources.files.map { it.absolutePath })
+    }
+}
+
+tasks.register<JavaExec>("checkVersionDiff") {
+    dependsOn(versionDiffCompile)
+    classpath(versionDiffClasses)
+    classpath(provider { project(":app").configurations.getByName("debugCompileClasspath") })
+    mainClass.set("com.diexar.keepcapture.VersionDiffCheckKt")
+}
+
 val inlineTagsClasses = layout.buildDirectory.dir("inline-tags-check")
 val inlineTagsSources = files("app/src/main/kotlin/com/diexar/keepcapture/InlineTags.kt",
     "app/src/main/kotlin/com/diexar/keepcapture/CardText.kt", "checks/InlineTagsCheck.kt")

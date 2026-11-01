@@ -310,6 +310,7 @@ class NotesListActivity : ComponentActivity() {
         tutorialPending.value = false
     }
 
+
     // Welcome: the notes folder first; with Google or GitHub, the cloud sign-in follows straight away.
     private var welcomeProvider: String? = null
     private val pickVaultLauncher = registerForActivityResult(
@@ -429,6 +430,22 @@ class NotesListActivity : ComponentActivity() {
                 )
             }
         }
+        // Rotating or coming back keeps the intent; the button only counts the first time.
+        if (savedInstanceState == null) handleWidgetAction(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleWidgetAction(intent)
+    }
+
+    /** A button on the home screen. Without a folder the welcome screen stays in charge. */
+    private fun handleWidgetAction(intent: Intent) {
+        if (Storage.getVaultUri(this) == null) return
+        when (intent.action) {
+            QuickCaptureWidget.ACTION_NOTE -> startActivity(EditorActivity.newNoteIntent(this))
+            QuickCaptureWidget.ACTION_PHOTO -> launchCamera(withOcr = false)
+        }
     }
 
     private fun requireVaultOrPromptSettings(): Boolean {
@@ -539,10 +556,14 @@ class NotesListActivity : ComponentActivity() {
 
     override fun onStop() {
         loadJob?.cancel()
+        // A tick on a card does not reload the list: leaving the app is when the home screen shows again.
+        HomeWidgets.refresh(this)
         super.onStop()
     }
 
     private fun reload(rescheduleReminders: Boolean = false) {
+        // Also after a force stop or an edit: the widgets follow what this screen shows.
+        HomeWidgets.refresh(this)
         loadJob?.cancel()
         if (Storage.getVaultUri(this) == null) {
             labelsState.value = emptyList()
@@ -1055,6 +1076,7 @@ private fun NotesListScreen(
                 onRefresh()
             }
             CardAction.SHARE -> context.startActivity(Intent(context, CloudActivity::class.java).putExtra(CloudActivity.EXTRA_SHARE, note.uri.toString()))
+            CardAction.LINK -> context.startActivity(Intent(context, CloudActivity::class.java).putExtra(CloudActivity.EXTRA_LINK, note.uri.toString()))
             CardAction.GROUP -> context.startActivity(Intent(context, CloudActivity::class.java))
             CardAction.MOVE_TO_MINE -> scope.launch {
                 val result = withContext(Dispatchers.IO) {
@@ -2782,12 +2804,12 @@ internal fun conflictOriginalName(filename: String): String =
     filename.replace(Regex("\\.cloud-conflict-r\\d+(?:-[0-9a-fA-F-]+)?(?=\\.[^.]*$|$)"), "")
 
 /** What a card's own menu can do, depending on the folder it is shown in. */
-internal enum class CardAction { COLOR, LABELS, ARCHIVE, RESTORE, MOVE, COPY, DELETE, SHARE, GROUP, MOVE_TO_MINE }
+internal enum class CardAction { COLOR, LABELS, ARCHIVE, RESTORE, MOVE, COPY, DELETE, SHARE, LINK, GROUP, MOVE_TO_MINE }
 /** Pin, labels and archive are per person, so a shared note's card offers what goes for everyone. */
 internal val SHARED_CARD_ACTIONS = listOf(CardAction.COLOR, CardAction.GROUP, CardAction.MOVE_TO_MINE, CardAction.DELETE)
 
 internal fun cardActionsFor(folder: NoteFolder): List<CardAction> = when (folder) {
-    NoteFolder.NOTES -> listOf(CardAction.COLOR, CardAction.LABELS, CardAction.ARCHIVE, CardAction.SHARE, CardAction.MOVE, CardAction.COPY, CardAction.DELETE)
+    NoteFolder.NOTES -> listOf(CardAction.COLOR, CardAction.LABELS, CardAction.ARCHIVE, CardAction.SHARE, CardAction.LINK, CardAction.MOVE, CardAction.COPY, CardAction.DELETE)
     NoteFolder.ARCHIVE -> listOf(CardAction.COLOR, CardAction.LABELS, CardAction.RESTORE, CardAction.MOVE, CardAction.COPY, CardAction.DELETE)
     NoteFolder.TRASH -> listOf(CardAction.RESTORE, CardAction.DELETE)
 }
@@ -2815,6 +2837,7 @@ private fun CardMenu(actions: List<CardAction>, foreground: Color, onAction: (Ca
                     CardAction.MOVE -> Icons.Filled.DriveFileMove to R.string.action_move_to_folder
                     CardAction.COPY -> Icons.Filled.ContentCopy to R.string.action_copy_to_folder
                     CardAction.SHARE -> Icons.Filled.Group to R.string.action_share_note
+                    CardAction.LINK -> Icons.Filled.Link to R.string.action_share_link
                     CardAction.GROUP -> Icons.Filled.Group to R.string.action_group
                     CardAction.MOVE_TO_MINE -> Icons.Filled.DriveFileMove to R.string.action_move_to_mine
                     CardAction.DELETE -> if (inTrash) Icons.Filled.DeleteForever to R.string.action_delete_forever

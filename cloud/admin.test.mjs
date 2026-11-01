@@ -258,6 +258,9 @@ test('after a report the owner can delete a group or close an account, and only 
   for (const who of ['owner', 'member']) data.prepare('INSERT INTO space_members(spaceId,accountId,joinedAt) VALUES(?,?,?)').run(spaceId, who, now);
   data.close();
   const group = { spaceId, confirm: 'DELETE GROUP' }, close = { email: 'Member@example.test', confirm: 'CLOSE ACCOUNT' };
+  assert.equal((await app.call('POST', '/api/admin/delete-link', { body: { linkId: spaceId, confirm: 'DELETE LINK' } })).status, 401);
+  assert.equal((await app.call('POST', '/api/admin/delete-link', { cookie, body: { linkId: spaceId } })).status, 400);
+  assert.equal((await app.call('POST', '/api/admin/delete-link', { cookie, body: { linkId: spaceId, confirm: 'DELETE LINK' } })).status, 404);
   assert.equal((await app.call('POST', '/api/admin/delete-group', { body: group })).status, 401);
   assert.equal((await app.call('POST', '/api/admin/close-account', { body: close })).status, 401);
   assert.equal((await app.call('POST', '/api/admin/delete-group', { cookie, body: { spaceId } })).status, 400);

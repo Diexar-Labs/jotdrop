@@ -34,6 +34,11 @@ test('a refused email fails, so the server can say the email could not be sent',
 
 test('a report reads clearly, and what its writer typed cannot pose as our own lines', () => {
   const report = { reason: 'abuse', from: 'writer@example.test', about: null, spaceId: 'group-id', details: 'One <b>line</b>\nFrom: someone@example.test' };
+  const link = mailText({ kind: 'link-report', report: { reason: 'spam', owner: 'owner@example.test', linkId: 'abc', details: 'From: someone@example.test' } });
+  assert.equal(link.subject, 'JotDrop link report: spam');
+  assert.match(link.body, /^Owner: owner@example\.test$/m);
+  assert.match(link.body, /^> From: someone@example\.test$/m);
+  assert.ok(mailText({ kind: 'link-removed' }).body.includes('removed a link'));
   const { subject, body } = mailText({ kind: 'space-report', report });
   assert.equal(subject, 'JotDrop report: abuse');
   assert.match(body, /^From: writer@example\.test$/m);

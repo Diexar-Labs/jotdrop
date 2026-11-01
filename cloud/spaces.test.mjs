@@ -195,6 +195,8 @@ const refusedInSpace = [
   ['GET', '/account/approvals'], ['POST', `/account/approvals/${other}`, {}], ['DELETE', `/account/approvals/${other}`, {}],
   ['POST', '/account/password', {}], ['POST', '/account/delete', { confirm: 'DELETE MY CLOUD' }], ['POST', '/recovery', { recoveryTokenHash: id64 }],
   ['POST', '/account/trial', {}], ['POST', '/account/checkout', { interval: 'month' }], ['GET', '/snapshot?at=2026-11-02T08:00:00Z'],
+  ['GET', '/links'], ['POST', '/links', { id: other, days: 7 }], ['DELETE', `/links/${other}`],
+  ['GET', '/family'], ['POST', '/family/invites', {}], ['POST', '/family/join', { token: 'A'.repeat(43) }], ['DELETE', `/family/members/${other}`], ['POST', '/account/checkout', { interval: 'year', plan: 'family' }],
   ['GET', '/devices'], ['DELETE', `/devices/${other}`], ['POST', '/pairings', { deviceName: 'X', deviceTokenHash: id64, claimTokenHash: id64, envelope: '{}' }], ['GET', '/pieces/legacy'],
   ['POST', `/objects/${id64}/convert`, { from: id64 }], ['GET', `/objects/${id64}/uploads/0/${id64}`], ['POST', `/objects/${id64}/uploads/0/${id64}`, { size: 100 }], ['PUT', `/objects/${id64}/uploads/0/${id64}?offset=0`, {}], ['DELETE', `/objects/${id64}/uploads/0/${id64}`], ['POST', `/objects/${id64}/uploads/0/${id64}/commit`, {}],
   ['GET', '/spaces'], ['POST', '/spaces', {}], ['GET', `/spaces/${other}`], ['DELETE', `/spaces/${other}`], ['PUT', `/spaces/${other}/key`, {}], ['POST', `/spaces/${other}/invites`, {}], ['DELETE', `/spaces/${other}/invites/${other}`], ['DELETE', `/spaces/${other}/members/${other}`], ['POST', `/spaces/${other}/leave`, {}], ['POST', `/spaces/${other}/takeover`, {}], ['POST', `/spaces/${other}/replace`, {}], ['POST', `/invites/${other}/claim`, {}],

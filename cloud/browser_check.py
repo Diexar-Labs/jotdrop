@@ -169,6 +169,16 @@ def check_browser(browser, url, enrollment_token):
         first.locator("#note-history").click()
         first.locator(".history-row").nth(3).wait_for()
         assert first.locator(".history-row").count() == 4
+        # Compare an old version with the current note, without restoring anything.
+        oldest = first.locator(".history-row").nth(3)
+        oldest.get_by_role("button", name="Compare with current", exact=True).click()
+        oldest.locator(".history-diff .diff-line.added").first.wait_for()
+        assert oldest.locator(".history-diff .diff-line.added").first.inner_text().startswith("+ ")
+        assert oldest.locator(".history-diff .diff-line.removed").first.inner_text().startswith("- ")
+        assert first.locator(".history-row").count() == 4
+        oldest.get_by_role("button", name="Compare with current", exact=True).click()
+        assert oldest.locator(".history-diff").count() == 0
+        assert first.locator(".history-row").first.get_by_role("button", name="Compare with current", exact=True).count() == 0
         first.locator("#close-editor").click()
         assert first.evaluate("""async () => {
           const db = await new Promise(done => { const r = indexedDB.open('jotdrop-cloud-v1', 1); r.onsuccess = () => done(r.result); });

@@ -315,6 +315,7 @@
     <string name="toast_restored">Notitie teruggezet</string>
     <string name="action_delete_forever">Definitief verwijderen</string>
     <string name="action_share_note">Delen…</string>
+    <string name="action_share_link">Delen via link…</string>
     <string name="action_group">Gedeelde groep…</string>
     <string name="action_move_to_mine">Naar mijn notities</string>
     <string name="toast_moved_to_mine">Naar je eigen notities verplaatst</string>
@@ -327,4 +328,15 @@
         <item quantity="one">%d notitie</item>
         <item quantity="other">%d notities</item>
     </plurals>
+    <string name="widget_name">Snel vastleggen</string>
+    <string name="widget_description">Nieuwe notitie, spraakmemo of foto met één tik.</string>
+    <string name="widget_note">Notitie</string>
+    <string name="widget_voice">Spraakmemo</string>
+    <string name="widget_photo">Foto</string>
+    <string name="widget_note_name">Notitie of lijst</string>
+    <string name="widget_note_description">Eén notitie of lijst op je startscherm. Vink daar meteen af.</string>
+    <string name="widget_note_pick">Kies een notitie</string>
+    <string name="widget_note_gone">Deze notitie is verplaatst of weg. Tik om een andere te kiezen.</string>
+    <string name="widget_note_empty">Deze notitie is leeg.</string>
+    <string name="widget_note_none">Nog geen notities. Maak er eerst een.</string>
 </resources>

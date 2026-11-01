@@ -1,5 +1,7 @@
 import { CloudClient } from '/shared/client.mjs';
 import { mergeNote } from '/shared/merge.mjs';
+import { diffLines, foldUnchanged } from '/shared/diff.mjs';
+import { createLink, listLinks, removeLink } from '/shared/links.mjs';
 import { acceptInvite, blockMember, createSpace, deleteSpace, leaveSpace, listSpaces, makeInvite, readInvite, removeMember, replaceSpace, reportSpace, saveSpacePrefs, setMemberName, spaceClient, spaceDetails, takeOverSpace, unreadableFile, withdrawInvite, writeUnderFreeName } from '/shared/spaces.mjs';
 import { accountInfo, approveDevice, attachAccount, availableProviders, changePassword, checkApproval, completeApproval, confirmLogin, confirmSignup, deleteAccount, disableTotp, enableTotp, listApprovals, logIn, newRecoveryCode, personCheckKey, providerApproval, providerRecover, providerSignUp, providerTicket, rejectDevice, requestApproval, resetWithRecoveryCode, setupTotp, signUp, startOver, startProviderSignIn, startReset } from '/shared/account.mjs';
 import { base64ToBytes, bytesToBase64, decodeRecovery, decryptEnvelope, encryptEnvelope, isSpacePath, objectId, sealLocal, unsealLocal } from '/shared/crypto.mjs';
@@ -769,7 +771,7 @@ function render() {
       ]));
       const more = iconButton('more', 'More', () => showMenu(more, [
         { label: 'Download', action: save },
-        ...(activeSpace ? [{ label: activeSpace.frozen ? 'Copy to my notes' : 'Move to my notes', action: () => moveToOwn(entry) }] : view === 'notes' ? [{ label: 'Share…', action: () => showShare(entry) }] : []),
+        ...(activeSpace ? [{ label: activeSpace.frozen ? 'Copy to my notes' : 'Move to my notes', action: () => moveToOwn(entry) }] : view === 'notes' ? [{ label: 'Share…', action: () => showShare(entry) }, ...(isMarkdown(entry.file.path) ? [{ label: 'Share by link…', action: () => showLink(entry) }] : [])] : []),
         ...(activeSpace?.frozen ? [] : [{ label: 'Move to trash', action: () => deleteEntry(entry) }]),
       ]));
       if (activeSpace) actions.append(iconButton('pencil', 'Open note', () => openEditor(entry)), color, more);
@@ -1135,12 +1137,15 @@ async function showPlan(activeClient, activeGeneration) {
   $('storage-usage').textContent = `${(status.usedBytes / 1048576).toFixed(1)} / ${(status.quotaBytes / 1048576).toFixed(0)} MiB encrypted storage`;
   if (status.pieces?.maxFileBytes) maxFileBytes = status.pieces.maxFileBytes;
   const plan = status.plan;
-  $('plan-status').textContent = plan.name === 'plus' ? `JotDrop Plus until ${new Date(plan.plusUntil).toLocaleDateString()}` : `Free plan: ${plan.deviceLimit} devices, ${plan.historyDays} days of history`;
+  $('plan-status').textContent = plan.name === 'plus' ? `JotDrop Plus${plan.family === 'member' ? ' through your family' : ''} until ${new Date(plan.plusUntil).toLocaleDateString()}` : `Free plan: ${plan.deviceLimit} devices, ${plan.historyDays} days of history`;
   currentPlan = plan;
   storageShare = plan.name === 'plus' ? 0 : status.usedBytes / status.quotaBytes;
   showPlusNudge();
-  $('plus-offer').hidden = !plan.checkout || plan.subscribed;
+  $('plus-offer').hidden = !plan.checkout || plan.subscribed || (plan.family === 'member' && plan.name === 'plus');
   $('buy-year').textContent = plan.founderPrice ? '€29 per year (founder price)' : '€39 per year';
+  $('family-offer').hidden = !plan.familyCheckout;
+  $('buy-family-year').textContent = plan.founderPrice ? '€45 per year (founder price)' : '€59 per year';
+  $('open-family').hidden = !plan.family;
   $('plus-manage').hidden = !plan.subscribed;
   return status;
 }
@@ -1884,7 +1889,8 @@ function lock(notice = '') {
   spacePlan = undefined;
   spaces.clear();
   goneSpaces.clear();
-  for (const id of ['share-dialog', 'invite-dialog', 'join-dialog', 'gone-dialog']) $(id).close();
+  for (const id of ['share-dialog', 'invite-dialog', 'join-dialog', 'gone-dialog', 'family-dialog', 'family-join-dialog']) $(id).close();
+  $('family-link').value = '';
   $('invite-link').value = '';
   files.clear();
   moments.clear();
@@ -2378,9 +2384,9 @@ $('start-trial').addEventListener('click', startTrial);
 $('get-plus').addEventListener('click', showPlusOffer);
 $('plus-not-now').addEventListener('click', () => { plusReason = ''; plusQuiet = true; showPlusNudge(); });
 // Stripe shows the payment page and is the seller; Plus turns on when Stripe confirms the payment to the server.
-for (const [id, interval] of [['buy-month', 'month'], ['buy-year', 'year']]) $(id).addEventListener('click', async () => {
-  try { location.assign((await ownClient.call('/account/checkout', 'POST', { interval })).url); }
-  catch (error) { message(errorText(error)); }
+for (const [id, interval, plan] of [['buy-month', 'month', 'plus'], ['buy-year', 'year', 'plus'], ['buy-family-month', 'month', 'family'], ['buy-family-year', 'year', 'family']]) $(id).addEventListener('click', async () => {
+  try { location.assign((await ownClient.call('/account/checkout', 'POST', { interval, plan })).url); }
+  catch (error) { message(error.code === 'account-required' ? 'The family plan needs an account. Add one in Devices & recovery first.' : errorText(error)); }
 });
 $('sync').addEventListener('click', () => { syncPaused = false; $('sync').textContent = 'Sync now'; message(); void sync(); });
 $('pause-sync').addEventListener('click', () => { syncPaused = true; syncController?.abort(); });
@@ -2548,6 +2554,26 @@ $('note-delete').addEventListener('click', async () => {
   try { await deleteEntry(editing); resetPhoto(); $('editor').close(); }
   catch (error) { $('editor-message').textContent = errorText(error); }
 });
+async function toggleVersionDiff(row, version) {
+  const open = row.querySelector('.history-diff');
+  if (open) { open.remove(); return; }
+  const old = await client.read(editing.id, version.revision);
+  const lines = diffLines(noteText(old.file), noteText(editing.file));
+  const box = document.createElement('div');
+  box.className = 'history-diff';
+  if (!lines) box.append(paragraph('This note is too long to compare here.'));
+  else if (lines.every((line) => line.type === 'same')) box.append(paragraph('This version is the same as the current note.'));
+  else {
+    box.append(paragraph('From this version to the current note: + was added, - was removed.'));
+    for (const line of foldUnchanged(lines)) {
+      const shown = document.createElement('div');
+      shown.className = `diff-line ${line.type}`;
+      shown.textContent = line.type === 'gap' ? `${line.count} unchanged ${line.count === 1 ? 'line' : 'lines'}` : `${{ same: '  ', added: '+ ', removed: '- ' }[line.type]}${line.text}`;
+      box.append(shown);
+    }
+  }
+  row.append(box);
+}
 $('note-history').addEventListener('click', async () => {
   try {
     const result = await client.history(editing.id);
@@ -2566,6 +2592,7 @@ $('note-history').addEventListener('click', async () => {
         const old = await client.read(editing.id, version.revision);
         download(base64ToBytes(old.file.content), old.file.path);
       }));
+      if (version.revision !== editing.revision && !version.deleted && !editing.deleted && isMarkdown(editing.file.path)) row.append(button('Compare with current', () => toggleVersionDiff(row, version).catch((error) => { $('editor-message').textContent = errorText(error); })));
       if (version.revision !== editing.revision) row.append(button('Restore version', async () => {
         await restoreEntry(editing, version.revision);
         $('editor').close();
@@ -2989,6 +3016,7 @@ function showShare(entry) {
   $('share-me').value = myName();
   $('share-reminder').hidden = !parts.reminder;
   $('share-message').textContent = '';
+  $('share-plus').hidden = true;
   $('share-dialog').showModal();
 }
 $('share-group').addEventListener('change', () => { $('share-new').hidden = Boolean($('share-group').value); });
@@ -3014,8 +3042,8 @@ $('share-form').addEventListener('submit', async (event) => {
     } else if (!space.members.find((member) => isMe(space, member))?.name) await setMemberName(ownClient, space, me);
     const target = spaceClient(ownClient, space.id, space.key);
     if ((await target.status()).plan?.name !== 'plus' && await countNotes(target) >= 1) {
-      if (space.role === 'owner') offerPlus('JotDrop Plus shares as many notes as you like.');
-      throw new Error('The free plan shares one note.');
+      // The plan of the group's owner counts: a member cannot change it.
+      throw Object.assign(new Error('The free plan shares one note.'), { code: space.role === 'owner' ? 'plus-required' : undefined });
     }
     const attachments = await copyNote(target, entry, text);
     await removeMoved(entry, attachments);
@@ -3023,9 +3051,89 @@ $('share-form').addEventListener('submit', async (event) => {
     await enterSpace(space.id);
     await refreshSpaces();
     if (activeSpace?.role === 'owner' && activeSpace.members.length < 2) await showInvite(activeSpace);
-  } catch (error) { $('share-message').textContent = errorText(error); }
-  finally { submit.disabled = false; }
+  } catch (error) {
+    if (error.code === 'plus-required') { offerSharePlus(); $('share-message').textContent = error.message; }
+    else $('share-message').textContent = errorText(error);
+  } finally { submit.disabled = false; }
 });
+// Wanting to share a second note is when Plus is worth something; the trial then finishes what you were doing.
+function offerSharePlus() {
+  const choice = plusChoice();
+  $('share-plus').hidden = !choice;
+  $('share-trial').hidden = choice !== 'trial';
+  $('share-buy').hidden = choice !== 'buy';
+}
+$('share-trial').addEventListener('click', async () => {
+  await startTrial();
+  if (currentPlan?.name !== 'plus') return;
+  $('share-plus').hidden = true;
+  $('share-form').requestSubmit($('share-form').querySelector('button[type="submit"]'));
+});
+$('share-buy').addEventListener('click', () => { $('share-dialog').close(); showPlusOffer(); });
+
+// A copy anyone with the link can read. Frontmatter and attachments stay behind: a link is for the words.
+let linkEntry;
+async function showLink(entry) {
+  linkEntry = entry;
+  $('link-days').value = '7';
+  $('link-message').textContent = '';
+  $('link-plus').hidden = true;
+  $('link-made').hidden = true;
+  $('link-copy').hidden = true;
+  $('link-create').hidden = false;
+  $('link-dialog').showModal();
+  await refreshLinks();
+}
+async function refreshLinks() {
+  try {
+    const links = await listLinks(ownClient, location.origin);
+    $('link-list-box').hidden = !links.length;
+    $('link-list').replaceChildren(...links.map((link) => {
+      const row = document.createElement('div');
+      row.className = 'history-row';
+      row.append(paragraph(`${link.title || 'Untitled note'} - ${link.expiresAt ? `ends ${new Date(link.expiresAt).toLocaleDateString()}` : 'until you remove it'}`));
+      if (link.address) row.append(button('Copy', async () => { await navigator.clipboard.writeText(link.address); $('link-message').textContent = 'Link copied.'; }));
+      row.append(button('Remove', async () => { await removeLink(ownClient, link.id); $('link-message').textContent = 'The link no longer works.'; await refreshLinks(); }));
+      return row;
+    }));
+  } catch (error) { $('link-message').textContent = errorMessage(error); }
+}
+function offerLinkPlus(reason) {
+  const choice = plusChoice();
+  $('link-plus-reason').textContent = reason;
+  $('link-plus').hidden = !choice;
+  $('link-trial').hidden = choice !== 'trial';
+  $('link-buy').hidden = choice !== 'buy';
+}
+$('link-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  $('link-create').disabled = true;
+  $('link-message').textContent = 'Encrypting and sending...';
+  try {
+    const { title, body } = splitNote(noteText(linkEntry.file));
+    const text = body.split(/\r?\n/).filter((line) => !/^\s*!\[/.test(line)).join('\n');
+    const link = await createLink(ownClient, { title, text }, { origin: location.origin, days: Number($('link-days').value) });
+    $('link-plus').hidden = true;
+    $('link-address').value = link.address;
+    $('link-made').hidden = false;
+    $('link-copy').hidden = false;
+    $('link-create').hidden = true;
+    $('link-message').textContent = 'Send this link yourself. It holds the key, so we never see it.';
+    await refreshLinks();
+  } catch (error) {
+    if (error.code === 'plus-required') offerLinkPlus('JotDrop Plus keeps more links, for as long as you choose.');
+    $('link-message').textContent = error.code === 'plus-required' ? error.message : errorMessage(error);
+  } finally { $('link-create').disabled = false; }
+});
+$('link-close').addEventListener('click', () => $('link-dialog').close());
+$('link-copy').addEventListener('click', async () => { await navigator.clipboard.writeText($('link-address').value); $('link-message').textContent = 'Link copied.'; });
+$('link-trial').addEventListener('click', async () => {
+  await startTrial();
+  if (currentPlan?.name !== 'plus') return;
+  $('link-plus').hidden = true;
+  $('link-form').requestSubmit($('link-create'));
+});
+$('link-buy').addEventListener('click', () => { $('link-dialog').close(); showPlusOffer(); });
 
 async function moveToOwn(entry) {
   if (syncing) await syncing;
@@ -3179,7 +3287,7 @@ $('gone-keep').addEventListener('click', async () => {
 });
 
 // An invitation link opens here. It leaves the address bar at once; this tab keeps it through signing in or signing up.
-let invitation;
+let invitation, familyInvitation;
 function takeInvitation() {
   try {
     if (location.pathname === '/join') {
@@ -3187,14 +3295,30 @@ function takeInvitation() {
       history.replaceState(null, '', '/');
       sessionStorage.setItem('jotdrop-invitation', invitation);
     } else invitation = sessionStorage.getItem('jotdrop-invitation') ?? undefined;
+    if (location.pathname === '/family') {
+      familyInvitation = location.hash.slice(1);
+      history.replaceState(null, '', '/');
+      sessionStorage.setItem('jotdrop-family-invitation', familyInvitation);
+    } else familyInvitation = sessionStorage.getItem('jotdrop-family-invitation') ?? undefined;
   } catch { /* It still works in this page. */ }
+}
+function dropFamilyInvitation() {
+  familyInvitation = undefined;
+  try { sessionStorage.removeItem('jotdrop-family-invitation'); } catch { /* Nothing was kept. */ }
 }
 function dropInvitation() {
   invitation = undefined;
   try { sessionStorage.removeItem('jotdrop-invitation'); } catch { /* Nothing was kept. */ }
 }
 function offerInvitation() {
-  if (!invitation || !ownClient || $('join-dialog').open || $('recovery-dialog').open || $('secure-dialog').open) return;
+  if (!ownClient || $('join-dialog').open || $('family-join-dialog').open || $('recovery-dialog').open || $('secure-dialog').open) return;
+  if (!invitation) {
+    if (!familyInvitation) return;
+    $('family-join-message').textContent = '';
+    $('family-join-accept').disabled = false;
+    $('family-join-dialog').showModal();
+    return;
+  }
   $('join-name').value = myName();
   $('join-message').textContent = '';
   $('join-accept').disabled = false;
@@ -3220,6 +3344,72 @@ $('join-form').addEventListener('submit', async (event) => {
     if (!error.status || error.status === 429) $('join-accept').disabled = false;
   }
 });
+
+$('family-join-later').addEventListener('click', () => { dropFamilyInvitation(); $('family-join-dialog').close(); });
+$('family-join-accept').addEventListener('click', async () => {
+  $('family-join-accept').disabled = true;
+  try {
+    const { owner } = await ownClient.call('/family/join', 'POST', { token: familyInvitation });
+    dropFamilyInvitation();
+    $('family-join-dialog').close();
+    message(`You joined the family plan of ${owner}. JotDrop Plus is on.`);
+    await sync();
+  } catch (error) {
+    if (error.status && error.status !== 429) dropFamilyInvitation();
+    $('family-join-message').textContent = error.code === 'account-required' ? 'The family plan needs an account. Add one in Devices & recovery, then open the link again.' : error.message || 'Could not join. Try again.';
+    if (!error.status || error.status === 429) $('family-join-accept').disabled = false;
+  }
+});
+
+// The person who pays sees and manages the family; a member sees who pays and can leave.
+async function renderFamily() {
+  const family = await ownClient.call('/family', 'GET');
+  const owner = family.role === 'owner';
+  $('family-about').textContent = owner
+    ? `JotDrop Plus for you and up to ${family.seats - 1} others, until ${new Date(family.until).toLocaleDateString()}. You see their email addresses. Nobody can read anyone else's notes.`
+    : family.role === 'member' ? `You have JotDrop Plus through the family plan of ${family.owner}. They see your email address, not your notes.` : 'You are not in a family plan.';
+  $('family-members').replaceChildren(...(family.members ?? []).map((member) => {
+    const row = document.createElement('p');
+    row.append(member.email, ' ', button('Remove', async () => {
+      if (!confirm(`Remove ${member.email} from your family plan? Their JotDrop Plus ends right away. Their notes stay theirs.`)) return;
+      try { await ownClient.call(`/family/members/${member.accountId}`, 'DELETE'); await renderFamily(); } catch (error) { $('family-message').textContent = errorText(error); }
+    }));
+    return row;
+  }));
+  const room = owner && family.members.length + family.openInvites < family.seats - 1;
+  $('family-add').hidden = !room;
+  $('family-leave').hidden = family.role !== 'member';
+  $('family-message').textContent = owner && family.openInvites ? `${family.openInvites} invitation(s) not used yet. Each one keeps a place free for 7 days.` : '';
+  return family;
+}
+$('open-family').addEventListener('click', async () => {
+  $('family-message').textContent = '';
+  $('family-invite').hidden = $('family-copy').hidden = true;
+  try { await renderFamily(); $('family-dialog').showModal(); } catch (error) { message(errorText(error)); }
+});
+$('family-add').addEventListener('click', async () => {
+  try {
+    const { token } = await ownClient.call('/family/invites', 'POST', {});
+    $('family-link').value = `${location.origin}/family#${token}`;
+    $('family-invite').hidden = $('family-copy').hidden = false;
+    await renderFamily();
+  } catch (error) { $('family-message').textContent = errorText(error); }
+});
+$('family-copy').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText($('family-link').value); $('family-message').textContent = 'Link copied.'; }
+  catch { $('family-message').textContent = 'Clipboard unavailable. Select and copy the link yourself.'; }
+});
+$('family-leave').addEventListener('click', async () => {
+  if (!confirm('Leave the family plan? Your JotDrop Plus ends right away. Your notes stay yours.')) return;
+  try {
+    const { accountId } = await ownClient.call('/family', 'GET');
+    await ownClient.call(`/family/members/${accountId}`, 'DELETE');
+    $('family-dialog').close();
+    message('You left the family plan.');
+    await sync();
+  } catch (error) { $('family-message').textContent = errorText(error); }
+});
+$('family-close').addEventListener('click', () => { $('family-link').value = ''; $('family-dialog').close(); });
 
 /** Old versions of the apps can have put a group's folder in your own cloud. Nothing shows it, but it takes up storage. */
 function renderOldCopies() {
@@ -3347,5 +3537,6 @@ finally {
   if ($('workspace').hidden) {
     $('access').hidden = false;
     if (invitation && !$('access-message').textContent) $('access-message').textContent = 'Log in or create a free account to join the shared group.';
+    else if (familyInvitation && !$('access-message').textContent) $('access-message').textContent = 'Log in or create a free account to join the family plan.';
   }
 }

@@ -51,7 +51,7 @@ try {
   writeFileSync(merges, [...JSON.parse(readFileSync(path.join(root, 'cloud/shared/merge-vectors.json'), 'utf8')), ...generated]
     .map((vector) => [vector.name, vector.base, vector.local, vector.cloud, vector.merged].map(field).join('\t')).join('\n'));
   const windows = process.platform === 'win32';
-  execFileSync(windows ? process.env.ComSpec || 'cmd.exe' : './gradlew', windows ? ['/d', '/c', 'gradlew.bat checkCloudCrypto checkCloudSync --no-daemon --console=plain'] : ['checkCloudCrypto', 'checkCloudSync', '--no-daemon', '--console=plain'], {
+  execFileSync(windows ? process.env.ComSpec || 'cmd.exe' : './gradlew', windows ? ['/d', '/c', 'gradlew.bat checkCloudCrypto checkCloudSync checkVersionDiff --no-daemon --console=plain'] : ['checkCloudCrypto', 'checkCloudSync', '--no-daemon', '--console=plain'], {
     cwd: path.join(root, 'android'), stdio: 'inherit',
     env: { ...process.env, JOTDROP_CRYPTO_INPUT: input, JOTDROP_CRYPTO_OUTPUT: output, JOTDROP_MERGE_INPUT: merges },
   });

@@ -33,6 +33,7 @@
     <string name="empty_hint_new_note">die erste mit + notieren</string>
     <string name="stamp_sealed">Versiegelt</string>
     <string name="action_share_note">Teilen…</string>
+    <string name="action_share_link">Per Link teilen…</string>
     <string name="action_group">Geteilte Gruppe…</string>
     <string name="action_move_to_mine">Zu meinen Notizen</string>
     <string name="toast_moved_to_mine">Zu deinen Notizen verschoben</string>
@@ -45,4 +46,15 @@
         <item quantity="one">%d Notiz</item>
         <item quantity="other">%d Notizen</item>
     </plurals>
+    <string name="widget_name">Schnell festhalten</string>
+    <string name="widget_description">Neue Notiz, Sprachmemo oder Foto mit einem Tipp.</string>
+    <string name="widget_note">Notiz</string>
+    <string name="widget_voice">Sprachmemo</string>
+    <string name="widget_photo">Foto</string>
+    <string name="widget_note_name">Notiz oder Liste</string>
+    <string name="widget_note_description">Eine Notiz oder Liste auf dem Startbildschirm. Direkt dort abhaken.</string>
+    <string name="widget_note_pick">Notiz auswählen</string>
+    <string name="widget_note_gone">Diese Notiz wurde verschoben oder ist weg. Tippen, um eine andere zu wählen.</string>
+    <string name="widget_note_empty">Diese Notiz ist leer.</string>
+    <string name="widget_note_none">Noch keine Notizen. Erstelle zuerst eine.</string>
 </resources>

@@ -37,6 +37,7 @@
       <li>Your devices: the name you give each one, when it was added and when it last connected.</li>
       <li>Your encrypted notes and their earlier versions, with their size, the time they were saved and which of your devices saved them.</li>
       <li>Your plan: free or JotDrop Plus, whether you used the trial, and for a subscription the Stripe subscription ID, its status and the date it is paid until.</li>
+      <li>If you are in a family plan: which account pays for it, who is in it and when they joined, and the invitations that are not used yet, stored only as a hash.</li>
       <li>If you tick "Email me news about JotDrop.": when you ticked it and when we added you to our mailing list.</li>
       <li>For one day after an account is made: a keyed hash of the network (IP) address it was made from, so that one network cannot open many accounts. It is deleted after that day.</li>
       <li>Short-lived codes, only as keyed hashes. Email codes expire after 15 minutes and Google or GitHub sign-in links after 10 minutes. We count wrong codes per account or email address to stop guessing.</li>
@@ -61,6 +62,11 @@
     <p>Our server does store which accounts are in which group, when something changed, how large the files are and which device saved a version. Other people in the group do not see the device. The owner of a group can see the email addresses of everyone in it, and the join screen says so. Everyone else sees only the name each person chose.</p>
     <p>Because we cannot look inside a group, we only learn what is in it if someone tells us. If someone shares something with you that should be reported, use Report in the group or write to hello@jotdrop.net. A report sends us your email address, the email address of the person you report, the group's ID and what you wrote, and we keep that email for as long as we need to handle it. We can then remove the group or the account.</p>
     <p>If you block someone, our server stores which account blocked which, so the two of you cannot join a new group together. That stops when either account is deleted.</p>
+    <h3>Links to a note</h3>
+    <p>If you share a note by link, our server stores an encrypted copy of its title and text, which account made the link and when it ends. The key is in the link, in a part that browsers do not send to us, so we cannot read the copy. Anyone with the link can. The link is deleted when it ends, when you remove it or when you delete your account. Someone who reports a link sends us what they write about it, and we see the address of the account that made it.</p>
+
+    <h3>Family plan</h3>
+    <p>The person who pays for a family plan sees the email addresses of the people in it. Each of them sees the email address of the person who pays, and the join screen says so. Nobody in a family can read anyone else's notes, and the family plan shares no notes. Someone leaves the family when they leave, are removed or delete their account; the family ends when the person who pays deletes their account.</p>
 
     <h2>Why we may use it</h2>
     <ul>

@@ -156,7 +156,9 @@
       <div class="sidebar-bottom">
         <p id="storage-usage" class="checking">Checking storage...</p>
         <p id="plan-status"></p>
-        <div id="plus-offer" hidden><p>Get JotDrop Plus</p><button id="buy-month" type="button">&euro;3.99 per month</button><button id="buy-year" type="button">&euro;39 per year</button></div>
+        <div id="plus-offer" hidden><p>Get JotDrop Plus</p><button id="buy-month" type="button">&euro;3.99 per month</button><button id="buy-year" type="button">&euro;39 per year</button>
+          <div id="family-offer" hidden><p>Family: Plus for you and 5 others</p><button id="buy-family-month" type="button">&euro;6.99 per month</button><button id="buy-family-year" type="button">&euro;59 per year</button></div></div>
+        <button id="open-family" type="button" hidden>Family plan</button>
         <button id="export-all" type="button">Export files</button>
       </div>
     </aside>
@@ -337,8 +339,23 @@
       <p id="share-reminder" class="dialog-note" hidden>The reminder on this note is taken off: it would go off for everyone.</p>
       <p class="dialog-note">By sharing you accept the <a href="/terms" target="_blank" rel="noopener">terms of use</a>.</p>
       <p id="share-message" class="message" role="status" aria-live="polite"></p>
+      <div id="share-plus" class="history-plus" hidden><p>JotDrop Plus shares as many notes as you like.</p><button id="share-trial" class="primary" type="button">Try JotDrop Plus free for 14 days</button><button id="share-buy" type="button">Get JotDrop Plus</button></div>
       <div class="dialog-actions"><button id="share-cancel" type="button">Cancel</button><button class="primary" type="submit">Share</button></div>
     </form>
+  </dialog>
+  <dialog id="link-dialog" aria-labelledby="link-title">
+    <form id="link-form">
+      <h2 id="link-title">Share by link</h2>
+      <p>Anyone with this link can read a copy of this note, without an account. Later changes do not go along. Photos and files stay out.</p>
+      <label for="link-days">The link ends</label>
+      <select id="link-days"><option value="1">After 1 day</option><option value="7" selected>After 7 days</option><option value="30">After 30 days</option><option value="0">When I remove it</option></select>
+      <p class="dialog-note">By sharing you accept the <a href="/terms" target="_blank" rel="noopener">terms of use</a>.</p>
+      <p id="link-message" class="message" role="status" aria-live="polite"></p>
+      <div id="link-plus" class="history-plus" hidden><p id="link-plus-reason"></p><button id="link-trial" class="primary" type="button">Try JotDrop Plus free for 14 days</button><button id="link-buy" type="button">Get JotDrop Plus</button></div>
+      <div id="link-made" hidden><label for="link-address">Your link</label><textarea id="link-address" rows="3" readonly spellcheck="false"></textarea></div>
+      <div class="dialog-actions"><button id="link-close" type="button">Close</button><button id="link-copy" type="button" hidden>Copy link</button><button id="link-create" class="primary" type="submit">Make link</button></div>
+    </form>
+    <section id="link-list-box" hidden><h3>Your links</h3><div id="link-list"></div></section>
   </dialog>
   <dialog id="invite-dialog" aria-labelledby="invite-title">
     <h2 id="invite-title">Invite someone</h2>
@@ -357,6 +374,22 @@
       <p id="join-message" class="message" role="status" aria-live="polite"></p>
       <div class="dialog-actions"><button id="join-later" type="button">Not now</button><button id="join-accept" class="primary" type="submit">Join</button></div>
     </form>
+  </dialog>
+  <dialog id="family-dialog" aria-labelledby="family-title">
+    <h2 id="family-title">Family plan</h2>
+    <p id="family-about"></p>
+    <div id="family-members"></div>
+    <div id="family-invite" hidden><p>Send this link yourself, to one person. It works once and expires after 7 days. They need a free JotDrop account.</p><label for="family-link">Invitation link</label><textarea id="family-link" rows="3" readonly spellcheck="false"></textarea></div>
+    <p id="family-message" role="status" aria-live="polite"></p>
+    <div class="dialog-actions"><button id="family-leave" class="danger" type="button" hidden>Leave the family</button><button id="family-copy" type="button" hidden>Copy link</button><button id="family-add" type="button" hidden>Invite someone</button><button id="family-close" class="primary" type="button">Done</button></div>
+  </dialog>
+  <dialog id="family-join-dialog" aria-labelledby="family-join-title">
+    <h2 id="family-join-title">You are invited to a JotDrop family</h2>
+    <p>You get JotDrop Plus for as long as the family plan runs. You pay nothing.</p>
+    <p>The person who pays sees your email address, and you see theirs. Nobody in the family can read your notes.</p>
+    <p class="dialog-note">By joining you accept the <a href="/terms" target="_blank" rel="noopener">terms of use</a>.</p>
+    <p id="family-join-message" class="message" role="status" aria-live="polite"></p>
+    <div class="dialog-actions"><button id="family-join-later" type="button">Not now</button><button id="family-join-accept" class="primary" type="button">Join</button></div>
   </dialog>
   <dialog id="report-dialog" aria-labelledby="report-title">
     <form id="report-form">

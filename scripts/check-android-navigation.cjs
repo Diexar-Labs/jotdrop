@@ -134,6 +134,56 @@ for (const [folder, hint] of [['values', 'Voice memo'], ['values-nl', 'Spraakmem
   const balloon = strings.split('\n').find(line => line.includes('name="tutorial_voice_memo"'));
   assert(balloon.includes(hint), `${folder}: the microphone balloon must explain the shortcut, with the label people see`);
 }
+// The home screen widget: three buttons, no note text, so nothing private shows on the home screen.
+const widgetEntry = manifest.slice(manifest.indexOf('android:name=".QuickCaptureWidget"'));
+assert(manifest.includes('android:name=".QuickCaptureWidget"'), 'The widget must be registered');
+assert(widgetEntry.slice(0, widgetEntry.indexOf('</receiver>')).includes('android:exported="false"'), 'Other apps must not be able to poke the widget');
+assert(widgetEntry.slice(0, widgetEntry.indexOf('</receiver>')).includes('android.appwidget.action.APPWIDGET_UPDATE'), 'The launcher must be able to update the widget');
+assert(widgetEntry.slice(0, widgetEntry.indexOf('</receiver>')).includes('@xml/quick_capture_widget_info'), 'The widget needs its description file');
+const widget = source('QuickCaptureWidget');
+assert(widget.includes('FLAG_IMMUTABLE'), 'Widget buttons need immutable pending intents');
+assert(widget.includes('VoiceMemoShortcutActivity::class.java'), 'The voice button must reuse the shortcut, with its permission and recording checks');
+assert(!/Storage\.|readText|openInputStream/.test(widget), 'The widget must not read notes');
+assert(list.includes('override fun onNewIntent'), 'A widget tap must reach a list that is already open');
+for (const name of ['QuickCaptureWidget.ACTION_NOTE', 'QuickCaptureWidget.ACTION_PHOTO']) assert(list.includes(name), `The list must handle ${name}`);
+const widgetAction = list.slice(list.indexOf('private fun handleWidgetAction('));
+assert(widgetAction.slice(0, widgetAction.indexOf('\n    }\n')).includes('Storage.getVaultUri(this) == null'), 'Without a folder the widget must leave the welcome screen in charge');
+const widgetLayout = fs.readFileSync(path.join(root, 'res', 'layout', 'widget_quick_capture.xml'), 'utf8');
+for (const id of ['widget_note', 'widget_voice', 'widget_photo']) assert(widgetLayout.includes(`@+id/${id}`), `The widget needs the ${id} button`);
+for (const label of ['@string/widget_note', '@string/widget_voice', '@string/widget_photo']) assert(widgetLayout.includes(label), 'Every widget button needs a text label, not only an icon');
+for (const folder of ['values', 'values-nl', 'values-de', 'values-es', 'values-fr', 'values-it']) {
+  const strings = fs.readFileSync(path.join(root, 'res', folder, 'strings.xml'), 'utf8');
+  for (const name of ['widget_name', 'widget_description', 'widget_note', 'widget_voice', 'widget_photo']) assert(strings.includes(`name="${name}"`), `${folder}: ${name} is missing`);
+}
+// The note widget: every copy shows its own note, and ticking on the home screen changes that note.
+assert(manifest.includes('android:name=".NoteWidget"'), 'The note widget must be registered');
+const noteWidgetEntry = manifest.slice(manifest.indexOf('android:name=".NoteWidget"'));
+assert(noteWidgetEntry.slice(0, noteWidgetEntry.indexOf('</receiver>')).includes('android:exported="false"'), 'Other apps must not be able to tick items');
+assert(manifest.includes('android.appwidget.action.APPWIDGET_CONFIGURE'), 'Placing a note widget must ask which note');
+const noteService = manifest.slice(manifest.indexOf('android:name=".NoteWidgetService"'));
+assert(noteService.slice(0, noteService.indexOf('/>')).includes('android.permission.BIND_REMOTEVIEWS'), 'Only the system may read the widget rows');
+const noteWidget = source('NoteWidget');
+assert(noteWidget.includes('Storage.noteWriteMutex'), 'A tick must wait for other note writes');
+assert(noteWidget.includes('Storage.toggleChecklistItem'), 'A tick must use the same write as the board');
+assert(noteWidget.includes('EXTRA_ROW_TEXT'), 'A tick must check that the row is still the one the person saw');
+assert(noteWidget.includes('goAsync()'), 'Reading a note must not block the main thread');
+assert(noteWidget.includes('FLAG_MUTABLE'), 'Rows fill in their own item, which needs a mutable template');
+assert(noteWidget.includes('getAppWidgetInfo'), 'The note picker must only serve this app\'s own widgets');
+assert(list.includes('HomeWidgets.refresh'), 'Opening the app must repair widgets after a force stop');
+assert(source('CloudSyncManager').includes('HomeWidgets.refresh'), 'A background sync must update the widgets');
+const noteRow = fs.readFileSync(path.join(root, 'res', 'layout', 'widget_note_item.xml'), 'utf8');
+assert(noteRow.includes('@+id/widget_note_item_box'), 'A ticked item must differ by shape, not only by colour');
+for (const folder of ['values', 'values-nl', 'values-de', 'values-es', 'values-fr', 'values-it']) {
+  const strings = fs.readFileSync(path.join(root, 'res', folder, 'strings.xml'), 'utf8');
+  for (const name of ['widget_note_name', 'widget_note_description', 'widget_note_pick', 'widget_note_gone', 'widget_note_empty', 'widget_note_none']) assert(strings.includes(`name="${name}"`), `${folder}: ${name} is missing`);
+}
+// Plus: a weekly ZIP. A half-written file never gets the name of a finished one, and only our own files are cleared.
+const backup = source('CloudBackup');
+assert(backup.includes('.part') && backup.includes('renameTo'), 'A backup must only get its name when it is finished');
+assert(backup.includes('it.name?.startsWith(PREFIX)'), 'Clearing old backups must never touch other files in that folder');
+assert(backup.includes('insideNotes'), 'A backup folder inside the notes folder would copy itself');
+assert(backup.includes('hasPlus'), 'Backups are part of Plus');
+assert(source('CloudActivity').includes('BackupSection'), 'The backup needs its place in the cloud screen');
 assert(manifest.includes('android:foregroundServiceType="microphone"'));
 assert(manifest.includes('android.permission.FOREGROUND_SERVICE_MICROPHONE'));
 assert(manifest.includes('android.permission.WAKE_LOCK'));
