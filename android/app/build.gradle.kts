@@ -24,6 +24,9 @@ android {
     // ("App not installed"). Met deze gecommite keystore krijgt elke release
     // dezelfde signature en updaten APK's gewoon netjes over elkaar heen.
     // Dit is geen geheime productiesleutel: gebruik hem nooit voor Play App Signing.
+    // Sinds de sleutelrotatie is hij alleen nog voor test-builds en de v2-handtekening
+    // op Android 8. Openbare GitHub-APK's tekent de release-workflow opnieuw met de
+    // geheime sleutel: scripts/sign-github-apk.mjs.
     signingConfigs {
         getByName("debug") {
             storeFile = file("debug.keystore")
@@ -50,10 +53,10 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // Bewust dezelfde (gecommite debug-)keystore als de debug-build:
-            // identieke signature, dus bestaande installaties updaten gewoon
-            // door zonder uninstall. Play-bundels gebruiken de aparte upload-key
-            // via omgevingsvariabelen; Google beheert de geheime app-signing-key.
+            // Lokaal en op main dezelfde (gecommite debug-)keystore als de debug-build;
+            // alleen een release-tag tekent opnieuw met de geheime sleutel.
+            // Play-bundels gebruiken de aparte upload-key via omgevingsvariabelen;
+            // Google beheert de geheime app-signing-key.
             signingConfig = signingConfigs.findByName("playUpload") ?: signingConfigs.getByName("debug")
         }
         debug {

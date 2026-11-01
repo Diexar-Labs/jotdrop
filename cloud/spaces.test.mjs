@@ -887,14 +887,17 @@ test('the terms of use are there and lead nowhere near a payment page', async (t
   assert.doesNotMatch(page, /href="\/"/);
 });
 
-test('only the Play signing key may open invitation links, because the key of the GitHub APK is public', async (t) => {
+test('only the private signing keys may open invitation links, never the key that is published in the repository', async (t) => {
   const app = await fixture(t);
   const response = await fetch(`${app.url()}/.well-known/assetlinks.json`);
   assert.equal(response.status, 200);
   assert.match(response.headers.get('content-type'), /application\/json/);
   const [link] = await response.json();
   assert.equal(link.target.package_name, 'com.diexar.keepcapture');
-  assert.deepEqual(link.target.sha256_cert_fingerprints, ['AE:88:95:8E:EB:45:C5:A7:E5:B6:80:CC:A6:10:EF:2E:6A:32:38:2F:22:B1:02:B3:D5:84:B9:6C:0B:2E:43:D6']);
+  assert.deepEqual(link.target.sha256_cert_fingerprints, [
+    'AE:88:95:8E:EB:45:C5:A7:E5:B6:80:CC:A6:10:EF:2E:6A:32:38:2F:22:B1:02:B3:D5:84:B9:6C:0B:2E:43:D6',
+    'C4:A1:00:72:D1:EB:98:8E:9E:1D:94:26:D9:03:8D:D9:BD:3F:DB:7C:C4:AB:90:00:3D:ED:F8:7D:FC:4A:43:3A',
+  ]);
 });
 
 test('whoever is blocked cannot end up in a group with the person who blocked them', async (t) => {

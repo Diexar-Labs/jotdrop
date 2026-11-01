@@ -76,6 +76,10 @@ jobs:
         working-directory: .
         run: npm run check:list-preview
 
+      - name: Check release signing
+        working-directory: .
+        run: npm run check:github-signing
+
       - name: Check note imports
         working-directory: .
         run: npm run check:keep-import && npm run check:markdown-import && npm run check:evernote-import
@@ -113,6 +117,15 @@ jobs:
       - name: Build release APK
         if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
         run: ./gradlew :app:assembleRelease --no-daemon --stacktrace
+
+      # Builds of main stay on the public test key: only a release tag may use the release key.
+      - name: Sign the public APK with the release key
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: .
+        env:
+          JOTDROP_GITHUB_KEYSTORE_BASE64: ${{ secrets.JOTDROP_GITHUB_KEYSTORE_BASE64 }}
+          JOTDROP_GITHUB_KEYSTORE_PASSWORD: ${{ secrets.JOTDROP_GITHUB_KEYSTORE_PASSWORD }}
+        run: node scripts/sign-github-apk.mjs
 
       - name: Stage Android release assets
         if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')

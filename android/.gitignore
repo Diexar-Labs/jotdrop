@@ -19,4 +19,5 @@ desktop.ini
 
 # Keystore (geen release-keystore committen)
 *.jks
+*.p12
 !debug.keystore

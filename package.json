@@ -69,6 +69,7 @@
     "deploy:local": "node scripts/deploy-local.mjs",
     "android:release": "node scripts/build-android-release.mjs",
     "android:test-release": "node scripts/build-android-release.mjs --test",
+    "check:github-signing": "node scripts/check-github-signing.mjs",
     "android:verify": "node scripts/verify-android-apk.mjs",
     "android:install": "node scripts/install-android-release.mjs"
   },

@@ -215,7 +215,7 @@ Notes go to the `Mini Notes` folder of your vault; you can choose another folder
 3. Open JotDrop. Choose **Continue with Google** for a free JotDrop Cloud, or **Use without cloud** and pick a folder for your notes (for example the vault folder you sync to your computer).
 4. From now on, the share menu of every app includes JotDrop.
 
-> **About the signing key:** GitHub APKs use the repository's published compatibility key, so they update existing sideloaded installs. Because that key is public, it is not proof of authenticity. Download APKs only from the versioned `Diexar-Labs/jotdrop` release URL above and check the linked Actions build.
+> **About the signing key:** Up to 0.28.30, GitHub APKs were signed with a key that is published in this repository, so anyone could sign an APK with it. From 0.28.31 on they use a private key (SHA-256 `C4:A1:00:72:D1:EB:98:8E:9E:1D:94:26:D9:03:8D:D9:BD:3F:DB:7C:C4:AB:90:00:3D:ED:F8:7D:FC:4A:43:3A`). On Android 9 and newer, updating is enough: you don't need to reinstall, and the old key can't update the app after that. Android 8 can't switch keys and keeps trusting the old one. Download APKs only from the versioned `Diexar-Labs/jotdrop` release URL above.
 
 ### Web app
 
