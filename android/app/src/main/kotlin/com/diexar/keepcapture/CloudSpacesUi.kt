@@ -153,6 +153,7 @@ internal fun SharedGroups(busy: Boolean, run: (suspend () -> Unit) -> Unit, clie
     var paste by remember { mutableStateOf("") }
     var ask by remember { mutableStateOf<Triple<String, String, suspend () -> Unit>?>(null) }
     var reporting by remember { mutableStateOf<Pair<KnownSpace, CloudSpaceMember?>?>(null) }
+    var reported by remember { mutableStateOf(false) }
     val reload = { version++ }
     LaunchedEffect(version, busy) { groups = withContext(Dispatchers.IO) { CloudSpacesFlow.known(context) } }
     LaunchedEffect(open, version) {
@@ -220,6 +221,8 @@ internal fun SharedGroups(busy: Boolean, run: (suspend () -> Unit) -> Unit, clie
             confirmButton = { TextButton(onClick = { ask = null; run(action) }) { Text("Continue") } },
             dismissButton = { TextButton(onClick = { ask = null }) { Text("Cancel") } })
     }
+    if (reported) AlertDialog(onDismissRequest = { reported = false }, title = { Text("Report sent") }, text = { Text("Thanks. Your report was sent to JotDrop.") },
+        confirmButton = { TextButton(onClick = { reported = false }) { Text("OK") } })
     reporting?.let { (space, member) ->
         var reason by remember { mutableStateOf(REPORT_REASONS.first().first) }
         var words by remember { mutableStateOf("") }
@@ -234,7 +237,7 @@ internal fun SharedGroups(busy: Boolean, run: (suspend () -> Unit) -> Unit, clie
                 run {
                     val own = client()
                     withContext(Dispatchers.IO) { CloudSpaces.report(own, space.id, reason, member?.accountId, words) }
-                    setNotice("Thanks. Your report was sent to JotDrop.")
+                    reported = true
                 }
             }, enabled = !busy) { Text("Send report") } },
             dismissButton = { TextButton(onClick = { reporting = null }) { Text("Cancel") } })

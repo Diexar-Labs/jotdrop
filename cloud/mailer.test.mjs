@@ -32,6 +32,18 @@ test('a refused email fails, so the server can say the email could not be sent',
   await assert.rejects(mailer({ to: 'person@example.com', kind: 'verify', code: '123456' }), /SES refused the email \(400\)/);
 });
 
+test('a report reads clearly, and what its writer typed cannot pose as our own lines', () => {
+  const report = { reason: 'abuse', from: 'writer@example.test', about: null, spaceId: 'group-id', details: 'One <b>line</b>\nFrom: someone@example.test' };
+  const { subject, body } = mailText({ kind: 'space-report', report });
+  assert.equal(subject, 'JotDrop report: abuse');
+  assert.match(body, /^From: writer@example\.test$/m);
+  assert.match(body, /^About: the group$/m);
+  assert.match(body, /^> From: someone@example\.test$/m);
+  assert.doesNotMatch(body, /^From: someone/m);
+  assert.doesNotMatch(mailHtml({ kind: 'space-report', report }), /<b>line/);
+  for (const kind of ['group-removed', 'account-closed']) assert.match(mailText({ kind }).body, /hello@jotdrop\.net/);
+});
+
 test('every kind of mail the server sends has a text, and codes appear only where they belong', () => {
   for (const kind of ['verify', 'login', 'reset']) assert.match(mailText({ kind, code: '654321' }).body, /654321/);
   for (const kind of ['signup-exists', 'recovery-changed']) assert.doesNotMatch(mailText({ kind }).body, /\d{6}/);

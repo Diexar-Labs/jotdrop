@@ -41,6 +41,8 @@ for (const needed of ["CloudSpaces.report(", "CloudSpaces.block(", "TermsNotice(
   check(spacesUi.includes(needed), `CloudSpacesUi must use ${needed}`);
 }
 check(/runCatching \{ context\.startActivity\(Intent\(Intent\.ACTION_VIEW, Uri\.parse\("\$\{.*\/terms"/.test(spacesUi), "the terms link must follow the server and survive a phone without a browser");
+// The notice line sits under the list of groups, out of sight while a group is open: a report needs its own answer.
+check(spacesUi.includes("reported = true") && !spacesUi.includes('setNotice("Thanks.'), "sending a report must answer in a dialog");
 // Linked from the app, so it must not lead to checkout either.
 const terms = read("cloud/web/terms.html");
 check(!/href="\/"|href="https?:\/\/[^"]*jotdrop\.net/.test(terms), "the terms must not link onward to the web app or the site");
