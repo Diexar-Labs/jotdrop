@@ -298,6 +298,49 @@ def check_sharing(browser, url, codes, directory):
     eric.locator("#workspace-message").filter(has_text="The group is deleted").wait_for()
     assert eric.locator("#view-title").inner_text() == "Notes"
 
+    # --- Terms before sharing or joining; report and block from inside the group.
+    new_note(eric, "Blocking", "- [ ] one")
+    card(eric, "Blocking").wait_for()
+    synced(eric)
+    menu(eric, "Blocking", "Share…")
+    eric.locator("#share-dialog").wait_for()
+    assert eric.locator('#share-dialog a[href="/terms"]').is_visible()
+    eric.locator("#share-name").fill("To block")
+    eric.locator("#share-me").fill("Eric")
+    eric.locator('#share-form button[type="submit"]').click()
+    block_link = take_link(eric)
+    carl.goto(block_link, wait_until="networkidle")
+    carl.locator("#join-dialog").wait_for()
+    assert carl.locator('#join-dialog a[href="/terms"]').is_visible()
+    join(carl, "Carl")
+    owner_row = people(carl).locator(".space-person").filter(has_text="(owner)")
+    owner_row.get_by_role("button", name="Report").click()
+    carl.locator("#report-dialog").wait_for()
+    carl.locator("#report-reason").select_option("abuse")
+    carl.locator("#report-details").fill("Testing the report")
+    carl.locator('#report-form button[type="submit"]').click()
+    carl.locator("#report-dialog").wait_for(state="hidden")
+    carl.locator("#workspace-message").filter(has_text="report was sent").wait_for()
+    people(carl).get_by_role("button", name="Report this group").click()
+    carl.locator("#report-dialog").wait_for()
+    carl.locator("#report-cancel").click()
+    assert people(eric).locator(".space-person").filter(has_text="(you)").get_by_role("button", name="Block").count() == 0
+    owner_row.get_by_role("button", name="Block").click()
+    carl.locator("#gone-dialog").wait_for()
+    carl.locator("#gone-remove").click()
+    carl.locator("#gone-dialog").wait_for(state="hidden")
+    synced(eric)
+    block_link = invite_link(eric)
+    carl.goto(block_link, wait_until="networkidle")
+    carl.locator("#join-dialog").wait_for()
+    carl.locator("#join-name").fill("Carl")
+    carl.locator("#join-accept").click()
+    carl.locator("#join-message").filter(has_text="cannot join").wait_for()
+    carl.locator("#join-later").click()
+    people(eric).get_by_role("button", name="Delete group").click()
+    eric.locator("#workspace-message").filter(has_text="The group is deleted").wait_for()
+    assert eric.locator("#view-title").inner_text() == "Notes"
+
     # --- A note with a photo: the photo goes along, and comes back. Only two people, so removing one needs no new group.
     png = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAEBgIApD5fRAAAAABJRU5ErkJggg==")
     eric.locator("#upload").set_input_files({"name": "photo.png", "mimeType": "image/png", "buffer": png})
@@ -395,7 +438,7 @@ def check_sharing(browser, url, codes, directory):
     stored = b"".join(path.read_bytes() for path in Path(directory).glob("cloud.db*"))
     for word in [b"Family lists", b"Groceries", b"milk", b"bread", b"Carl", b"onerror"]:
         assert word not in stored, word
-    return {"share": True, "join": True, "usedLink": True, "emailsOnlyOwner": True, "linesMerged": True, "freeOneNote": True, "hostileContentInert": True, "removeWithNewKey": True, "unsentRescued": True, "goneKeepsCopy": True, "leave": True, "deleteGroup": True, "photoGoesAlong": True, "sameLineKeepsBoth": True, "backToOwnNotes": True, "takeOver": True, "oldCopiesCleared": True}
+    return {"share": True, "join": True, "usedLink": True, "emailsOnlyOwner": True, "linesMerged": True, "freeOneNote": True, "hostileContentInert": True, "removeWithNewKey": True, "unsentRescued": True, "goneKeepsCopy": True, "leave": True, "deleteGroup": True, "photoGoesAlong": True, "sameLineKeepsBoth": True, "backToOwnNotes": True, "takeOver": True, "oldCopiesCleared": True, "termsReportBlock": True}
 
 
 def main():

@@ -497,7 +497,7 @@ async function groupSetup(t) {
   const invite = async () => { now += 61000; return (await makeInvite(eric, space, 'Eric')).link; };
   await cloud.join(await invite(), 'Ana');
   const deleted = async (path) => (await files.read(await objectId(space.key, path))).deleted === true;
-  return { v, cloud, eric, space, invite, deleted, local: `Mini Notes/Shared/${space.id}` };
+  return { v, cloud, eric, space, invite, deleted, mails, local: `Mini Notes/Shared/${space.id}` };
 }
 
 test('shared groups: the conflict review of the own vault leaves a group alone', async (t) => {
@@ -519,6 +519,20 @@ test('shared groups: invited again after a removal, what was thrown away here co
   assert.equal(await deleted('notes/Groceries.md'), false);
   assert.ok(v.files.has(`${local}/Groceries.md`));
   assert.equal(cloud.spaceOf(`${local}/Groceries.md`).gone, false);
+});
+
+test('shared groups: a report leaves the group alone, and blocking leaves it and stays', async (t) => {
+  const { cloud, eric, space, invite, local, mails } = await groupSetup(t);
+  const known = cloud.spaceOf(`${local}/Groceries.md`);
+  const owner = (await spaceDetails(eric, space.id)).members.find((member) => member.name !== 'Ana');
+  await cloud.report(space.id, { reason: 'spam', about: owner.accountId, details: 'Selling things' });
+  assert.equal(mails.at(-1).kind, 'space-report');
+  assert.equal(mails.at(-1).report.details, 'Selling things');
+  assert.equal(known.gone, false);
+  await cloud.block(known, owner.accountId, false);
+  assert.equal(known.gone, true);
+  assert.ok((await spaceDetails(eric, space.id)).members.every((member) => member.name !== 'Ana'), 'She left');
+  await assert.rejects(cloud.join(await invite(), 'Ana'), (error) => error.status === 403);
 });
 
 test('shared groups: with cloud sync off nothing moves into a group and a link is not used up', async (t) => {

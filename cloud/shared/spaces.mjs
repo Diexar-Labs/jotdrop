@@ -92,6 +92,14 @@ export async function acceptInvite(client, invite, memberName) {
 
 export const removeMember = (client, spaceId, accountId) => client.call(spacePath(spaceId, `/members/${accountId}`), 'DELETE');
 export const leaveSpace = (client, spaceId) => client.call(spacePath(spaceId, '/leave'), 'POST', {});
+/**
+ * `about` is a person's account; without it the report is about the group.
+ * @param {*} client
+ * @param {string} spaceId
+ * @param {{ reason: string, about?: string, details?: string }} report reason: abuse, illegal, spam or other
+ */
+export const reportSpace = (client, spaceId, { reason, about, details }) => client.call(spacePath(spaceId, '/report'), 'POST', { reason, ...(about ? { about } : {}), ...(details ? { details } : {}) });
+export const blockMember = (client, spaceId, accountId) => client.call(spacePath(spaceId, '/block'), 'POST', { accountId });
 export const takeOverSpace = (client, spaceId) => client.call(spacePath(spaceId, '/takeover'), 'POST', {});
 export const deleteSpace = (client, spaceId) => client.call(spacePath(spaceId), 'DELETE');
 

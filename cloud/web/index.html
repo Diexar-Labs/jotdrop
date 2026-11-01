@@ -335,6 +335,7 @@
       <label for="share-me">Your name for the others</label><input id="share-me" maxlength="80" required autocomplete="off">
       <p class="dialog-note">Pin, labels and order stay yours and do not go along.</p>
       <p id="share-reminder" class="dialog-note" hidden>The reminder on this note is taken off: it would go off for everyone.</p>
+      <p class="dialog-note">By sharing you accept the <a href="/terms" target="_blank" rel="noopener">terms of use</a>.</p>
       <p id="share-message" class="message" role="status" aria-live="polite"></p>
       <div class="dialog-actions"><button id="share-cancel" type="button">Cancel</button><button class="primary" type="submit">Share</button></div>
     </form>
@@ -352,8 +353,25 @@
       <p>Accept only a link from someone you know. The people in the group can read and change its notes. Joining sends none of your own notes.</p>
       <p>The owner of the group can see your email address. The others see the name you choose here.</p>
       <label for="join-name">Your name for the others</label><input id="join-name" maxlength="80" required autocomplete="off">
+      <p class="dialog-note">By joining you accept the <a href="/terms" target="_blank" rel="noopener">terms of use</a>.</p>
       <p id="join-message" class="message" role="status" aria-live="polite"></p>
       <div class="dialog-actions"><button id="join-later" type="button">Not now</button><button id="join-accept" class="primary" type="submit">Join</button></div>
+    </form>
+  </dialog>
+  <dialog id="report-dialog" aria-labelledby="report-title">
+    <form id="report-form">
+      <h2 id="report-title">Report</h2>
+      <p class="dialog-note">We cannot read the notes in this group, so we only see what you write here. Your email address goes along, so we can reply.</p>
+      <label for="report-reason">What is wrong?</label>
+      <select id="report-reason">
+        <option value="abuse">Threats, harassment or hate</option>
+        <option value="illegal">Illegal content</option>
+        <option value="spam">Spam or a scam</option>
+        <option value="other">Something else</option>
+      </select>
+      <label for="report-details">Tell us more (optional)</label><textarea id="report-details" rows="4" maxlength="2000"></textarea>
+      <p id="report-message" class="message" role="status" aria-live="polite"></p>
+      <div class="dialog-actions"><button id="report-cancel" type="button">Cancel</button><button class="primary" type="submit">Send report</button></div>
     </form>
   </dialog>
   <dialog id="gone-dialog" aria-labelledby="gone-title">

@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
@@ -84,6 +86,15 @@ internal object CloudSpacesFlow {
         return joined
     }
 
+    /** You lose access. The folder stays here until you choose to keep a copy or remove it. */
+    fun leave(context: Context, client: CloudClient, spaceId: String) {
+        CloudSpaces.leave(client, spaceId)
+        val store = CloudPreviewStore(context)
+        val spaces = store.spaces()
+        spaces.optJSONObject(spaceId)?.put("gone", true)
+        store.saveSpaces(spaces)
+    }
+
     /** The other side of a group is gone or read-only: keep the notes as your own, or remove the folder. Asks first, in the screen. */
     suspend fun release(context: Context, space: KnownSpace, keep: Boolean) = CloudSyncManager.exclusive { CloudSyncManager.dropSpace(context, space.id, space.key, keep) }
 
@@ -118,6 +129,17 @@ internal object CloudSpacesFlow {
     }
 }
 
+private val REPORT_REASONS = listOf("abuse" to "Threats, harassment or hate", "illegal" to "Illegal content", "spam" to "Spam or a scam", "other" to "Something else")
+
+/** The terms come before anything is shared or joined. */
+@Composable
+private fun TermsNotice(action: String) {
+    val context = LocalContext.current
+    Text("By $action you accept the terms of use.", style = MaterialTheme.typography.bodySmall)
+    val server = remember { runCatching { CloudPreviewStore(context).credentials()?.url }.getOrNull() ?: "https://app.jotdrop.net" }
+    TextButton(onClick = { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("${server.trimEnd('/')}/terms"))) } }) { Text("Read the terms of use") }
+}
+
 /** The groups on this phone, and the people in the one that is open. */
 @Composable
 internal fun SharedGroups(busy: Boolean, run: (suspend () -> Unit) -> Unit, client: suspend () -> CloudClient, setNotice: (String) -> Unit) {
@@ -130,6 +152,7 @@ internal fun SharedGroups(busy: Boolean, run: (suspend () -> Unit) -> Unit, clie
     var link by remember { mutableStateOf<String?>(null) }
     var paste by remember { mutableStateOf("") }
     var ask by remember { mutableStateOf<Triple<String, String, suspend () -> Unit>?>(null) }
+    var reporting by remember { mutableStateOf<Pair<KnownSpace, CloudSpaceMember?>?>(null) }
     val reload = { version++ }
     LaunchedEffect(version, busy) { groups = withContext(Dispatchers.IO) { CloudSpacesFlow.known(context) } }
     LaunchedEffect(open, version) {
@@ -161,6 +184,19 @@ internal fun SharedGroups(busy: Boolean, run: (suspend () -> Unit) -> Unit, clie
                         Text(listOfNotNull(member.name ?: "Someone", "(you)".takeIf { me }, "(owner)".takeIf { member.owner }, member.email?.let { "- $it" }).joinToString(" "), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
                         if (details.owner && !me && !details.frozen) TextButton(onClick = { ask = Triple("Remove ${member.name ?: "this person"}?", "They lose access right away to all notes in this group. What they already downloaded stays with them.") { val own = client(); setNotice(withContext(Dispatchers.IO) { CloudSpacesFlow.remove(context, own, group, member) }); open = null; CloudSyncManager.request(context); reload() } }, enabled = !busy) { Text("Remove") }
                     }
+                    if (!me) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        TextButton(onClick = { reporting = group to member }, enabled = !busy) { Text("Report") }
+                        if (!details.frozen && details.replacedBy == null) TextButton(onClick = { ask = Triple("Block ${member.name ?: "this person"}?", "${if (details.owner) "They are removed from this group" else "You leave this group"} and the two of you cannot join a new group together. Other groups you share stay as they are. To undo this, write to hello@jotdrop.net.") {
+                            val own = client()
+                            withContext(Dispatchers.IO) { CloudSpaces.block(own, group.id, member.accountId) }
+                            if (details.owner) {
+                                setNotice(withContext(Dispatchers.IO) { CloudSpacesFlow.remove(context, own, group, member) })
+                                open = null
+                                CloudSyncManager.request(context)
+                            } else withContext(Dispatchers.IO) { CloudSpacesFlow.leave(context, own, group.id) }
+                            reload()
+                        } }, enabled = !busy) { Text("Block") }
+                    }
                 }
                 for (invite in details.invites.filter { !it.claimed }) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("Link not used yet", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
@@ -171,7 +207,8 @@ internal fun SharedGroups(busy: Boolean, run: (suspend () -> Unit) -> Unit, clie
                     link = withContext(Dispatchers.IO) { CloudSpaces.makeInvite(own, group.id, group.key, details.members.firstOrNull { it.accountId == details.accountId }?.name ?: "Someone") }
                     reload()
                 } }, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) { Text("Invite someone") }
-                if (!details.frozen && details.replacedBy == null) OutlinedButton(onClick = { ask = Triple("Leave \"${group.name}\"?", "You lose access. You can keep a copy of the notes next.") { val own = client(); withContext(Dispatchers.IO) { CloudSpaces.leave(own, group.id); val store = CloudPreviewStore(context); val spaces = store.spaces(); spaces.optJSONObject(group.id)?.put("gone", true); store.saveSpaces(spaces) }; reload() } }, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) { Text("Leave group") }
+                if (!details.frozen && details.replacedBy == null) OutlinedButton(onClick = { ask = Triple("Leave \"${group.name}\"?", "You lose access. You can keep a copy of the notes next.") { val own = client(); withContext(Dispatchers.IO) { CloudSpacesFlow.leave(context, own, group.id) }; reload() } }, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) { Text("Leave group") }
+                if (details.members.size > 1) OutlinedButton(onClick = { reporting = group to null }, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) { Text("Report this group") }
                 if (details.owner) OutlinedButton(onClick = { ask = Triple("Delete \"${group.name}\"?", "The group and all of its notes are deleted for everyone. This cannot be undone. Move notes you want to keep to your own notes first.") { val own = client(); withContext(Dispatchers.IO) { CloudSpaces.delete(own, group.id); CloudSpacesFlow.release(context, group, false) }; open = null; reload() } }, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) { Text("Delete group") }
             }
         }
@@ -182,6 +219,25 @@ internal fun SharedGroups(busy: Boolean, run: (suspend () -> Unit) -> Unit, clie
         AlertDialog(onDismissRequest = { ask = null }, title = { Text(title) }, text = { Text(text) },
             confirmButton = { TextButton(onClick = { ask = null; run(action) }) { Text("Continue") } },
             dismissButton = { TextButton(onClick = { ask = null }) { Text("Cancel") } })
+    }
+    reporting?.let { (space, member) ->
+        var reason by remember { mutableStateOf(REPORT_REASONS.first().first) }
+        var words by remember { mutableStateOf("") }
+        AlertDialog(onDismissRequest = { reporting = null }, title = { Text(if (member != null) "Report ${member.name ?: "this person"}" else "Report this group") },
+            text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("We cannot read the notes in this group, so we only see what you write here. Your email address goes along, so we can reply.", style = MaterialTheme.typography.bodySmall)
+                for ((value, label) in REPORT_REASONS) Row(verticalAlignment = Alignment.CenterVertically) { RadioButton(selected = reason == value, onClick = { reason = value }); Text(label) }
+                OutlinedTextField(value = words, onValueChange = { if (it.length <= 2000) words = it }, label = { Text("Tell us more (optional)") }, modifier = Modifier.fillMaxWidth(), maxLines = 4)
+            } },
+            confirmButton = { TextButton(onClick = {
+                reporting = null
+                run {
+                    val own = client()
+                    withContext(Dispatchers.IO) { CloudSpaces.report(own, space.id, reason, member?.accountId, words) }
+                    setNotice("Thanks. Your report was sent to JotDrop.")
+                }
+            }, enabled = !busy) { Text("Send report") } },
+            dismissButton = { TextButton(onClick = { reporting = null }) { Text("Cancel") } })
     }
     link?.let { value ->
         AlertDialog(onDismissRequest = { link = null }, title = { Text("Invite someone") },
@@ -199,11 +255,12 @@ internal fun SharedGroups(busy: Boolean, run: (suspend () -> Unit) -> Unit, clie
         var name by remember { mutableStateOf("") }
         LaunchedEffect(value) { name = runCatching { val own = client(); withContext(Dispatchers.IO) { CloudSpacesFlow.myName(own, CloudSpacesFlow.known(context)) } }.getOrDefault("") }
         AlertDialog(onDismissRequest = { CloudSpacesFlow.invitation = null }, title = { Text("You are invited to a shared group") },
-            text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Accept only a link from someone you know. The people in the group can read and change its notes. Joining sends none of your own notes.")
                 Text("The owner of the group can see your email address. The others see the name you choose here.")
                 OutlinedTextField(value = name, onValueChange = { if (it.length <= 80) name = it }, label = { Text("Your name for the others") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
                     keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Words))
+                TermsNotice("joining")
             } },
             confirmButton = { TextButton(onClick = {
                 val used = value
@@ -224,7 +281,7 @@ internal fun SharedGroups(busy: Boolean, run: (suspend () -> Unit) -> Unit, clie
         var me by remember { mutableStateOf("") }
         LaunchedEffect(note) { me = runCatching { val own = client(); withContext(Dispatchers.IO) { CloudSpacesFlow.myName(own, CloudSpacesFlow.known(context)) } }.getOrDefault("") }
         AlertDialog(onDismissRequest = { CloudSpacesFlow.shareNote = null }, title = { Text("Share this note") },
-            text = { Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("The note moves to a shared group. Pin, labels, order and a reminder stay behind.", style = MaterialTheme.typography.bodySmall)
                 for (group in groups.filter { !it.gone && !it.frozen }) Row(verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(selected = choice == group.id, onClick = { choice = group.id })
@@ -233,6 +290,7 @@ internal fun SharedGroups(busy: Boolean, run: (suspend () -> Unit) -> Unit, clie
                 Row(verticalAlignment = Alignment.CenterVertically) { RadioButton(selected = choice == null, onClick = { choice = null }); Text("New group") }
                 if (choice == null) OutlinedTextField(value = newName, onValueChange = { if (it.length <= 80) newName = it }, label = { Text("Name of the new group") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(value = me, onValueChange = { if (it.length <= 80) me = it }, label = { Text("Your name for the others") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                TermsNotice("sharing")
             } },
             confirmButton = { TextButton(onClick = {
                 val target = choice

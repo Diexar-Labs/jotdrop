@@ -20,7 +20,7 @@ export function signRequest({ method, url, headers, body, service, region, acces
 const footer = '\n\nJotDrop, private notes that sync end to end encrypted.';
 
 /** The subject and plain text of each mail the server sends. */
-export function mailText({ kind, code, provider }) {
+export function mailText({ kind, code, provider, report }) {
   const texts = {
     verify: [`Your JotDrop code: ${code}`, `Enter this code to finish creating your JotDrop account:\n\n${code}\n\nThe code works for 15 minutes. If you did not sign up, you can ignore this email.`],
     login: [`Your JotDrop sign-in code: ${code}`, `Enter this code to sign in to JotDrop:\n\n${code}\n\nThe code works for 15 minutes. If you did not try to sign in, change your password.`],
@@ -28,8 +28,12 @@ export function mailText({ kind, code, provider }) {
     'signup-exists': ['You already have a JotDrop account', 'Someone tried to create a JotDrop account with this email address, but you already have one.\n\nTo sign in, use your password, or the Google or GitHub button you used before. If you forgot your password, choose "Forgot password". If this was not you, you can ignore this email.'],
     'provider-linked': [`You can now sign in to JotDrop with ${provider}`, `Your JotDrop account can now be opened by signing in with ${provider}. A new device still needs your approval on a signed-in device, or your recovery code, before it can read your notes.\n\nIf this was not you, change your ${provider} password and check the devices in your JotDrop account.`],
     'account-deleted': ['Your JotDrop account was deleted', 'Your JotDrop account and everything in your JotDrop Cloud were deleted, and every device was signed out. Your notes on your own devices were not touched.\n\nIf this was not you, write to hello@jotdrop.net.'],
+    'group-removed': ['A shared group was removed from JotDrop', 'We removed a shared group you were in, because someone reported it and it broke our terms of use. Notes already on your devices stay there.\n\nIf you think this is wrong, reply to hello@jotdrop.net.'],
+    'account-closed': ['Your JotDrop account was closed', 'We closed your JotDrop account because it broke our terms of use. Your cloud and devices were removed from JotDrop, and a running JotDrop Plus subscription was cancelled. Notes on your own devices were not touched.\n\nIf you think this is wrong, reply to hello@jotdrop.net.'],
     'recovery-changed': ['Your JotDrop recovery code was changed', 'A new recovery code was made for your JotDrop cloud. The old code no longer works.\n\nIf this was you, keep the new code in a safe place. If this was not you, change your password and make a new recovery code.'],
   };
+  // Only for us. What the writer typed stays plain text here; mailHtml escapes it.
+  if (kind === 'space-report') texts[kind] = [`JotDrop report: ${report.reason}`, `Someone reported something in a shared group.\n\nReason: ${report.reason}\nFrom: ${report.from}\nAbout: ${report.about ?? 'the group'}\nGroup: ${report.spaceId}\n\nTheir words, each line marked:\n${(report.details || 'They wrote nothing more.').split('\n').map((line) => `> ${line}`).join('\n')}\n\nThe server cannot read the notes in this group. Ask the writer if you need to see them.`];
   if (!texts[kind]) throw new Error(`Unknown mail kind: ${kind}`);
   const [subject, body] = texts[kind];
   return { subject, body: body + footer };
@@ -40,8 +44,8 @@ const FONT = "'Instrument Sans', -apple-system, 'Segoe UI', Roboto, Helvetica, A
 
 /** The same mail dressed in the house style "paper and ink" (Eric, 27 Oct): the code large in an amber box, easy to copy.
  * Tables and inline styles only, since mail apps ignore style sheets; the plain text goes along for apps that show no HTML. */
-export function mailHtml({ kind, code, provider }) {
-  const { subject, body } = mailText({ kind, code, provider });
+export function mailHtml({ kind, code, provider, report }) {
+  const { subject, body } = mailText({ kind, code, provider, report });
   const paragraphs = body.split('\n\n');
   const closing = paragraphs.pop();
   const content = paragraphs.map((paragraph) => paragraph === code
@@ -82,9 +86,9 @@ export function createBrevoList({ apiKey, listId, fetcher = globalThis.fetch }) 
 export function createSesMailer({ region, accessKeyId, secretAccessKey, from, fetcher = globalThis.fetch, clock = Date.now }) {
   if (![region, accessKeyId, secretAccessKey, from].every((value) => typeof value === 'string' && value.length > 0) || !/^[a-z]{2}-[a-z]+-\d$/.test(region)) throw new Error('Provide the SES region, access key, secret key and sender address.');
   const url = `https://email.${region}.amazonaws.com/v2/email/outbound-emails`;
-  return async ({ to, kind, code, provider }) => {
-    const { subject, body: text } = mailText({ kind, code, provider });
-    const html = mailHtml({ kind, code, provider });
+  return async ({ to, kind, code, provider, report }) => {
+    const { subject, body: text } = mailText({ kind, code, provider, report });
+    const html = mailHtml({ kind, code, provider, report });
     const body = JSON.stringify({ FromEmailAddress: from, Destination: { ToAddresses: [to] }, Content: { Simple: { Subject: { Data: subject, Charset: 'UTF-8' }, Body: { Text: { Data: text, Charset: 'UTF-8' }, Html: { Data: html, Charset: 'UTF-8' } } } } });
     const headers = signRequest({ method: 'POST', url, headers: { 'content-type': 'application/json', 'x-amz-content-sha256': sha256(body) }, body, service: 'ses', region, accessKeyId, secretAccessKey, date: new Date(clock()) });
     const response = await fetcher(url, { method: 'POST', headers, body, signal: AbortSignal.timeout(10000) });

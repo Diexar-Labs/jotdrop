@@ -1,4 +1,4 @@
-// Read-only owner dashboard. Everything goes on the page as text (textContent), never as HTML.
+// Owner dashboard: reads, plus the two actions after a report. Everything goes on the page as text (textContent), never as HTML.
 const $ = (id) => document.getElementById(id);
 const state = { page: 1, pages: 1 };
 
@@ -115,6 +115,22 @@ $('log-out').addEventListener('click', async () => {
   try { await api('/api/admin/logout', {}); } catch { /* The session is gone from this page either way. */ }
   $('accounts').replaceChildren(); $('tiles').replaceChildren();
   show(false);
+});
+
+// Typed in full, because neither can be undone.
+for (const [form, field, path, key, word, done] of [
+  ['group-form', 'group-id', '/api/admin/delete-group', 'spaceId', 'DELETE GROUP', 'The group is deleted and its people were told.'],
+  ['close-form', 'close-email', '/api/admin/close-account', 'email', 'CLOSE ACCOUNT', 'The account is closed and its owner was told.'],
+]) $(form).addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const value = $(field).value.trim();
+  if (prompt(`This cannot be undone. Type ${word} to go on with ${value}.`) !== word) return;
+  try {
+    await api(path, { [key]: value, confirm: word });
+    $(field).value = '';
+    $('moderation-message').textContent = done;
+    await load();
+  } catch (error) { $('moderation-message').textContent = error.message; }
 });
 
 $('search-form').addEventListener('submit', (event) => {

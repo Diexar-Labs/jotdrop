@@ -2,7 +2,7 @@ import { type App, FileSystemAdapter, Modal, Notice, Platform, Setting, TFile, n
 import type JotDropPlugin from "./main";
 import { ConfirmModal } from "./confirmModal";
 import { CloudClient } from "../cloud/shared/client.mjs";
-import { acceptInvite, createSpace, deleteSpace, leaveSpace, listSpaces, makeInvite, readInvite, removeMember, replaceSpace, saveSpacePrefs, setMemberName, spaceClient, spaceDetails, takeOverSpace, withdrawInvite } from "../cloud/shared/spaces.mjs";
+import { acceptInvite, blockMember, createSpace, deleteSpace, leaveSpace, listSpaces, makeInvite, readInvite, removeMember, replaceSpace, reportSpace, saveSpacePrefs, setMemberName, spaceClient, spaceDetails, takeOverSpace, withdrawInvite } from "../cloud/shared/spaces.mjs";
 import { availableProviders, checkApproval, completeApproval, confirmLogin, confirmSignup, logIn, personCheckKey, providerApproval, providerRecover, providerSignUp, providerTicket, requestApproval, resetWithRecoveryCode, signUp, startOver, startProviderSignIn, startReset } from "../cloud/shared/account.mjs";
 import { AuthenticatorModal, RecoveryCodeModal } from "./cloudAccount";
 import { ConflictReviewModal, TimeMachineModal } from "./cloudReview";
@@ -898,6 +898,16 @@ export class CloudController {
     await this.saveSpaces();
     this.changed();
   }
+  async report(spaceId: string, input: { reason: string; about?: string; details?: string }): Promise<void> {
+    await this.withClient((client) => reportSpace(client, spaceId, input));
+  }
+  /** The mark first; removing takes a new key, which only a device can make. */
+  async block(space: KnownSpace, accountId: string, owner: boolean): Promise<string> {
+    await this.withClient((client) => blockMember(client, space.id, accountId));
+    if (owner) return this.removePerson(space, accountId);
+    await this.leave(space);
+    return "You left this group and blocked this person.";
+  }
   async deleteGroup(space: KnownSpace): Promise<void> {
     await this.rescueUnsent(space);
     await this.withClient((client) => deleteSpace(client, space.id));
@@ -1220,6 +1230,7 @@ export class SharedGroupsModal extends Modal {
     el.createEl("p", { text: "Accept only a link from someone you know. These people write in your vault: plugins such as Dataview JS or Templater can run code from a note. The owner can see your email address; the others see the name below." });
     new Setting(el).setName("Invitation link").addText((input) => input.onChange((value) => { link = value; }));
     new Setting(el).setName("Your name for the others").addText((input) => input.setValue(name).onChange((value) => { name = value; }));
+    this.termsNotice(el, "joining");
     new Setting(el).addButton((button) => button.setButtonText("Join").setCta().onClick(() => this.act(() => this.cloud.join(link, name))));
   }
 
@@ -1239,6 +1250,8 @@ export class SharedGroupsModal extends Modal {
     for (const member of details.members) {
       const me = member.accountId === details.me.accountId;
       const row = new Setting(el).setName([member.name || "Someone", me ? "(you)" : "", member.role === "owner" ? "(owner)" : ""].filter(Boolean).join(" ")).setDesc(member.email ?? "");
+      if (!me) row.addButton((button) => button.setButtonText("Report").onClick(() => new ReportModal(this.app, this.cloud, space.id, member.name || "this person", member.accountId).open()));
+      if (!me && !details.frozen && !details.replacedBy) row.addButton((button) => button.setButtonText("Block").setWarning().onClick(() => this.confirmThen(`${owner ? "They are removed from this group" : "You leave this group"} and the two of you cannot join a new group together. Other groups you share stay as they are. To undo this, write to hello@jotdrop.net.`, () => this.cloud.block(space, member.accountId, owner))));
       if (owner && !me && !details.frozen) row.addButton((button) => button.setButtonText("Remove").setWarning().onClick(() => this.confirmThen(`${member.name || "This person"} loses access right away to all notes in this group. What they already downloaded stays with them.`, () => this.cloud.removePerson(space, member.accountId))));
     }
     for (const invite of (details.invites ?? []).filter((item: { claimed: boolean }) => !item.claimed)) new Setting(el).setName("Link not used yet").addButton((button) => button.setButtonText("Withdraw").onClick(() => this.act(() => this.cloud.withdraw(space.id, invite.id))));
@@ -1249,7 +1262,14 @@ export class SharedGroupsModal extends Modal {
       return "Invitation link copied. Send it yourself, to one person. It works once and expires after 7 days.";
     })));
     if (!details.frozen && !details.replacedBy) actions.addButton((button) => button.setButtonText("Leave group").onClick(() => this.confirmThen("You lose access, and can keep a copy of the notes next.", () => this.cloud.leave(space))));
+    if (details.members.length > 1) actions.addButton((button) => button.setButtonText("Report this group").onClick(() => new ReportModal(this.app, this.cloud, space.id).open()));
     if (owner) actions.addButton((button) => button.setButtonText("Delete group").setWarning().onClick(() => this.confirmThen("The group and all of its notes are deleted for everyone. This cannot be undone. Move notes you want to keep to your own notes first.", () => this.cloud.deleteGroup(space))));
+  }
+
+  private termsNotice(el: HTMLElement, action: string): void {
+    const line = el.createEl("p", { text: `By ${action} you accept the ` });
+    line.createEl("a", { text: "terms of use", href: `${DEFAULT_CLOUD_SERVER}/terms` });
+    line.appendText(".");
   }
 
   private confirmThen(text: string, action: () => Promise<unknown>): void {
@@ -1267,10 +1287,26 @@ export class SharedGroupsModal extends Modal {
     });
     new Setting(el).setName("Name of the new group").addText((input) => input.setValue(name).onChange((value) => { name = value; }));
     new Setting(el).setName("Your name for the others").addText((input) => input.setValue(me).onChange((value) => { me = value; }));
+    this.termsNotice(el, "sharing");
     new Setting(el).addButton((button) => button.setButtonText("Share").setCta().onClick(() => {
       this.cloud.share(note, choice || null, name, me).then(() => { new Notice("The note is shared. Invite someone with \"JotDrop Cloud: shared groups\"."); this.close(); }, (error) => new Notice((error as Error).message));
     }));
   }
+}
+
+class ReportModal extends Modal {
+  constructor(app: App, private cloud: CloudController, private spaceId: string, private name?: string, private about?: string) { super(app); }
+  onOpen(): void {
+    this.titleEl.setText(this.name ? `Report ${this.name}` : "Report this group");
+    let reason = "abuse", details = "";
+    this.contentEl.createEl("p", { text: "We cannot read the notes in this group, so we only see what you write here. Your email address goes along, so we can reply." });
+    new Setting(this.contentEl).setName("What is wrong?").addDropdown((list) => list.addOptions({ abuse: "Threats, harassment or hate", illegal: "Illegal content", spam: "Spam or a scam", other: "Something else" }).onChange((value) => { reason = value; }));
+    new Setting(this.contentEl).setName("Tell us more (optional)").addTextArea((input) => { input.inputEl.maxLength = 2000; input.onChange((value) => { details = value; }); });
+    new Setting(this.contentEl).addButton((button) => button.setButtonText("Send report").setCta().onClick(() => {
+      this.cloud.report(this.spaceId, { reason, about: this.about, details: details.trim() }).then(() => { new Notice("Thanks. Your report was sent to JotDrop."); this.close(); }, (error) => new Notice((error as Error).message));
+    }));
+  }
+  onClose(): void { this.contentEl.empty(); }
 }
 
 class CloudSignInModal extends Modal {

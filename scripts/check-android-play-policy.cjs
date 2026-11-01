@@ -35,6 +35,16 @@ check(/<h2 id="delete-account">[^<]*JotDrop[^<]*<\/h2>/.test(privacy), "privacy 
 check(privacy.includes('href="#delete-account"'), "privacy page needs a link to the delete-account section at the top");
 check(!/href="\/"/.test(privacy), "privacy page must not link to the web app");
 
+// User-generated content policy: terms before sharing, and reporting and blocking inside the app.
+const spacesUi = read("android/app/src/main/kotlin/com/diexar/keepcapture/CloudSpacesUi.kt");
+for (const needed of ["CloudSpaces.report(", "CloudSpaces.block(", "TermsNotice(\"sharing\")", "TermsNotice(\"joining\")"]) {
+  check(spacesUi.includes(needed), `CloudSpacesUi must use ${needed}`);
+}
+check(/runCatching \{ context\.startActivity\(Intent\(Intent\.ACTION_VIEW, Uri\.parse\("\$\{.*\/terms"/.test(spacesUi), "the terms link must follow the server and survive a phone without a browser");
+// Linked from the app, so it must not lead to checkout either.
+const terms = read("cloud/web/terms.html");
+check(!/href="\/"|href="https?:\/\/[^"]*jotdrop\.net/.test(terms), "the terms must not link onward to the web app or the site");
+
 if (errors.length) {
   for (const error of errors) console.error(`FAIL: ${error}`);
   process.exit(1);

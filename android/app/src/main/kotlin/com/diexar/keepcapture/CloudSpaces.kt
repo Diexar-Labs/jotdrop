@@ -121,6 +121,9 @@ object CloudSpaces {
     /** The number of people left in the space. */
     fun removeMember(client: CloudClient, spaceId: String, accountId: String): Int = client.call(route(spaceId, "/members/$accountId"), "DELETE").getInt("members")
     fun leave(client: CloudClient, spaceId: String) { client.call(route(spaceId, "/leave"), "POST", JSONObject()) }
+    /** reason: abuse, illegal, spam or other. Without [about] the report is about the group. */
+    fun report(client: CloudClient, spaceId: String, reason: String, about: String?, details: String) { client.call(route(spaceId, "/report"), "POST", JSONObject().put("reason", reason).apply { about?.let { put("about", it) }; if (details.isNotBlank()) put("details", details) }) }
+    fun block(client: CloudClient, spaceId: String, accountId: String) { client.call(route(spaceId, "/block"), "POST", JSONObject().put("accountId", accountId)) }
     fun takeOver(client: CloudClient, spaceId: String) { client.call(route(spaceId, "/takeover"), "POST", JSONObject()) }
     fun delete(client: CloudClient, spaceId: String) { client.call(route(spaceId), "DELETE") }
 

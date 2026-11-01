@@ -12,6 +12,9 @@ import { createBrevoList, createSesMailer } from './mailer.mjs';
 const directory = dirname(fileURLToPath(import.meta.url));
 const MAX_BODY = 12 * 1024 * 1024;
 const MAX_METADATA_BODY = 16 * 1024;
+const REPORT_ADDRESS = 'hello@jotdrop.net';
+const REPORT_REASONS = ['abuse', 'illegal', 'spam', 'other'];
+const MAX_REPORTS_A_DAY = 10;
 const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const TRANSFER_CHUNK_BYTES = 64 * 1024;
 // v2 objects: encrypted pieces of up to 1 MiB of file plus a 28-byte IV and tag.
@@ -296,7 +299,11 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         CREATE INDEX IF NOT EXISTS space_members_by_account ON space_members(accountId);
         CREATE TABLE IF NOT EXISTS space_keys(accountId TEXT NOT NULL, spaceId TEXT NOT NULL, wrapped TEXT NOT NULL, prefs TEXT, PRIMARY KEY(accountId,spaceId));
         CREATE TABLE IF NOT EXISTS space_invites(id TEXT PRIMARY KEY, spaceId TEXT NOT NULL, claimTokenHash TEXT NOT NULL, envelope TEXT, expiresAt INTEGER NOT NULL, claimedBy TEXT, claimedAt INTEGER);
-        CREATE INDEX IF NOT EXISTS space_invites_by_space ON space_invites(spaceId);`);
+        CREATE INDEX IF NOT EXISTS space_invites_by_space ON space_invites(spaceId);
+        CREATE TABLE IF NOT EXISTS space_blocks(accountId TEXT NOT NULL, blockedAccountId TEXT NOT NULL, createdAt INTEGER NOT NULL, PRIMARY KEY(accountId,blockedAccountId));
+        CREATE INDEX IF NOT EXISTS space_blocks_by_blocked ON space_blocks(blockedAccountId);
+        CREATE TABLE IF NOT EXISTS space_reports(accountId TEXT NOT NULL, createdAt INTEGER NOT NULL);
+        CREATE INDEX IF NOT EXISTS space_reports_by_account ON space_reports(accountId);`);
       // Who uploaded a piece that no version uses yet; only set in a space, so one member cannot block the others.
       if (!all('PRAGMA table_info(chunks)').some((column) => column.name === 'deviceId')) db.exec('ALTER TABLE chunks ADD COLUMN deviceId TEXT;');
       db.exec('CREATE INDEX IF NOT EXISTS chunks_by_device ON chunks(deviceId) WHERE deviceId IS NOT NULL;');
@@ -826,6 +833,32 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     }
     if (method === 'GET' && pathname === '/api/admin/summary') { adminSession(req); reply(200, adminSummary()); return; }
     if (method === 'GET' && pathname === '/api/admin/accounts') { adminSession(req); reply(200, adminAccounts(url.searchParams)); return; }
+    // What the terms promise after a report. The notes stay sealed: these act on what a report names, a group ID or an address.
+    if (method === 'POST' && pathname === '/api/admin/delete-group') {
+      adminSession(req);
+      const value = await body(req, MAX_METADATA_BODY);
+      requireValue(value.confirm === 'DELETE GROUP' && validId(value.spaceId), 'Confirm deleting the group');
+      const emails = transaction(() => {
+        const space = spaceRow(value.spaceId) ?? fail(404, 'Group not found');
+        const people = all('SELECT a.email FROM space_members m JOIN accounts a ON a.id=m.accountId WHERE m.spaceId=?', space.id).map((person) => person.email);
+        const old = space.replaces ? spaceRow(space.replaces) : undefined;
+        if (old?.replacedBy === space.id) deleteSpace(old.id);
+        deleteSpace(space.id);
+        return people;
+      });
+      for (const to of emails) sendMailLater({ to, kind: 'group-removed' });
+      reply(200, { deleted: true, told: emails.length }); return;
+    }
+    if (method === 'POST' && pathname === '/api/admin/close-account') {
+      adminSession(req);
+      const value = await body(req, MAX_METADATA_BODY);
+      requireValue(value.confirm === 'CLOSE ACCOUNT' && typeof value.email === 'string', 'Confirm closing the account');
+      const account = one('SELECT * FROM accounts WHERE email=?', value.email.trim().toLowerCase()) ?? fail(404, 'Account not found');
+      await cancelPlus(account.vaultId);
+      transaction(() => wipeCloud(account.vaultId, account));
+      forgetAddress(account, 'account-closed');
+      reply(200, { deleted: true }); return;
+    }
     fail(404, 'Not found');
   }
   // A space being replaced until the old one is frozen: only its owner is in it and nobody can join yet.
@@ -859,7 +892,36 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     run('DELETE FROM space_invites WHERE spaceId=? AND claimedBy IS NULL', space.id);
   }
   // Before the account's devices go: what they wrote stays with the others, without pointing at a device that no longer exists.
+  // Before anything is gone: a subscription that cannot be cancelled stops the whole deletion.
+  async function cancelPlus(vaultId) {
+    for (const { subscriptionId } of all(`SELECT subscriptionId FROM subscriptions WHERE vaultId=? AND status IN (${RUNNING.map(() => '?').join(',')})`, vaultId, ...RUNNING)) {
+      let cancelled = false;
+      try {
+        const response = await stripeCall(`/subscriptions/${subscriptionId}`, { method: 'DELETE' });
+        cancelled = response.ok || response.status === 404;
+        await response.body?.cancel();
+      } catch { cancelled = false; }
+      if (!cancelled) fail(502, 'Could not cancel JotDrop Plus. Try again later, or cancel it at link.com first.');
+    }
+  }
+  /** Everything of one cloud and its account, inside the caller's transaction. */
+  function wipeCloud(vaultId, account) {
+    if (account) {
+      leaveAllSpaces(account);
+      for (const table of ['identities', 'newsletter', 'login_challenges', 'resets', 'device_approvals']) run(`DELETE FROM ${table} WHERE accountId=?`, account.id);
+      run('DELETE FROM code_failures WHERE scope IN (?,?,?)', `login:${account.id}`, `reset:${account.id}`, `signup:${account.email}`);
+      run('DELETE FROM accounts WHERE id=?', account.id);
+    }
+    for (const table of ['uploads', 'pairings', 'revisions', 'envelope_chunks', 'chunks', 'retired_envelopes', 'envelopes', 'changes', 'signups', 'devices', 'plans', 'subscriptions']) run(`DELETE FROM ${table} WHERE vaultId=?`, vaultId);
+    run('DELETE FROM vaults WHERE id=?', vaultId);
+  }
+  function forgetAddress(account, kind) {
+    sendMailLater({ to: account.email, kind });
+    if (newsletter?.remove) void Promise.resolve().then(() => newsletter.remove(account.email))
+      .catch((error) => console.warn(`Could not remove a deleted account from the mailing list: ${error.message}`));
+  }
   function leaveAllSpaces(account) {
+    run('DELETE FROM space_blocks WHERE accountId=? OR blockedAccountId=?', account.id, account.id);
     for (const table of ['revisions', 'changes']) run(`UPDATE ${table} SET deviceId='removed' WHERE vaultId IN (SELECT id FROM spaces) AND deviceId IN (SELECT id FROM devices WHERE vaultId=?)`, account.vaultId);
     for (const space of all('SELECT * FROM spaces WHERE ownerAccountId=? AND ownerGoneAt IS NULL', account.id)) ownerGone(space);
     for (const { spaceId } of all('SELECT spaceId FROM space_members WHERE accountId=?', account.id)) {
@@ -872,7 +934,9 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       const now = clock();
       run('DELETE FROM space_invites WHERE expiresAt<=?', now);
       // An older server may have run for a while and deleted accounts without knowing about spaces.
-      for (const table of ['space_members', 'space_keys']) run(`DELETE FROM ${table} WHERE accountId NOT IN (SELECT id FROM accounts)`);
+      for (const table of ['space_members', 'space_keys', 'space_blocks']) run(`DELETE FROM ${table} WHERE accountId NOT IN (SELECT id FROM accounts)`);
+      run('DELETE FROM space_blocks WHERE blockedAccountId NOT IN (SELECT id FROM accounts)');
+      run('DELETE FROM space_reports WHERE createdAt<=? OR accountId NOT IN (SELECT id FROM accounts)', now - 24 * 60 * 60 * 1000);
       run('UPDATE spaces SET ownerGoneAt=?,frozenAt=COALESCE(frozenAt,?) WHERE ownerGoneAt IS NULL AND ownerAccountId NOT IN (SELECT id FROM accounts)', now, now);
       const finished = all(`SELECT s.id FROM spaces s WHERE s.frozenAt<=? OR (s.createdAt<=? AND ${unfinishedSql}) OR NOT EXISTS (SELECT 1 FROM space_members m WHERE m.spaceId=s.id)`, now - FROZEN_SPACE_LIFETIME, now - UNFINISHED_SPACE_LIFETIME);
       for (const { id } of finished) deleteSpace(id);
@@ -922,6 +986,8 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           fail(409, 'This invitation was already used.', { code: 'invite-used' });
         }
         requireJoinable(spaceRow(invite.spaceId));
+        // Before anything is used up: the link can still go to someone else.
+        if (one('SELECT 1 FROM space_members m JOIN space_blocks b ON (b.accountId=m.accountId AND b.blockedAccountId=?) OR (b.accountId=? AND b.blockedAccountId=m.accountId) WHERE m.spaceId=? LIMIT 1', account.id, account.id, invite.spaceId)) fail(403, 'You cannot join this group.', { code: 'blocked' });
         if (one('SELECT 1 FROM space_members WHERE spaceId=? AND accountId=?', invite.spaceId, account.id)) fail(409, 'You are already in this shared space.', { code: 'already-member' });
         if (memberCount(invite.spaceId) >= MAX_SPACE_MEMBERS) fail(409, `A shared space can have ${MAX_SPACE_MEMBERS} people at most.`, { code: 'space-full' });
         if (memberships(account.id) >= MAX_MEMBERSHIPS) fail(409, `You can be in ${MAX_MEMBERSHIPS} shared spaces at most.`, { code: 'too-many-spaces' });
@@ -965,7 +1031,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       });
       reply(result.created ? 201 : 200, result); return;
     }
-    const match = /^\/spaces\/([0-9a-f-]+)(?:\/(key|invites|members|leave|takeover|replace)(?:\/([0-9a-f-]+))?)?$/.exec(route);
+    const match = /^\/spaces\/([0-9a-f-]+)(?:\/(key|invites|members|leave|takeover|replace|report|block)(?:\/([0-9a-f-]+))?)?$/.exec(route);
     if (!match) fail(404, 'Not found');
     const [, spaceId, action, target] = match;
     requireValue(validId(spaceId) && (target === undefined || validId(target)), 'Invalid shared space');
@@ -1029,6 +1095,34 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       });
       reply(200, { ok: true, members }); return;
     }
+    // The notes are sealed, so a report holds only what its writer chooses to say.
+    if (action === 'report' && !target && method === 'POST') {
+      limit(`report:${account.id}`, 5);
+      const value = await body(req, MAX_METADATA_BODY);
+      requireValue(REPORT_REASONS.includes(value.reason) && (value.details === undefined || (typeof value.details === 'string' && value.details.length <= 2000)) && (value.about === undefined || validId(value.about)), 'Invalid report');
+      const about = change(() => {
+        memberSpace(spaceId, account.id);
+        const named = value.about === undefined ? null : one('SELECT a.email FROM space_members m LEFT JOIN accounts a ON a.id=m.accountId WHERE m.spaceId=? AND m.accountId=?', spaceId, value.about) ?? fail(404, 'Member not found');
+        // Each report is a mail to a person. Survives a restart, unlike the limit per minute.
+        if (one('SELECT COUNT(*) AS count FROM space_reports WHERE accountId=? AND createdAt>?', account.id, clock() - DAY).count >= MAX_REPORTS_A_DAY) fail(429, 'You sent many reports today. Write to hello@jotdrop.net if there is more.');
+        run('INSERT INTO space_reports(accountId,createdAt) VALUES(?,?)', account.id, clock());
+        return named;
+      });
+      await sendMail({ to: REPORT_ADDRESS, kind: 'space-report', report: { reason: value.reason, from: account.email, about: about?.email ?? null, spaceId, details: value.details ?? '' } });
+      reply(200, { ok: true }); return;
+    }
+    // Only the mark: the device then leaves or removes as usual, because removing takes a new key that only a device can make.
+    if (action === 'block' && !target && method === 'POST') {
+      const value = await body(req, MAX_METADATA_BODY);
+      requireValue(validId(value.accountId), 'Invalid person');
+      change(() => {
+        memberSpace(spaceId, account.id);
+        if (value.accountId === account.id) fail(400, 'You cannot block yourself.');
+        if (!one('SELECT 1 FROM space_members WHERE spaceId=? AND accountId=?', spaceId, value.accountId)) fail(404, 'Member not found');
+        run('INSERT OR IGNORE INTO space_blocks(accountId,blockedAccountId,createdAt) VALUES(?,?,?)', account.id, value.accountId, clock());
+      });
+      reply(200, { ok: true }); return;
+    }
     if (action === 'leave' && !target && method === 'POST') {
       change(() => {
         const space = memberSpace(spaceId, account.id);
@@ -1072,6 +1166,8 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   const assets = new Map([['/',[join(webRoot, 'index.html'), 'text/html']], ['/app.js', [join(webRoot, 'app.js'), 'text/javascript']], ['/style.css', [join(webRoot, 'style.css'), 'text/css']], ['/export.mjs', [join(webRoot, 'export.mjs'), 'text/javascript']], ['/note.mjs', [join(webRoot, 'note.mjs'), 'text/javascript']], ['/shared/crypto.mjs', [join(directory, 'shared/crypto.mjs'), 'text/javascript']], ['/shared/client.mjs', [join(directory, 'shared/client.mjs'), 'text/javascript']]]);
   assets.set('/ocr-worker.js', [join(webRoot, 'ocr-worker.js'), 'text/javascript']);
   assets.set('/privacy', [join(webRoot, 'privacy.html'), 'text/html']);
+  assets.set('/terms', [join(webRoot, 'terms.html'), 'text/html']);
+  assets.set('/.well-known/assetlinks.json', [join(webRoot, 'assetlinks.json'), 'application/json']);
   assets.set('/human', [join(webRoot, 'human.html'), 'text/html']);
   assets.set('/human.js', [join(webRoot, 'human.js'), 'text/javascript']);
   assets.set('/logo.svg', [join(webRoot, 'logo.svg'), 'image/svg+xml']);
@@ -1565,31 +1661,12 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         const account = one('SELECT * FROM accounts WHERE vaultId=?', vaultId);
         // With a password, a stolen device token cannot delete the owner's cloud.
         if (account?.authHash) await requirePassword(account, value.currentAuthKey);
-        for (const { subscriptionId } of all(`SELECT subscriptionId FROM subscriptions WHERE vaultId=? AND status IN (${RUNNING.map(() => '?').join(',')})`, vaultId, ...RUNNING)) {
-          let cancelled = false;
-          try {
-            const response = await stripeCall(`/subscriptions/${subscriptionId}`, { method: 'DELETE' });
-            cancelled = response.ok || response.status === 404;
-            await response.body?.cancel();
-          } catch { cancelled = false; }
-          if (!cancelled) fail(502, 'Could not cancel JotDrop Plus. Try again later, or cancel it at link.com first.');
-        }
+        await cancelPlus(vaultId);
         transaction(() => {
           requireAccess(vaultId, deviceId);
-          if (account) {
-            leaveAllSpaces(account);
-            for (const table of ['identities', 'newsletter', 'login_challenges', 'resets', 'device_approvals']) run(`DELETE FROM ${table} WHERE accountId=?`, account.id);
-            run('DELETE FROM code_failures WHERE scope IN (?,?,?)', `login:${account.id}`, `reset:${account.id}`, `signup:${account.email}`);
-            run('DELETE FROM accounts WHERE id=?', account.id);
-          }
-          for (const table of ['uploads', 'pairings', 'revisions', 'envelope_chunks', 'chunks', 'retired_envelopes', 'envelopes', 'changes', 'signups', 'devices', 'plans', 'subscriptions']) run(`DELETE FROM ${table} WHERE vaultId=?`, vaultId);
-          run('DELETE FROM vaults WHERE id=?', vaultId);
+          wipeCloud(vaultId, account);
         });
-        if (account) {
-          sendMailLater({ to: account.email, kind: 'account-deleted' });
-          if (newsletter?.remove) void Promise.resolve().then(() => newsletter.remove(account.email))
-            .catch((error) => console.warn(`Could not remove a deleted account from the mailing list: ${error.message}`));
-        }
+        if (account) forgetAddress(account, 'account-deleted');
         reply(200, { deleted: true }); return;
       }
       if (route === '/recovery' && method === 'POST') {

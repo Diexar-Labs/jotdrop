@@ -840,3 +840,101 @@ test('the database holds no readable name, note or link', async (t) => {
   for (const file of ['cloud.db', 'cloud.db-wal']) stored = Buffer.concat([stored, await readFile(join(app.dataDir, file)).catch(() => Buffer.alloc(0))]);
   for (const secret of [name, note, display, inviter, 'secret-path', link.claimToken, link.wrappingKey, space.key]) assert.ok(!stored.includes(secret), `${secret} is readable`);
 });
+
+test('a member can report something in a group, and the report reaches us without any note', async (t) => {
+  const app = await fixture(t);
+  const { owner, space, members: [ana] } = await group(app, 'eric', 'ana');
+  const outsider = await signUp(app, 'mallory');
+  const report = (who, body) => who.call(`/spaces/${space.id}/report`, body);
+  app.mails.length = 0;
+  assert.equal((await report(outsider, { reason: 'abuse' })).status, 404);
+  assert.equal((await report(ana, { reason: 'because' })).status, 400);
+  assert.equal((await report(ana, { reason: 'abuse', details: 'x'.repeat(2001) })).status, 400);
+  assert.equal((await report(ana, { reason: 'abuse', about: randomUUID() })).status, 404);
+  assert.equal(app.mails.length, 0);
+  app.advance(MINUTE + 1);
+  const aboutOwner = (await owner.call(`/spaces/${space.id}`)).body.me.accountId;
+  const sent = await report(ana, { reason: 'abuse', about: aboutOwner, details: 'Threats in the shopping list' });
+  assert.equal(sent.status, 200);
+  assert.equal(app.mails.length, 1);
+  assert.equal(app.mails[0].to, 'hello@jotdrop.net');
+  assert.equal(app.mails[0].kind, 'space-report');
+  assert.deepEqual(app.mails[0].report, { reason: 'abuse', from: ana.email, about: owner.email, spaceId: space.id, details: 'Threats in the shopping list' });
+  // Without a person it is about the group, and it cannot be used to send mail without limit.
+  assert.equal((await report(ana, { reason: 'other' })).status, 200);
+  assert.equal(app.mails.at(-1).report.about, null);
+  for (let count = 0; count < 3; count++) assert.equal((await report(ana, { reason: 'other' })).status, 200);
+  assert.equal((await report(ana, { reason: 'other' })).status, 429);
+  // A restart does not reset it, and a day has a ceiling: 5 went out above plus 5 more here.
+  app.advance(MINUTE + 1);
+  for (let count = 0; count < 5; count++) assert.equal((await report(ana, { reason: 'other' })).status, 200);
+  app.advance(MINUTE + 1);
+  assert.equal((await report(ana, { reason: 'other' })).status, 429);
+  const sentBefore = app.mails.length;
+  assert.equal((await report(ana, { reason: 'other' })).status, 429);
+  assert.equal(app.mails.length, sentBefore);
+  app.advance(24 * 60 * MINUTE + 1);
+  assert.equal((await report(ana, { reason: 'other' })).status, 200);
+});
+
+test('the terms of use are there and lead nowhere near a payment page', async (t) => {
+  const app = await fixture(t);
+  const response = await fetch(`${app.url()}/terms`);
+  assert.equal(response.status, 200);
+  const page = await response.text();
+  assert.match(page, /Terms of use/);
+  assert.match(page, /What is not allowed/);
+  assert.doesNotMatch(page, /href="\/"/);
+});
+
+test('only the Play signing key may open invitation links, because the key of the GitHub APK is public', async (t) => {
+  const app = await fixture(t);
+  const response = await fetch(`${app.url()}/.well-known/assetlinks.json`);
+  assert.equal(response.status, 200);
+  assert.match(response.headers.get('content-type'), /application\/json/);
+  const [link] = await response.json();
+  assert.equal(link.target.package_name, 'com.diexar.keepcapture');
+  assert.deepEqual(link.target.sha256_cert_fingerprints, ['AE:88:95:8E:EB:45:C5:A7:E5:B6:80:CC:A6:10:EF:2E:6A:32:38:2F:22:B1:02:B3:D5:84:B9:6C:0B:2E:43:D6']);
+});
+
+test('whoever is blocked cannot end up in a group with the person who blocked them', async (t) => {
+  const app = await fixture(t);
+  const { owner, space, members: [ana, bob] } = await group(app, 'eric', 'ana', 'bob');
+  const details = await owner.call(`/spaces/${space.id}`);
+  const idOf = (who) => details.body.members.find((member) => member.email === who.email).accountId;
+  const block = (who, accountId) => who.call(`/spaces/${space.id}/block`, { accountId });
+  assert.equal((await block(ana, idOf(ana))).status, 400);
+  assert.equal((await block(ana, randomUUID())).status, 404);
+  const outsider = await signUp(app, 'mallory');
+  assert.equal((await block(outsider, idOf(ana))).status, 404);
+  assert.equal((await block(ana, idOf(bob))).status, 200);
+  assert.equal((await block(ana, idOf(bob))).status, 200, 'twice is the same as once');
+  // Ana leaves; Bob is then invited to a group of someone else with Ana in it, and the other way round.
+  assert.equal((await ana.call(`/spaces/${space.id}/leave`, {})).status, 200);
+  const carol = await signUp(app, 'carol'), hers = await newSpace(carol);
+  await joinSpace(app, carol, hers, ana);
+  app.advance(MINUTE + 1);
+  const forBob = await invite(carol, hers);
+  const refused = await bob.call(`/invites/${forBob.id}/claim`, { claimToken: forBob.claimToken });
+  assert.equal(refused.status, 403);
+  assert.equal(refused.body.code, 'blocked');
+  // The link is not used up: someone else can still come in with it.
+  assert.equal((await outsider.call(`/invites/${forBob.id}/claim`, { claimToken: forBob.claimToken })).status, 200);
+  const dave = await signUp(app, 'dave'), his = await newSpace(dave);
+  await joinSpace(app, dave, his, bob);
+  app.advance(MINUTE + 1);
+  const forAna = await invite(dave, his);
+  assert.equal((await ana.call(`/invites/${forAna.id}/claim`, { claimToken: forAna.claimToken })).status, 403);
+  // Others are not touched.
+  await joinSpace(app, dave, his, carol);
+  const database = app.database();
+  const blocks = database.prepare('SELECT COUNT(*) AS count FROM space_blocks').get().count;
+  database.close();
+  assert.equal(blocks, 1);
+  // Deleting an account leaves no mark behind.
+  assert.equal((await bob.call('/account/delete', { confirm: 'DELETE MY CLOUD', currentAuthKey: bob.authKey })).status, 200);
+  const after = app.database();
+  const left = after.prepare('SELECT COUNT(*) AS count FROM space_blocks').get().count;
+  after.close();
+  assert.equal(left, 0);
+});

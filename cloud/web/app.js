@@ -1,6 +1,6 @@
 import { CloudClient } from '/shared/client.mjs';
 import { mergeNote } from '/shared/merge.mjs';
-import { acceptInvite, createSpace, deleteSpace, leaveSpace, listSpaces, makeInvite, readInvite, removeMember, replaceSpace, saveSpacePrefs, setMemberName, spaceClient, spaceDetails, takeOverSpace, unreadableFile, withdrawInvite, writeUnderFreeName } from '/shared/spaces.mjs';
+import { acceptInvite, blockMember, createSpace, deleteSpace, leaveSpace, listSpaces, makeInvite, readInvite, removeMember, replaceSpace, reportSpace, saveSpacePrefs, setMemberName, spaceClient, spaceDetails, takeOverSpace, unreadableFile, withdrawInvite, writeUnderFreeName } from '/shared/spaces.mjs';
 import { accountInfo, approveDevice, attachAccount, availableProviders, changePassword, checkApproval, completeApproval, confirmLogin, confirmSignup, deleteAccount, disableTotp, enableTotp, listApprovals, logIn, newRecoveryCode, personCheckKey, providerApproval, providerRecover, providerSignUp, providerTicket, rejectDevice, requestApproval, resetWithRecoveryCode, setupTotp, signUp, startOver, startProviderSignIn, startReset } from '/shared/account.mjs';
 import { base64ToBytes, bytesToBase64, decodeRecovery, decryptEnvelope, encryptEnvelope, isSpacePath, objectId, sealLocal, unsealLocal } from '/shared/crypto.mjs';
 import { exportZip } from '/export.mjs';
@@ -2847,7 +2847,14 @@ function renderSpacePanel() {
     row.className = 'space-person';
     const who = [personName(member), isMe(space, member) ? '(you)' : '', member.role === 'owner' ? '(owner)' : '', member.email ? `- ${member.email}` : ''].filter(Boolean).join(' ');
     row.append(paragraph(who));
-    if (owner && !isMe(space, member) && !space.frozen) row.append(button('Remove', () => removePerson(space, member), 'danger'));
+    if (!isMe(space, member)) {
+      const buttons = document.createElement('div');
+      buttons.className = 'space-actions';
+      buttons.append(button('Report', () => showReport(space, member)));
+      if (!space.frozen && !space.replacedBy) buttons.append(button('Block', () => blockPerson(space, member), 'danger'));
+      if (owner && !space.frozen) buttons.append(button('Remove', () => removePerson(space, member), 'danger'));
+      row.append(buttons);
+    }
     people.append(row);
   }
   for (const invite of (space.invites ?? []).filter((item) => !item.claimed)) {
@@ -2862,6 +2869,7 @@ function renderSpacePanel() {
   actions.className = 'space-actions';
   if (owner && !space.frozen) actions.append(button('Invite someone', () => showInvite(space), 'primary'));
   if (!space.replacedBy) actions.append(button('Leave group', () => leaveGroup(space)));
+  if (space.members.length > 1) actions.append(button('Report this group', () => showReport(space)));
   if (owner) actions.append(button('Delete group', () => deleteGroup(space), 'danger'));
   people.append(actions);
   shown.push(people);
@@ -3045,10 +3053,35 @@ $('invite-copy').addEventListener('click', async () => {
 $('invite-send').addEventListener('click', () => navigator.share({ title: 'JotDrop', url: $('invite-link').value }).catch(() => {}));
 $('invite-close').addEventListener('click', () => { $('invite-link').value = ''; $('invite-dialog').close(); });
 
-async function removePerson(space, member) {
+let reporting;
+function showReport(space, member) {
+  reporting = { space, member };
+  $('report-title').textContent = member ? `Report ${personName(member)}` : 'Report this group';
+  $('report-form').reset();
+  $('report-message').textContent = '';
+  $('report-dialog').showModal();
+}
+$('report-cancel').addEventListener('click', () => $('report-dialog').close());
+$('report-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  try {
+    await reportSpace(ownClient, reporting.space.id, { reason: $('report-reason').value, about: reporting.member?.accountId, details: $('report-details').value.trim() });
+    $('report-dialog').close();
+    message('Thanks. Your report was sent to JotDrop.');
+  } catch (error) { $('report-message').textContent = errorText(error); }
+});
+async function blockPerson(space, member) {
+  const owner = space.role === 'owner';
+  if (!confirm(`Block ${personName(member)}? ${owner ? 'They are removed from this group' : 'You leave this group'} and the two of you cannot join a new group together. Other groups you share stay as they are. To undo this, write to hello@jotdrop.net.`)) return;
+  await blockMember(ownClient, space.id, member.accountId);
+  if (owner) { await removePerson(space, member, true); return; }
+  await leaveSpace(ownClient, space.id);
+  await refreshSpaces();
+}
+async function removePerson(space, member, confirmed = false) {
   const titles = [...files.values()].filter((entry) => !entry.deleted && isMarkdown(entry.file.path)).map((entry) => noteParts(noteText(entry.file), entry.file.path).title);
   const rest = space.members.length - 2;
-  if (!confirm(`Remove ${personName(member)} from "${spaceName(space)}"? They lose access right away to all ${titles.length} note(s) here: ${titles.slice(0, 5).join(', ')}${titles.length > 5 ? ', ...' : ''}. What they already downloaded stays with them.${rest ? ' The group gets a new key: the others need a new link from you, and old versions stay behind.' : ' You are then the only one left, so the notes move to your own notes.'}`)) return;
+  if (!confirmed && !confirm(`Remove ${personName(member)} from "${spaceName(space)}"? They lose access right away to all ${titles.length} note(s) here: ${titles.slice(0, 5).join(', ')}${titles.length > 5 ? ', ...' : ''}. What they already downloaded stays with them.${rest ? ' The group gets a new key: the others need a new link from you, and old versions stay behind.' : ' You are then the only one left, so the notes move to your own notes.'}`)) return;
   // Remembered under your own key before anything happens: on any device, a crash shows "Finish removing".
   await saveSpacePrefs(ownClient, space.id, { ...space.prefs, finishRemoval: true });
   await removeMember(ownClient, space.id, member.accountId);

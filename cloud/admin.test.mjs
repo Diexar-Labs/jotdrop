@@ -242,6 +242,41 @@ test('totals and the account list match the database and never include secrets',
   }
 });
 
+test('after a report the owner can delete a group or close an account, and only signed in', async (t) => {
+  const mails = [];
+  const app = await fixture(t, { mailer: async (mail) => { mails.push(mail); } });
+  const cookie = app.cookieOf(await app.login());
+  const db = () => new DatabaseSync(app.app().dbPath);
+  const data = db();
+  const now = Date.parse('2026-10-26T12:00:00Z');
+  const vault = (id) => data.prepare("INSERT INTO vaults(id,recoveryHash,enrollmentHash) VALUES(?,'x','x')").run(id);
+  const account = (id, email, vaultId) => data.prepare("INSERT INTO accounts(id,email,vaultId,kdf,authHash,wrappedVaultKey,passwordChangedAt,createdAt) VALUES(?,?,?,'','','',?,?)").run(id, email, vaultId, new Date(now).toISOString(), new Date(now).toISOString());
+  const [ownVault, otherVault, spaceId] = [randomUUID(), randomUUID(), randomUUID()];
+  vault(ownVault); vault(otherVault); vault(spaceId);
+  account('owner', 'owner@example.test', ownVault); account('member', 'member@example.test', otherVault);
+  data.prepare("INSERT INTO spaces(id,ownerAccountId,nameEnvelope,createdAt) VALUES(?,'owner','x',?)").run(spaceId, now);
+  for (const who of ['owner', 'member']) data.prepare('INSERT INTO space_members(spaceId,accountId,joinedAt) VALUES(?,?,?)').run(spaceId, who, now);
+  data.close();
+  const group = { spaceId, confirm: 'DELETE GROUP' }, close = { email: 'Member@example.test', confirm: 'CLOSE ACCOUNT' };
+  assert.equal((await app.call('POST', '/api/admin/delete-group', { body: group })).status, 401);
+  assert.equal((await app.call('POST', '/api/admin/close-account', { body: close })).status, 401);
+  assert.equal((await app.call('POST', '/api/admin/delete-group', { cookie, body: { spaceId } })).status, 400);
+  assert.equal((await app.call('POST', '/api/admin/close-account', { cookie, body: { email: close.email } })).status, 400);
+  assert.equal((await app.call('POST', '/api/admin/delete-group', { cookie, body: { spaceId: randomUUID(), confirm: 'DELETE GROUP' } })).status, 404);
+  assert.equal((await app.call('POST', '/api/admin/close-account', { cookie, body: { email: 'nobody@example.test', confirm: 'CLOSE ACCOUNT' } })).status, 404);
+  assert.equal((await app.call('POST', '/api/admin/delete-group', { cookie, body: group })).status, 200);
+  await new Promise((done) => setTimeout(done, 20));
+  assert.deepEqual(mails.filter((mail) => mail.kind === 'group-removed').map((mail) => mail.to).sort(), ['member@example.test', 'owner@example.test']);
+  assert.equal((await app.call('POST', '/api/admin/close-account', { cookie, body: close })).status, 200);
+  await new Promise((done) => setTimeout(done, 20));
+  assert.deepEqual(mails.filter((mail) => mail.kind === 'account-closed').map((mail) => mail.to), ['member@example.test']);
+  const after = db();
+  const count = (sql, ...values) => after.prepare(sql).get(...values).count;
+  const left = [count('SELECT COUNT(*) AS count FROM spaces WHERE id=?', spaceId), count('SELECT COUNT(*) AS count FROM accounts WHERE id=?', 'member'), count('SELECT COUNT(*) AS count FROM vaults WHERE id=?', otherVault), count('SELECT COUNT(*) AS count FROM accounts WHERE id=?', 'owner')];
+  after.close();
+  assert.deepEqual(left, [0, 0, 0, 1]);
+});
+
 test('the setup script prints settings the server accepts, without the password', async (t) => {
   const script = join(dirname(fileURLToPath(import.meta.url)), 'admin-setup.mjs'), password = 'a long owner password';
   const mismatch = spawnSync(process.execPath, [script, ADMIN], { input: `${password}\nanother password\n`, encoding: 'utf8' });

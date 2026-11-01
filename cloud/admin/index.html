@@ -35,6 +35,11 @@
       <p id="generated" class="muted"></p>
     </div>
     <dl id="tiles" class="tiles"></dl>
+    <h2>After a report</h2>
+    <p>A report mail names a group ID and addresses. The notes stay sealed, so ask the person who reported if you need to see them.</p>
+    <form id="group-form" class="toolbar"><label for="group-id">Group ID</label><input id="group-id" required autocomplete="off" spellcheck="false"><button type="submit">Delete group</button></form>
+    <form id="close-form" class="toolbar"><label for="close-email">Account email</label><input id="close-email" type="email" required autocomplete="off" spellcheck="false"><button type="submit">Close account</button></form>
+    <p id="moderation-message" role="status" aria-live="polite"></p>
     <h2>Accounts</h2>
     <form id="search-form" class="toolbar" role="search">
       <label class="hidden-label" for="search">Search by email</label>
