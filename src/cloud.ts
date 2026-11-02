@@ -8,6 +8,7 @@ import { AuthenticatorModal, RecoveryCodeModal } from "./cloudAccount";
 import { ConflictReviewModal, TimeMachineModal } from "./cloudReview";
 import { base64ToBytes, decryptEnvelope, isSpacePath, MAX_CHUNKED_BYTES, MAX_FILE_BYTES, objectId, sha256Hex } from "../cloud/shared/crypto.mjs";
 import { cloudTimeline, conflictOriginal, copyName, fromHex, hash, isPreserved, remoteFiles, restorePlan, syncFolder, syncPath, unavailable } from "../cloud/shared/sync.mjs";
+import { mailKeyPair, mailToNote, openMailBody, openMailKey, openMailPart } from "../cloud/shared/mail.mjs";
 
 export const DEFAULT_CLOUD_SERVER = "https://app.jotdrop.net";
 const PROVIDER_NAMES: Record<string, string> = { google: "Google", github: "GitHub" };
@@ -593,8 +594,12 @@ export class CloudController {
         },
       };
       // The plan's maximum per file; a server without encrypted pieces takes 4 MiB.
-      const pieces = (await client.status()).pieces;
+      const cloudStatus = await client.status();
+      const pieces = cloudStatus.pieces;
       const maxFileBytes: number = pieces?.maxFileBytes ?? MAX_FILE_BYTES;
+      // Mail to JotDrop: open waiting sealed mail into local files first; the sync below uploads them like any other note.
+      let convertedMail: { wrote: boolean; items: { id: string; paths: string[] }[] } = { wrote: false, items: [] };
+      if (cloudStatus.mail?.enabled && cloudStatus.mail.pending) convertedMail = await this.convertMail(client, folder, cloudStatus.mail, active);
       const report = await syncFolder(remote, folder, state.tracked, (next: Record<string, Base>) => this.store.put("state", { ...state, tracked: next }), { checkActive: active, seen: state.seen ??= {}, progress: progress("Syncing..."), maxFileBytes });
       // Files saved before encrypted pieces move into pieces once, so storage counts their real size.
       if (pieces?.legacy) {
@@ -602,7 +607,13 @@ export class CloudController {
         await client.convertLegacy({ signal: abort.signal, onProgress: ({ done, total }: { done: number, total: number }) => { active(); shrinking(done, total); } });
       }
       state.lastSynced = new Date().toISOString();
-      redraw = report.downloaded > 0 || report.deleted > 0 || report.conflicts !== conflictsBefore;
+      redraw = report.downloaded > 0 || report.deleted > 0 || report.conflicts !== conflictsBefore || convertedMail.wrote;
+      // A sealed mail item leaves the server only when every file of it is confirmed in the cloud.
+      for (const item of convertedMail.items) {
+        if (item.paths.every((path) => { const tracked = state.tracked[path]; return tracked && !tracked.deleted && tracked.revision > 0; })) {
+          await client.call(`/mail/${item.id}`, "DELETE", {}).catch(() => {});
+        }
+      }
       state.conflicts = report.conflicts;
       const big = report.skipped.length
         ? ` ${report.skipped.length === 1 ? "1 file is" : `${report.skipped.length} files are`} larger than ${Math.round(maxFileBytes / 1048576)} MB, your plan's maximum per file, and ${report.skipped.length === 1 ? "stays" : "stay"} only on this device: ${report.skipped.slice(0, 3).map((path: string) => path.split("/").pop()).join(", ")}${report.skipped.length > 3 ? ` and ${report.skipped.length - 3} more` : ""}.`
@@ -632,6 +643,49 @@ export class CloudController {
       this.changed();
       if (redraw) this.plugin.refreshViews();
     }
+  }
+
+  private mailWarned = false;
+
+  /**
+   * Mail to JotDrop: opens waiting sealed mail with the key derived from the vault key and writes the notes
+   * and attachments into this vault, skipping anything that already exists. Returns what was handled, so the
+   * sealed items can be deleted once their files are confirmed in the cloud.
+   */
+  private async convertMail(client: CloudClient, folder: VaultFolder, mail: { publicKey: string | null }, active: () => void): Promise<{ wrote: boolean; items: { id: string; paths: string[] }[] }> {
+    const { vaultKey, vaultId } = client.credentials;
+    const nothing = { wrote: false, items: [] };
+    let pair: { privateKey: CryptoKey; publicKey?: string };
+    try { pair = await mailKeyPair(vaultKey); }
+    catch { if (!this.mailWarned) { this.mailWarned = true; new Notice("This device cannot open mail for notes yet. Update Obsidian for it."); } return nothing; }
+    if (pair.publicKey !== mail.publicKey) {
+      if (!this.mailWarned) { this.mailWarned = true; new Notice("The mail key on the server does not match this vault. Turn Mail to JotDrop off and on again."); }
+      return nothing;
+    }
+    const { items } = await client.call("/mail", "GET") as { items: { id: string; receivedAt: string }[] };
+    const handled: { id: string; paths: string[] }[] = [];
+    let wrote = false, saved = 0;
+    for (const item of items.slice(0, 25)) {
+      active();
+      try {
+        const detail = await client.call(`/mail/${item.id}`, "GET");
+        const key = await openMailKey(pair.privateKey, pair.publicKey, detail.ephemeralKey, item.id);
+        const payload = await openMailBody(key, vaultId, item.id, detail.body);
+        const note = mailToNote(payload, item.id, item.receivedAt);
+        const paths: string[] = [note.path];
+        for (const attachment of note.attachments) {
+          const path = `attachments/${attachment.name}`;
+          paths.push(path);
+          if (await folder.get(path)) continue;
+          const part = await client.call(`/mail/${item.id}/parts/${attachment.part}`, "GET");
+          if (await folder.compareAndSet(path, null, await openMailPart(key, vaultId, item.id, attachment.part, part.sealed))) wrote = true;
+        }
+        if (!await folder.get(note.path) && await folder.compareAndSet(note.path, null, new TextEncoder().encode(note.content))) { wrote = true; saved++; }
+        handled.push({ id: item.id, paths });
+      } catch { /* One unreadable mail stays safe on the server for a later try and never stops the sync. */ }
+    }
+    if (saved) new Notice(saved === 1 ? "1 email was saved as a note." : `${saved} emails were saved as notes.`);
+    return { wrote, items: handled };
   }
 
   /** The groups this device knows, for the mark on a card and the groups window. */

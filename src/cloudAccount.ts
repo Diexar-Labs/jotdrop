@@ -2,6 +2,8 @@ import { App, ButtonComponent, Modal, Notice, Setting } from "obsidian";
 import type { CloudController } from "./cloud";
 import { ConfirmModal } from "./confirmModal";
 import { accountInfo, approveDevice, changePassword, deleteAccount, disableTotp, enableTotp, listApprovals, newRecoveryCode, rejectDevice, setupTotp } from "../cloud/shared/account.mjs";
+import { decryptEnvelope, encryptEnvelope } from "../cloud/shared/crypto.mjs";
+import { addressHash, mailAddress, mailKeyPair, senderHash } from "../cloud/shared/mail.mjs";
 
 type Device = { id: string; name: string; revoked?: boolean; lastSeenAt?: string };
 type Approval = { id: string; words: string[] };
@@ -23,6 +25,7 @@ export function renderCloudAccount(app: App, el: HTMLElement, cloud: CloudContro
   const client = cloud.connection;
   if (!client) return () => {};
   const plan = el.createDiv();
+  const mail = el.createDiv();
   const approvals = el.createDiv();
   const devices = el.createDiv();
   const security = el.createDiv();
@@ -47,6 +50,79 @@ export function renderCloudAccount(app: App, el: HTMLElement, cloud: CloudContro
         details.createEl("p", { text: "Manage or cancel your subscription at link.com." });
       }
     } catch (error) { plan.empty(); plan.createEl("p", { text: errorText(error) }); }
+  };
+
+  type MailState = { domain: string | null; enabled: boolean; publicKey: string | null; address: string | null; mode: string | null; pending: number };
+  const showMail = async () => {
+    let m: MailState | undefined;
+    try { m = (await client.status() as { mail?: MailState }).mail; }
+    catch { mail.empty(); return; }
+    if (stopped) return;
+    mail.empty();
+    if (!m || (!m.domain && !m.enabled)) return;
+    const state = m;
+    const { vaultKey } = client.credentials;
+    new Setting(mail).setName("Mail to JotDrop").setHeading();
+    /** Turn on, rotate or update: the server gets the public key, the address itself only hashed and sealed. */
+    const register = async (options: { rotate?: boolean; senders?: string[]; plain?: { address?: string; senders?: string[] } } = {}) => {
+      const pair = await mailKeyPair(vaultKey);
+      const address: string = !options.rotate && options.plain?.address ? options.plain.address : mailAddress(state.domain);
+      const senders = options.senders ?? options.plain?.senders ?? [];
+      const envelope = JSON.stringify(await encryptEnvelope(vaultKey, { address, senders }, "jotdrop:mail-address:v1"));
+      await client.call("/mail", "POST", { action: "enable", publicKey: pair.publicKey, addressHash: await addressHash(address), addressEnvelope: envelope, mode: state.enabled && state.mode === "senders" ? "senders" : "open" });
+    };
+    if (!state.enabled) {
+      new Setting(mail).setName("Turn on Mail to JotDrop").setDesc("Email anything to your own secret address and it becomes a note in this vault, attachments included. The server seals every mail the moment it arrives, with a key only your devices hold. Part of JotDrop Plus.")
+        .addButton((button) => button.setButtonText("Turn on").setCta().onClick(async () => {
+          try { await register(); new Notice("Mail to JotDrop is on. Mail to your secret address becomes a note."); await showMail(); }
+          catch (error) { new Notice((error as { code?: string }).code === "plus-required" ? "Mail to JotDrop is part of JotDrop Plus." : errorText(error)); }
+        }));
+      return;
+    }
+    let plain: { address?: string; senders?: string[] } = {};
+    try { plain = await decryptEnvelope(vaultKey, JSON.parse(state.address || ""), "jotdrop:mail-address:v1"); }
+    catch { /* Registered elsewhere with another key: the controls below still work. */ }
+    new Setting(mail).setName("Your secret address").setDesc(plain.address ?? "The address could not be read on this device.")
+      .addButton((button) => button.setButtonText("Copy").onClick(async () => {
+        if (!plain.address) return;
+        await navigator.clipboard.writeText(plain.address);
+        new Notice("Address copied.");
+      }))
+      .addButton((button) => button.setButtonText("New address").onClick(() => {
+        new ConfirmModal(app, { title: "Make a new secret address?", message: "The old address stops working at once. Use this when the address ended up with the wrong people.", confirmLabel: "New address" }, async () => {
+          try { await register({ rotate: true, plain }); new Notice("This is your new address. The old one is gone."); await showMail(); }
+          catch (error) { new Notice(errorText(error)); }
+        }).open();
+      }));
+    if (state.pending) mail.createEl("p", { text: `${state.pending === 1 ? "1 mail is" : `${state.pending} mails are`} waiting to become notes. The next sync picks ${state.pending === 1 ? "it" : "them"} up.` });
+    new Setting(mail).setName("Only accept mail from senders I list").setDesc("A sender address can be faked, so this is a filter against noise, not proof of who really wrote a mail.")
+      .addToggle((toggle) => toggle.setValue(state.mode === "senders").onChange(async (value) => {
+        try { await client.call("/mail", "POST", { action: "mode", mode: value ? "senders" : "open" }); }
+        catch (error) { new Notice(errorText(error)); }
+        await showMail();
+      }));
+    if (state.mode === "senders") {
+      let list = (plain.senders ?? []).join("\n");
+      new Setting(mail).setName("Allowed senders, one address per line")
+        .addTextArea((input) => { input.setValue(list); input.onChange((value) => { list = value; }); })
+        .addButton((button) => button.setButtonText("Save").onClick(async () => {
+          const senders = [...new Set(list.split("\n").map((line) => line.trim().toLowerCase()).filter(Boolean))];
+          if (senders.some((sender) => !sender.includes("@") || sender.length > 320) || senders.length > 200) { new Notice("Use one full email address per line, at most 200."); return; }
+          try {
+            await client.call("/mail/senders", "POST", { senders: await Promise.all(senders.map((sender) => senderHash(sender))) });
+            await register({ senders, plain });
+            new Notice(senders.length ? `Sender list saved: ${senders.length} address${senders.length === 1 ? "" : "es"}.` : "The sender list is empty: no mail is accepted while the filter is on.");
+            await showMail();
+          } catch (error) { new Notice(errorText(error)); }
+        }));
+    }
+    new Setting(mail).setName("Turn off Mail to JotDrop").setDesc("The address stops working. Mail that already arrived stays and still becomes notes.")
+      .addButton((button) => button.setButtonText("Turn off").setWarning().onClick(() => {
+        new ConfirmModal(app, { title: "Turn off Mail to JotDrop?", message: "The secret address stops working at once.", confirmLabel: "Turn off", destructive: true }, async () => {
+          try { await client.call("/mail", "DELETE", {}); await showMail(); }
+          catch (error) { new Notice(errorText(error)); }
+        }).open();
+      }));
   };
 
   const showApprovals = async () => {
@@ -124,6 +200,7 @@ export function renderCloudAccount(app: App, el: HTMLElement, cloud: CloudContro
   };
 
   void showPlan();
+  void showMail();
   void showApprovals();
   void showDevices().then(showSecurity);
   // A request from a new device waits here while the settings are open.
