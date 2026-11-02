@@ -40,9 +40,8 @@ export class NoteLinkModal extends Modal {
         try {
           const link = await createLink(client, linkNote(this.file, await this.app.vault.read(this.file)), { origin: client.credentials.url, days: Number(this.days) }) as { address: string };
           made.empty();
-          const field = made.createEl("input", { type: "text", attr: { readonly: "true", "aria-label": "Link" } });
+          const field = made.createEl("input", { type: "text", cls: "jotdrop-link-field", attr: { readonly: "true", "aria-label": "Link" } });
           field.value = link.address;
-          field.style.width = "100%";
           new ButtonComponent(made).setButtonText("Copy").onClick(async () => { await navigator.clipboard.writeText(link.address); new Notice("Link copied."); });
           message.setText("Send this link yourself. It holds the key, so we never see it.");
           void this.list(listEl, message);

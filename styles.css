@@ -1954,3 +1954,4 @@ button.jotdrop-provider-github:not(.clickable-icon):hover { background: #32383f;
 .jd-draw-dot .jd-draw-check { color: #fff; font-size: 11px; }
 .jd-draw-pen[aria-checked="true"] .jd-draw-dot .jd-draw-check { display: inline; }
 .jd-draw-message { color: var(--text-muted); font-size: var(--font-smaller); min-height: 1.4em; margin: 8px 0 0; }
+.jotdrop-link-field { width: 100%; }
