@@ -14,8 +14,8 @@ android {
         applicationId = "com.diexar.keepcapture"
         minSdk = 26
         targetSdk = 36
-        versionCode = 86
-        versionName = "0.28.32"
+        versionCode = 87
+        versionName = "0.28.33"
     }
 
     // Stabiele debug-keystore in de repo. AGP's default genereert per CI-runner
