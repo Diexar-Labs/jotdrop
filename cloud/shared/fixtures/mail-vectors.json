@@ -1,0 +1,31 @@
+{
+  "vaultKey": "BxQhLjtIVWJvfImWo7C9ytfk8f4LGCUyP0xZZnOAjZo",
+  "privateScalar": "GCPK39e7Atn5fzc6xGXzo4fpPOOWRrBDWAeX7mGNm0o",
+  "publicKey": "fl_3M20oxK4H6e7n9IAJ8PM_jreZuBE3S6rV-2R2zXo",
+  "vaultId": "1f2e3d4c-5b6a-4987-8765-432100fedcba",
+  "mailId": "a1b2c3d4-e5f6-4a0b-8c1d-2e3f40516273",
+  "receivedAt": "2026-11-02T20:15:00.000Z",
+  "payload": {
+    "v": 1,
+    "from": "Anna Voss <anna@example.com>",
+    "to": "k7wmq3xbrn4p@in.jotdrop.net",
+    "subject": "Receipt: desk lamp",
+    "date": "Mon, 2 Nov 2026 21:14:55 +0100",
+    "text": "Hi Eric,\n\nthe receipt is attached.\n\nAnna",
+    "attachments": [
+      {
+        "name": "bon.pdf",
+        "type": "application/pdf",
+        "size": 11
+      }
+    ]
+  },
+  "partsPlain": [
+    "UERGLUNPTlRFTlQ"
+  ],
+  "ephemeralKey": "YAp1etEwahccq0OXJxBETRFcQso0H82D8VGwoMO4OBU",
+  "body": "EVBZOVSK42YszZySDfKtsEr6epWkH8QxMXPOKc-_RITXhb7bYEEHz6npdj3kCWBjEC_V15w5VuYvvnYQIKxjtJfmeaNwzr5mhphn_oZP8HnNJTmGr5REkMr2Mmt0lwOp9RWeiW8hMndPcgE8EE95M2-fjOvP_tprISDCdciF8Q9vyRpoq0ePMli-KMLXmsWuookoVxuOqA0ZYloJdmsAXKxSB541heYCGFqTxACJi8UyAWXs5yrmUZDUWjczKZS3vPBibkL3dfpxq0B-cK6TwgaOuDdY1sVIuZka8J0K4qHGEdq6GvWNbfV28WCFLPJtNF6pMGD6G6BH2C5V7kyPOxp1KeI7m03Z4P3kLi78TPH3JMxpMCQDkTXLPSM9c96YvGFk84ZmMNPGXTaM5t6c",
+  "parts": [
+    "WZGIbF1Q2pPUQMbadu-wc-UBNX0fQsIXM5eAH3g3ZS0lc95ZY8QY"
+  ]
+}
