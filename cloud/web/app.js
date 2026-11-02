@@ -1889,7 +1889,7 @@ function lock(notice = '') {
   spacePlan = undefined;
   spaces.clear();
   goneSpaces.clear();
-  for (const id of ['share-dialog', 'invite-dialog', 'join-dialog', 'gone-dialog', 'family-dialog', 'family-join-dialog']) $(id).close();
+  for (const id of ['share-dialog', 'invite-dialog', 'join-dialog', 'gone-dialog', 'family-dialog', 'family-join-dialog', 'plan-dialog']) $(id).close();
   $('family-link').value = '';
   $('invite-link').value = '';
   files.clear();
@@ -3302,6 +3302,66 @@ function takeInvitation() {
     } else familyInvitation = sessionStorage.getItem('jotdrop-family-invitation') ?? undefined;
   } catch { /* It still works in this page. */ }
 }
+// A plan chosen on jotdrop.net (?plan=family&billing=year) is shown before signing in and offered right after.
+const planChoices = {
+  'plus-month': { title: 'JotDrop Plus', price: '€3.99 per month', text: 'Room for your photos and files, all your devices and your whole history.' },
+  'plus-year': { title: 'JotDrop Plus', price: '€39 per year', text: 'That is €3.25 a month. Room for your photos and files, all your devices and your whole history.' },
+  'family-month': { title: 'JotDrop Family', price: '€6.99 per month', text: "JotDrop Plus for you and up to 5 others. After paying you invite them with a link. Everyone keeps their own notes, and nobody can read anyone else's." },
+  'family-year': { title: 'JotDrop Family', price: '€59 per year', text: "That is €4.92 a month for up to 6 people. JotDrop Plus for you and up to 5 others. After paying you invite them with a link. Everyone keeps their own notes, and nobody can read anyone else's." },
+};
+let planChoice;
+function takePlanChoice() {
+  try {
+    const params = new URLSearchParams(location.search);
+    if (params.has('plan')) {
+      const key = `${params.get('plan')}-${params.get('billing') === 'year' ? 'year' : 'month'}`;
+      history.replaceState(null, '', '/');
+      if (planChoices[key]) sessionStorage.setItem('jotdrop-plan-choice', key);
+    }
+    planChoice = sessionStorage.getItem('jotdrop-plan-choice') ?? undefined;
+  } catch { /* It still works in this page. */ }
+  if (!planChoices[planChoice]) planChoice = undefined;
+  const choice = planChoices[planChoice];
+  $('access-choice').hidden = !choice;
+  if (choice) $('access-choice').textContent = `You chose ${choice.title}, ${choice.price}. Sign in or create your free account first, then you can pay.`;
+}
+function dropPlanChoice() {
+  planChoice = undefined;
+  $('access-choice').hidden = true;
+  try { sessionStorage.removeItem('jotdrop-plan-choice'); } catch { /* Nothing was kept. */ }
+}
+async function offerChoice() {
+  if (!planChoice || !ownClient || $('plan-dialog').open) return;
+  const plan = (await ownClient.status().catch(() => undefined))?.plan;
+  if (!plan || !planChoice) return;
+  const family = planChoice.startsWith('family');
+  if (plan.subscribed || plan.family) {
+    dropPlanChoice();
+    message(plan.family ? 'You are already in a family plan. Open Family plan in the menu to see it.' : 'You already pay for JotDrop Plus. Your subscription is under Subscription in the menu.');
+    return;
+  }
+  if (!plan.checkout || (family && !plan.familyCheckout)) { dropPlanChoice(); return; }
+  const choice = planChoices[planChoice];
+  $('plan-title').textContent = choice.title;
+  $('plan-price').textContent = choice.price;
+  $('plan-text').textContent = choice.text;
+  $('plan-message').textContent = '';
+  $('plan-pay').disabled = false;
+  $('plan-dialog').showModal();
+}
+$('plan-later').addEventListener('click', () => { dropPlanChoice(); $('plan-dialog').close(); });
+$('plan-pay').addEventListener('click', async () => {
+  const [plan, interval] = planChoice.split('-');
+  $('plan-pay').disabled = true;
+  try {
+    const { url } = await ownClient.call('/account/checkout', 'POST', { interval, plan });
+    dropPlanChoice();
+    location.assign(url);
+  } catch (error) {
+    $('plan-message').textContent = error.code === 'account-required' ? 'The family plan needs an account. Add one in Devices & recovery first, then choose the family plan in the menu.' : errorText(error);
+    $('plan-pay').disabled = false;
+  }
+});
 function dropFamilyInvitation() {
   familyInvitation = undefined;
   try { sessionStorage.removeItem('jotdrop-family-invitation'); } catch { /* Nothing was kept. */ }
@@ -3313,7 +3373,7 @@ function dropInvitation() {
 function offerInvitation() {
   if (!ownClient || $('join-dialog').open || $('family-join-dialog').open || $('recovery-dialog').open || $('secure-dialog').open) return;
   if (!invitation) {
-    if (!familyInvitation) return;
+    if (!familyInvitation) { void offerChoice(); return; }
     $('family-join-message').textContent = '';
     $('family-join-accept').disabled = false;
     $('family-join-dialog').showModal();
@@ -3525,6 +3585,7 @@ setInterval(() => {
   }, () => {});
 }, 30000);
 takeInvitation();
+takePlanChoice();
 try {
   const credentials = (await providerReturn().catch((error) => { $('access-message').textContent = accessError(error); return true; })) ? undefined : await signedInCredentials().catch(() => undefined);
   // A connection that no longer opens is forgotten and says why; the password still unlocks this browser.

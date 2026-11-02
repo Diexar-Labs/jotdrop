@@ -119,8 +119,39 @@ def check_family(browser, url, codes, database):
     dialog.locator("#family-members").filter(has_text="cas@example.com").wait_for(state="detached")
     cas.locator("#sync").click()
     cas.locator("#plan-status").filter(has_text="Free plan").wait_for()
+    # A plan chosen on jotdrop.net is shown before signing up and offered right after; payment goes to Stripe.
+    dan_page = browser.new_context(viewport={"width": 390, "height": 844}).new_page()
+    dan_page.on("pageerror", lambda error: errors.append(str(error)))
+    dan_page.goto(url + "/?plan=family&billing=year", wait_until="networkidle")
+    dan_page.locator("#access-choice").filter(has_text="You chose JotDrop Family, €59 per year.").wait_for()
+    assert "plan=" not in dan_page.url, dan_page.url
+    dan_page.context.close()
+    dan = sign_up("dan@example.com", "/?plan=family&billing=year")
+    offer = dan.locator("#plan-dialog")
+    offer.filter(has_text="€59 per year").wait_for()
+    assert "up to 5 others" in offer.inner_text()
+    checkout = []
+    dan.route("**/account/checkout", lambda route: (checkout.append(route.request.post_data_json), route.fulfill(status=200, content_type="application/json", body='{"url": "%s/?plus=welcome"}' % url)))
+    with dan.expect_navigation(url=re.compile(r".*[?]plus=welcome$")):
+        offer.get_by_role("button", name="Continue to payment").click()
+    assert checkout == [{"interval": "year", "plan": "family"}], checkout
+    eve = sign_up("eve@example.com", "/?plan=plus&billing=month")
+    eve.locator("#plan-dialog").filter(has_text="€3.99 per month").wait_for()
+    eve.get_by_role("button", name="Not now").click()
+    assert eve.locator("#plan-dialog").is_hidden()
+    assert eve.evaluate("sessionStorage.getItem('jotdrop-plan-choice')") is None, "Not now forgets the choice"
+    # Someone who already pays for a family is told so instead of being offered a second plan.
+    ana.goto(url + "/?plan=family&billing=month", wait_until="networkidle")
+    ana.locator("#access-choice").filter(has_text="JotDrop Family").wait_for()
+    ana.locator("#login-email").fill("ana@example.com")
+    ana.locator("#login-password").fill(PASSWORD)
+    ana.locator('#login-form button[type="submit"]').click()
+    ana.locator("#code-input").fill(code("login"))
+    ana.locator('#code-form button[type="submit"]').click()
+    ana.locator("#workspace-message").filter(has_text="already in a family plan").wait_for()
+    assert ana.locator("#plan-dialog").is_hidden()
     assert not errors, errors
-    return {"offer": True, "invite": True, "joinAfterSignup": True, "linkOnce": True, "leave": True, "remove": True}
+    return {"siteChoice": True, "offer": True, "invite": True, "joinAfterSignup": True, "linkOnce": True, "leave": True, "remove": True}
 
 
 def main():

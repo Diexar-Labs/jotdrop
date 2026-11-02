@@ -22,6 +22,7 @@
     <div class="wordmark"><img class="brand-mark" src="/logo.svg" alt=""> JotDrop <span>Cloud</span></div>
     <h1 id="access-title">Your notes, within reach.</h1>
     <p>Open your encrypted workspace. Your password never leaves this device, so nobody else can read your notes. Not even us.</p>
+    <p id="access-choice" class="access-choice" role="status" hidden></p>
     <form id="unlock-form" hidden>
       <label for="unlock-password">Password or device unlock passphrase</label>
       <input id="unlock-password" type="password" autocomplete="current-password" required>
@@ -390,6 +391,14 @@
     <p class="dialog-note">By joining you accept the <a href="/terms" target="_blank" rel="noopener">terms of use</a>.</p>
     <p id="family-join-message" class="message" role="status" aria-live="polite"></p>
     <div class="dialog-actions"><button id="family-join-later" type="button">Not now</button><button id="family-join-accept" class="primary" type="button">Join</button></div>
+  </dialog>
+  <dialog id="plan-dialog" aria-labelledby="plan-title">
+    <h2 id="plan-title">JotDrop Plus</h2>
+    <p id="plan-price" class="plan-price"></p>
+    <p id="plan-text"></p>
+    <p class="dialog-note">Stripe shows the payment page and handles the payment. Plus turns on as soon as Stripe confirms it.</p>
+    <p id="plan-message" class="message" role="status" aria-live="polite"></p>
+    <div class="dialog-actions"><button id="plan-later" type="button">Not now</button><button id="plan-pay" class="primary" type="button">Continue to payment</button></div>
   </dialog>
   <dialog id="report-dialog" aria-labelledby="report-title">
     <form id="report-form">
