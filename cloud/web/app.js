@@ -143,14 +143,19 @@ async function sealFile(path, bytes, revision, modifiedAt = new Date().toISOStri
 // the difference, and the trial works once per account (Eric, 27 Oct). The error says what happened, the offer what helps.
 const filePlus = 'JotDrop Plus takes files up to 200 MB.';
 let currentPlan, storageShare = 0, plusReason = '', plusQuiet = false;
+// Every new account starts with 14 days of Plus (Eric, 2 Nov 2026); the last 3 days say so, once per page.
+const trialDaysLeft = (plan) => plan?.trialEnds ? Math.max(1, Math.ceil((Date.parse(plan.trialEnds) - Date.now()) / 86400000)) : 0;
 function plusChoice() {
-  if (!currentPlan || currentPlan.name === 'plus') return undefined;
+  if (!currentPlan) return undefined;
+  if (currentPlan.name === 'plus') return currentPlan.trialEnds && currentPlan.checkout && !currentPlan.subscribed ? 'buy' : undefined;
   if (currentPlan.trialAvailable) return 'trial';
   return currentPlan.checkout && !currentPlan.subscribed ? 'buy' : undefined;
 }
 function showPlusNudge() {
   const nearlyFull = !plusQuiet && storageShare >= .8 ? `Your cloud storage is ${Math.round(storageShare * 100)}% full. JotDrop Plus has 10 GB.` : '';
-  const reason = plusReason || nearlyFull, choice = plusChoice();
+  const days = trialDaysLeft(currentPlan);
+  const trialEnding = !plusQuiet && days && days <= 3 ? `Your JotDrop Plus trial ends in ${days === 1 ? '1 day' : `${days} days`}. After that you are on Free: nothing is deleted, and you keep 250 MB, 2 devices and 30 days of history.` : '';
+  const reason = plusReason || trialEnding || nearlyFull, choice = plusChoice();
   $('plus-nudge').hidden = !reason || !choice;
   $('plus-reason').textContent = reason;
   $('start-trial').hidden = choice !== 'trial';
@@ -1193,7 +1198,8 @@ async function showPlan(activeClient, activeGeneration) {
   $('storage-usage').textContent = `${(status.usedBytes / 1048576).toFixed(1)} / ${(status.quotaBytes / 1048576).toFixed(0)} MiB encrypted storage`;
   if (status.pieces?.maxFileBytes) maxFileBytes = status.pieces.maxFileBytes;
   const plan = status.plan;
-  $('plan-status').textContent = plan.name === 'plus' ? `JotDrop Plus${plan.family === 'member' ? ' through your family' : ''} until ${new Date(plan.plusUntil).toLocaleDateString()}` : `Free plan: ${plan.deviceLimit} devices, ${plan.historyDays} days of history`;
+  const trialDays = trialDaysLeft(plan);
+  $('plan-status').textContent = trialDays ? `JotDrop Plus trial: ${trialDays === 1 ? '1 day' : `${trialDays} days`} left, until ${new Date(plan.trialEnds).toLocaleDateString()}` : plan.name === 'plus' ? `JotDrop Plus${plan.family === 'member' ? ' through your family' : ''} until ${new Date(plan.plusUntil).toLocaleDateString()}` : `Free plan: ${plan.deviceLimit} devices, ${plan.historyDays} days of history`;
   currentPlan = plan;
   storageShare = plan.name === 'plus' ? 0 : status.usedBytes / status.quotaBytes;
   showPlusNudge();

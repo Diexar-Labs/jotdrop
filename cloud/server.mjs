@@ -206,10 +206,11 @@ async function body(req, maximum = MAX_BODY) {
 }
 
 /** Loopback-only server behind a trusted HTTPS proxy. Accounts need a mailer; no billing or provider credentials. `quotaBytes` and `freeDeviceLimit` are the free plan's limits. */
-export async function createCloudServer({ dataDir, enrollmentToken, mailer, newsletter, serverKey, stripe, reviewLogin, oauth = {}, fetcher = globalThis.fetch, quotaBytes = 250 * 1024 * 1024, plusQuotaBytes = 10 * 1024 * 1024 * 1024, maxFileBytes = 25 * 1024 * 1024, plusMaxFileBytes = 200 * 1024 * 1024, freeDeviceLimit = 2, maxHistoryEntries = 100000, maxDeviceEntries = 1000, maxPairingEntries = 128, maxConcurrentRequests = 16, signupsPerAddress = 5, turnstile, webRoot = join(directory, 'web'), corsOrigins = [], publicOrigin, adminOrigin, adminPasswordHash, adminTotpSecret, adminRoot = join(directory, 'admin'), port = 0, enrollmentLimit = 1, sweepEvery = 60 * 60 * 1000, clock = Date.now }) {
+export async function createCloudServer({ dataDir, enrollmentToken, mailer, newsletter, serverKey, stripe, reviewLogin, oauth = {}, fetcher = globalThis.fetch, quotaBytes = 250 * 1024 * 1024, plusQuotaBytes = 10 * 1024 * 1024 * 1024, maxFileBytes = 25 * 1024 * 1024, plusMaxFileBytes = 200 * 1024 * 1024, freeDeviceLimit = 2, maxHistoryEntries = 100000, maxDeviceEntries = 1000, maxPairingEntries = 128, maxConcurrentRequests = 16, signupsPerAddress = 5, signupTrial = TRIAL_TIME, turnstile, webRoot = join(directory, 'web'), corsOrigins = [], publicOrigin, adminOrigin, adminPasswordHash, adminTotpSecret, adminRoot = join(directory, 'admin'), port = 0, enrollmentLimit = 1, sweepEvery = 60 * 60 * 1000, clock = Date.now }) {
   if (!dataDir || (enrollmentToken !== undefined && !validToken(enrollmentToken)) || [quotaBytes, plusQuotaBytes, freeDeviceLimit].some((value) => !Number.isSafeInteger(value) || value < 1)) throw new Error('Provide a data directory, random 32-byte enrollment token and positive quota.');
   if (mailer !== undefined && typeof mailer !== 'function') throw new Error('Provide the mailer as a function.');
   // Google Play reviewers cannot receive email codes: this one address confirms with a fixed code and gets no mail. The password stays required.
+  if (!Number.isSafeInteger(signupTrial) || signupTrial < 0) throw new Error('Provide the sign-up trial as whole days, 0 or more.');
   if (reviewLogin && !(typeof reviewLogin.email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(reviewLogin.email) && reviewLogin.email === reviewLogin.email.toLowerCase() && validCode(reviewLogin.code))) throw new Error('Provide the review login as a lowercase email address and a six-digit code.');
   // `newsletter(email)` adds someone who ticked "Email me news about JotDrop" to the mailing list (Brevo).
   if (newsletter !== undefined && typeof newsletter !== 'function') throw new Error('Provide the newsletter as a function.');
@@ -296,6 +297,9 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       if (!all('PRAGMA table_info(envelopes)').some((column) => column.name === 'pieces')) db.exec('ALTER TABLE envelopes ADD COLUMN pieces INTEGER NOT NULL DEFAULT 0; UPDATE envelopes SET pieces=1 WHERE EXISTS (SELECT 1 FROM envelope_chunks ec WHERE ec.vaultId=envelopes.vaultId AND ec.id=envelopes.id AND ec.envelopeHash=envelopes.envelopeHash);');
       // The newsletter tick waits with the signup until the email address is confirmed.
       if (!all('PRAGMA table_info(signups)').some((column) => column.name === 'newsletter')) db.exec('ALTER TABLE signups ADD COLUMN newsletter INTEGER NOT NULL DEFAULT 0;');
+      // A trial that runs: when its 14 days end, and `mail` 1 = "ends in 3 days" sent, 2 = "ended" sent or not needed.
+      // Its own table, so `plans` keeps three columns for an older server after a rollback.
+      db.exec('CREATE TABLE IF NOT EXISTS trials(vaultId TEXT PRIMARY KEY, trialUntil INTEGER NOT NULL, mail INTEGER NOT NULL DEFAULT 0);');
       // Shared spaces. No foreign key to accounts and no higher user_version: an older server must keep starting and deleting accounts.
       db.exec(`CREATE TABLE IF NOT EXISTS spaces(id TEXT PRIMARY KEY REFERENCES vaults(id), ownerAccountId TEXT NOT NULL, nameEnvelope TEXT NOT NULL, createdAt INTEGER NOT NULL, frozenAt INTEGER, replaces TEXT UNIQUE, replacedBy TEXT, ownerGoneAt INTEGER);
         CREATE INDEX IF NOT EXISTS spaces_by_owner ON spaces(ownerAccountId);
@@ -379,10 +383,10 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     const space = spaceRow(vaultId);
     if (space) {
       const owner = !space.ownerGoneAt && one('SELECT vaultId FROM accounts WHERE id=?', space.ownerAccountId);
-      if (!owner) return { plusUntil: 0, trialUsed: 0 };
+      if (!owner) return { plusUntil: 0, trialUsed: 0, trialUntil: 0 };
       vaultId = owner.vaultId;
     }
-    const plan = one('SELECT plusUntil,trialUsed FROM plans WHERE vaultId=?', vaultId) ?? { plusUntil: 0, trialUsed: 0 };
+    const plan = { ...(one('SELECT plusUntil,trialUsed FROM plans WHERE vaultId=?', vaultId) ?? { plusUntil: 0, trialUsed: 0 }), trialUntil: one('SELECT trialUntil FROM trials WHERE vaultId=?', vaultId)?.trialUntil ?? 0 };
     // A family member has Plus as long as the family plan they are in.
     const payer = one('SELECT o.vaultId FROM family_members m JOIN accounts a ON a.id=m.accountId JOIN accounts o ON o.id=m.ownerAccountId WHERE a.vaultId=?', vaultId);
     return { ...plan, plusUntil: Math.max(plan.plusUntil, one('SELECT COALESCE(MAX(paidUntil),0) AS until FROM subscriptions WHERE vaultId=?', vaultId).until, payer ? familyUntil(payer.vaultId) : 0) };
@@ -396,6 +400,18 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   // Someone who pays for a family is its owner, whatever family they were in before.
   const familyRole = (account) => !account ? null : ownsFamily(account) ? 'owner' : activeMember(account) ? 'member' : null;
   const isPlus = (vaultId) => planRow(vaultId).plusUntil > clock();
+  // Every new account starts with the trial (Eric, 2 Nov): someone who had Plus for two weeks knows what Free lacks.
+  // A cloud that already used its trial or has Plus for longer keeps what it has.
+  function startTrial(vaultId, length = TRIAL_TIME) {
+    const until = clock() + length, plan = one('SELECT plusUntil,trialUsed FROM plans WHERE vaultId=?', vaultId);
+    if (plan?.trialUsed) return plan.plusUntil;
+    run('INSERT INTO plans(vaultId,plusUntil,trialUsed) VALUES(?,?,1) ON CONFLICT(vaultId) DO UPDATE SET plusUntil=MAX(plusUntil,excluded.plusUntil),trialUsed=1', vaultId, until);
+    // Plus that already lasts longer (a manual grant) is no trial: no countdown, no mails.
+    if ((plan?.plusUntil ?? 0) < until) run('INSERT INTO trials(vaultId,trialUntil) VALUES(?,?) ON CONFLICT(vaultId) DO UPDATE SET trialUntil=excluded.trialUntil,mail=0', vaultId, until);
+    return Math.max(until, plan?.plusUntil ?? 0);
+  }
+  // The trial is what keeps Plus going only while nothing else lasts longer (a subscription, a family, a manual grant).
+  const trialEnds = (plan) => plan.trialUntil > clock() && plan.plusUntil === plan.trialUntil ? plan.trialUntil : 0;
   const subscribed = (vaultId) => Boolean(one(`SELECT 1 FROM subscriptions WHERE vaultId=? AND status IN (${RUNNING.map(() => '?').join(',')})`, vaultId, ...RUNNING));
   // Abandoned payments do not use a founder place.
   const founderPrice = () => Boolean(stripe?.founderYearPrice) && one('SELECT COUNT(DISTINCT vaultId) AS count FROM subscriptions WHERE paidUntil>0').count < (stripe.founderLimit ?? 500);
@@ -956,7 +972,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       run('DELETE FROM code_failures WHERE scope IN (?,?,?)', `login:${account.id}`, `reset:${account.id}`, `signup:${account.email}`);
       run('DELETE FROM accounts WHERE id=?', account.id);
     }
-    for (const table of ['uploads', 'pairings', 'revisions', 'envelope_chunks', 'chunks', 'retired_envelopes', 'envelopes', 'changes', 'signups', 'devices', 'plans', 'subscriptions']) run(`DELETE FROM ${table} WHERE vaultId=?`, vaultId);
+    for (const table of ['uploads', 'pairings', 'revisions', 'envelope_chunks', 'chunks', 'retired_envelopes', 'envelopes', 'changes', 'signups', 'devices', 'plans', 'trials', 'subscriptions']) run(`DELETE FROM ${table} WHERE vaultId=?`, vaultId);
     run('DELETE FROM vaults WHERE id=?', vaultId);
   }
   function forgetAddress(account, kind) {
@@ -972,6 +988,32 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     for (const { spaceId } of all('SELECT spaceId FROM space_members WHERE accountId=?', account.id)) {
       removeMember(spaceId, account.id);
       if (!memberCount(spaceId)) deleteSpace(spaceId);
+    }
+  }
+  // What a cloud has above the free plan, for the mail when the trial ends. Nothing is deleted: it only stops growing.
+  function aboveFree(account) {
+    const now = clock();
+    const used = storageUsage(account.vaultId) + liveSpaceBytes(account.id);
+    const devices = one('SELECT COUNT(*) AS count FROM devices WHERE vaultId=? AND revoked=0', account.vaultId).count;
+    const groups = liveSpaces(account.id);
+    const links = all('SELECT createdAt,expiresAt FROM note_links WHERE accountId=?', account.id).filter((link) => (link.expiresAt === null || link.expiresAt > now) && link.createdAt + LINK_FREE_DAYS * DAY <= now).length;
+    return { usedMb: used > quotaBytes ? Math.ceil(used / 1048576) : 0, quotaMb: Math.round(quotaBytes / 1048576), devices: devices > freeDeviceLimit ? devices : 0, deviceLimit: freeDeviceLimit, groups: groups > 1 ? groups : 0, links };
+  }
+  // Two mails per trial: three days before the end, and on the day itself. A cloud that pays or has a family gets neither;
+  // a trial that ended more than a week ago (a server that was down) is marked without a late mail.
+  function sweepTrials() {
+    const now = clock();
+    for (const row of all('SELECT t.vaultId,t.mail,t.trialUntil,a.id,a.email FROM trials t JOIN accounts a ON a.vaultId=t.vaultId WHERE t.mail<2')) {
+      const account = { id: row.id, vaultId: row.vaultId, email: row.email };
+      const extended = planRow(row.vaultId).plusUntil !== row.trialUntil || subscribed(row.vaultId);
+      if (extended || row.trialUntil <= now - 7 * DAY) { run('UPDATE trials SET mail=2 WHERE vaultId=?', row.vaultId); continue; }
+      if (row.trialUntil <= now) {
+        run('UPDATE trials SET mail=2 WHERE vaultId=?', row.vaultId);
+        sendMailLater({ to: row.email, kind: 'trial-ended', trial: aboveFree(account) });
+      } else if (row.mail < 1 && row.trialUntil - now <= 3 * DAY) {
+        run('UPDATE trials SET mail=1 WHERE vaultId=?', row.vaultId);
+        sendMailLater({ to: row.email, kind: 'trial-ending', trial: { ...aboveFree(account), endsAt: new Date(row.trialUntil).toISOString() } });
+      }
     }
   }
   function sweepSpaces() {
@@ -1487,6 +1529,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           }
           const now = new Date(clock()).toISOString(), accountId = randomUUID();
           run('INSERT INTO accounts(id,email,vaultId,kdf,authHash,wrappedVaultKey,createdAt,passwordChangedAt) VALUES(?,?,?,?,?,?,?,?)', accountId, email, vaultId, signup.kdf, signup.authHash, signup.wrappedVaultKey, now, now);
+          if (signupTrial > 0 && email !== reviewLogin?.email) startTrial(vaultId, signupTrial);
           if (!signup.vaultId) countSignup(ip);
           if (signup.newsletter) joined = joinNewsletter(accountId, email, now);
           return deviceId ? { vaultId, deviceId } : { vaultId };
@@ -1618,6 +1661,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           run('UPDATE accounts SET vaultId=? WHERE id=?', vaultId, account.id);
           // The subscription belongs to the person, not to the deleted ciphertext.
           run('UPDATE plans SET vaultId=? WHERE vaultId=?', vaultId, account.vaultId);
+          run('UPDATE trials SET vaultId=? WHERE vaultId=?', vaultId, account.vaultId);
           run('UPDATE subscriptions SET vaultId=? WHERE vaultId=?', vaultId, account.vaultId);
           setCredentials(account.id, next);
           run('DELETE FROM device_approvals WHERE accountId=?', account.id);
@@ -1694,6 +1738,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           // No password: '' never matches a login key, and "Forgot password" can add one later.
           run("INSERT INTO accounts(id,email,vaultId,kdf,authHash,wrappedVaultKey,createdAt,passwordChangedAt) VALUES(?,?,?,'','','',?,?)", accountId, ticket.email, vaultId, now, now);
           run('INSERT INTO identities VALUES(?,?,?,?)', ticket.provider, ticket.subject, accountId, now);
+          if (signupTrial > 0) startTrial(vaultId, signupTrial);
           countSignup(ip);
           if (value.newsletter === true) joined = joinNewsletter(accountId, ticket.email, now);
           return addDevice(vaultId, value.deviceName, value.deviceTokenHash);
@@ -1870,9 +1915,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           const plan = planRow(vaultId);
           if (plan.trialUsed) fail(409, 'The free trial was already used.');
           if (plan.plusUntil > clock()) fail(409, 'This cloud already has JotDrop Plus.');
-          const until = clock() + TRIAL_TIME;
-          run('INSERT INTO plans VALUES(?,?,1) ON CONFLICT(vaultId) DO UPDATE SET plusUntil=excluded.plusUntil,trialUsed=1', vaultId, until);
-          return until;
+          return startTrial(vaultId);
         });
         reply(200, { plusUntil: new Date(plusUntil).toISOString() }); return;
       }
@@ -1921,7 +1964,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       }
       if (method === 'GET' && route === '/status') {
         const plan = planRow(vaultId), plus = plan.plusUntil > clock(), owner = one('SELECT id,vaultId FROM accounts WHERE vaultId=?', vaultId);
-        reply(200, { usedBytes: one('SELECT (SELECT COALESCE(SUM(size),0) FROM envelopes WHERE vaultId=?) + (SELECT COALESCE(SUM(size),0) FROM chunks WHERE vaultId=?) AS size', vaultId, vaultId).size + (owner ? liveSpaceBytes(owner.id) : 0), quotaBytes: quotaFor(vaultId), plan: { name: plus ? 'plus' : 'free', plusUntil: plan.plusUntil ? new Date(plan.plusUntil).toISOString() : null, trialAvailable: !plan.trialUsed && !plus, deviceLimit: plus ? null : freeDeviceLimit, historyDays: plus ? null : FREE_HISTORY / DAY, subscribed: subscribed(vaultId), checkout: Boolean(stripe), founderPrice: founderPrice(), familyCheckout: familyPrices.length > 0, family: familyRole(owner) }, sequence: one('SELECT COALESCE(MAX(sequence),0) AS sequence FROM changes WHERE vaultId=?', vaultId).sequence, history: historyUsage(vaultId), transport: { version: 1, chunkBytes: TRANSFER_CHUNK_BYTES, reservedBytes: one('SELECT COALESCE(SUM(reservedBytes),0) AS size FROM uploads WHERE vaultId=?', vaultId).size }, pieces: { version: 1, pieceBytes: PIECE_BYTES, maxFileBytes: maxFileFor(vaultId), legacy: one('SELECT COUNT(*) AS count FROM envelopes WHERE vaultId=? AND pieces=0 AND size>?', vaultId, LEGACY_ENVELOPE_BYTES).count } }); return;
+        reply(200, { usedBytes: one('SELECT (SELECT COALESCE(SUM(size),0) FROM envelopes WHERE vaultId=?) + (SELECT COALESCE(SUM(size),0) FROM chunks WHERE vaultId=?) AS size', vaultId, vaultId).size + (owner ? liveSpaceBytes(owner.id) : 0), quotaBytes: quotaFor(vaultId), plan: { name: plus ? 'plus' : 'free', plusUntil: plan.plusUntil ? new Date(plan.plusUntil).toISOString() : null, trialAvailable: !plan.trialUsed && !plus, trialEnds: trialEnds(plan) ? new Date(plan.trialUntil).toISOString() : null, deviceLimit: plus ? null : freeDeviceLimit, historyDays: plus ? null : FREE_HISTORY / DAY, subscribed: subscribed(vaultId), checkout: Boolean(stripe), founderPrice: founderPrice(), familyCheckout: familyPrices.length > 0, family: familyRole(owner) }, sequence: one('SELECT COALESCE(MAX(sequence),0) AS sequence FROM changes WHERE vaultId=?', vaultId).sequence, history: historyUsage(vaultId), transport: { version: 1, chunkBytes: TRANSFER_CHUNK_BYTES, reservedBytes: one('SELECT COALESCE(SUM(reservedBytes),0) AS size FROM uploads WHERE vaultId=?', vaultId).size }, pieces: { version: 1, pieceBytes: PIECE_BYTES, maxFileBytes: maxFileFor(vaultId), legacy: one('SELECT COUNT(*) AS count FROM envelopes WHERE vaultId=? AND pieces=0 AND size>?', vaultId, LEGACY_ENVELOPE_BYTES).count } }); return;
       }
       if (method === 'GET' && route === '/changes') {
         const after = Number(url.searchParams.get('after') || 0);
@@ -2201,12 +2244,14 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   server.requestTimeout = 30000;
   server.headersTimeout = 10000;
   sweepSpaces();
+  sweepTrials();
   await new Promise((done, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', done); });
   // The privacy policy promises these are gone on time, so do not wait for the next sign-up to remove them.
   const sweep = setInterval(() => {
     run('DELETE FROM signup_addresses WHERE createdAt<=?', clock() - DAY);
     run('DELETE FROM signups WHERE expiresAt<=?', clock());
     sweepSpaces();
+    sweepTrials();
   }, sweepEvery);
   sweep.unref();
   let closing;
@@ -2239,7 +2284,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   const [adminOrigin, adminPasswordHash, adminTotpSecret] = ['ORIGIN', 'PASSWORD_HASH', 'TOTP_SECRET'].map((name) => process.env[`JOTDROP_CLOUD_ADMIN_${name}`] || undefined);
   if ((adminOrigin || adminPasswordHash || adminTotpSecret) && !(adminOrigin && adminPasswordHash && adminTotpSecret)) console.warn('Admin dashboard off: set JOTDROP_CLOUD_ADMIN_ORIGIN, JOTDROP_CLOUD_ADMIN_PASSWORD_HASH and JOTDROP_CLOUD_ADMIN_TOTP_SECRET together.');
   const reviewLogin = process.env.JOTDROP_CLOUD_REVIEW_EMAIL || process.env.JOTDROP_CLOUD_REVIEW_CODE ? { email: process.env.JOTDROP_CLOUD_REVIEW_EMAIL, code: process.env.JOTDROP_CLOUD_REVIEW_CODE } : undefined;
-  const app = await createCloudServer({ dataDir: process.env.JOTDROP_CLOUD_DATA_DIR, reviewLogin, adminOrigin, adminPasswordHash, adminTotpSecret, enrollmentToken, mailer, newsletter, serverKey, stripe, oauth: { google: provider('GOOGLE'), github: provider('GITHUB') }, maxHistoryEntries: Number(process.env.JOTDROP_CLOUD_MAX_HISTORY_ENTRIES ?? 100000), maxDeviceEntries: Number(process.env.JOTDROP_CLOUD_MAX_DEVICE_ENTRIES ?? 1000), maxPairingEntries: Number(process.env.JOTDROP_CLOUD_MAX_PAIRING_ENTRIES ?? 128), maxConcurrentRequests: Number(process.env.JOTDROP_CLOUD_MAX_CONCURRENT_REQUESTS ?? 16), signupsPerAddress: Number(process.env.JOTDROP_CLOUD_SIGNUPS_PER_ADDRESS ?? 5), turnstile, publicOrigin: process.env.JOTDROP_CLOUD_PUBLIC_ORIGIN, port: Number(process.env.JOTDROP_CLOUD_PORT || 8787), corsOrigins: (process.env.JOTDROP_CLOUD_CORS_ORIGINS || '').split(',').map((entry) => entry.trim()).filter(Boolean) });
+  const app = await createCloudServer({ dataDir: process.env.JOTDROP_CLOUD_DATA_DIR, reviewLogin, adminOrigin, adminPasswordHash, adminTotpSecret, enrollmentToken, mailer, newsletter, serverKey, stripe, oauth: { google: provider('GOOGLE'), github: provider('GITHUB') }, maxHistoryEntries: Number(process.env.JOTDROP_CLOUD_MAX_HISTORY_ENTRIES ?? 100000), maxDeviceEntries: Number(process.env.JOTDROP_CLOUD_MAX_DEVICE_ENTRIES ?? 1000), maxPairingEntries: Number(process.env.JOTDROP_CLOUD_MAX_PAIRING_ENTRIES ?? 128), maxConcurrentRequests: Number(process.env.JOTDROP_CLOUD_MAX_CONCURRENT_REQUESTS ?? 16), signupsPerAddress: Number(process.env.JOTDROP_CLOUD_SIGNUPS_PER_ADDRESS ?? 5), signupTrial: Number(process.env.JOTDROP_CLOUD_SIGNUP_TRIAL_DAYS ?? 14) * DAY, turnstile, publicOrigin: process.env.JOTDROP_CLOUD_PUBLIC_ORIGIN, port: Number(process.env.JOTDROP_CLOUD_PORT || 8787), corsOrigins: (process.env.JOTDROP_CLOUD_CORS_ORIGINS || '').split(',').map((entry) => entry.trim()).filter(Boolean) });
   console.log(`JotDrop Cloud listening on http://127.0.0.1:${app.port}.`);
   if (!process.env.JOTDROP_CLOUD_ENROLLMENT_TOKEN) console.log(`Single-use local enrollment token: ${enrollmentToken}`);
   for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { void app.close().then(() => process.exit(0)); });

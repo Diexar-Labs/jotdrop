@@ -41,7 +41,7 @@ internal class KnownSpace(val id: String, val key: String, val name: String, val
 
 internal object CloudSpacesFlow {
     // No link and no price: Google allows telling people where to upgrade, not sending them there.
-    private const val FREE_SHARES_ONE = "The free plan shares one note. JotDrop Plus shares more, and you can try it free for 14 days on our website."
+    private const val FREE_SHARES_ONE = "The free plan shares one note. JotDrop Plus shares more; see our website."
 
     /** From an invitation link, until it is used or put aside. */
     var invitation by mutableStateOf<String?>(null)

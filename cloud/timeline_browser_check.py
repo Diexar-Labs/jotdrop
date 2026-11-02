@@ -102,7 +102,7 @@ def check_timeline(browser, url, codes, database):
 
     # The offer appears right at that limit (Eric, 27 Oct).
     laptop.locator("#plus-nudge").filter(has_text="keeps every version").get_by_role("button", name="Try JotDrop Plus free for 14 days").click()
-    laptop.locator("#plan-status").filter(has_text="JotDrop Plus until").wait_for()
+    laptop.locator("#plan-status").filter(has_text="JotDrop Plus trial: 14 days left").wait_for()  # The trial counts down (2 Nov 2026).
     pick(laptop, 1)
     assert "30 days" not in laptop.locator("#timeline-moment").inner_text()
     assert "eggs" not in card_text(laptop, "notes/a.md") and "milk" in card_text(laptop, "notes/a.md")
@@ -166,7 +166,7 @@ def main():
         with socket.socket() as candidate:
             candidate.bind(("127.0.0.1", 0))
             port = candidate.getsockname()[1]
-        environment = dict(os.environ, JOTDROP_CLOUD_DATA_DIR=directory, JOTDROP_CLOUD_PORT=str(port), JOTDROP_CLOUD_SERVER_KEY=secrets.token_urlsafe(32))
+        environment = dict(os.environ, JOTDROP_CLOUD_SIGNUP_TRIAL_DAYS="0", JOTDROP_CLOUD_DATA_DIR=directory, JOTDROP_CLOUD_PORT=str(port), JOTDROP_CLOUD_SERVER_KEY=secrets.token_urlsafe(32))
         process = subprocess.Popen(["node", "cloud/server.mjs"], cwd=root, env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         codes = queue.Queue()
 

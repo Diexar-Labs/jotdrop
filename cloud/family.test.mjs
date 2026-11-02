@@ -26,7 +26,7 @@ async function fixture(t, { stripe = STRIPE } = {}) {
     sessions.push(new URLSearchParams(options.body));
     return new Response(JSON.stringify({ id: `cs_${sessions.length}`, url: `https://checkout.stripe.com/c/pay/cs_${sessions.length}` }), { status: 200 });
   };
-  const app = await createCloudServer({ dataDir, mailer: async (mail) => { mails.push(mail); }, serverKey: randomToken(), enrollmentToken: randomToken(), clock: () => now, freeDeviceLimit: 100, signupsPerAddress: 1000, stripe, fetcher });
+  const app = await createCloudServer({ dataDir, signupTrial: 0, mailer: async (mail) => { mails.push(mail); }, serverKey: randomToken(), enrollmentToken: randomToken(), clock: () => now, freeDeviceLimit: 100, signupsPerAddress: 1000, stripe, fetcher });
   t.after(async () => { await app.close(); await rm(dataDir, { recursive: true, force: true }); });
   const url = `http://127.0.0.1:${app.port}`;
   const seconds = () => Math.floor(now / 1000);

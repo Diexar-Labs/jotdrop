@@ -535,7 +535,7 @@ def main():
         with socket.socket() as candidate:
             candidate.bind(("127.0.0.1", 0))
             port = candidate.getsockname()[1]
-        environment = dict(os.environ, JOTDROP_CLOUD_DATA_DIR=directory, JOTDROP_CLOUD_PORT=str(port), JOTDROP_CLOUD_SERVER_KEY=secrets.token_urlsafe(32))
+        environment = dict(os.environ, JOTDROP_CLOUD_SIGNUP_TRIAL_DAYS="0", JOTDROP_CLOUD_DATA_DIR=directory, JOTDROP_CLOUD_PORT=str(port), JOTDROP_CLOUD_SERVER_KEY=secrets.token_urlsafe(32))
         process = subprocess.Popen(["node", "cloud/server.mjs"], cwd=root, env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         codes = queue.Queue()
 

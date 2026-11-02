@@ -35,7 +35,7 @@ function totp(secret, time) {
 async function fixture(t, options = {}) {
   const dataDir = await mkdtemp(join(tmpdir(), 'jotdrop-admin-test-'));
   let now = Date.parse('2026-10-26T12:00:00Z'), app;
-  const start = async () => { app = await createCloudServer({ dataDir, clock: () => now, publicOrigin: APP, adminOrigin: ADMIN, adminPasswordHash: PASSWORD_HASH, adminTotpSecret: SECRET, ...options }); };
+  const start = async () => { app = await createCloudServer({ dataDir, signupTrial: 0, clock: () => now, publicOrigin: APP, adminOrigin: ADMIN, adminPasswordHash: PASSWORD_HASH, adminTotpSecret: SECRET, ...options }); };
   await start();
   t.after(async () => { await app.close(); await rm(dataDir, { recursive: true, force: true }); });
   // State-changing requests carry the dashboard's Origin unless a test says otherwise.

@@ -20,7 +20,7 @@ async function fixture(t, options = {}) {
   const mails = [];
   let now = Date.parse('2026-10-22T08:00:00Z');
   // Most tests sign in on several devices; plans.test.mjs covers the free device limit.
-  const app = await createCloudServer({ dataDir, mailer: async (mail) => { mails.push(mail); }, serverKey: randomToken(), clock: () => now, freeDeviceLimit: 100, ...options });
+  const app = await createCloudServer({ dataDir, signupTrial: 0, mailer: async (mail) => { mails.push(mail); }, serverKey: randomToken(), clock: () => now, freeDeviceLimit: 100, ...options });
   t.after(async () => { await app.close(); await rm(dataDir, { recursive: true, force: true }); });
   const url = `http://127.0.0.1:${app.port}`;
   const api = async (path, body, headers = {}) => {

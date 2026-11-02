@@ -5,7 +5,10 @@ import { accountInfo, approveDevice, changePassword, deleteAccount, disableTotp,
 
 type Device = { id: string; name: string; revoked?: boolean; lastSeenAt?: string };
 type Approval = { id: string; words: string[] };
-type Plan = { name: string; plusUntil?: string; deviceLimit: number; historyDays: number; subscribed?: boolean };
+type Plan = { name: string; plusUntil?: string; trialEnds?: string | null; deviceLimit: number; historyDays: number; subscribed?: boolean };
+
+// Every new account starts with 14 days of Plus; the plan line counts down like the website.
+const trialDays = (p: Plan) => p.trialEnds ? Math.max(1, Math.ceil((Date.parse(p.trialEnds) - Date.now()) / 86400000)) : 0;
 
 // A wrong password or code is also a 401; only "Device access denied" means this device lost access (as on the website).
 const errorText = (error: unknown) => (error as { status?: number }).status === 401 && (!(error instanceof Error) || !error.message || error.message === "Device access denied")
@@ -31,10 +34,12 @@ export function renderCloudAccount(app: App, el: HTMLElement, cloud: CloudContro
       if (stopped) return;
       plan.empty();
       const p = status.plan;
-      const name = p.name === "plus" && p.plusUntil ? `JotDrop Plus until ${new Date(p.plusUntil).toLocaleDateString()}` : `Free plan: ${p.deviceLimit} devices, ${p.historyDays} days of history`;
+      const days = trialDays(p);
+      const name = days && p.trialEnds ? `JotDrop Plus trial: ${days === 1 ? "1 day" : `${days} days`} left, until ${new Date(p.trialEnds).toLocaleDateString()}. After that you are on Free and nothing is deleted`
+        : p.name === "plus" && p.plusUntil ? `JotDrop Plus until ${new Date(p.plusUntil).toLocaleDateString()}` : `Free plan: ${p.deviceLimit} devices, ${p.historyDays} days of history`;
       const origin = client.credentials.url;
       new Setting(plan).setName("Plan").setDesc(`${name}. ${(status.usedBytes / 1048576).toFixed(1)} of ${(status.quotaBytes / 1048576).toFixed(0)} MiB encrypted storage used.`)
-        .addButton((button) => button.setButtonText(p.name === "plus" ? "Open the website" : "JotDrop Plus on the website").onClick(() => window.open(origin, "_blank")));
+        .addButton((button) => button.setButtonText(p.name === "plus" && !days ? "Open the website" : "JotDrop Plus on the website").onClick(() => window.open(origin, "_blank")));
       // Like the website: findable, but out of the way.
       if (p.subscribed) {
         const details = plan.createEl("details", { cls: "jotdrop-cloud-subscription" });

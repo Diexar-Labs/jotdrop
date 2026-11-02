@@ -183,7 +183,7 @@ def main():
         with socket.socket() as candidate:
             candidate.bind(("127.0.0.1", 0))
             port = candidate.getsockname()[1]
-        environment = dict(os.environ, JOTDROP_CLOUD_DATA_DIR=directory, JOTDROP_CLOUD_PORT=str(port), JOTDROP_CLOUD_SERVER_KEY=secrets.token_urlsafe(32),
+        environment = dict(os.environ, JOTDROP_CLOUD_SIGNUP_TRIAL_DAYS="0", JOTDROP_CLOUD_DATA_DIR=directory, JOTDROP_CLOUD_PORT=str(port), JOTDROP_CLOUD_SERVER_KEY=secrets.token_urlsafe(32),
                            JOTDROP_CLOUD_STRIPE_SECRET_KEY="sk_test_synthetic", JOTDROP_CLOUD_STRIPE_WEBHOOK_SECRET="whsec_synthetic", JOTDROP_CLOUD_STRIPE_PRICE_MONTH="price_month", JOTDROP_CLOUD_STRIPE_PRICE_YEAR="price_year",
                            JOTDROP_CLOUD_STRIPE_PRICE_FOUNDER_YEAR="price_founder", JOTDROP_CLOUD_STRIPE_PRICE_FAMILY_MONTH="price_family_month", JOTDROP_CLOUD_STRIPE_PRICE_FAMILY_YEAR="price_family_year",
                            JOTDROP_CLOUD_STRIPE_PRICE_FAMILY_FOUNDER_YEAR="price_family_founder")

@@ -145,6 +145,8 @@ private fun CloudScreen(welcome: Boolean, resolve: String?, onBack: () -> Unit, 
     var notice by remember { mutableStateOf<String?>(null) }
     // The account this phone is in, at the top of the screen like on the website and in Obsidian.
     var accountEmail by remember { mutableStateOf<String?>(null) }
+    // When the 14 days of Plus every new account starts with end; null outside a trial.
+    var trialEnds by remember { mutableStateOf<java.time.Instant?>(null) }
 
     suspend fun refresh() {
         status = withContext(Dispatchers.IO) { CloudSyncManager.status(context) }
@@ -224,6 +226,11 @@ private fun CloudScreen(welcome: Boolean, resolve: String?, onBack: () -> Unit, 
     LaunchedEffect(Unit) { CloudSyncManager.changes.collect { runCatching { refresh() } } }
     LaunchedEffect(status?.connected, status?.vaultId) {
         accountEmail = if (status?.connected != true) null else try { val client = cloud(); withContext(Dispatchers.IO) { CloudAccount.accountInfo(client)?.email } }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { null }
+    }
+    LaunchedEffect(status?.connected, status?.vaultId, status?.lastSynced) {
+        trialEnds = if (status?.connected != true) null else try { val client = cloud(); withContext(Dispatchers.IO) { trialEndsOf(client.call("/status")) } }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { null }
     }
@@ -426,6 +433,11 @@ private fun CloudScreen(welcome: Boolean, resolve: String?, onBack: () -> Unit, 
                                     }
                                 }
                             }
+                        }
+                        trialEnds?.let { ends ->
+                            val days = maxOf(1L, kotlin.math.ceil((ends.toEpochMilli() - System.currentTimeMillis()) / 86_400_000.0).toLong())
+                            val date = java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM).format(java.util.Date(ends.toEpochMilli()))
+                            Text("JotDrop Plus trial: ${if (days == 1L) "1 day" else "$days days"} left, until $date. After that you are on Free and nothing is deleted.", style = MaterialTheme.typography.bodyMedium)
                         }
                         // Google Play allows naming the website, without a link or button, when the app sells nothing itself.
                         Text("JotDrop Plus adds more storage, devices and history. Upgrade on our website.", style = MaterialTheme.typography.bodySmall)
@@ -636,3 +648,8 @@ private fun CloudCard(icon: ImageVector, title: String, content: @Composable Col
         }
     }
 }
+
+/** The end of a running sign-up trial from `/status`, or null: the server only sends `trialEnds` while the trial is what gives Plus. */
+internal fun trialEndsOf(status: JSONObject): java.time.Instant? =
+    status.optJSONObject("plan")?.takeUnless { it.isNull("trialEnds") }?.optString("trialEnds")?.takeIf { it.isNotBlank() }
+        ?.let { runCatching { java.time.Instant.parse(it) }.getOrNull() }

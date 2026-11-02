@@ -112,7 +112,7 @@ function vault() {
 test('the plugin signs in with an account, syncs the real JotDrop folders both ways and refuses a second sync system', async (t) => {
   const dataDir = await mkdtemp(join(tmpdir(), 'jotdrop-plugin-test-'));
   const mails = [];
-  const app = await createCloudServer({ dataDir, enrollmentToken: randomToken(), mailer: async (mail) => { mails.push(mail); }, serverKey: randomToken(), freeDeviceLimit: 100, maxFileBytes: 6 * 1024 * 1024 });
+  const app = await createCloudServer({ dataDir, signupTrial: 0, enrollmentToken: randomToken(), mailer: async (mail) => { mails.push(mail); }, serverKey: randomToken(), freeDeviceLimit: 100, maxFileBytes: 6 * 1024 * 1024 });
   t.after(async () => { await app.close(); await rm(dataDir, { recursive: true, force: true }); });
   const url = `http://127.0.0.1:${app.port}`;
 
@@ -224,7 +224,7 @@ test('the plugin signs in with an account, syncs the real JotDrop folders both w
 test('sync now during a sync waits for it and syncs again, so it sees what changed meanwhile', async (t) => {
   const dataDir = await mkdtemp(join(tmpdir(), 'jotdrop-plugin-test-'));
   const mails = [];
-  const app = await createCloudServer({ dataDir, enrollmentToken: randomToken(), mailer: async (mail) => { mails.push(mail); }, serverKey: randomToken(), freeDeviceLimit: 100 });
+  const app = await createCloudServer({ dataDir, signupTrial: 0, enrollmentToken: randomToken(), mailer: async (mail) => { mails.push(mail); }, serverKey: randomToken(), freeDeviceLimit: 100 });
   t.after(async () => { globalThis.afterRequest = undefined; await app.close(); await rm(dataDir, { recursive: true, force: true }); });
   const url = `http://127.0.0.1:${app.port}`;
 
@@ -256,7 +256,7 @@ test('sync now during a sync waits for it and syncs again, so it sees what chang
 test('a sync that only sends changes up leaves the cards alone; one that brings something in redraws them', async (t) => {
   const dataDir = await mkdtemp(join(tmpdir(), 'jotdrop-plugin-test-'));
   const mails = [];
-  const app = await createCloudServer({ dataDir, enrollmentToken: randomToken(), mailer: async (mail) => { mails.push(mail); }, serverKey: randomToken(), freeDeviceLimit: 100 });
+  const app = await createCloudServer({ dataDir, signupTrial: 0, enrollmentToken: randomToken(), mailer: async (mail) => { mails.push(mail); }, serverKey: randomToken(), freeDeviceLimit: 100 });
   t.after(async () => { await app.close(); await rm(dataDir, { recursive: true, force: true }); });
   const url = `http://127.0.0.1:${app.port}`;
 
@@ -299,7 +299,7 @@ test('shared groups: a group syncs in its own folder, a bad file or being remove
   const dataDir = await mkdtemp(join(tmpdir(), 'jotdrop-plugin-spaces-'));
   const mails = [];
   let now = Date.parse('2026-11-02T08:00:00Z');
-  const app = await createCloudServer({ dataDir, enrollmentToken: randomToken(), mailer: async (mail) => { mails.push(mail); }, serverKey: randomToken(), clock: () => now, freeDeviceLimit: 100, signupsPerAddress: 1000 });
+  const app = await createCloudServer({ dataDir, signupTrial: 0, enrollmentToken: randomToken(), mailer: async (mail) => { mails.push(mail); }, serverKey: randomToken(), clock: () => now, freeDeviceLimit: 100, signupsPerAddress: 1000 });
   t.after(async () => { await app.close(); await rm(dataDir, { recursive: true, force: true }); });
   const url = `http://127.0.0.1:${app.port}`;
   const account = async (email) => {
@@ -474,7 +474,7 @@ async function groupSetup(t) {
   const dataDir = await mkdtemp(join(tmpdir(), 'jotdrop-plugin-groups-'));
   const mails = [];
   let now = Date.parse('2026-11-02T08:00:00Z');
-  const app = await createCloudServer({ dataDir, enrollmentToken: randomToken(), mailer: async (mail) => { mails.push(mail); }, serverKey: randomToken(), clock: () => now, freeDeviceLimit: 100, signupsPerAddress: 1000 });
+  const app = await createCloudServer({ dataDir, signupTrial: 0, enrollmentToken: randomToken(), mailer: async (mail) => { mails.push(mail); }, serverKey: randomToken(), clock: () => now, freeDeviceLimit: 100, signupsPerAddress: 1000 });
   t.after(async () => { await app.close(); await rm(dataDir, { recursive: true, force: true }); });
   const url = `http://127.0.0.1:${app.port}`;
   const account = async (email) => {
@@ -601,7 +601,7 @@ test('the plugin signs in with Google through obsidian://jotdrop-cloud, and the 
     if (address === 'https://openidconnect.googleapis.com/v1/userinfo') return json(people[/token-(\w+)/.exec(init.headers.Authorization)[1]]);
     throw new Error(`Unexpected request ${address}`);
   };
-  const app = await createCloudServer({ dataDir, mailer: async () => {}, serverKey: randomToken(), freeDeviceLimit: 100, fetcher, oauth: { google: { clientId: 'google-id', clientSecret: 'google-secret' } } });
+  const app = await createCloudServer({ dataDir, signupTrial: 0, mailer: async () => {}, serverKey: randomToken(), freeDeviceLimit: 100, fetcher, oauth: { google: { clientId: 'google-id', clientSecret: 'google-secret' } } });
   t.after(async () => { await app.close(); await rm(dataDir, { recursive: true, force: true }); });
   const url = `http://127.0.0.1:${app.port}`;
 
@@ -641,7 +641,7 @@ test('the plugin settles a conflict either way and goes back to a moment with th
   const dataDir = await mkdtemp(join(tmpdir(), 'jotdrop-plugin-test-'));
   const mails = [];
   let now = Date.parse('2026-10-24T10:00:00Z');
-  const app = await createCloudServer({ dataDir, enrollmentToken: randomToken(), mailer: async (mail) => { mails.push(mail); }, serverKey: randomToken(), freeDeviceLimit: 100, clock: () => now });
+  const app = await createCloudServer({ dataDir, signupTrial: 0, enrollmentToken: randomToken(), mailer: async (mail) => { mails.push(mail); }, serverKey: randomToken(), freeDeviceLimit: 100, clock: () => now });
   t.after(async () => { await app.close(); await rm(dataDir, { recursive: true, force: true }); });
   const url = `http://127.0.0.1:${app.port}`;
   const minute = () => { now += 60_000; };

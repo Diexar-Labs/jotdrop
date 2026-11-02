@@ -170,7 +170,7 @@ def check_plans(browser, url, codes, database):
     tablet_nudge = tablet.locator("#plus-nudge")
     tablet_nudge.filter(has_text="no device limit").wait_for()
     tablet_nudge.get_by_role("button", name=TRIAL).click()
-    tablet.locator("#plan-status").filter(has_text="JotDrop Plus until").wait_for()
+    tablet.locator("#plan-status").filter(has_text="JotDrop Plus trial: 14 days left").wait_for()  # The trial counts down (2 Nov 2026).
     assert tablet_nudge.is_hidden() and tablet.get_by_role("button", name=TRIAL).count() == 0
     rows = history(tablet)
     assert rows.count() == 3 and tablet.locator("#history-list .history-row.locked").count() == 0
@@ -211,7 +211,7 @@ def main():
         with socket.socket() as candidate:
             candidate.bind(("127.0.0.1", 0))
             port = candidate.getsockname()[1]
-        environment = dict(os.environ, JOTDROP_CLOUD_DATA_DIR=directory, JOTDROP_CLOUD_PORT=str(port), JOTDROP_CLOUD_SERVER_KEY=secrets.token_urlsafe(32),
+        environment = dict(os.environ, JOTDROP_CLOUD_SIGNUP_TRIAL_DAYS="0", JOTDROP_CLOUD_DATA_DIR=directory, JOTDROP_CLOUD_PORT=str(port), JOTDROP_CLOUD_SERVER_KEY=secrets.token_urlsafe(32),
                            JOTDROP_CLOUD_STRIPE_SECRET_KEY="sk_test_synthetic", JOTDROP_CLOUD_STRIPE_WEBHOOK_SECRET="whsec_synthetic", JOTDROP_CLOUD_STRIPE_PRICE_MONTH="price_month", JOTDROP_CLOUD_STRIPE_PRICE_YEAR="price_year", JOTDROP_CLOUD_STRIPE_PRICE_FOUNDER_YEAR="price_founder")
         process = subprocess.Popen(["node", "cloud/server.mjs"], cwd=root, env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         codes = queue.Queue()

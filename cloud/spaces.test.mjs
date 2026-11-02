@@ -19,7 +19,7 @@ async function fixture(t, options = {}) {
   const dataDir = await mkdtemp(join(tmpdir(), 'jotdrop-spaces-test-'));
   const mails = [];
   let now = Date.parse('2026-11-02T08:00:00Z');
-  const settings = { dataDir, mailer: async (mail) => { mails.push(mail); }, serverKey: randomToken(), enrollmentToken: randomToken(), clock: () => now, freeDeviceLimit: 100, signupsPerAddress: 1000, sweepEvery: 10, ...options };
+  const settings = { dataDir, signupTrial: 0, mailer: async (mail) => { mails.push(mail); }, serverKey: randomToken(), enrollmentToken: randomToken(), clock: () => now, freeDeviceLimit: 100, signupsPerAddress: 1000, sweepEvery: 10, ...options };
   const app = await createCloudServer(settings);
   t.after(async () => { await app.close(); await rm(dataDir, { recursive: true, force: true }); });
   const url = () => `http://127.0.0.1:${app.port}`;

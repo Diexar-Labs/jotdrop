@@ -19,8 +19,22 @@ export function signRequest({ method, url, headers, body, service, region, acces
 
 const footer = '\n\nJotDrop, private notes that sync end to end encrypted.';
 
+// The trial mails are service notices about the account's own trial: worded as information, not promotion,
+// and at most two per account (jurist, 2 Nov 2026; LSSI art. 21 covers promotional mail).
+// Opens the Plus choice in the web app, after signing in (`takePlanChoice` in web/app.js).
+const PLUS_LINK = 'https://app.jotdrop.net/?plan=plus';
+// What stays above the free plan once the trial ends; empty when everything fits in Free.
+function aboveFreeLines(trial) {
+  const lines = [];
+  if (trial.usedMb) lines.push(`- You use ${trial.usedMb} MB, and Free has ${trial.quotaMb} MB. Everything stays and you can still read it, but new notes and photos only sync once there is room again.`);
+  if (trial.devices) lines.push(`- ${trial.devices} devices are signed in, and Free has ${trial.deviceLimit}. They all keep working. To add a new one, sign out one of these first.`);
+  if (trial.groups) lines.push(`- You share ${trial.groups} notes or lists, and Free shares one. They all keep working; only a new one needs Plus.`);
+  if (trial.links) lines.push(`- ${trial.links === 1 ? '1 note link is' : `${trial.links} note links are`} older than 7 days. On Free a link lasts 7 days, so ${trial.links === 1 ? 'it is' : 'they are'} paused. With Plus ${trial.links === 1 ? 'it works' : 'they work'} again.`);
+  return lines;
+}
+
 /** The subject and plain text of each mail the server sends. */
-export function mailText({ kind, code, provider, report }) {
+export function mailText({ kind, code, provider, report, trial }) {
   const texts = {
     verify: [`Your JotDrop code: ${code}`, `Enter this code to finish creating your JotDrop account:\n\n${code}\n\nThe code works for 15 minutes. If you did not sign up, you can ignore this email.`],
     login: [`Your JotDrop sign-in code: ${code}`, `Enter this code to sign in to JotDrop:\n\n${code}\n\nThe code works for 15 minutes. If you did not try to sign in, change your password.`],
@@ -33,6 +47,16 @@ export function mailText({ kind, code, provider, report }) {
     'account-closed': ['Your JotDrop account was closed', 'We closed your JotDrop account because it broke our terms of use. Your cloud and devices were removed from JotDrop, and a running JotDrop Plus subscription was cancelled. Notes on your own devices were not touched.\n\nIf you think this is wrong, reply to hello@jotdrop.net.'],
     'recovery-changed': ['Your JotDrop recovery code was changed', 'A new recovery code was made for your JotDrop cloud. The old code no longer works.\n\nIf this was you, keep the new code in a safe place. If this was not you, change your password and make a new recovery code.'],
   };
+  if (kind === 'trial-ending') {
+    const lines = aboveFreeLines(trial), day = new Date(trial.endsAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', timeZone: 'UTC' });
+    const now = lines.length ? `This is what you use now that goes beyond Free:\n${lines.join('\n')}` : 'Everything you use now also fits in Free: 250 MB, 2 devices, one shared note, one note link and 30 days of history.';
+    texts[kind] = ['Your JotDrop Plus trial ends in 3 days', `Your 14 days of JotDrop Plus end on ${day}. After that your cloud moves to the free plan. Nothing is deleted, and nothing is charged.\n\n${now}\n\nIf you want Plus after that, you can choose it at ${PLUS_LINK}. If you do nothing, you stay on Free.\n\nYou get this email because every new JotDrop account starts with a Plus trial. We send two emails about it: this one, and one on the day it ends.`];
+  }
+  if (kind === 'trial-ended') {
+    const lines = aboveFreeLines(trial);
+    const now = lines.length ? `A few things go beyond Free:\n${lines.join('\n')}` : 'Everything you have fits in Free, so nothing changes for you.';
+    texts[kind] = ['Your JotDrop Plus trial has ended', `Your cloud is on the free plan now. Your notes, photos and history are all still there.\n\n${now}\n\nIf you want Plus later, you can choose it at ${PLUS_LINK}.\n\nThis is the last email about your trial.`];
+  }
   // Only for us. What the writer typed stays plain text here; mailHtml escapes it.
   if (kind === 'space-report') texts[kind] = [`JotDrop report: ${report.reason}`, `Someone reported something in a shared group.\n\nReason: ${report.reason}\nFrom: ${report.from}\nAbout: ${report.about ?? 'the group'}\nGroup: ${report.spaceId}\n\nTheir words, each line marked:\n${(report.details || 'They wrote nothing more.').split('\n').map((line) => `> ${line}`).join('\n')}\n\nThe server cannot read the notes in this group. Ask the writer if you need to see them.`];
   if (kind === 'link-report') texts[kind] = [`JotDrop link report: ${report.reason}`, `Someone reported a shared note link. We cannot read the note: open the link only if the report includes it.\n\nReason: ${report.reason}\nOwner: ${report.owner}\nLink ID: ${report.linkId}\n\nWhat they wrote:\n${report.details.split('\n').map((text) => `> ${text}`).join('\n')}`];
@@ -46,8 +70,8 @@ const FONT = "'Instrument Sans', -apple-system, 'Segoe UI', Roboto, Helvetica, A
 
 /** The same mail dressed in the house style "paper and ink" (Eric, 27 Oct): the code large in an amber box, easy to copy.
  * Tables and inline styles only, since mail apps ignore style sheets; the plain text goes along for apps that show no HTML. */
-export function mailHtml({ kind, code, provider, report }) {
-  const { subject, body } = mailText({ kind, code, provider, report });
+export function mailHtml({ kind, code, provider, report, trial }) {
+  const { subject, body } = mailText({ kind, code, provider, report, trial });
   const paragraphs = body.split('\n\n');
   const closing = paragraphs.pop();
   const content = paragraphs.map((paragraph) => paragraph === code
@@ -88,9 +112,9 @@ export function createBrevoList({ apiKey, listId, fetcher = globalThis.fetch }) 
 export function createSesMailer({ region, accessKeyId, secretAccessKey, from, fetcher = globalThis.fetch, clock = Date.now }) {
   if (![region, accessKeyId, secretAccessKey, from].every((value) => typeof value === 'string' && value.length > 0) || !/^[a-z]{2}-[a-z]+-\d$/.test(region)) throw new Error('Provide the SES region, access key, secret key and sender address.');
   const url = `https://email.${region}.amazonaws.com/v2/email/outbound-emails`;
-  return async ({ to, kind, code, provider, report }) => {
-    const { subject, body: text } = mailText({ kind, code, provider, report });
-    const html = mailHtml({ kind, code, provider, report });
+  return async ({ to, kind, code, provider, report, trial }) => {
+    const { subject, body: text } = mailText({ kind, code, provider, report, trial });
+    const html = mailHtml({ kind, code, provider, report, trial });
     const body = JSON.stringify({ FromEmailAddress: from, Destination: { ToAddresses: [to] }, Content: { Simple: { Subject: { Data: subject, Charset: 'UTF-8' }, Body: { Text: { Data: text, Charset: 'UTF-8' }, Html: { Data: html, Charset: 'UTF-8' } } } } });
     const headers = signRequest({ method: 'POST', url, headers: { 'content-type': 'application/json', 'x-amz-content-sha256': sha256(body) }, body, service: 'ses', region, accessKeyId, secretAccessKey, date: new Date(clock()) });
     const response = await fetcher(url, { method: 'POST', headers, body, signal: AbortSignal.timeout(10000) });
