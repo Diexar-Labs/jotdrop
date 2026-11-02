@@ -15,6 +15,7 @@ export class LightboxModal extends Modal {
   private imageResourcePath: string;
   private attachmentFile: TFile | null;
   private vaultPath: string | null;
+  private editDrawing: (() => void) | null;
 
   constructor(
     app: App,
@@ -23,6 +24,7 @@ export class LightboxModal extends Modal {
     imageResourcePath: string,
     attachmentFile: TFile | null,
     vaultPath: string | null = null,
+    editDrawing: (() => void) | null = null,
   ) {
     super(app);
     this.plugin = plugin;
@@ -30,6 +32,7 @@ export class LightboxModal extends Modal {
     this.imageResourcePath = imageResourcePath;
     this.attachmentFile = attachmentFile;
     this.vaultPath = vaultPath ?? attachmentFile?.path ?? null;
+    this.editDrawing = editDrawing;
   }
 
   onOpen(): void {
@@ -50,6 +53,13 @@ export class LightboxModal extends Modal {
     });
 
     const actions = root.createDiv({ cls: "jotdrop-lightbox-actions" });
+
+    // A JotDrop drawing (its lines travel inside the PNG) opens again to draw on, like on Android.
+    if (this.editDrawing) {
+      const drawBtn = actions.createEl("button", { cls: "jotdrop-lightbox-edit-drawing", text: t("action_edit_drawing") });
+      const edit = this.editDrawing;
+      drawBtn.addEventListener("click", () => { this.close(); edit(); });
+    }
 
     const editBtn = actions.createEl("button", {
       text: t("action_edit_note"),

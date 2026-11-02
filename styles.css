@@ -1933,3 +1933,24 @@ button.jotdrop-provider-github:not(.clickable-icon):hover { background: #32383f;
 .jotdrop-diff-line.added { background: rgba(var(--color-yellow-rgb), 0.25); font-weight: 600; }
 .jotdrop-diff-line.removed { text-decoration: line-through; color: var(--text-muted); }
 .jotdrop-diff-line.gap { color: var(--text-muted); font-family: inherit; font-style: italic; }
+
+/* Drawing (shared editor in cloud/shared/drawing-editor.mjs): the paper is always white, like the saved picture. */
+.jotdrop-drawing-modal { width: min(92vw, 760px); }
+.jotdrop-drawing-modal .modal-close-button { z-index: 1; }
+.jd-draw-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-right: 28px; }
+.jd-draw-head h2 { margin: 0; }
+.jd-draw-head-actions { display: flex; gap: 8px; }
+.jd-draw-paper { display: flex; justify-content: center; margin: 10px 0; }
+.jd-draw-paper canvas { display: block; width: min(100%, calc(min(55vh, 640px) * 0.75)); height: auto; background: #fff; border: 1px solid var(--background-modifier-border); border-radius: 8px; touch-action: none; cursor: crosshair; }
+.jd-draw.is-erasing canvas { cursor: cell; }
+.jd-draw-row, .jd-draw-row-sizes { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.jd-draw-row { margin-top: 8px; }
+.jd-draw-row-sizes { margin-right: 10px; }
+.jd-draw-row button { display: inline-flex; align-items: center; gap: 6px; }
+.jd-draw-row button[aria-checked="true"], .jd-draw-row button[aria-pressed="true"] { background: var(--background-modifier-hover); box-shadow: 0 0 0 2px var(--interactive-accent) inset; }
+.jd-draw-check { display: none; font-weight: 700; }
+.jd-draw-row button[aria-checked="true"] > .jd-draw-check, .jd-draw-row button[aria-pressed="true"] > .jd-draw-check { display: inline; }
+.jd-draw-dot { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 50%; background: var(--pen); border: 1px solid var(--background-modifier-border); }
+.jd-draw-dot .jd-draw-check { color: #fff; font-size: 11px; }
+.jd-draw-pen[aria-checked="true"] .jd-draw-dot .jd-draw-check { display: inline; }
+.jd-draw-message { color: var(--text-muted); font-size: var(--font-smaller); min-height: 1.4em; margin: 8px 0 0; }

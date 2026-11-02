@@ -2,6 +2,7 @@ import { App, ItemView, Menu, Modal, Notice, TFile, WorkspaceLeaf, normalizePath
 import type JotDropPlugin from "./main";
 import { QuickCaptureModal, createNoteInFolder } from "./capture";
 import { AttachmentPreviewHint, EditNoteModal } from "./edit";
+import { DrawingModal, saveDrawingFile } from "./drawing";
 import { LOGO_ICON } from "./logo";
 import { FolderPickerModal } from "./folderPicker";
 import { TagPickerModal, TagItem } from "./tagPicker";
@@ -499,6 +500,16 @@ export class JotDropView extends ItemView {
       menu.showAtMouseEvent(e);
     });
 
+    // Like the Android main screen: draw with a finger or a pen; drawing is for everyone (Eric, 2 Nov).
+    const drawBtn = this.normalToolbarEl.createEl("button", {
+      cls: "jotdrop-mic-btn jotdrop-draw-btn",
+      attr: { "aria-label": t("action_new_drawing") },
+    });
+    setIcon(drawBtn, "pencil");
+    drawBtn.addEventListener("click", () => {
+      new DrawingModal(this.app, null, (png) => this.saveDrawingNote(png)).open();
+    });
+
     this.searchEl = this.normalToolbarEl.createEl("input", {
       cls: "jotdrop-search",
       attr: { type: "search", placeholder: t("search_placeholder") },
@@ -892,6 +903,17 @@ export class JotDropView extends ItemView {
     } catch (err) {
       new Notice(t("notice_save_failed", err instanceof Error ? err.message : String(err)));
     }
+  }
+
+  /** Same note as Android's New drawing: `# Drawing` and the picture, as a new card. */
+  private async saveDrawingNote(png: Uint8Array): Promise<void> {
+    const basename = await saveDrawingFile(this.app, this.plugin, png);
+    const notesFolder = this.plugin.settings.notesFolder;
+    if (!(await this.app.vault.adapter.exists(notesFolder))) await this.app.vault.adapter.mkdir(notesFolder);
+    const title = t("drawing_note_title");
+    await this.app.vault.create(normalizePath(`${notesFolder}/${formatStamp(new Date())} ${title}.md`), `# ${title}\n\n![[${basename}]]\n`);
+    new Notice(t("drawing_saved"));
+    void this.render();
   }
 
   private confirmBulkArchive(): void {

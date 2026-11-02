@@ -2,6 +2,7 @@ import { App, Modal, Notice, SuggestModal, TFile, setIcon } from "obsidian";
 import type JotDropPlugin from "./main";
 import { toggleOrInsertChecklistOnTextArea } from "./capture";
 import { LightboxModal } from "./lightbox";
+import { DrawingModal, isDrawingName, readDrawingAt, saveDrawingFile } from "./drawing";
 import { voidAsync } from "./asyncUtil";
 import { RepeatEditor } from "./repeat";
 import { MarkdownHelpModal } from "./markdownHelp";
@@ -380,6 +381,15 @@ export class EditNoteModal extends Modal {
       this.state.body = this.bodyEl.value;
     });
 
+    // Like "Drawing" in the photo menu of the Android editor: a new drawing goes into this note.
+    const drawBtn = pinWrap.createEl("button", {
+      cls: "jotdrop-edit-linkbtn jotdrop-edit-drawbtn",
+      text: t("action_add_drawing"),
+    });
+    drawBtn.addEventListener("click", () => {
+      new DrawingModal(this.app, null, (png) => this.addDrawing(png)).open();
+    });
+
     const helpBtn = pinWrap.createEl("button", {
       cls: "jotdrop-edit-linkbtn",
       text: t("md_help_button"),
@@ -601,6 +611,9 @@ export class EditNoteModal extends Modal {
       }
     });
     wrap.addEventListener("click", () => {
+      const editDrawing = isDrawingName(basename)
+        ? () => void this.editDrawing(basename, current.vaultPath)
+        : null;
       new LightboxModal(
         this.app,
         this.plugin,
@@ -608,8 +621,30 @@ export class EditNoteModal extends Modal {
         current.resourcePath,
         current.file,
         current.vaultPath,
+        editDrawing,
       ).open();
     });
+  }
+
+  /** Opens the lines of an existing drawing to draw on; saving makes a new file that takes its place in this note. */
+  private async editDrawing(basename: string, vaultPath: string): Promise<void> {
+    const drawing = await readDrawingAt(this.app, vaultPath);
+    if (!drawing) { new Notice(t("drawing_not_editable")); return; }
+    new DrawingModal(this.app, drawing, (png) => this.addDrawing(png, basename)).open();
+  }
+
+  /**
+   * Saves a drawing as a new file in the attachments folder and puts its embed in this note, saved right away.
+   * With [replaces] the embed of that earlier drawing is pointed at the new file; the earlier picture stays.
+   */
+  private async addDrawing(png: Uint8Array, replaces?: string): Promise<void> {
+    const basename = await saveDrawingFile(this.app, this.plugin, png);
+    const index = replaces ? this.state.embedLines.findIndex((line) => extractEmbedBasename(line) === replaces) : -1;
+    if (index >= 0) this.state.embedLines[index] = `![[${basename}]]`;
+    else this.state.embedLines.push(`![[${basename}]]`);
+    if (!(await this.persist())) throw new Error(t("notice_save_failed", basename));
+    this.attachmentHint = null;
+    this.buildLayout();
   }
 
   private resolveAttachment(
