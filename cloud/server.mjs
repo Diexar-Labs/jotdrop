@@ -9,10 +9,14 @@ import { promisify } from 'node:util';
 import qrcode from 'qrcode-generator';
 import { createBrevoList, createSesMailer } from './mailer.mjs';
 import { EARLY_FEATURES, MAX_VOTES, ROADMAP } from './roadmap.mjs';
+import { MAILS_PER_DAY, MAILS_PER_HOUR, MAX_MAIL_BYTES, MAX_PENDING_BYTES, MAX_PENDING_ITEMS } from './shared/mail.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const MAX_BODY = 12 * 1024 * 1024;
 const MAX_METADATA_BODY = 16 * 1024;
+// A sealed 20 MB mail arrives from the mailin process as base64 with some envelope overhead.
+const MAX_MAILIN_BODY = 32 * 1024 * 1024;
+const MAX_MAIL_PARTS = 20, MAX_MAIL_SENDERS = 200;
 const REPORT_ADDRESS = 'hello@jotdrop.net';
 const REPORT_REASONS = ['abuse', 'illegal', 'spam', 'other'];
 // A note anyone with its link can read. Text only: the key stays in the link, so nobody here can read or moderate it.
@@ -207,7 +211,7 @@ async function body(req, maximum = MAX_BODY) {
 }
 
 /** Loopback-only server behind a trusted HTTPS proxy. Accounts need a mailer; no billing or provider credentials. `quotaBytes` and `freeDeviceLimit` are the free plan's limits. */
-export async function createCloudServer({ dataDir, enrollmentToken, mailer, newsletter, serverKey, stripe, reviewLogin, oauth = {}, fetcher = globalThis.fetch, quotaBytes = 250 * 1024 * 1024, plusQuotaBytes = 10 * 1024 * 1024 * 1024, maxFileBytes = 25 * 1024 * 1024, plusMaxFileBytes = 200 * 1024 * 1024, freeDeviceLimit = 2, maxHistoryEntries = 100000, maxDeviceEntries = 1000, maxPairingEntries = 128, maxConcurrentRequests = 16, signupsPerAddress = 5, signupTrial = TRIAL_TIME, roadmap = ROADMAP, earlyFeatures = EARLY_FEATURES, turnstile, webRoot = join(directory, 'web'), corsOrigins = [], publicOrigin, adminOrigin, adminPasswordHash, adminTotpSecret, adminRoot = join(directory, 'admin'), port = 0, enrollmentLimit = 1, sweepEvery = 60 * 60 * 1000, clock = Date.now }) {
+export async function createCloudServer({ dataDir, enrollmentToken, mailer, newsletter, serverKey, stripe, reviewLogin, oauth = {}, fetcher = globalThis.fetch, quotaBytes = 250 * 1024 * 1024, plusQuotaBytes = 10 * 1024 * 1024 * 1024, maxFileBytes = 25 * 1024 * 1024, plusMaxFileBytes = 200 * 1024 * 1024, freeDeviceLimit = 2, maxHistoryEntries = 100000, maxDeviceEntries = 1000, maxPairingEntries = 128, maxConcurrentRequests = 16, signupsPerAddress = 5, signupTrial = TRIAL_TIME, roadmap = ROADMAP, earlyFeatures = EARLY_FEATURES, turnstile, webRoot = join(directory, 'web'), corsOrigins = [], publicOrigin, adminOrigin, adminPasswordHash, adminTotpSecret, adminRoot = join(directory, 'admin'), port = 0, enrollmentLimit = 1, sweepEvery = 60 * 60 * 1000, clock = Date.now, mailDomain, mailinToken }) {
   if (!dataDir || (enrollmentToken !== undefined && !validToken(enrollmentToken)) || [quotaBytes, plusQuotaBytes, freeDeviceLimit].some((value) => !Number.isSafeInteger(value) || value < 1)) throw new Error('Provide a data directory, random 32-byte enrollment token and positive quota.');
   if (mailer !== undefined && typeof mailer !== 'function') throw new Error('Provide the mailer as a function.');
   // Google Play reviewers cannot receive email codes: this one address confirms with a fixed code and gets no mail. The password stays required.
@@ -216,6 +220,9 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   // `newsletter(email)` adds someone who ticked "Email me news about JotDrop" to the mailing list (Brevo).
   if (newsletter !== undefined && typeof newsletter !== 'function') throw new Error('Provide the newsletter as a function.');
   if (serverKey !== undefined && !validToken(serverKey)) throw new Error('Provide the server key as 32 random bytes.');
+  // Mail to JotDrop: `mailDomain` is the domain of the secret addresses; `mailinToken` lets only the local mailin process deliver.
+  if (mailDomain !== undefined && !/^[a-z0-9][a-z0-9.-]{2,126}[a-z0-9]$/.test(mailDomain)) throw new Error('Provide the mail domain as a lowercase hostname.');
+  if (mailinToken !== undefined && !validToken(mailinToken)) throw new Error('Provide the mailin token as 32 random bytes.');
   // JotDrop Plus is sold through Stripe Managed Payments (Stripe is the seller and handles VAT); without settings there is no checkout.
   if (stripe !== undefined && !['secretKey', 'webhookSecret', 'monthPrice', 'yearPrice'].every((name) => typeof stripe[name] === 'string' && stripe[name].length > 0)) throw new Error('Provide the Stripe secret key, webhook secret and both prices.');
   // `oauth.google` / `oauth.github`: { clientId, clientSecret }, plus endpoint overrides for tests.
@@ -303,6 +310,12 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       db.exec('CREATE TABLE IF NOT EXISTS trials(vaultId TEXT PRIMARY KEY, trialUntil INTEGER NOT NULL, mail INTEGER NOT NULL DEFAULT 0);');
       // Which ideas on the roadmap (roadmap.mjs) an account voted for.
       db.exec('CREATE TABLE IF NOT EXISTS roadmap_votes(accountId TEXT NOT NULL, itemId TEXT NOT NULL, votedAt INTEGER NOT NULL, PRIMARY KEY(accountId,itemId));');
+      // Mail to JotDrop: the server knows an address only as a hash, and a mail only as sealed blobs it can never open.
+      db.exec(`CREATE TABLE IF NOT EXISTS mail_accounts(vaultId TEXT PRIMARY KEY REFERENCES vaults(id), addressHash TEXT NOT NULL UNIQUE, publicKey TEXT NOT NULL, addressEnvelope TEXT NOT NULL, mode TEXT NOT NULL DEFAULT 'open', createdAt INTEGER NOT NULL, rotatedAt INTEGER);
+        CREATE TABLE IF NOT EXISTS mail_senders(vaultId TEXT NOT NULL, senderHash TEXT NOT NULL, createdAt INTEGER NOT NULL, PRIMARY KEY(vaultId,senderHash));
+        CREATE TABLE IF NOT EXISTS mail_items(vaultId TEXT NOT NULL, id TEXT NOT NULL, receivedAt INTEGER NOT NULL, size INTEGER NOT NULL, ephemeralKey TEXT NOT NULL, sealed BLOB NOT NULL, PRIMARY KEY(vaultId,id));
+        CREATE TABLE IF NOT EXISTS mail_parts(vaultId TEXT NOT NULL, itemId TEXT NOT NULL, n INTEGER NOT NULL, sealed BLOB NOT NULL, PRIMARY KEY(vaultId,itemId,n));
+        CREATE TABLE IF NOT EXISTS mail_log(vaultId TEXT NOT NULL, receivedAt INTEGER NOT NULL);`);
       // Shared spaces. No foreign key to accounts and no higher user_version: an older server must keep starting and deleting accounts.
       db.exec(`CREATE TABLE IF NOT EXISTS spaces(id TEXT PRIMARY KEY REFERENCES vaults(id), ownerAccountId TEXT NOT NULL, nameEnvelope TEXT NOT NULL, createdAt INTEGER NOT NULL, frozenAt INTEGER, replaces TEXT UNIQUE, replacedBy TEXT, ownerGoneAt INTEGER);
         CREATE INDEX IF NOT EXISTS spaces_by_owner ON spaces(ownerAccountId);
@@ -428,6 +441,28 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     return { items: roadmap.map((item) => ({ ...item, votes: counts.get(item.id) ?? 0, mine: mine.has(item.id) })), canVote: isPlus(vaultId), maxVotes: MAX_VOTES, votesLeft: MAX_VOTES - mine.size };
   }
   const subscribed = (vaultId) => Boolean(one(`SELECT 1 FROM subscriptions WHERE vaultId=? AND status IN (${RUNNING.map(() => '?').join(',')})`, vaultId, ...RUNNING));
+  const mailPending = (vaultId) => one('SELECT COUNT(*) AS count,COALESCE(SUM(size),0) AS bytes FROM mail_items WHERE vaultId=?', vaultId);
+  /** Refusals happen at RCPT, so the sending server reports them and nothing is ever stored. */
+  function mailRefusal(vaultId) {
+    const pending = mailPending(vaultId);
+    if (pending.count >= MAX_PENDING_ITEMS || pending.bytes >= MAX_PENDING_BYTES) return 'full';
+    run('DELETE FROM mail_log WHERE receivedAt<=?', clock() - DAY);
+    const recent = one('SELECT COUNT(*) AS day,COALESCE(SUM(receivedAt>?),0) AS hour FROM mail_log WHERE vaultId=?', clock() - 60 * 60 * 1000, vaultId);
+    return recent.day >= MAILS_PER_DAY || recent.hour >= MAILS_PER_HOUR ? 'rate' : null;
+  }
+  function mailLookup({ addressHash, senderHash }) {
+    const row = one('SELECT vaultId,publicKey,mode FROM mail_accounts WHERE addressHash=?', addressHash);
+    if (!row) return { accept: false, code: 'unknown' };
+    if (!isPlus(row.vaultId)) return { accept: false, code: 'no-plus' };
+    if (row.mode === 'senders' && (!senderHash || !one('SELECT 1 FROM mail_senders WHERE vaultId=? AND senderHash=?', row.vaultId, senderHash))) return { accept: false, code: 'sender' };
+    const refusal = mailRefusal(row.vaultId);
+    return refusal ? { accept: false, code: refusal } : { accept: true, vaultId: row.vaultId, publicKey: row.publicKey };
+  }
+  function mailStatus(vaultId) {
+    const row = one('SELECT publicKey,addressEnvelope,mode FROM mail_accounts WHERE vaultId=?', vaultId);
+    const pending = mailPending(vaultId);
+    return { domain: mailDomain ?? null, enabled: Boolean(row), publicKey: row?.publicKey ?? null, address: row?.addressEnvelope ?? null, mode: row?.mode ?? null, pending: pending.count, pendingBytes: pending.bytes };
+  }
   // Abandoned payments do not use a founder place.
   const founderPrice = () => Boolean(stripe?.founderYearPrice) && one('SELECT COUNT(DISTINCT vaultId) AS count FROM subscriptions WHERE paidUntil>0').count < (stripe.founderLimit ?? 500);
   const stripeCall = (path, init = {}, timeout = 15000) => fetcher(`https://api.stripe.com/v1${path}`, { ...init, headers: { ...init.headers, Authorization: `Bearer ${stripe.secretKey}`, 'Stripe-Version': STRIPE_VERSION }, signal: AbortSignal.timeout(timeout) });
@@ -991,7 +1026,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       run('DELETE FROM code_failures WHERE scope IN (?,?,?)', `login:${account.id}`, `reset:${account.id}`, `signup:${account.email}`);
       run('DELETE FROM accounts WHERE id=?', account.id);
     }
-    for (const table of ['uploads', 'pairings', 'revisions', 'envelope_chunks', 'chunks', 'retired_envelopes', 'envelopes', 'changes', 'signups', 'devices', 'plans', 'trials', 'subscriptions']) run(`DELETE FROM ${table} WHERE vaultId=?`, vaultId);
+    for (const table of ['uploads', 'pairings', 'revisions', 'envelope_chunks', 'chunks', 'retired_envelopes', 'envelopes', 'changes', 'signups', 'devices', 'plans', 'trials', 'subscriptions', 'mail_accounts', 'mail_senders', 'mail_items', 'mail_parts', 'mail_log']) run(`DELETE FROM ${table} WHERE vaultId=?`, vaultId);
     run('DELETE FROM vaults WHERE id=?', vaultId);
   }
   function forgetAddress(account, kind) {
@@ -1801,6 +1836,39 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         await applySubscription(stripeEvent(await bodyBytes(req, 256 * 1024), String(req.headers['stripe-signature'] || '')));
         reply(200, { received: true }); return;
       }
+      // The mailin process next door: it alone sees a mail readable, for a moment, and hands over only sealed blobs.
+      if (route === '/mailin/rcpt' || route === '/mailin/deliver') {
+        if (!mailinToken || !loopback || method !== 'POST' || !equal(req.headers.authorization || '', `Bearer ${mailinToken}`)) fail(401, 'Mail delivery authorization required');
+        if (route === '/mailin/rcpt') {
+          const value = await body(req, MAX_METADATA_BODY);
+          requireValue(validHash(value.addressHash) && (value.senderHash === undefined || validHash(value.senderHash)), 'Invalid mail lookup');
+          const found = mailLookup(value);
+          reply(200, found.accept ? { accept: true, publicKey: found.publicKey, vaultId: found.vaultId } : { accept: false, code: found.code }); return;
+        }
+        const value = await body(req, MAX_MAILIN_BODY);
+        requireValue(validHash(value.addressHash) && (value.senderHash === undefined || validHash(value.senderHash)) && validId(value.id) && validToken(value.ephemeralKey)
+          && typeof value.body === 'string' && Array.isArray(value.parts) && value.parts.length <= MAX_MAIL_PARTS && value.parts.every((part) => typeof part === 'string' && /^[A-Za-z0-9_-]*$/.test(part)), 'Invalid mail delivery');
+        requireValue(/^[A-Za-z0-9_-]*$/.test(value.body), 'Invalid mail delivery');
+        const sealedBody = Buffer.from(value.body, 'base64url'), sealedParts = value.parts.map((part) => Buffer.from(part, 'base64url'));
+        const size = sealedBody.length + sealedParts.reduce((total, part) => total + part.length, 0);
+        requireValue(sealedBody.length >= 28 && sealedParts.every((part) => part.length >= 28) && size <= MAX_MAIL_BYTES + 1024 * 1024, 'Invalid mail delivery');
+        let outcome;
+        try {
+          outcome = transaction(() => {
+            const found = mailLookup(value);
+            if (!found.accept) return found;
+            run('INSERT INTO mail_items(vaultId,id,receivedAt,size,ephemeralKey,sealed) VALUES(?,?,?,?,?,?)', found.vaultId, value.id, clock(), size, value.ephemeralKey, sealedBody);
+            sealedParts.forEach((part, n) => run('INSERT INTO mail_parts(vaultId,itemId,n,sealed) VALUES(?,?,?,?)', found.vaultId, value.id, n, part));
+            run('INSERT INTO mail_log(vaultId,receivedAt) VALUES(?,?)', found.vaultId, clock());
+            return { accept: true };
+          });
+        } catch (error) {
+          // A repeated delivery of the same mail already succeeded.
+          if (sqliteCode(error) !== 19) throw error;
+          outcome = { accept: true };
+        }
+        reply(200, outcome); return;
+      }
       const vaultId = req.headers['x-jotdrop-vault'], deviceId = req.headers['x-jotdrop-device'];
       const token = /^Bearer (.+)$/.exec(req.headers.authorization || '')?.[1];
       if (!validId(vaultId) || !validId(deviceId) || !validToken(token)) fail(401, 'Device authorization required');
@@ -1946,6 +2014,75 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         });
         reply(200, roadmapView(account, vaultId)); return;
       }
+      if (route === '/mail' && method === 'GET') {
+        reply(200, { items: all('SELECT id,receivedAt,size FROM mail_items WHERE vaultId=? ORDER BY receivedAt,id', vaultId).map((item) => ({ ...item, receivedAt: new Date(item.receivedAt).toISOString() })) }); return;
+      }
+      if (route === '/mail' && method === 'POST') {
+        limit(`mail:${vaultId}`, 10);
+        const value = await body(req, MAX_METADATA_BODY);
+        if (value.action === 'mode') {
+          requireValue(['open', 'senders'].includes(value.mode), 'Invalid mail mode');
+          transaction(() => {
+            requireAccess(vaultId, deviceId);
+            if (run('UPDATE mail_accounts SET mode=? WHERE vaultId=?', value.mode, vaultId).changes !== 1) fail(404, 'Mail to JotDrop is not on for this cloud.');
+          });
+          reply(200, { mail: mailStatus(vaultId) }); return;
+        }
+        requireValue(value.action === 'enable' && validToken(value.publicKey) && validHash(value.addressHash), 'Invalid mail settings');
+        envelopeSize(value.addressEnvelope, 4096);
+        const mode = value.mode ?? 'open';
+        requireValue(['open', 'senders'].includes(mode), 'Invalid mail mode');
+        if (!mailDomain) fail(503, 'Mail to JotDrop is not available on this server.');
+        transaction(() => {
+          requireAccess(vaultId, deviceId);
+          if (!isPlus(vaultId)) fail(402, 'Mail to JotDrop is part of JotDrop Plus.', { code: 'plus-required' });
+          try {
+            run('INSERT INTO mail_accounts(vaultId,addressHash,publicKey,addressEnvelope,mode,createdAt) VALUES(?,?,?,?,?,?) ON CONFLICT(vaultId) DO UPDATE SET addressHash=excluded.addressHash,publicKey=excluded.publicKey,addressEnvelope=excluded.addressEnvelope,mode=excluded.mode,rotatedAt=excluded.createdAt', vaultId, value.addressHash, value.publicKey, value.addressEnvelope, mode, clock());
+          } catch (error) {
+            if (sqliteCode(error) === 19) fail(409, 'That address is taken. Try another one.');
+            throw error;
+          }
+        });
+        reply(200, { mail: mailStatus(vaultId) }); return;
+      }
+      if (route === '/mail' && method === 'DELETE') {
+        // Turning it off keeps the sealed items: they are the person's mail, still there to convert.
+        transaction(() => {
+          requireAccess(vaultId, deviceId);
+          run('DELETE FROM mail_accounts WHERE vaultId=?', vaultId);
+          run('DELETE FROM mail_senders WHERE vaultId=?', vaultId);
+        });
+        reply(200, { mail: mailStatus(vaultId) }); return;
+      }
+      if (route === '/mail/senders' && method === 'POST') {
+        const value = await body(req, MAX_METADATA_BODY);
+        requireValue(Array.isArray(value.senders) && value.senders.length <= MAX_MAIL_SENDERS && value.senders.every(validHash), 'Invalid sender list');
+        transaction(() => {
+          requireAccess(vaultId, deviceId);
+          if (!one('SELECT 1 FROM mail_accounts WHERE vaultId=?', vaultId)) fail(404, 'Mail to JotDrop is not on for this cloud.');
+          run('DELETE FROM mail_senders WHERE vaultId=?', vaultId);
+          for (const senderHash of new Set(value.senders)) run('INSERT INTO mail_senders(vaultId,senderHash,createdAt) VALUES(?,?,?)', vaultId, senderHash, clock());
+        });
+        reply(200, { ok: true }); return;
+      }
+      const mailTarget = /^\/mail\/([0-9a-f-]{36})(?:\/parts\/([0-9]{1,2}))?$/.exec(route);
+      if (mailTarget && method === 'GET') {
+        const item = one('SELECT id,receivedAt,size,ephemeralKey,sealed FROM mail_items WHERE vaultId=? AND id=?', vaultId, mailTarget[1]) ?? fail(404, 'Mail not found');
+        if (mailTarget[2] !== undefined) {
+          const part = one('SELECT sealed FROM mail_parts WHERE vaultId=? AND itemId=? AND n=?', vaultId, item.id, Number(mailTarget[2])) ?? fail(404, 'Mail part not found');
+          reply(200, { sealed: Buffer.from(part.sealed).toString('base64url') }); return;
+        }
+        reply(200, { id: item.id, receivedAt: new Date(item.receivedAt).toISOString(), size: item.size, ephemeralKey: item.ephemeralKey, body: Buffer.from(item.sealed).toString('base64url'),
+          parts: all('SELECT n,LENGTH(sealed) AS size FROM mail_parts WHERE vaultId=? AND itemId=? ORDER BY n', vaultId, item.id) }); return;
+      }
+      if (mailTarget && !mailTarget[2] && method === 'DELETE') {
+        transaction(() => {
+          requireAccess(vaultId, deviceId);
+          run('DELETE FROM mail_parts WHERE vaultId=? AND itemId=?', vaultId, mailTarget[1]);
+          if (run('DELETE FROM mail_items WHERE vaultId=? AND id=?', vaultId, mailTarget[1]).changes !== 1) fail(404, 'Mail not found');
+        });
+        reply(200, { ok: true }); return;
+      }
       if (route === '/account/trial' && method === 'POST') {
         const plusUntil = transaction(() => {
           requireAccess(vaultId, deviceId);
@@ -2001,7 +2138,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       }
       if (method === 'GET' && route === '/status') {
         const plan = planRow(vaultId), plus = plan.plusUntil > clock(), owner = one('SELECT id,vaultId FROM accounts WHERE vaultId=?', vaultId);
-        reply(200, { usedBytes: one('SELECT (SELECT COALESCE(SUM(size),0) FROM envelopes WHERE vaultId=?) + (SELECT COALESCE(SUM(size),0) FROM chunks WHERE vaultId=?) AS size', vaultId, vaultId).size + (owner ? liveSpaceBytes(owner.id) : 0), quotaBytes: quotaFor(vaultId), plan: { name: plus ? 'plus' : 'free', plusUntil: plan.plusUntil ? new Date(plan.plusUntil).toISOString() : null, trialAvailable: !plan.trialUsed && !plus, trialEnds: trialEnds(plan) ? new Date(plan.trialUntil).toISOString() : null, deviceLimit: plus ? null : freeDeviceLimit, historyDays: plus ? null : FREE_HISTORY / DAY, subscribed: subscribed(vaultId), checkout: Boolean(stripe), founderPrice: founderPrice(), familyCheckout: familyPrices.length > 0, family: familyRole(owner), supporter: owner ? supporter(vaultId, owner) : subscribed(vaultId), early: plus }, features: featuresFor(plus), sequence: one('SELECT COALESCE(MAX(sequence),0) AS sequence FROM changes WHERE vaultId=?', vaultId).sequence, history: historyUsage(vaultId), transport: { version: 1, chunkBytes: TRANSFER_CHUNK_BYTES, reservedBytes: one('SELECT COALESCE(SUM(reservedBytes),0) AS size FROM uploads WHERE vaultId=?', vaultId).size }, pieces: { version: 1, pieceBytes: PIECE_BYTES, maxFileBytes: maxFileFor(vaultId), legacy: one('SELECT COUNT(*) AS count FROM envelopes WHERE vaultId=? AND pieces=0 AND size>?', vaultId, LEGACY_ENVELOPE_BYTES).count } }); return;
+        reply(200, { usedBytes: one('SELECT (SELECT COALESCE(SUM(size),0) FROM envelopes WHERE vaultId=?) + (SELECT COALESCE(SUM(size),0) FROM chunks WHERE vaultId=?) AS size', vaultId, vaultId).size + (owner ? liveSpaceBytes(owner.id) : 0), quotaBytes: quotaFor(vaultId), plan: { name: plus ? 'plus' : 'free', plusUntil: plan.plusUntil ? new Date(plan.plusUntil).toISOString() : null, trialAvailable: !plan.trialUsed && !plus, trialEnds: trialEnds(plan) ? new Date(plan.trialUntil).toISOString() : null, deviceLimit: plus ? null : freeDeviceLimit, historyDays: plus ? null : FREE_HISTORY / DAY, subscribed: subscribed(vaultId), checkout: Boolean(stripe), founderPrice: founderPrice(), familyCheckout: familyPrices.length > 0, family: familyRole(owner), supporter: owner ? supporter(vaultId, owner) : subscribed(vaultId), early: plus }, mail: mailStatus(vaultId), features: featuresFor(plus), sequence: one('SELECT COALESCE(MAX(sequence),0) AS sequence FROM changes WHERE vaultId=?', vaultId).sequence, history: historyUsage(vaultId), transport: { version: 1, chunkBytes: TRANSFER_CHUNK_BYTES, reservedBytes: one('SELECT COALESCE(SUM(reservedBytes),0) AS size FROM uploads WHERE vaultId=?', vaultId).size }, pieces: { version: 1, pieceBytes: PIECE_BYTES, maxFileBytes: maxFileFor(vaultId), legacy: one('SELECT COUNT(*) AS count FROM envelopes WHERE vaultId=? AND pieces=0 AND size>?', vaultId, LEGACY_ENVELOPE_BYTES).count } }); return;
       }
       if (method === 'GET' && route === '/changes') {
         const after = Number(url.searchParams.get('after') || 0);
