@@ -78,7 +78,7 @@ Already on Joplin? [JotDrop for Joplin](#jotdrop-for-joplin) turns the notes you
 | Where | How | Link |
 | --- | --- | --- |
 | **Obsidian** | Settings → Community plugins → Browse → search **JotDrop** → Install → Enable | [Plugin page](https://community.obsidian.md/plugins/jotdrop) |
-| **Android** | Download the APK and open it on your phone | [JotDrop 0.28.32 APK](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.32/jotdrop.apk) |
+| **Android** | Download the APK and open it on your phone | [JotDrop 0.28.33 APK](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.33/jotdrop.apk) |
 | **Web** | Open the web app and sign in with Google, GitHub or email | [app.jotdrop.net](https://app.jotdrop.net/) |
 | **Chrome** | One click from the Chrome Web Store; works together with the Obsidian desktop plugin | [JotDrop Web Clipper](https://chromewebstore.google.com/detail/jotdrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo) |
 | **Joplin** | Tools → Options → Plugins → search **JotDrop** → Install; on Android, first Configuration → Plugins → Enable plugin support | [JotDrop for Joplin](https://joplinapp.org/plugins/plugin/net.jotdrop.joplin/) |
@@ -210,7 +210,7 @@ Notes go to the `Mini Notes` folder of your vault; you can choose another folder
 
 ### Android app
 
-1. Download [`jotdrop.apk` for Android 0.28.32](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.32/jotdrop.apk).
+1. Download [`jotdrop.apk` for Android 0.28.33](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.33/jotdrop.apk).
 2. Open the file on your phone and allow installs from this source when Android asks.
 3. Open JotDrop. Choose **Continue with Google** for a free JotDrop Cloud, or **Use without cloud** and pick a folder for your notes (for example the vault folder you sync to your computer).
 4. From now on, the share menu of every app includes JotDrop.
