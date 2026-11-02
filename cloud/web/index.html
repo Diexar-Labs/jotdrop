@@ -157,9 +157,11 @@
       <div class="sidebar-bottom">
         <p id="storage-usage" class="checking">Checking storage...</p>
         <p id="plan-status"></p>
+        <p id="supporter-badge" class="supporter-badge" hidden><span aria-hidden="true">&#9733;</span> Plus supporter</p>
         <div id="plus-offer" hidden><p>Get JotDrop Plus</p><button id="buy-month" type="button">&euro;3.99 per month</button><button id="buy-year" type="button">&euro;39 per year</button>
           <div id="family-offer" hidden><p>Family: Plus for you and 5 others</p><button id="buy-family-month" type="button">&euro;6.99 per month</button><button id="buy-family-year" type="button">&euro;59 per year</button></div></div>
         <button id="open-family" type="button" hidden>Family plan</button>
+        <button id="open-roadmap" type="button" hidden>Vote on what's next</button>
         <button id="export-all" type="button">Export files</button>
       </div>
     </aside>
@@ -385,6 +387,14 @@
     <div id="family-invite" hidden><p>Send this link yourself, to one person. It works once and expires after 7 days. They need a free JotDrop account.</p><label for="family-link">Invitation link</label><textarea id="family-link" rows="3" readonly spellcheck="false"></textarea></div>
     <p id="family-message" role="status" aria-live="polite"></p>
     <div class="dialog-actions"><button id="family-leave" class="danger" type="button" hidden>Leave the family</button><button id="family-copy" type="button" hidden>Copy link</button><button id="family-add" type="button" hidden>Invite someone</button><button id="family-close" class="primary" type="button">Done</button></div>
+  </dialog>
+  <dialog id="roadmap-dialog" aria-labelledby="roadmap-title">
+    <h2 id="roadmap-title">What should we build next?</h2>
+    <p id="roadmap-about"></p>
+    <ol id="roadmap-items" class="roadmap-items"></ol>
+    <p class="dialog-note">We read every vote and build what helps most people, but a vote is not a promise or a date.</p>
+    <p id="roadmap-message" class="message" role="status" aria-live="polite"></p>
+    <div class="dialog-actions"><button id="roadmap-plus" class="primary" type="button" hidden>Get JotDrop Plus</button><button id="roadmap-close" type="button">Close</button></div>
   </dialog>
   <dialog id="family-join-dialog" aria-labelledby="family-join-title">
     <h2 id="family-join-title">You are invited to a JotDrop family</h2>

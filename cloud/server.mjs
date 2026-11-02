@@ -8,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import qrcode from 'qrcode-generator';
 import { createBrevoList, createSesMailer } from './mailer.mjs';
+import { EARLY_FEATURES, MAX_VOTES, ROADMAP } from './roadmap.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const MAX_BODY = 12 * 1024 * 1024;
@@ -206,7 +207,7 @@ async function body(req, maximum = MAX_BODY) {
 }
 
 /** Loopback-only server behind a trusted HTTPS proxy. Accounts need a mailer; no billing or provider credentials. `quotaBytes` and `freeDeviceLimit` are the free plan's limits. */
-export async function createCloudServer({ dataDir, enrollmentToken, mailer, newsletter, serverKey, stripe, reviewLogin, oauth = {}, fetcher = globalThis.fetch, quotaBytes = 250 * 1024 * 1024, plusQuotaBytes = 10 * 1024 * 1024 * 1024, maxFileBytes = 25 * 1024 * 1024, plusMaxFileBytes = 200 * 1024 * 1024, freeDeviceLimit = 2, maxHistoryEntries = 100000, maxDeviceEntries = 1000, maxPairingEntries = 128, maxConcurrentRequests = 16, signupsPerAddress = 5, signupTrial = TRIAL_TIME, turnstile, webRoot = join(directory, 'web'), corsOrigins = [], publicOrigin, adminOrigin, adminPasswordHash, adminTotpSecret, adminRoot = join(directory, 'admin'), port = 0, enrollmentLimit = 1, sweepEvery = 60 * 60 * 1000, clock = Date.now }) {
+export async function createCloudServer({ dataDir, enrollmentToken, mailer, newsletter, serverKey, stripe, reviewLogin, oauth = {}, fetcher = globalThis.fetch, quotaBytes = 250 * 1024 * 1024, plusQuotaBytes = 10 * 1024 * 1024 * 1024, maxFileBytes = 25 * 1024 * 1024, plusMaxFileBytes = 200 * 1024 * 1024, freeDeviceLimit = 2, maxHistoryEntries = 100000, maxDeviceEntries = 1000, maxPairingEntries = 128, maxConcurrentRequests = 16, signupsPerAddress = 5, signupTrial = TRIAL_TIME, roadmap = ROADMAP, earlyFeatures = EARLY_FEATURES, turnstile, webRoot = join(directory, 'web'), corsOrigins = [], publicOrigin, adminOrigin, adminPasswordHash, adminTotpSecret, adminRoot = join(directory, 'admin'), port = 0, enrollmentLimit = 1, sweepEvery = 60 * 60 * 1000, clock = Date.now }) {
   if (!dataDir || (enrollmentToken !== undefined && !validToken(enrollmentToken)) || [quotaBytes, plusQuotaBytes, freeDeviceLimit].some((value) => !Number.isSafeInteger(value) || value < 1)) throw new Error('Provide a data directory, random 32-byte enrollment token and positive quota.');
   if (mailer !== undefined && typeof mailer !== 'function') throw new Error('Provide the mailer as a function.');
   // Google Play reviewers cannot receive email codes: this one address confirms with a fixed code and gets no mail. The password stays required.
@@ -300,6 +301,8 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       // A trial that runs: when its 14 days end, and `mail` 1 = "ends in 3 days" sent, 2 = "ended" sent or not needed.
       // Its own table, so `plans` keeps three columns for an older server after a rollback.
       db.exec('CREATE TABLE IF NOT EXISTS trials(vaultId TEXT PRIMARY KEY, trialUntil INTEGER NOT NULL, mail INTEGER NOT NULL DEFAULT 0);');
+      // Which ideas on the roadmap (roadmap.mjs) an account voted for.
+      db.exec('CREATE TABLE IF NOT EXISTS roadmap_votes(accountId TEXT NOT NULL, itemId TEXT NOT NULL, votedAt INTEGER NOT NULL, PRIMARY KEY(accountId,itemId));');
       // Shared spaces. No foreign key to accounts and no higher user_version: an older server must keep starting and deleting accounts.
       db.exec(`CREATE TABLE IF NOT EXISTS spaces(id TEXT PRIMARY KEY REFERENCES vaults(id), ownerAccountId TEXT NOT NULL, nameEnvelope TEXT NOT NULL, createdAt INTEGER NOT NULL, frozenAt INTEGER, replaces TEXT UNIQUE, replacedBy TEXT, ownerGoneAt INTEGER);
         CREATE INDEX IF NOT EXISTS spaces_by_owner ON spaces(ownerAccountId);
@@ -412,6 +415,18 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   }
   // The trial is what keeps Plus going only while nothing else lasts longer (a subscription, a family, a manual grant).
   const trialEnds = (plan) => plan.trialUntil > clock() && plan.plusUntil === plan.trialUntil ? plan.trialUntil : 0;
+  // A supporter pays: a running subscription of their own, or a place in a family someone pays for. A trial or a grant is no support.
+  const supporter = (vaultId, account) => subscribed(vaultId) || familyRole(account) !== null;
+  // Early access: Plus has a new feature at once, everyone else from its `everyoneFrom` date.
+  const featuresFor = (plus) => Object.fromEntries(earlyFeatures.map((feature) => [feature.id, plus || clock() >= Date.parse(feature.everyoneFrom)]));
+  // Votes only count for ideas still on the list, so taking an idea off the list frees those votes.
+  const roadmapIds = new Set(roadmap.map((item) => item.id));
+  const myVotes = (accountId) => all('SELECT itemId FROM roadmap_votes WHERE accountId=? ORDER BY votedAt', accountId).map((row) => row.itemId).filter((id) => roadmapIds.has(id));
+  function roadmapView(account, vaultId) {
+    const counts = new Map(all('SELECT itemId,COUNT(*) AS votes FROM roadmap_votes GROUP BY itemId').map((row) => [row.itemId, row.votes]));
+    const mine = new Set(myVotes(account.id));
+    return { items: roadmap.map((item) => ({ ...item, votes: counts.get(item.id) ?? 0, mine: mine.has(item.id) })), canVote: isPlus(vaultId), maxVotes: MAX_VOTES, votesLeft: MAX_VOTES - mine.size };
+  }
   const subscribed = (vaultId) => Boolean(one(`SELECT 1 FROM subscriptions WHERE vaultId=? AND status IN (${RUNNING.map(() => '?').join(',')})`, vaultId, ...RUNNING));
   // Abandoned payments do not use a founder place.
   const founderPrice = () => Boolean(stripe?.founderYearPrice) && one('SELECT COUNT(DISTINCT vaultId) AS count FROM subscriptions WHERE paidUntil>0').count < (stripe.founderLimit ?? 500);
@@ -832,7 +847,11 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     const now = clock(), since = (days) => new Date(now - days * DAY).toISOString();
     const accounts = one(`SELECT COUNT(*) AS total,COALESCE(SUM(createdAt>=?),0) AS newLast7Days,COALESCE(SUM(createdAt>=?),0) AS newLast30Days,COALESCE(SUM(${plusUntilSql}>?),0) AS plus,COALESCE(SUM(EXISTS${runningSql}),0) AS paying FROM accounts a`, since(7), since(30), now, ...RUNNING);
     const disk = statfsSync(dataDir), file = (name) => statSync(join(dataDir, name), { throwIfNoEntry: false })?.size ?? 0;
-    return { generatedAt: new Date(now).toISOString(), accounts: { ...accounts, free: accounts.total - accounts.plus },
+    // The sign-up trial: how many run now, and how many clouds that had one pay now or paid before.
+    const trials = one('SELECT COUNT(*) AS total,COALESCE(SUM(trialUntil>?),0) AS running,COALESCE(SUM(EXISTS(SELECT 1 FROM subscriptions s WHERE s.vaultId=t.vaultId AND s.paidUntil>0)),0) AS paidAfter FROM trials t', now);
+    const votes = new Map(all('SELECT itemId,COUNT(*) AS votes FROM roadmap_votes GROUP BY itemId').map((row) => [row.itemId, row.votes]));
+    return { generatedAt: new Date(now).toISOString(), accounts: { ...accounts, free: accounts.total - accounts.plus }, trials,
+      roadmap: roadmap.map((item) => ({ title: item.title, votes: votes.get(item.id) ?? 0 })),
       // The count founderPrice uses; no limit when there is no founder price.
       founder: { taken: one('SELECT COUNT(DISTINCT vaultId) AS count FROM subscriptions WHERE paidUntil>0').count, limit: stripe?.founderYearPrice ? stripe.founderLimit ?? 500 : null },
       storage: { storedBytes: one('SELECT (SELECT COALESCE(SUM(size),0) FROM envelopes) + (SELECT COALESCE(SUM(size),0) FROM chunks) AS size').size, databaseBytes: file('cloud.db') + file('cloud.db-wal'), diskFreeBytes: disk.bavail * disk.bsize, diskTotalBytes: disk.blocks * disk.bsize } };
@@ -968,7 +987,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       leaveAllSpaces(account);
       run('DELETE FROM family_members WHERE accountId=? OR ownerAccountId=?', account.id, account.id);
       run('DELETE FROM family_invites WHERE ownerAccountId=?', account.id);
-      for (const table of ['identities', 'newsletter', 'login_challenges', 'resets', 'device_approvals']) run(`DELETE FROM ${table} WHERE accountId=?`, account.id);
+      for (const table of ['identities', 'newsletter', 'login_challenges', 'resets', 'device_approvals', 'roadmap_votes']) run(`DELETE FROM ${table} WHERE accountId=?`, account.id);
       run('DELETE FROM code_failures WHERE scope IN (?,?,?)', `login:${account.id}`, `reset:${account.id}`, `signup:${account.email}`);
       run('DELETE FROM accounts WHERE id=?', account.id);
     }
@@ -1909,6 +1928,24 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         if (account) sendMailLater({ to: account.email, kind: 'recovery-changed' });
         reply(200, { ok: true }); return;
       }
+      if (route === '/account/roadmap' && method === 'GET') {
+        reply(200, roadmapView(accountFor(vaultId), vaultId)); return;
+      }
+      if (route === '/account/roadmap' && method === 'POST') {
+        const account = accountFor(vaultId), value = await body(req, MAX_METADATA_BODY);
+        requireValue(typeof value.itemId === 'string' && typeof value.vote === 'boolean', 'Invalid vote');
+        if (!roadmapIds.has(value.itemId)) fail(404, 'This idea is not on the list any more.');
+        transaction(() => {
+          requireAccess(vaultId, deviceId);
+          if (!value.vote) { run('DELETE FROM roadmap_votes WHERE accountId=? AND itemId=?', account.id, value.itemId); return; }
+          if (!isPlus(vaultId)) fail(402, 'Voting is part of JotDrop Plus.', { code: 'plus-required' });
+          const mine = myVotes(account.id);
+          if (mine.includes(value.itemId)) return;
+          if (mine.length >= MAX_VOTES) fail(409, `You can vote for ${MAX_VOTES} ideas at a time. Take back a vote first.`, { code: 'too-many-votes' });
+          run('INSERT INTO roadmap_votes(accountId,itemId,votedAt) VALUES(?,?,?) ON CONFLICT DO NOTHING', account.id, value.itemId, clock());
+        });
+        reply(200, roadmapView(account, vaultId)); return;
+      }
       if (route === '/account/trial' && method === 'POST') {
         const plusUntil = transaction(() => {
           requireAccess(vaultId, deviceId);
@@ -1964,7 +2001,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       }
       if (method === 'GET' && route === '/status') {
         const plan = planRow(vaultId), plus = plan.plusUntil > clock(), owner = one('SELECT id,vaultId FROM accounts WHERE vaultId=?', vaultId);
-        reply(200, { usedBytes: one('SELECT (SELECT COALESCE(SUM(size),0) FROM envelopes WHERE vaultId=?) + (SELECT COALESCE(SUM(size),0) FROM chunks WHERE vaultId=?) AS size', vaultId, vaultId).size + (owner ? liveSpaceBytes(owner.id) : 0), quotaBytes: quotaFor(vaultId), plan: { name: plus ? 'plus' : 'free', plusUntil: plan.plusUntil ? new Date(plan.plusUntil).toISOString() : null, trialAvailable: !plan.trialUsed && !plus, trialEnds: trialEnds(plan) ? new Date(plan.trialUntil).toISOString() : null, deviceLimit: plus ? null : freeDeviceLimit, historyDays: plus ? null : FREE_HISTORY / DAY, subscribed: subscribed(vaultId), checkout: Boolean(stripe), founderPrice: founderPrice(), familyCheckout: familyPrices.length > 0, family: familyRole(owner) }, sequence: one('SELECT COALESCE(MAX(sequence),0) AS sequence FROM changes WHERE vaultId=?', vaultId).sequence, history: historyUsage(vaultId), transport: { version: 1, chunkBytes: TRANSFER_CHUNK_BYTES, reservedBytes: one('SELECT COALESCE(SUM(reservedBytes),0) AS size FROM uploads WHERE vaultId=?', vaultId).size }, pieces: { version: 1, pieceBytes: PIECE_BYTES, maxFileBytes: maxFileFor(vaultId), legacy: one('SELECT COUNT(*) AS count FROM envelopes WHERE vaultId=? AND pieces=0 AND size>?', vaultId, LEGACY_ENVELOPE_BYTES).count } }); return;
+        reply(200, { usedBytes: one('SELECT (SELECT COALESCE(SUM(size),0) FROM envelopes WHERE vaultId=?) + (SELECT COALESCE(SUM(size),0) FROM chunks WHERE vaultId=?) AS size', vaultId, vaultId).size + (owner ? liveSpaceBytes(owner.id) : 0), quotaBytes: quotaFor(vaultId), plan: { name: plus ? 'plus' : 'free', plusUntil: plan.plusUntil ? new Date(plan.plusUntil).toISOString() : null, trialAvailable: !plan.trialUsed && !plus, trialEnds: trialEnds(plan) ? new Date(plan.trialUntil).toISOString() : null, deviceLimit: plus ? null : freeDeviceLimit, historyDays: plus ? null : FREE_HISTORY / DAY, subscribed: subscribed(vaultId), checkout: Boolean(stripe), founderPrice: founderPrice(), familyCheckout: familyPrices.length > 0, family: familyRole(owner), supporter: owner ? supporter(vaultId, owner) : subscribed(vaultId), early: plus }, features: featuresFor(plus), sequence: one('SELECT COALESCE(MAX(sequence),0) AS sequence FROM changes WHERE vaultId=?', vaultId).sequence, history: historyUsage(vaultId), transport: { version: 1, chunkBytes: TRANSFER_CHUNK_BYTES, reservedBytes: one('SELECT COALESCE(SUM(reservedBytes),0) AS size FROM uploads WHERE vaultId=?', vaultId).size }, pieces: { version: 1, pieceBytes: PIECE_BYTES, maxFileBytes: maxFileFor(vaultId), legacy: one('SELECT COUNT(*) AS count FROM envelopes WHERE vaultId=? AND pieces=0 AND size>?', vaultId, LEGACY_ENVELOPE_BYTES).count } }); return;
       }
       if (method === 'GET' && route === '/changes') {
         const after = Number(url.searchParams.get('after') || 0);
@@ -2245,6 +2282,8 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   server.headersTimeout = 10000;
   sweepSpaces();
   sweepTrials();
+  // The privacy policy promises votes go when their idea leaves the list (roadmap.mjs changes need a restart anyway).
+  run(`DELETE FROM roadmap_votes WHERE itemId NOT IN (${roadmap.map(() => '?').join(',')})`, ...roadmapIds);
   await new Promise((done, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', done); });
   // The privacy policy promises these are gone on time, so do not wait for the next sign-up to remove them.
   const sweep = setInterval(() => {

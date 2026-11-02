@@ -50,7 +50,7 @@ function tile(label, value, note) {
 }
 
 async function loadSummary() {
-  const { generatedAt, accounts, founder, storage } = await api('/api/admin/summary');
+  const { generatedAt, accounts, trials, roadmap, founder, storage } = await api('/api/admin/summary');
   $('generated').textContent = `Updated ${when(generatedAt)}`;
   $('tiles').replaceChildren(
     tile('Accounts', String(accounts.total)),
@@ -58,10 +58,17 @@ async function loadSummary() {
     tile('New, last 30 days', String(accounts.newLast30Days)),
     tile('Plus', String(accounts.plus), `${accounts.paying} paying, rest trial or granted`),
     tile('Free', String(accounts.free)),
+    tile('Trials running', String(trials.running), `${trials.total} started, ${trials.paidAfter} of those pay or paid (${percent(trials.paidAfter, trials.total)})`),
     tile('Founder places', founder.limit === null ? `${founder.taken} taken` : `${founder.taken} of ${founder.limit}`, founder.limit === null ? 'No founder price set' : `${founder.limit - founder.taken} left`),
     tile('Stored notes (encrypted)', bytes(storage.storedBytes), `Database file ${bytes(storage.databaseBytes)}`),
     tile('Disk free', bytes(storage.diskFreeBytes), `of ${bytes(storage.diskTotalBytes)} (${percent(storage.diskFreeBytes, storage.diskTotalBytes)} free)`),
   );
+  // Most votes first; the count is written out, so the order never depends on a colour or a bar.
+  $('roadmap').replaceChildren(...[...roadmap].sort((a, b) => b.votes - a.votes).map((item) => {
+    const li = element('li', `${item.title}: `);
+    li.append(element('strong', `${item.votes} ${item.votes === 1 ? 'vote' : 'votes'}`));
+    return li;
+  }));
 }
 
 function row(account) {

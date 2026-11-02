@@ -212,7 +212,9 @@ test('totals and the account list match the database and never include secrets',
   const get = async (path) => { const response = await admin.call('GET', path, { cookie }); assert.equal(response.status, 200, response.text); return response; };
   const summary = await get('/api/admin/summary');
   const { storage, ...rest } = summary.body;
-  assert.deepEqual(rest, { generatedAt: iso(now), accounts: { total: 3, newLast7Days: 1, newLast30Days: 2, plus: 2, paying: 1, free: 1 }, founder: { taken: 2, limit: 3 } });
+  const { roadmap, ...others } = rest;
+  assert.deepEqual(others, { generatedAt: iso(now), accounts: { total: 3, newLast7Days: 1, newLast30Days: 2, plus: 2, paying: 1, free: 1 }, trials: { total: 0, running: 0, paidAfter: 0 }, founder: { taken: 2, limit: 3 } });
+  assert.ok(roadmap.length > 0 && roadmap.every((item) => item.votes === 0 && item.title), 'every idea on the list, no votes yet');
   assert.equal(storage.storedBytes, 16500);
   assert.ok(storage.databaseBytes > 0 && storage.diskTotalBytes >= storage.diskFreeBytes && storage.diskFreeBytes > 0);
 

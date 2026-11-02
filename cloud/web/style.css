@@ -242,6 +242,14 @@ dialog { overscroll-behavior: contain; }
 .dialog-heading { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .dialog-heading h2 { margin: 0; }
 .dialog-actions { display: flex; flex-wrap: wrap; gap: .6rem; justify-content: flex-end; margin-top: 1rem; }
+.supporter-badge { font-weight: 650; }
+.roadmap-items { list-style: none; padding: 0; margin: 1rem 0; display: grid; gap: .7rem; }
+.roadmap-items li { display: grid; grid-template-columns: 1fr auto; gap: .2rem 1rem; align-items: center; padding: .8rem 1rem; border: 1.5px solid var(--line); border-radius: 10px; }
+.roadmap-items li > :not(button) { grid-column: 1; }
+.roadmap-items p { margin: 0; color: var(--muted); }
+.roadmap-count { font-size: .9rem; font-weight: 600; }
+.roadmap-items button { grid-column: 2; grid-row: 1 / span 3; min-width: 7.5rem; }
+.roadmap-items button.is-voted { background: var(--selected); border-color: var(--accent); }
 #note-content { min-height: 260px; line-height: 1.7; }
 #photo-tools { margin-top: 1rem; }
 #photo-tools summary { cursor: pointer; font-weight: 600; padding: .6rem 0; }

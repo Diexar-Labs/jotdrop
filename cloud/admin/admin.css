@@ -33,6 +33,7 @@ main { max-width: 1200px; margin: 0 auto; }
 .tiles dt { color: var(--muted); font-size: .85rem; font-weight: 600; }
 .tiles dd { margin: .3rem 0 0; font-size: 1.5rem; font-weight: 650; overflow-wrap: anywhere; }
 .tiles dd small { display: block; color: var(--muted); font-size: .8rem; font-weight: 500; }
+.roadmap { margin: 0 0 1rem; padding-left: 1.4rem; line-height: 1.8; }
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; }
 .toolbar input[type="search"] { flex: 1 1 240px; width: auto; }
 .sort { display: flex; align-items: center; gap: .5rem; }

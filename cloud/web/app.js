@@ -1210,6 +1210,7 @@ async function showPlan(activeClient, activeGeneration) {
   $('buy-family-month').textContent = `${money(6.99)} per month`;
   $('buy-family-year').textContent = plan.founderPrice ? '€45 per year (founder price)' : `${money(59)} per year`;
   $('open-family').hidden = !plan.family;
+  $('supporter-badge').hidden = !plan.supporter;
   $('plus-manage').hidden = !plan.subscribed;
   return status;
 }
@@ -1953,7 +1954,7 @@ function lock(notice = '') {
   spacePlan = undefined;
   spaces.clear();
   goneSpaces.clear();
-  for (const id of ['share-dialog', 'invite-dialog', 'join-dialog', 'gone-dialog', 'family-dialog', 'family-join-dialog', 'plan-dialog']) $(id).close();
+  for (const id of ['share-dialog', 'invite-dialog', 'join-dialog', 'gone-dialog', 'family-dialog', 'family-join-dialog', 'plan-dialog', 'roadmap-dialog']) $(id).close();
   $('family-link').value = '';
   $('invite-link').value = '';
   files.clear();
@@ -2268,6 +2269,8 @@ function showAccountEmail(account) {
   label.textContent = account?.email ?? '';
   label.title = account?.email ? `Logged in as ${account.email}` : '';
   label.hidden = !account?.email;
+  // Voting needs an account; a cloud joined with a pairing code alone has none.
+  $('open-roadmap').hidden = !account?.email;
 }
 
 async function renderAccount() {
@@ -3520,6 +3523,53 @@ async function renderFamily() {
   $('family-message').textContent = owner && family.openInvites ? `${family.openInvites} invitation(s) not used yet. Each one keeps a place free for 7 days.` : '';
   return family;
 }
+// "Plus gets it first" (Eric, 2 Nov 2026): Plus votes on what comes next and gets new features about 4 weeks early.
+// Everyone sees the list and the counts; a vote button shows its state in words and a check mark, never only in colour.
+async function renderRoadmap(list) {
+  list ??= await ownClient.call('/account/roadmap');
+  $('roadmap-about').textContent = list.canVote
+    ? `You have ${list.votesLeft} of ${list.maxVotes} votes left. Vote for what you want most; you can take a vote back at any time. New features reach JotDrop Plus about 4 weeks before everyone else.`
+    : 'Voting is part of JotDrop Plus. You can see what others asked for. New features reach JotDrop Plus about 4 weeks before everyone else.';
+  $('roadmap-items').replaceChildren(...list.items.map((item) => {
+    const li = document.createElement('li'), title = document.createElement('strong'), text = document.createElement('p');
+    const count = document.createElement('span'), button = document.createElement('button');
+    title.textContent = item.title;
+    title.id = `roadmap-${item.id}`;
+    text.textContent = item.text;
+    count.className = 'roadmap-count';
+    count.textContent = `${item.votes} ${item.votes === 1 ? 'vote' : 'votes'}`;
+    button.type = 'button';
+    button.dataset.item = item.id;
+    button.textContent = item.mine ? '✓ Voted' : 'Vote';
+    // The visible words are the name; the idea's title describes which vote it is.
+    button.classList.toggle('is-voted', item.mine);
+    button.setAttribute('aria-describedby', title.id);
+    button.disabled = !item.mine && (!list.canVote || list.votesLeft === 0);
+    button.addEventListener('click', () => castVote(item.id, !item.mine));
+    li.append(title, text, count, button);
+    return li;
+  }));
+  const choice = plusChoice();
+  $('roadmap-plus').hidden = list.canVote || !choice;
+  $('roadmap-plus').textContent = choice === 'trial' ? 'Try JotDrop Plus free for 14 days' : 'Get JotDrop Plus';
+}
+async function castVote(itemId, vote) {
+  $('roadmap-message').textContent = '';
+  try {
+    await renderRoadmap(await ownClient.call('/account/roadmap', 'POST', { itemId, vote }));
+    $('roadmap-message').textContent = vote ? 'Thanks, your vote counts.' : 'Your vote is taken back.';
+  } catch (error) { $('roadmap-message').textContent = errorMessage(error); }
+  $('roadmap-items').querySelector(`[data-item="${itemId}"]`)?.focus();
+}
+$('open-roadmap').addEventListener('click', async () => {
+  $('roadmap-message').textContent = '';
+  try { await renderRoadmap(); $('roadmap-dialog').showModal(); } catch (error) { message(errorText(error)); }
+});
+$('roadmap-plus').addEventListener('click', async () => {
+  $('roadmap-dialog').close();
+  if (plusChoice() === 'trial') await startTrial(); else showPlusOffer();
+});
+$('roadmap-close').addEventListener('click', () => $('roadmap-dialog').close());
 $('open-family').addEventListener('click', async () => {
   $('family-message').textContent = '';
   $('family-invite').hidden = $('family-copy').hidden = true;
