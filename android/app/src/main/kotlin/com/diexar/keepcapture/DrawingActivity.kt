@@ -91,8 +91,8 @@ import kotlin.math.hypot
 /**
  * Draw with a finger or a pen (Eric, 2 Nov: drawing for everyone, everywhere). The result is a PNG with its
  * lines inside (see [DrawingFormat]), so it shows as a picture everywhere and opens here again to draw on.
- * New drawing: the PNG goes to the cache and its path comes back as [RESULT_FILE].
- * With [EXTRA_SOURCE] (an existing drawing in the attachments folder) the same file is written again.
+ * The PNG goes to the cache and its path comes back as [RESULT_FILE].
+ * With [EXTRA_SOURCE] (an existing drawing) its lines open to draw on; the result is still a new file.
  */
 class DrawingActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -105,15 +105,12 @@ class DrawingActivity : ComponentActivity() {
                 DrawingScreen(initial, onCancel = { setResult(Activity.RESULT_CANCELED); finish() }) { drawing ->
                     val png = withContext(Dispatchers.Default) { render(drawing) }
                     withContext(Dispatchers.IO) {
-                        if (source != null) {
-                            contentResolver.openOutputStream(source, "wt")?.use { it.write(png) } ?: error("The drawing could not be saved.")
-                            setResult(Activity.RESULT_OK, Intent().putExtra(RESULT_EDITED, true))
-                        } else {
-                            val stamp = SimpleDateFormat("yyyy-MM-dd HHmmss", Locale.US).format(Date())
-                            val file = File(File(cacheDir, "drawings").apply { mkdirs() }, "drawing-$stamp.png")
-                            file.writeBytes(png)
-                            setResult(Activity.RESULT_OK, Intent().putExtra(RESULT_FILE, file.absolutePath))
-                        }
+                        // Always a new file, also after editing: the note then points to it, the earlier picture stays as it was,
+                        // and no screen can keep showing an old copy of the same file.
+                        val stamp = SimpleDateFormat("yyyy-MM-dd HHmmss", Locale.US).format(Date())
+                        val file = File(File(cacheDir, "drawings").apply { mkdirs() }, "drawing-$stamp.png")
+                        file.writeBytes(png)
+                        setResult(Activity.RESULT_OK, Intent().putExtra(RESULT_FILE, file.absolutePath))
                     }
                     finish()
                 }
@@ -122,11 +119,10 @@ class DrawingActivity : ComponentActivity() {
     }
 
     companion object {
-        /** An existing drawing (content Uri) to open and save again in place. */
+        /** An existing drawing (content Uri) whose lines open to draw on. */
         const val EXTRA_SOURCE = "source"
         /** Path of the new PNG in the cache. */
         const val RESULT_FILE = "file"
-        const val RESULT_EDITED = "edited"
 
         /** White background, round line ends, the lines as stored; then the lines go inside the PNG. */
         fun render(drawing: DrawingFormat.Drawing): ByteArray {

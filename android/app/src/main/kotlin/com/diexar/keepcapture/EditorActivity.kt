@@ -352,7 +352,7 @@ private fun EditorScreen(
         embedLines.add("![[" + basename + "]]")
     }
 
-    fun handleImageUri(uri: Uri, cleanupFile: File?, withOcr: Boolean, name: String? = null) {
+    fun handleImageUri(uri: Uri, cleanupFile: File?, withOcr: Boolean, name: String? = null, replaces: String? = null) {
         scope.launch {
             if (withOcr) {
                 Toast.makeText(context, R.string.ocr_running, Toast.LENGTH_SHORT).show()
@@ -390,7 +390,9 @@ private fun EditorScreen(
                 }
                 attachmentUris = if (hadCompleteIndex) attachmentUris + refreshed else refreshed
                 attachmentIndexLoaded = true
-                if (withOcr) insertOcrAndEmbed(basename, ocrText)
+                val old = replaces?.let { "![[" + it + "]]" }?.let(embedLines::indexOf) ?: -1
+                if (old >= 0) embedLines[old] = "![[" + basename + "]]"
+                else if (withOcr) insertOcrAndEmbed(basename, ocrText)
                 else insertImageEmbed(basename)
             } else {
                 val err = result.exceptionOrNull()
@@ -427,6 +429,15 @@ private fun EditorScreen(
         val path = result.data?.getStringExtra(DrawingActivity.RESULT_FILE) ?: return@rememberLauncherForActivityResult
         val file = File(path)
         handleImageUri(Uri.fromFile(file), cleanupFile = file, withOcr = false, name = file.name)
+    }
+    // Drawing on an existing drawing: the new picture takes the place of the old one in this note.
+    var editingDrawing by rememberSaveable { mutableStateOf<String?>(null) }
+    val editDrawingLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val replaced = editingDrawing
+        editingDrawing = null
+        val path = result.data?.getStringExtra(DrawingActivity.RESULT_FILE) ?: return@rememberLauncherForActivityResult
+        val file = File(path)
+        handleImageUri(Uri.fromFile(file), cleanupFile = file, withOcr = false, name = file.name, replaces = replaced)
     }
     val pickImageLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia()
@@ -1194,6 +1205,10 @@ private fun EditorScreen(
                             )
                         }
                     },
+                    onEditDrawing = { uri ->
+                        editingDrawing = Uri.decode(uri.lastPathSegment.orEmpty()).substringAfterLast('/')
+                        editDrawingLauncher.launch(Intent(context, DrawingActivity::class.java).putExtra(DrawingActivity.EXTRA_SOURCE, uri.toString()))
+                    },
                     foreground = fg,
                 )
             }
@@ -1403,6 +1418,7 @@ private fun EditorBody(
     onUntilChange: (String?) -> Unit,
     onLimitChange: (Int?) -> Unit,
     onClear: () -> Unit,
+    onEditDrawing: (Uri) -> Unit,
     foreground: Color,
 ) {
     val context = LocalContext.current
@@ -1595,7 +1611,8 @@ private fun EditorBody(
         }
     }
     lightboxUri?.let { uri ->
-        ImageLightbox(uri = uri, onClose = { lightboxUri = null })
+        val drawing = DrawingFormat.isDrawingName(Uri.decode(uri.lastPathSegment.orEmpty()).substringAfterLast('/'))
+        ImageLightbox(uri = uri, onClose = { lightboxUri = null }, onEditDrawing = if (drawing) ({ onEditDrawing(uri) }) else null)
     }
 }
 
