@@ -18,6 +18,10 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.PhonelinkLock
+import androidx.compose.material.icons.filled.RemoveCircleOutline
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -583,7 +587,6 @@ internal fun CloudAccountSection(busy: Boolean, run: (suspend () -> Unit) -> Uni
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Account", style = MaterialTheme.typography.titleLarge)
         notice?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
         val attach = flow.attach
         when {
@@ -611,7 +614,8 @@ internal fun CloudAccountSection(busy: Boolean, run: (suspend () -> Unit) -> Uni
             }
             else -> {
                 Text(if (hasPassword) "Email sign-in: $email" else "Account: $email", style = MaterialTheme.typography.bodyMedium)
-                OutlinedButton(onClick = { run { val client = cloud(); approvals = io { CloudAccount.listApprovals(client) } } }, enabled = !busy) { Text("Check requests from new devices") }
+                OutlinedButton(onClick = { run { val client = cloud(); approvals = io { CloudAccount.listApprovals(client) } } }, enabled = !busy,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Check requests from new devices") }
                 approvals?.let { list ->
                     if (list.isEmpty()) Text("No devices are waiting for approval.", style = MaterialTheme.typography.bodySmall)
                     list.forEach { request ->
@@ -629,7 +633,7 @@ internal fun CloudAccountSection(busy: Boolean, run: (suspend () -> Unit) -> Uni
                 // An account made with Google or GitHub gets a password through "Forgot password?", like on the website.
                 if (!hasPassword) Text("You sign in with Google or GitHub, so this account has no password. A password is needed to make a new recovery code. " +
                     "To add one: disconnect this device, choose \"Forgot password?\" and follow the steps.", style = MaterialTheme.typography.bodySmall)
-                else if (!changing) TextButton(onClick = { changing = true }, enabled = !busy) { Text("Change password") }
+                else if (!changing) OutlinedButton(onClick = { changing = true }, enabled = !busy, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Change password") }
                 else {
                     PasswordField(current, { current = it }, "Current password", !busy)
                     PasswordField(password, { password = it }, "New password (at least 12 characters)", !busy)
@@ -655,8 +659,20 @@ internal fun CloudAccountSection(busy: Boolean, run: (suspend () -> Unit) -> Uni
                         try { io(action); return true }
                         catch (failure: CloudRequestException) { if (failure.status != 401) throw failure; totpProblem = accountProblem(failure); return false }
                     }
-                    Text("Authenticator app", style = MaterialTheme.typography.titleMedium)
-                    Text(if (totp) "On: a new device asks for a code from your app." else "Off: a new device asks for a code by email.")
+                    OutlinedCard(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.PhonelinkLock, null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(10.dp))
+                        Text("Authenticator app", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                        // A sign and a word, not only a colour.
+                        Icon(if (totp) Icons.Filled.CheckCircle else Icons.Filled.RemoveCircleOutline, null, Modifier.size(18.dp),
+                            tint = if (totp) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.width(4.dp))
+                        Text(if (totp) "On" else "Off", style = MaterialTheme.typography.labelLarge)
+                    }
+                    Text(if (totp) "A new device asks for a code from your app." else "Recommended. Now a new device asks for a code by email. With an app like Google Authenticator, Microsoft Authenticator or 2FAS your account stays safe even if someone gets into your email.",
+                        style = MaterialTheme.typography.bodySmall)
                     when {
                         setup != null -> {
                             TotpSetupSteps(setup, totpCode, { totpCode = it }, !busy)
@@ -684,18 +700,20 @@ internal fun CloudAccountSection(busy: Boolean, run: (suspend () -> Unit) -> Uni
                                 TextButton(onClick = { turningOff = false; totpPassword = ""; totpProblem = null }, enabled = !busy) { Text("Cancel") }
                             }
                         }
-                        totp -> TextButton(onClick = { turningOff = true }, enabled = !busy) { Text("Turn off") }
-                        else -> TextButton(onClick = { run {
+                        totp -> OutlinedButton(onClick = { turningOff = true }, enabled = !busy, modifier = Modifier.heightIn(min = 48.dp)) { Text("Turn off") }
+                        else -> Button(onClick = { run {
                             val client = cloud()
                             flow.totpSetup = io { CloudAccount.setupTotp(client) }
                             totpCode = ""; totpPassword = ""; totpProblem = null
-                        } }, enabled = !busy) { Text("Set up an authenticator app") }
+                        } }, enabled = !busy, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("Set up authenticator app") }
+                    }
+                    }
                     }
                 }
             }
         }
         if (loaded && !loadFailed && attach == null && hasPassword) {
-            if (!renewing) TextButton(onClick = { renewing = true }, enabled = !busy) { Text("Make a new recovery code") }
+            if (!renewing) OutlinedButton(onClick = { renewing = true }, enabled = !busy, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text("Make a new recovery code") }
             else {
                 Text("Recovery code", style = MaterialTheme.typography.titleMedium)
                 Text("A new code replaces your old recovery code. The old code stops working.", style = MaterialTheme.typography.bodySmall)

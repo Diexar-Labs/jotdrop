@@ -37,9 +37,12 @@ check(!/href="\/"/.test(privacy), "privacy page must not link to the web app");
 
 // User-generated content policy: terms before sharing, and reporting and blocking inside the app.
 const spacesUi = read("android/app/src/main/kotlin/com/diexar/keepcapture/CloudSpacesUi.kt");
-for (const needed of ["CloudSpaces.report(", "CloudSpaces.block(", "TermsNotice(\"sharing\")", "TermsNotice(\"joining\")"]) {
+for (const needed of ["CloudSpaces.report(", "CloudSpaces.block(", "TermsNotice(\"joining\")"]) {
   check(spacesUi.includes(needed), `CloudSpacesUi must use ${needed}`);
 }
+// Sharing a note has its own page; the terms come before both ways of sharing.
+const shareUi = read("android/app/src/main/kotlin/com/diexar/keepcapture/CloudShareUi.kt");
+check((shareUi.match(/TermsNotice\("sharing"\)/g) || []).length >= 2, "CloudShareUi must show TermsNotice(\"sharing\") before sharing with people and before making a link");
 check(/runCatching \{ context\.startActivity\(Intent\(Intent\.ACTION_VIEW, Uri\.parse\("\$\{.*\/terms"/.test(spacesUi), "the terms link must follow the server and survive a phone without a browser");
 // The notice line sits under the list of groups, out of sight while a group is open: a report needs its own answer.
 check(spacesUi.includes("reported = true") && !spacesUi.includes('setNotice("Thanks.'), "sending a report must answer in a dialog");

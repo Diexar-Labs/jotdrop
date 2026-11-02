@@ -45,11 +45,6 @@ internal object CloudSpacesFlow {
 
     /** From an invitation link, until it is used or put aside. */
     var invitation by mutableStateOf<String?>(null)
-    /** The note a card's menu wants to share. */
-    var shareNote by mutableStateOf<Uri?>(null)
-
-    /** The note a card's menu wants to share by link. */
-    var linkNote by mutableStateOf<Uri?>(null)
 
     fun known(context: Context): List<KnownSpace> {
         val spaces = CloudPreviewStore(context).spaces()
@@ -144,7 +139,7 @@ private val REPORT_REASONS = listOf("abuse" to "Threats, harassment or hate", "i
 
 /** The terms come before anything is shared or joined. */
 @Composable
-private fun TermsNotice(action: String) {
+internal fun TermsNotice(action: String) {
     val context = LocalContext.current
     Text("By $action you accept the terms of use.", style = MaterialTheme.typography.bodySmall)
     val server = remember { runCatching { CloudPreviewStore(context).credentials()?.url }.getOrNull() ?: "https://app.jotdrop.net" }
@@ -172,8 +167,7 @@ internal fun SharedGroups(busy: Boolean, run: (suspend () -> Unit) -> Unit, clie
         info = if (id == null) null else runCatching { val own = client(); withContext(Dispatchers.IO) { CloudSpaces.details(own, id) } }.getOrNull()
     }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Shared groups", style = MaterialTheme.typography.titleLarge)
-        Text("Share a note from the menu on its card. Everyone in a group can read and change its notes. JotDrop's server cannot read them.", style = MaterialTheme.typography.bodySmall)
+        Text("Share a note with Share in the menu on its card. Everyone in a group can read and change its notes. JotDrop's server cannot read them.", style = MaterialTheme.typography.bodySmall)
         for (group in groups) {
             val state = when { group.gone -> "No access any more"; group.frozen -> "Read-only"; group.others.isEmpty() -> "Only you so far"; else -> "Shared with ${group.others.joinToString(", ")}" }
             OutlinedButton(onClick = { open = if (open == group.id) null else group.id }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
@@ -288,84 +282,5 @@ internal fun SharedGroups(busy: Boolean, run: (suspend () -> Unit) -> Unit, clie
                 }
             }, enabled = name.isNotBlank() && !busy) { Text("Join") } },
             dismissButton = { TextButton(onClick = { CloudSpacesFlow.invitation = null }) { Text("Not now") } })
-    }
-    CloudSpacesFlow.linkNote?.let { note ->
-        var days by remember { mutableStateOf(7) }
-        var made by remember { mutableStateOf<String?>(null) }
-        var said by remember { mutableStateOf("") }
-        var links by remember { mutableStateOf<List<CloudNoteLinks.Link>>(emptyList()) }
-        val load: suspend () -> Unit = { val own = client(); links = withContext(Dispatchers.IO) { CloudNoteLinks.list(own) } }
-        LaunchedEffect(note) { runCatching { load() } }
-        AlertDialog(onDismissRequest = { CloudSpacesFlow.linkNote = null }, title = { Text("Share by link") },
-            text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                val link = made
-                if (link == null) {
-                    Text("Anyone with this link can read a copy of this note, without an account. Later changes do not go along. Photos and files stay out.", style = MaterialTheme.typography.bodySmall)
-                    for ((value, label) in listOf(1 to "After 1 day", 7 to "After 7 days", 30 to "After 30 days", 0 to "When I remove it")) Row(verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(selected = days == value, onClick = { days = value })
-                        Text(label)
-                    }
-                    TermsNotice("sharing")
-                } else {
-                    Text("Send this link yourself. It holds the key, so we never see it.", style = MaterialTheme.typography.bodySmall)
-                    Text(link, style = MaterialTheme.typography.bodySmall)
-                    TextButton(onClick = { context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, link), null)) }) { Text("Send link") }
-                }
-                if (said.isNotEmpty()) Text(said, style = MaterialTheme.typography.bodySmall)
-                if (links.isNotEmpty()) Text("Your links", style = MaterialTheme.typography.titleSmall)
-                for (item in links) Column {
-                    Text("${item.title.ifBlank { "Untitled note" }} - ${item.expiresAt?.let { "ends ${it.take(10)}" } ?: "until you remove it"}", style = MaterialTheme.typography.bodySmall)
-                    TextButton(onClick = { run { val own = client(); withContext(Dispatchers.IO) { CloudNoteLinks.remove(own, item.id) }; said = "The link no longer works."; if (made == item.address) made = null; load() } }, enabled = !busy) { Text("Remove") }
-                }
-            } },
-            confirmButton = { if (made == null) TextButton(onClick = {
-                run {
-                    val own = client()
-                    try {
-                        made = withContext(Dispatchers.IO) {
-                            val (title, text) = CloudNoteLinks.parts(Storage.readNote(context, note).getOrThrow())
-                            CloudNoteLinks.create(own, title, text, days)
-                        }
-                        said = ""
-                        load()
-                    } catch (error: CloudRequestException) {
-                        // No link and no price: Google allows telling people where to upgrade, not sending them there.
-                        if (error.code != "plus-required") throw error
-                        said = "${error.serverMessage} You can try it free for 14 days on our website."
-                    }
-                }
-            }, enabled = !busy) { Text("Make link") } },
-            dismissButton = { TextButton(onClick = { CloudSpacesFlow.linkNote = null }) { Text("Close") } })
-    }
-    CloudSpacesFlow.shareNote?.let { note ->
-        var choice by remember { mutableStateOf<String?>(null) }
-        var newName by remember { mutableStateOf("") }
-        var me by remember { mutableStateOf("") }
-        LaunchedEffect(note) { me = runCatching { val own = client(); withContext(Dispatchers.IO) { CloudSpacesFlow.myName(own, CloudSpacesFlow.known(context)) } }.getOrDefault("") }
-        AlertDialog(onDismissRequest = { CloudSpacesFlow.shareNote = null }, title = { Text("Share this note") },
-            text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("The note moves to a shared group. Pin, labels, order and a reminder stay behind.", style = MaterialTheme.typography.bodySmall)
-                for (group in groups.filter { !it.gone && !it.frozen }) Row(verticalAlignment = Alignment.CenterVertically) {
-                    RadioButton(selected = choice == group.id, onClick = { choice = group.id })
-                    Text(group.name.ifEmpty { "Shared group" })
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) { RadioButton(selected = choice == null, onClick = { choice = null }); Text("New group") }
-                if (choice == null) OutlinedTextField(value = newName, onValueChange = { if (it.length <= 80) newName = it }, label = { Text("Name of the new group") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = me, onValueChange = { if (it.length <= 80) me = it }, label = { Text("Your name for the others") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                TermsNotice("sharing")
-            } },
-            confirmButton = { TextButton(onClick = {
-                val target = choice
-                CloudSpacesFlow.shareNote = null
-                run {
-                    val own = client()
-                    val id = withContext(Dispatchers.IO) { CloudSpacesFlow.share(context, own, note, target, newName, me) }
-                    CloudSyncManager.request(context)
-                    open = id
-                    reload()
-                    setNotice("The note is shared. Invite someone below.")
-                }
-            }, enabled = me.isNotBlank() && (choice != null || newName.isNotBlank()) && !busy) { Text("Share") } },
-            dismissButton = { TextButton(onClick = { CloudSpacesFlow.shareNote = null }) { Text("Cancel") } })
     }
 }

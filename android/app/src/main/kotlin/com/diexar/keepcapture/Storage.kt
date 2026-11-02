@@ -459,8 +459,10 @@ object Storage {
         // A group's notes show the attachments of that group.
         attachments: Map<String, Uri> = snapshotAttachments(context, vaultUri),
     ): List<NoteSummary> {
-        return children.map { child ->
-            val preview = readPreview(context, child.uri)
+        val summaries = children.map { child ->
+            // Unchanged notes (same modified time and size) come from the preview cache instead of being opened again.
+            val preview = NotePreviewCache.get(context, child.uri, child.lastModified, child.size)
+                ?: readPreview(context, child.uri).also { NotePreviewCache.put(context, child.uri, child.lastModified, child.size, it) }
             val parsed = FrontmatterParser.parse(preview)
             val firstImage = findEmbeddedImageBasenames(parsed.body).firstOrNull()
             val firstAudio = if (firstImage == null) {
@@ -480,6 +482,8 @@ object Storage {
                 audioUri = firstAudio?.let { attachments[it] },
             )
         }
+        NotePreviewCache.save(context)
+        return summaries
     }
 
     /** Refresh one changed card without reopening every note in the vault. */
@@ -510,6 +514,7 @@ object Storage {
             DocumentsContract.Document.COLUMN_DISPLAY_NAME,
             DocumentsContract.Document.COLUMN_MIME_TYPE,
             DocumentsContract.Document.COLUMN_LAST_MODIFIED,
+            DocumentsContract.Document.COLUMN_SIZE,
         )
         val out = mutableListOf<ChildDoc>()
         try {
@@ -521,9 +526,10 @@ object Storage {
                     val name = cursor.getString(1) ?: continue
                     val mime = cursor.getString(2) ?: ""
                     val mtime = if (cursor.isNull(3)) 0L else cursor.getLong(3)
+                    val size = if (cursor.isNull(4)) -1L else cursor.getLong(4)
                     if (mime == DocumentsContract.Document.MIME_TYPE_DIR) continue
                     val uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, id)
-                    out.add(ChildDoc(uri, name, mtime))
+                    out.add(ChildDoc(uri, name, mtime, size))
                 }
             }
         } catch (e: Exception) {
@@ -669,7 +675,7 @@ object Storage {
         }
     }
 
-    private data class ChildDoc(val uri: Uri, val name: String, val lastModified: Long)
+    private data class ChildDoc(val uri: Uri, val name: String, val lastModified: Long, val size: Long = -1L)
 
     fun readNote(context: Context, uri: Uri): Result<String> {
         // Een halve notitie mag niet verder (archief/prullenbak kopieert en wist de bron).
