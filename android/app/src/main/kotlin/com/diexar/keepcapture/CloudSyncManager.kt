@@ -301,6 +301,52 @@ object CloudSyncManager {
     }
 
     /**
+     * Mail to JotDrop: opens waiting sealed mail with the key derived from the vault key, writes the note and its
+     * attachments as local files for the normal sync to upload, and deletes an item only once every file of it is
+     * confirmed in the cloud (present in the engine's tracked state). One bad mail never stops the sync.
+     */
+    private fun convertMail(client: CloudClient, adapter: CloudVaultAdapter, mail: JSONObject?, tracked: Map<String, CloudSyncBase>, checkActive: () -> Unit): Int {
+        if (mail == null || !mail.optBoolean("enabled") || mail.optInt("pending") == 0) return 0
+        val scalar = try { CloudMail.derivedScalar(client.credentials.vaultKey) } catch (error: Exception) { return 0 }
+        val publicKey = mail.optString("publicKey")
+        if (CloudMail.publicKey(scalar) != publicKey) {
+            Log.w("JotDropCloud", "The mail key on the server does not match this vault; mail stays sealed")
+            return 0
+        }
+        val items = try { client.call("/mail").getJSONArray("items") } catch (error: Exception) { return 0 }
+        var saved = 0
+        for (index in 0 until minOf(items.length(), 25)) {
+            checkActive()
+            try {
+                val item = items.getJSONObject(index)
+                val id = item.getString("id")
+                require(id.matches(Regex("[0-9a-f-]{36}"))) { "Invalid mail item" }
+                val uploaded = { path: String -> tracked[path]?.deleted == false }
+                val detail = client.call("/mail/$id")
+                val key = CloudMail.mailKey(scalar, publicKey, detail.getString("ephemeralKey"), id)
+                val payload = JSONObject(String(CloudMail.openBody(key, client.credentials.vaultId, id, detail.getString("body")), Charsets.UTF_8))
+                val attachments = payload.optJSONArray("attachments") ?: JSONArray()
+                val names = (0 until attachments.length()).map { attachments.optJSONObject(it)?.optString("name") }
+                val note = CloudMail.noteFor(payload.optString("subject"), payload.optString("from"), payload.optString("date"), payload.optString("text"), names, id, item.getString("receivedAt"))
+                val paths = mutableListOf(note.path)
+                note.attachments.forEachIndexed { n, name ->
+                    val path = "attachments/$name"
+                    paths += path
+                    if (uploaded(path)) return@forEachIndexed
+                    val sealed = client.call("/mail/$id/parts/$n").getString("sealed")
+                    adapter.compareAndSet(path, null, CloudMail.openPart(key, client.credentials.vaultId, id, n, sealed))
+                }
+                if (!uploaded(note.path) && adapter.compareAndSet(note.path, null, note.content.toByteArray(Charsets.UTF_8))) saved++
+                if (paths.all(uploaded)) client.call("/mail/$id", "DELETE")
+            } catch (error: Exception) {
+                if (error is CancellationException || error is CloudSyncException) throw error
+                Log.i("JotDropCloud", "A waiting mail stays sealed for a later try: ${error.javaClass.simpleName}")
+            }
+        }
+        return saved
+    }
+
+    /**
      * Every shared space in its own folder, with its own state. Nothing here may stop the own vault's sync: a 401 means
      * this space, not this device, and a member's bad file is left out. Runs inside the sync's lock.
      */
@@ -561,8 +607,10 @@ object CloudSyncManager {
             val index = loadIndex(store, client)
             val seen = loadSeen(store, scope)
             phase = CloudDiagnostics.Phase.REMOTE_LIST
+            // One status request: the plan's maximum per file and whether sealed mail waits (Mail to JotDrop).
+            val cloudStatus = client.call("/status")
             // The plan's maximum per file, and no more than this device can hold a few times over while syncing it.
-            val planMax = client.maxFileBytes()
+            val planMax = cloudStatus.optJSONObject("pieces")?.optLong("maxFileBytes")?.takeIf { it > 0 } ?: CloudCrypto.MAX_FILE_BYTES.toLong()
             val maxFileBytes = minOf(planMax, Runtime.getRuntime().maxMemory() / 4)
             // A big first sync takes a while: show how far it is, once a second at most.
             var shownAt = 0L
@@ -636,6 +684,13 @@ object CloudSyncManager {
             changed.value++
             // The own vault is done; a shared space that fails says so itself and never stops this.
             syncSpaces(context, store, client, checkActive)
+            // Mail to JotDrop: waiting sealed mail becomes local notes; the next sync uploads them, and only then the items go.
+            val mailSaved = convertMail(client, adapter, cloudStatus.optJSONObject("mail"), tracked, checkActive)
+            if (mailSaved > 0) {
+                settings.put("message", settings.optString("message") + " " + if (mailSaved == 1) "1 email was saved as a note." else "$mailSaved emails were saved as notes.")
+                store.saveSettings(settings)
+                changed.value++
+            }
         } catch (error: Exception) {
             if (error is CancellationException) throw error
             Log.w("JotDropCloud", CloudDiagnostics.failure(error, phase, (System.nanoTime() - startedAt) / 1_000_000))

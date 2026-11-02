@@ -46,6 +46,33 @@ tasks.register<JavaExec>("checkCloudSync") {
     maxHeapSize = "160m"
 }
 
+// Mail to JotDrop: Android must derive the same key pair and open the same sealed mail as every other platform.
+val cloudMailClasses = layout.buildDirectory.dir("cloud-mail-check")
+val cloudMailSources = files("app/src/main/kotlin/com/diexar/keepcapture/CloudCrypto.kt",
+    "app/src/main/kotlin/com/diexar/keepcapture/CloudMail.kt", "../cloud/android/CloudMailCheck.kt")
+val cloudMailCompile = tasks.register<JavaExec>("cloudMailCompile") {
+    inputs.files(cloudMailSources)
+    outputs.dir(cloudMailClasses)
+    classpath(buildscript.configurations.getByName("classpath"))
+    mainClass.set("org.jetbrains.kotlin.cli.jvm.K2JVMCompiler")
+    doFirst {
+        args("-Xdisable-default-scripting-plugin", "-no-stdlib", "-no-reflect", "-jvm-target", "17", "-classpath",
+            project(":app").configurations.getByName("debugCompileClasspath").asPath,
+            "-d", cloudMailClasses.get().asFile.absolutePath)
+        args(cloudMailSources.files.map { it.absolutePath })
+    }
+}
+
+tasks.register<JavaExec>("checkCloudMail") {
+    dependsOn(cloudMailCompile)
+    classpath(cloudMailClasses)
+    classpath(provider { project(":app").configurations.getByName("debugCompileClasspath") })
+    mainClass.set("com.diexar.keepcapture.CloudMailCheckKt")
+    doFirst {
+        args(requireNotNull(System.getenv("JOTDROP_MAIL_INPUT")))
+    }
+}
+
 val listEditorClasses = layout.buildDirectory.dir("list-editor-check")
 val listEditorSources = files("app/src/main/kotlin/com/diexar/keepcapture/ListEditing.kt", "checks/ListEditorCheck.kt")
 val listEditorCompile = tasks.register<JavaExec>("listEditorCompile") {

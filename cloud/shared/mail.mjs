@@ -119,14 +119,16 @@ export async function openMailBody(key, vaultId, mailId, sealed) {
 
 export const openMailPart = (key, vaultId, mailId, n, sealed) => openBytes(key, partAad(vaultId, mailId, n), base64ToBytes(sealed));
 
+// One explicit whitespace class, so Kotlin collapses exactly the same characters (CloudMail.kt).
+const SPACES = new RegExp('[ \\t\\n\\r\\f\\v\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff]+', 'g');
 const safeText = (value, fallback, length) => {
-  const text = typeof value === 'string' ? value.replace(/[\\/:\x00-\x1f\x7f#[\]|^]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, length).trim() : '';
-  return text.replace(/^[.\s]+|[.\s]+$/g, '') || fallback;
+  const text = typeof value === 'string' ? value.replace(/[\\/:\x00-\x1f\x7f#[\]|^]/g, ' ').replace(SPACES, ' ').trim().slice(0, length).trim() : '';
+  return text.replace(/^[. ]+|[. ]+$/g, '') || fallback;
 };
 
 // For lines inside the note, where only control characters are a problem.
 const lineText = (value, fallback, length) => {
-  const text = typeof value === 'string' ? value.replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, length).trim() : '';
+  const text = typeof value === 'string' ? value.replace(/[\x00-\x1f\x7f]/g, ' ').replace(SPACES, ' ').trim().slice(0, length).trim() : '';
   return text || fallback;
 };
 

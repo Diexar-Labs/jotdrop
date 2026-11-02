@@ -50,6 +50,13 @@ check(spacesUi.includes("reported = true") && !spacesUi.includes('setNotice("Tha
 const terms = read("cloud/web/terms.html");
 check(!/href="\/"|href="https?:\/\/[^"]*jotdrop\.net/.test(terms), "the terms must not link onward to the web app or the site");
 
+// Mail to JotDrop (Payments policy): the card may name JotDrop Plus and the website,
+// but no price, no currency and no tappable link or button to a checkout.
+const mailUi = read("android/app/src/main/kotlin/com/diexar/keepcapture/CloudMailUi.kt");
+check(!/€|\$\d|\bEUR\b|\bUSD\b|per month|per year/i.test(mailUi), "CloudMailUi must not name a price or currency");
+check(!/https?:\/\/|Uri\.parse|ACTION_VIEW|uriHandler|LocalUriHandler/.test(mailUi), "CloudMailUi must not open or show a link");
+check(mailUi.includes("Upgrade on our website."), "CloudMailUi names the website in words only");
+
 if (errors.length) {
   for (const error of errors) console.error(`FAIL: ${error}`);
   process.exit(1);

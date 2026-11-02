@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { hugeCase, longCase, randomCases } from '../cloud/shared/merge-cases.mjs';
 import { mergeNote } from '../cloud/shared/merge.mjs';
 import { base64ToBytes, bytesToBase64, CHUNK_BYTES, decryptChunk, decryptEnvelope, encryptChunk, encryptEnvelope, generateVaultKey, hashToken, normalizePath, objectId, sha256Hex } from '../cloud/shared/crypto.mjs';
+import { mailToNote } from '../cloud/shared/mail.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const temporary = mkdtempSync(path.join(tmpdir(), 'jotdrop-android-crypto-'));
@@ -50,10 +51,19 @@ try {
   });
   writeFileSync(merges, [...JSON.parse(readFileSync(path.join(root, 'cloud/shared/merge-vectors.json'), 'utf8')), ...generated]
     .map((vector) => [vector.name, vector.base, vector.local, vector.cloud, vector.merged].map(field).join('\t')).join('\n'));
+  // Mail to JotDrop: the frozen vectors, flattened to one TSV line for the Kotlin check.
+  const mail = JSON.parse(readFileSync(path.join(root, 'cloud/shared/fixtures/mail-vectors.json'), 'utf8'));
+  const mailInput = path.join(temporary, 'mail.tsv');
+  writeFileSync(mailInput, [mail.vaultKey, mail.privateScalar, mail.publicKey, mail.vaultId, mail.mailId, mail.receivedAt, mail.ephemeralKey,
+    mail.body, encodeText(JSON.stringify(mail.payload)), mail.parts[0], mail.partsPlain[0],
+    encodeText(mail.payload.subject), encodeText(mail.payload.from), encodeText(mail.payload.date), encodeText(mail.payload.text),
+    mail.payload.attachments.map((attachment) => encodeText(attachment.name)).join(','),
+    encodeText(mailToNote(mail.payload, mail.mailId, mail.receivedAt).path),
+    encodeText(mailToNote(mail.payload, mail.mailId, mail.receivedAt).content)].join('\t'));
   const windows = process.platform === 'win32';
-  execFileSync(windows ? process.env.ComSpec || 'cmd.exe' : './gradlew', windows ? ['/d', '/c', 'gradlew.bat checkCloudCrypto checkCloudSync checkVersionDiff --no-daemon --console=plain'] : ['checkCloudCrypto', 'checkCloudSync', '--no-daemon', '--console=plain'], {
+  execFileSync(windows ? process.env.ComSpec || 'cmd.exe' : './gradlew', windows ? ['/d', '/c', 'gradlew.bat checkCloudCrypto checkCloudSync checkVersionDiff checkCloudMail --no-daemon --console=plain'] : ['checkCloudCrypto', 'checkCloudSync', 'checkCloudMail', '--no-daemon', '--console=plain'], {
     cwd: path.join(root, 'android'), stdio: 'inherit',
-    env: { ...process.env, JOTDROP_CRYPTO_INPUT: input, JOTDROP_CRYPTO_OUTPUT: output, JOTDROP_MERGE_INPUT: merges },
+    env: { ...process.env, JOTDROP_CRYPTO_INPUT: input, JOTDROP_CRYPTO_OUTPUT: output, JOTDROP_MERGE_INPUT: merges, JOTDROP_MAIL_INPUT: mailInput },
   });
   const results = readFileSync(output, 'utf8').split('\n');
   assert.equal(results.length, vectors.length + pieces.length);

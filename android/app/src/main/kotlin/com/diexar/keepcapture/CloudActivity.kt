@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Devices
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Mail
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Sync
@@ -147,6 +148,7 @@ private fun CloudScreen(welcome: Boolean, resolve: String?, onBack: () -> Unit, 
     var accountEmail by remember { mutableStateOf<String?>(null) }
     // When the 14 days of Plus every new account starts with end; null outside a trial.
     var trialEnds by remember { mutableStateOf<java.time.Instant?>(null) }
+    var mailStatus by remember { mutableStateOf<JSONObject?>(null) }
 
     suspend fun refresh() {
         status = withContext(Dispatchers.IO) { CloudSyncManager.status(context) }
@@ -230,9 +232,11 @@ private fun CloudScreen(welcome: Boolean, resolve: String?, onBack: () -> Unit, 
             catch (_: Exception) { null }
     }
     LaunchedEffect(status?.connected, status?.vaultId, status?.lastSynced) {
-        trialEnds = if (status?.connected != true) null else try { val client = cloud(); withContext(Dispatchers.IO) { trialEndsOf(client.call("/status")) } }
+        val fetched = if (status?.connected != true) null else try { val client = cloud(); withContext(Dispatchers.IO) { client.call("/status") } }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { null }
+        trialEnds = fetched?.let { trialEndsOf(it) }
+        mailStatus = fetched?.optJSONObject("mail")
     }
     // Just signed in here: an empty notes folder starts syncing at once, a folder with files asks first (Eric).
     var wasConnected by remember { mutableStateOf<Boolean?>(null) }
@@ -441,6 +445,11 @@ private fun CloudScreen(welcome: Boolean, resolve: String?, onBack: () -> Unit, 
                         }
                         // Google Play allows naming the website, without a link or button, when the app sells nothing itself.
                         Text("JotDrop Plus adds more storage, devices and history. Upgrade on our website.", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                if (mailStatus?.let { it.optBoolean("enabled") || !it.optString("domain").isNullOrEmpty() } == true) item(key = "mail") {
+                    CloudCard(Icons.Filled.Mail, "Mail to JotDrop") {
+                        CloudMailSection(busy, mailStatus, { action -> run { action() } }, ::cloud) { mailStatus = it }
                     }
                 }
                 item(key = "account") { CloudCard(Icons.Filled.Shield, "Account and security") { CloudAccountSection(busy, ::accountRun) { cloud() } } }
