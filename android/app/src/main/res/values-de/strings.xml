@@ -57,4 +57,29 @@
     <string name="widget_note_gone">Diese Notiz wurde verschoben oder ist weg. Tippen, um eine andere zu wählen.</string>
     <string name="widget_note_empty">Diese Notiz ist leer.</string>
     <string name="widget_note_none">Noch keine Notizen. Erstelle zuerst eine.</string>
+    <!-- Drawing (2 Nov 2026) -->
+    <string name="drawing_title">Zeichnung</string>
+    <string name="drawing_save">Speichern</string>
+    <string name="drawing_canvas">Zeichenfläche</string>
+    <string name="drawing_color_black">Schwarz</string>
+    <string name="drawing_color_blue">Blau</string>
+    <string name="drawing_color_red">Rot</string>
+    <string name="drawing_color_green">Grün</string>
+    <string name="drawing_color_orange">Orange</string>
+    <string name="drawing_color_purple">Lila</string>
+    <string name="drawing_size_thin">Dünn</string>
+    <string name="drawing_size_medium">Mittel</string>
+    <string name="drawing_size_thick">Dick</string>
+    <string name="drawing_eraser">Radierer</string>
+    <string name="drawing_undo">Rückgängig</string>
+    <string name="drawing_redo">Wiederholen</string>
+    <string name="drawing_clear">Löschen</string>
+    <string name="drawing_clear_title">Die ganze Zeichnung löschen?</string>
+    <string name="drawing_discard_title">Diese Zeichnung verwerfen?</string>
+    <string name="drawing_discard">Verwerfen</string>
+    <string name="drawing_keep_drawing">Weiterzeichnen</string>
+    <string name="action_new_drawing">Neue Zeichnung</string>
+    <string name="action_insert_drawing">Zeichnung</string>
+    <string name="action_edit_drawing">Zeichnung bearbeiten</string>
+    <string name="drawing_note_title">Zeichnung</string>
 </resources>

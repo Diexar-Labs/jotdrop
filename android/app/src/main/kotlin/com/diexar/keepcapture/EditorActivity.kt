@@ -67,6 +67,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AddAPhoto
+import androidx.compose.material.icons.filled.Draw
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
@@ -351,7 +352,7 @@ private fun EditorScreen(
         embedLines.add("![[" + basename + "]]")
     }
 
-    fun handleImageUri(uri: Uri, cleanupFile: File?, withOcr: Boolean) {
+    fun handleImageUri(uri: Uri, cleanupFile: File?, withOcr: Boolean, name: String? = null) {
         scope.launch {
             if (withOcr) {
                 Toast.makeText(context, R.string.ocr_running, Toast.LENGTH_SHORT).show()
@@ -374,7 +375,7 @@ private fun EditorScreen(
             }
 
             val result = withContext(Dispatchers.IO) {
-                Storage.copyImageToAttachments(context, uri, Storage.spaceIdOf(initialUri))
+                Storage.copyImageToAttachments(context, uri, Storage.spaceIdOf(initialUri), name)
             }
             cleanupFile?.delete()
             val basename = result.getOrNull()
@@ -421,6 +422,12 @@ private fun EditorScreen(
         }
     }
 
+    // A drawing goes into the note like a photo, under its own name so it opens again to draw on.
+    val drawLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val path = result.data?.getStringExtra(DrawingActivity.RESULT_FILE) ?: return@rememberLauncherForActivityResult
+        val file = File(path)
+        handleImageUri(Uri.fromFile(file), cleanupFile = file, withOcr = false, name = file.name)
+    }
     val pickImageLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia()
     ) { uri ->
@@ -870,6 +877,14 @@ private fun EditorScreen(
                                     onClick = {
                                         photoMenuExpanded = false
                                         launchPicker(withOcr = false)
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.action_insert_drawing)) },
+                                    leadingIcon = { Icon(Icons.Filled.Draw, contentDescription = null) },
+                                    onClick = {
+                                        photoMenuExpanded = false
+                                        drawLauncher.launch(Intent(context, DrawingActivity::class.java))
                                     },
                                 )
                                 DropdownMenuItem(
