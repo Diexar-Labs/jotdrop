@@ -32,7 +32,7 @@ import coil.compose.AsyncImage
  * door aan de standaard-gallery via ACTION_VIEW met read-permission.
  */
 @Composable
-internal fun ImageLightbox(uri: Uri, onClose: () -> Unit) {
+internal fun ImageLightbox(uri: Uri, onClose: () -> Unit, onEditDrawing: (() -> Unit)? = null) {
     val context = LocalContext.current
     Dialog(
         onDismissRequest = onClose,
@@ -80,6 +80,11 @@ internal fun ImageLightbox(uri: Uri, onClose: () -> Unit) {
                     }
                 }) {
                     Text(stringResource(R.string.action_open_external))
+                }
+                // A JotDrop drawing opens again to draw on.
+                onEditDrawing?.let { edit ->
+                    Spacer(Modifier.height(8.dp))
+                    Button(onClick = { onClose(); edit() }) { Text(stringResource(R.string.action_edit_drawing)) }
                 }
                 Spacer(Modifier.height(8.dp))
                 Button(onClick = onClose) {
