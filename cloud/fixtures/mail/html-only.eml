@@ -1,0 +1,11 @@
+From: Webshop <noreply@shop.example>
+To: k7wmq3xbrn4p@in.jotdrop.net
+Subject: Je pakket is onderweg
+Date: Fri, 6 Nov 2026 12:00:00 +0000
+MIME-Version: 1.0
+Content-Type: text/html; charset="utf-8"
+
+<html><head><style>p { color: red; }</style></head><body>
+<p>Beste klant,</p><p>Je pakket komt <b>morgen</b> &amp; wordt bezorgd tussen 9&nbsp;en 12.</p>
+<ul><li>Track: <a href="https://shop.example/track">hier</a></li></ul>
+</body></html>

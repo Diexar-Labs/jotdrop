@@ -1,0 +1,20 @@
+From: Eva <eva@example.org>
+To: k7wmq3xbrn4p@in.jotdrop.net
+Subject: Doorgestuurd ticket
+Content-Type: multipart/mixed; boundary="fwd1"
+MIME-Version: 1.0
+
+--fwd1
+Content-Type: text/plain; charset=utf-8
+
+Zie bijgevoegde mail.
+--fwd1
+Content-Type: message/rfc822
+Content-Disposition: attachment
+
+From: Helpdesk <support@airline.example>
+Subject: Ticket 12345
+Content-Type: text/plain
+
+Uw vlucht is omgeboekt.
+--fwd1--

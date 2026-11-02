@@ -1,0 +1,26 @@
+MIME-Version: 1.0
+From: Anna Voss <anna.voss@gmail.com>
+Date: Mon, 2 Nov 2026 21:14:55 +0100
+Subject: Bon van de lamp
+To: k7wmq3xbrn4p@in.jotdrop.net
+Content-Type: multipart/mixed; boundary="000000000000f00dbead"
+
+--000000000000f00dbead
+Content-Type: multipart/alternative; boundary="000000000000f00dcafe"
+
+--000000000000f00dcafe
+Content-Type: text/plain; charset="UTF-8"
+
+De bon zit erbij.
+--000000000000f00dcafe
+Content-Type: text/html; charset="UTF-8"
+
+<div>De bon zit erbij.</div>
+--000000000000f00dcafe--
+--000000000000f00dbead
+Content-Type: application/pdf; name="bon.pdf"
+Content-Disposition: attachment; filename="bon.pdf"
+Content-Transfer-Encoding: base64
+
+JVBERi0xLjQgZmFrZSByZWNlaXB0IGZvciB0aGUgZGVzayBsYW1w
+--000000000000f00dbead--
