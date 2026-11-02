@@ -1880,7 +1880,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         if (!stripe) fail(503, 'Payments are not available on this server.');
         limit(`checkout:${vaultId}`, 10);
         const value = await body(req, MAX_METADATA_BODY);
-        requireValue(['month', 'year'].includes(value.interval) && [undefined, 'plus', 'family'].includes(value.plan), 'Choose a monthly or yearly plan');
+        requireValue(['month', 'year'].includes(value.interval) && [undefined, 'plus', 'family'].includes(value.plan) && [undefined, 'eur', 'usd'].includes(value.currency), 'Choose a monthly or yearly plan');
         const family = value.plan === 'family';
         if (family && !familyPrices.length) fail(503, 'The family plan is not available on this server.');
         if (subscribed(vaultId)) fail(409, 'This cloud already has a JotDrop Plus subscription. Manage it at link.com.');
@@ -1892,6 +1892,9 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         const form = new URLSearchParams({ mode: 'subscription', 'managed_payments[enabled]': 'true', 'line_items[0][price]': price,
           'line_items[0][quantity]': '1', client_reference_id: vaultId, 'subscription_data[metadata][vaultId]': vaultId, success_url: `${origin}/?plus=welcome`, cancel_url: `${origin}/`, expires_at: String(Math.floor(clock() / 1000) + 30 * 60) });
         if (account) { form.set('subscription_data[metadata][accountId]', account.id); form.set('customer_email', account.email); }
+        // The prices carry a fixed dollar amount next to the euro one. Without a currency Stripe shows euros or converts to the local currency.
+        // A founder price has no dollar amount, so it stays in euros.
+        if (value.currency === 'usd' && price !== stripe.founderYearPrice && price !== stripe.familyFounderYearPrice) form.set('currency', 'usd');
         let session;
         try {
           const response = await stripeCall('/checkout/sessions', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: form.toString() });

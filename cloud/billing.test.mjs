@@ -66,6 +66,18 @@ test('checkout starts a Stripe Managed Payments subscription for this cloud', as
   // A session left open cannot be paid much later, next to a newer one.
   assert.equal(Number(form.get('expires_at')), cloud.seconds() + 30 * 60);
   await assert.rejects(checkout(client, 'week'), (error) => error.status === 400);
+  // Without a currency Stripe chooses; a visitor from the US pays the fixed dollar price.
+  assert.equal(form.get('currency'), null);
+  await client.call('/account/checkout', 'POST', { interval: 'month', currency: 'usd' });
+  assert.equal(cloud.sessions.at(-1).form.get('currency'), 'usd');
+  assert.equal(cloud.sessions.at(-1).form.get('line_items[0][price]'), 'price_month');
+  // The founder price has no dollar amount and stays in euros.
+  await client.call('/account/checkout', 'POST', { interval: 'year', currency: 'usd' });
+  assert.equal(cloud.sessions.at(-1).form.get('line_items[0][price]'), 'price_founder');
+  assert.equal(cloud.sessions.at(-1).form.get('currency'), null);
+  await client.call('/account/checkout', 'POST', { interval: 'month', currency: 'eur' });
+  assert.equal(cloud.sessions.at(-1).form.get('currency'), null);
+  await assert.rejects(client.call('/account/checkout', 'POST', { interval: 'month', currency: 'gbp' }), (error) => error.status === 400);
 });
 
 test('a paid period turns Plus on until its end; Plus then follows Stripe, whatever order events arrive in', async (t) => {

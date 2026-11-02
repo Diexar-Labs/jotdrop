@@ -1142,9 +1142,11 @@ async function showPlan(activeClient, activeGeneration) {
   storageShare = plan.name === 'plus' ? 0 : status.usedBytes / status.quotaBytes;
   showPlusNudge();
   $('plus-offer').hidden = !plan.checkout || plan.subscribed || (plan.family === 'member' && plan.name === 'plus');
-  $('buy-year').textContent = plan.founderPrice ? '€29 per year (founder price)' : '€39 per year';
+  $('buy-month').textContent = `${money(3.99)} per month`;
+  $('buy-year').textContent = plan.founderPrice ? '€29 per year (founder price)' : `${money(39)} per year`;
   $('family-offer').hidden = !plan.familyCheckout;
-  $('buy-family-year').textContent = plan.founderPrice ? '€45 per year (founder price)' : '€59 per year';
+  $('buy-family-month').textContent = `${money(6.99)} per month`;
+  $('buy-family-year').textContent = plan.founderPrice ? '€45 per year (founder price)' : `${money(59)} per year`;
   $('open-family').hidden = !plan.family;
   $('plus-manage').hidden = !plan.subscribed;
   return status;
@@ -2385,7 +2387,7 @@ $('get-plus').addEventListener('click', showPlusOffer);
 $('plus-not-now').addEventListener('click', () => { plusReason = ''; plusQuiet = true; showPlusNudge(); });
 // Stripe shows the payment page and is the seller; Plus turns on when Stripe confirms the payment to the server.
 for (const [id, interval, plan] of [['buy-month', 'month', 'plus'], ['buy-year', 'year', 'plus'], ['buy-family-month', 'month', 'family'], ['buy-family-year', 'year', 'family']]) $(id).addEventListener('click', async () => {
-  try { location.assign((await ownClient.call('/account/checkout', 'POST', { interval, plan })).url); }
+  try { location.assign((await ownClient.call('/account/checkout', 'POST', { interval, plan, currency: currentPlan?.founderPrice ? undefined : payCurrency() })).url); }
   catch (error) { message(error.code === 'account-required' ? 'The family plan needs an account. Add one in Devices & recovery first.' : errorText(error)); }
 });
 $('sync').addEventListener('click', () => { syncPaused = false; $('sync').textContent = 'Sync now'; message(); void sync(); });
@@ -3302,17 +3304,30 @@ function takeInvitation() {
     } else familyInvitation = sessionStorage.getItem('jotdrop-family-invitation') ?? undefined;
   } catch { /* It still works in this page. */ }
 }
+// Prices are the same numbers in euros and in dollars. Visitors from the US pay in dollars: jotdrop.net passes
+// ?currency=usd (Cloudflare knows the country), and without it a US time zone counts. Everyone else sees euros.
+function payCurrency() {
+  try {
+    const chosen = localStorage.getItem('jotdrop-currency');
+    if (chosen === 'usd' || chosen === 'eur') return chosen;
+  } catch { /* Fall back to the time zone. */ }
+  try { return /^(America\/(New_York|Detroit|Kentucky\/.+|Indiana\/.+|Chicago|Menominee|North_Dakota\/.+|Denver|Boise|Phoenix|Los_Angeles|Anchorage|Juneau|Sitka|Metlakatla|Yakutat|Nome|Adak)|Pacific\/Honolulu|US\/.+)$/.test(Intl.DateTimeFormat().resolvedOptions().timeZone ?? '') ? 'usd' : 'eur'; } catch { return 'eur'; }
+}
+function money(amount) { return `${payCurrency() === 'usd' ? '$' : '€'}${amount}`; }
+function salesTax() { return payCurrency() === 'usd' ? ' Sales tax is added at checkout where it applies.' : ''; }
 // A plan chosen on jotdrop.net (?plan=family&billing=year) is shown before signing in and offered right after.
 const planChoices = {
-  'plus-month': { title: 'JotDrop Plus', price: '€3.99 per month', text: 'Room for your photos and files, all your devices and your whole history.' },
-  'plus-year': { title: 'JotDrop Plus', price: '€39 per year', text: 'That is €3.25 a month. Room for your photos and files, all your devices and your whole history.' },
-  'family-month': { title: 'JotDrop Family', price: '€6.99 per month', text: "JotDrop Plus for you and up to 5 others. After paying you invite them with a link. Everyone keeps their own notes, and nobody can read anyone else's." },
-  'family-year': { title: 'JotDrop Family', price: '€59 per year', text: "That is €4.92 a month for up to 6 people. JotDrop Plus for you and up to 5 others. After paying you invite them with a link. Everyone keeps their own notes, and nobody can read anyone else's." },
+  'plus-month': { title: 'JotDrop Plus', price: () => `${money(3.99)} per month`, text: () => 'Room for your photos and files, all your devices and your whole history.' },
+  'plus-year': { title: 'JotDrop Plus', price: () => `${money(39)} per year`, text: () => `That is ${money(3.25)} a month. Room for your photos and files, all your devices and your whole history.` },
+  'family-month': { title: 'JotDrop Family', price: () => `${money(6.99)} per month`, text: () => "JotDrop Plus for you and up to 5 others. After paying you invite them with a link. Everyone keeps their own notes, and nobody can read anyone else's." },
+  'family-year': { title: 'JotDrop Family', price: () => `${money(59)} per year`, text: () => `That is ${money(4.92)} a month for up to 6 people. JotDrop Plus for you and up to 5 others. After paying you invite them with a link. Everyone keeps their own notes, and nobody can read anyone else's.` },
 };
 let planChoice;
 function takePlanChoice() {
   try {
     const params = new URLSearchParams(location.search);
+    const currency = params.get('currency');
+    if (currency === 'usd' || currency === 'eur') localStorage.setItem('jotdrop-currency', currency);
     if (params.has('plan')) {
       const key = `${params.get('plan')}-${params.get('billing') === 'year' ? 'year' : 'month'}`;
       history.replaceState(null, '', '/');
@@ -3323,7 +3338,7 @@ function takePlanChoice() {
   if (!planChoices[planChoice]) planChoice = undefined;
   const choice = planChoices[planChoice];
   $('access-choice').hidden = !choice;
-  if (choice) $('access-choice').textContent = `You chose ${choice.title}, ${choice.price}. Sign in or create your free account first, then you can pay.`;
+  if (choice) $('access-choice').textContent = `You chose ${choice.title}, ${choice.price()}. Sign in or create your free account first, then you can pay.`;
 }
 function dropPlanChoice() {
   planChoice = undefined;
@@ -3343,8 +3358,8 @@ async function offerChoice() {
   if (!plan.checkout || (family && !plan.familyCheckout)) { dropPlanChoice(); return; }
   const choice = planChoices[planChoice];
   $('plan-title').textContent = choice.title;
-  $('plan-price').textContent = choice.price;
-  $('plan-text').textContent = choice.text;
+  $('plan-price').textContent = choice.price();
+  $('plan-text').textContent = choice.text() + salesTax();
   $('plan-message').textContent = '';
   $('plan-pay').disabled = false;
   $('plan-dialog').showModal();
@@ -3354,7 +3369,7 @@ $('plan-pay').addEventListener('click', async () => {
   const [plan, interval] = planChoice.split('-');
   $('plan-pay').disabled = true;
   try {
-    const { url } = await ownClient.call('/account/checkout', 'POST', { interval, plan });
+    const { url } = await ownClient.call('/account/checkout', 'POST', { interval, plan, currency: payCurrency() });
     dropPlanChoice();
     location.assign(url);
   } catch (error) {

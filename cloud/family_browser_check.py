@@ -134,12 +134,35 @@ def check_family(browser, url, codes, database):
     dan.route("**/account/checkout", lambda route: (checkout.append(route.request.post_data_json), route.fulfill(status=200, content_type="application/json", body='{"url": "%s/?plus=welcome"}' % url)))
     with dan.expect_navigation(url=re.compile(r".*[?]plus=welcome$")):
         offer.get_by_role("button", name="Continue to payment").click()
-    assert checkout == [{"interval": "year", "plan": "family"}], checkout
+    assert checkout == [{"interval": "year", "plan": "family", "currency": "eur"}], checkout
     eve = sign_up("eve@example.com", "/?plan=plus&billing=month")
     eve.locator("#plan-dialog").filter(has_text="€3.99 per month").wait_for()
     eve.get_by_role("button", name="Not now").click()
     assert eve.locator("#plan-dialog").is_hidden()
     assert eve.evaluate("sessionStorage.getItem('jotdrop-plan-choice')") is None, "Not now forgets the choice"
+    # A visitor from the US: jotdrop.net passes currency=usd, the prices show in dollars and Stripe gets usd.
+    us_page = browser.new_context(viewport={"width": 390, "height": 844}, timezone_id="America/Chicago").new_page()
+    us_page.on("pageerror", lambda error: errors.append(str(error)))
+    us_page.goto(url + "/?plan=plus&billing=year", wait_until="networkidle")
+    us_page.locator("#access-choice").filter(has_text="You chose JotDrop Plus, $39 per year.").wait_for()
+    us_page.context.close()
+    fay = eve
+    fay.goto(url + "/?plan=family&billing=month&currency=usd", wait_until="networkidle")
+    if fay.locator("#login-email").is_visible():
+        fay.locator("#login-email").fill("eve@example.com")
+        fay.locator("#login-password").fill(PASSWORD)
+        fay.locator('#login-form button[type="submit"]').click()
+        fay.locator("#code-input").fill(code("login"))
+        fay.locator('#code-form button[type="submit"]').click()
+    fay.locator("#plan-dialog").filter(has_text="$6.99 per month").wait_for()
+    assert "Sales tax is added at checkout" in fay.locator("#plan-dialog").inner_text()
+    assert fay.locator("#buy-month").text_content() == "$3.99 per month", fay.locator("#buy-month").text_content()
+    assert fay.locator("#buy-family-month").text_content() == "$6.99 per month"
+    checkout.clear()
+    fay.route("**/account/checkout", lambda route: (checkout.append(route.request.post_data_json), route.fulfill(status=200, content_type="application/json", body='{"url": "%s/?plus=welcome"}' % url)))
+    with fay.expect_navigation(url=re.compile(r".*[?]plus=welcome$")):
+        fay.locator("#plan-dialog").get_by_role("button", name="Continue to payment").click()
+    assert checkout == [{"interval": "month", "plan": "family", "currency": "usd"}], checkout
     # Someone who already pays for a family is told so instead of being offered a second plan.
     ana.goto(url + "/?plan=family&billing=month", wait_until="networkidle")
     ana.locator("#access-choice").filter(has_text="JotDrop Family").wait_for()
