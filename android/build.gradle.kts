@@ -90,6 +90,30 @@ tasks.register<JavaExec>("checkVersionDiff") {
     mainClass.set("com.diexar.keepcapture.VersionDiffCheckKt")
 }
 
+// A drawing is a PNG with its lines inside; the same format as the web app and the plugins.
+val drawingFormatClasses = layout.buildDirectory.dir("drawing-format-check")
+val drawingFormatSources = files("app/src/main/kotlin/com/diexar/keepcapture/DrawingFormat.kt", "checks/DrawingFormatCheck.kt")
+val drawingFormatCompile = tasks.register<JavaExec>("drawingFormatCompile") {
+    inputs.files(drawingFormatSources)
+    outputs.dir(drawingFormatClasses)
+    classpath(buildscript.configurations.getByName("classpath"))
+    mainClass.set("org.jetbrains.kotlin.cli.jvm.K2JVMCompiler")
+    doFirst {
+        args("-Xdisable-default-scripting-plugin", "-no-stdlib", "-no-reflect", "-jvm-target", "17", "-classpath",
+            project(":app").configurations.getByName("debugCompileClasspath").asPath,
+            "-d", drawingFormatClasses.get().asFile.absolutePath)
+        args(drawingFormatSources.files.map { it.absolutePath })
+    }
+}
+
+tasks.register<JavaExec>("checkDrawingFormat") {
+    dependsOn(drawingFormatCompile)
+    classpath(drawingFormatClasses)
+    classpath(provider { project(":app").configurations.getByName("debugCompileClasspath") })
+    mainClass.set("com.diexar.keepcapture.DrawingFormatCheckKt")
+    args(file("checks/fixtures/drawing-v1.png").absolutePath)
+}
+
 val inlineTagsClasses = layout.buildDirectory.dir("inline-tags-check")
 val inlineTagsSources = files("app/src/main/kotlin/com/diexar/keepcapture/InlineTags.kt",
     "app/src/main/kotlin/com/diexar/keepcapture/CardText.kt", "checks/InlineTagsCheck.kt")

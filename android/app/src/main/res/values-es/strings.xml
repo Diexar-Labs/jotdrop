@@ -57,4 +57,29 @@
     <string name="widget_note_gone">Esta nota se movió o ya no está. Toca para elegir otra.</string>
     <string name="widget_note_empty">Esta nota está vacía.</string>
     <string name="widget_note_none">Aún no hay notas. Crea una primero.</string>
+    <!-- Drawing (2 Nov 2026) -->
+    <string name="drawing_title">Dibujo</string>
+    <string name="drawing_save">Guardar</string>
+    <string name="drawing_canvas">Área de dibujo</string>
+    <string name="drawing_color_black">Negro</string>
+    <string name="drawing_color_blue">Azul</string>
+    <string name="drawing_color_red">Rojo</string>
+    <string name="drawing_color_green">Verde</string>
+    <string name="drawing_color_orange">Naranja</string>
+    <string name="drawing_color_purple">Morado</string>
+    <string name="drawing_size_thin">Fino</string>
+    <string name="drawing_size_medium">Medio</string>
+    <string name="drawing_size_thick">Grueso</string>
+    <string name="drawing_eraser">Borrador</string>
+    <string name="drawing_undo">Deshacer</string>
+    <string name="drawing_redo">Rehacer</string>
+    <string name="drawing_clear">Borrar</string>
+    <string name="drawing_clear_title">¿Borrar todo el dibujo?</string>
+    <string name="drawing_discard_title">¿Descartar este dibujo?</string>
+    <string name="drawing_discard">Descartar</string>
+    <string name="drawing_keep_drawing">Seguir dibujando</string>
+    <string name="action_new_drawing">Nuevo dibujo</string>
+    <string name="action_insert_drawing">Dibujo</string>
+    <string name="action_edit_drawing">Editar dibujo</string>
+    <string name="drawing_note_title">Dibujo</string>
 </resources>

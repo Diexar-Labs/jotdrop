@@ -57,4 +57,29 @@
     <string name="widget_note_gone">Cette note a été déplacée ou supprimée. Touchez pour en choisir une autre.</string>
     <string name="widget_note_empty">Cette note est vide.</string>
     <string name="widget_note_none">Pas encore de notes. Créez-en une d\'abord.</string>
+    <!-- Drawing (2 Nov 2026) -->
+    <string name="drawing_title">Dessin</string>
+    <string name="drawing_save">Enregistrer</string>
+    <string name="drawing_canvas">Zone de dessin</string>
+    <string name="drawing_color_black">Noir</string>
+    <string name="drawing_color_blue">Bleu</string>
+    <string name="drawing_color_red">Rouge</string>
+    <string name="drawing_color_green">Vert</string>
+    <string name="drawing_color_orange">Orange</string>
+    <string name="drawing_color_purple">Violet</string>
+    <string name="drawing_size_thin">Fin</string>
+    <string name="drawing_size_medium">Moyen</string>
+    <string name="drawing_size_thick">Épais</string>
+    <string name="drawing_eraser">Gomme</string>
+    <string name="drawing_undo">Annuler</string>
+    <string name="drawing_redo">Rétablir</string>
+    <string name="drawing_clear">Effacer</string>
+    <string name="drawing_clear_title">Effacer tout le dessin ?</string>
+    <string name="drawing_discard_title">Abandonner ce dessin ?</string>
+    <string name="drawing_discard">Abandonner</string>
+    <string name="drawing_keep_drawing">Continuer à dessiner</string>
+    <string name="action_new_drawing">Nouveau dessin</string>
+    <string name="action_insert_drawing">Dessin</string>
+    <string name="action_edit_drawing">Modifier le dessin</string>
+    <string name="drawing_note_title">Dessin</string>
 </resources>

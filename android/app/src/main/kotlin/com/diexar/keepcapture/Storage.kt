@@ -265,8 +265,9 @@ object Storage {
         imageUri: Uri,
         subject: String?,
         extraText: String?,
+        name: String? = null,
     ): Result<String> {
-        val basename = copyImageToAttachments(context, imageUri).getOrElse {
+        val basename = copyImageToAttachments(context, imageUri, name = name).getOrElse {
             return Result.failure(it)
         }
         val stamp = SimpleDateFormat("yyyy-MM-dd HHmmss", Locale.US).format(Date())
@@ -345,12 +346,13 @@ object Storage {
      * zowel saveImageNote (nieuwe foto-notitie) als de editor (foto invoegen in
      * bestaande notitie).
      */
-    fun copyImageToAttachments(context: Context, imageUri: Uri, spaceId: String? = null): Result<String> {
+    fun copyImageToAttachments(context: Context, imageUri: Uri, spaceId: String? = null, name: String? = null): Result<String> {
         synchronized(cloudFileLock) {
         val attachmentsFolder = getOrCreateAttachmentsFolder(context, spaceId).getOrElse {
             return Result.failure(it)
         }
-        val mime = context.contentResolver.getType(imageUri).orEmpty().lowercase()
+        // A drawing keeps its own name (drawing-....png), so JotDrop knows it can be opened again to draw on.
+        val mime = if (name?.endsWith(".png", true) == true) "image/png" else context.contentResolver.getType(imageUri).orEmpty().lowercase()
         val ext = when {
             mime.contains("jpeg") || mime.contains("jpg") -> "jpg"
             mime.contains("png") -> "png"
@@ -370,7 +372,7 @@ object Storage {
             else -> "image/*"
         }
         val stamp = SimpleDateFormat("yyyy-MM-dd HHmmss", Locale.US).format(Date())
-        val basename = "diexar-$stamp.$ext"
+        val basename = name ?: "diexar-$stamp.$ext"
 
         val target = attachmentsFolder.createFile(mimeForFile, basename)
             ?: return Result.failure(IllegalStateException("Kan attachment niet aanmaken."))

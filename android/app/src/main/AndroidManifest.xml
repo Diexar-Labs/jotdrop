@@ -58,6 +58,7 @@
             android:label="@string/settings_title" />
 
         <!-- singleTask: the way back from Google or GitHub returns to the open sign-in, not a second copy in the browser's task. -->
+        <activity android:name=".DrawingActivity" android:exported="false" android:label="@string/drawing_title" />
         <activity android:name=".CloudActivity" android:exported="true" android:label="JotDrop Cloud" android:launchMode="singleTask">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />

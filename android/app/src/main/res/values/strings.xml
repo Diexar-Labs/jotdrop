@@ -348,4 +348,29 @@
     <string name="widget_note_gone">This note moved or is gone. Tap to choose another.</string>
     <string name="widget_note_empty">This note is empty.</string>
     <string name="widget_note_none">No notes yet. Make one first.</string>
+    <!-- Drawing (2 Nov 2026) -->
+    <string name="drawing_title">Drawing</string>
+    <string name="drawing_save">Save</string>
+    <string name="drawing_canvas">Drawing area</string>
+    <string name="drawing_color_black">Black</string>
+    <string name="drawing_color_blue">Blue</string>
+    <string name="drawing_color_red">Red</string>
+    <string name="drawing_color_green">Green</string>
+    <string name="drawing_color_orange">Orange</string>
+    <string name="drawing_color_purple">Purple</string>
+    <string name="drawing_size_thin">Thin</string>
+    <string name="drawing_size_medium">Medium</string>
+    <string name="drawing_size_thick">Thick</string>
+    <string name="drawing_eraser">Eraser</string>
+    <string name="drawing_undo">Undo</string>
+    <string name="drawing_redo">Redo</string>
+    <string name="drawing_clear">Clear</string>
+    <string name="drawing_clear_title">Clear the whole drawing?</string>
+    <string name="drawing_discard_title">Discard this drawing?</string>
+    <string name="drawing_discard">Discard</string>
+    <string name="drawing_keep_drawing">Keep drawing</string>
+    <string name="action_new_drawing">New drawing</string>
+    <string name="action_insert_drawing">Drawing</string>
+    <string name="action_edit_drawing">Edit drawing</string>
+    <string name="drawing_note_title">Drawing</string>
 </resources>

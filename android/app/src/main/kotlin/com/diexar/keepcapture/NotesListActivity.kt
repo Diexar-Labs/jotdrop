@@ -59,6 +59,7 @@ import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddAPhoto
+import androidx.compose.material.icons.filled.Draw
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
@@ -294,6 +295,22 @@ class NotesListActivity : ComponentActivity() {
         }
     }
 
+    // A new drawing becomes a note with the picture in it, like a photo.
+    private val drawLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        val path = result.data?.getStringExtra(DrawingActivity.RESULT_FILE) ?: return@registerForActivityResult
+        val file = File(path)
+        stateEpoch++
+        lifecycleScope.launch {
+            val saved = withContext(Dispatchers.IO) {
+                Storage.saveImageNote(this@NotesListActivity, Uri.fromFile(file), subject = getString(R.string.drawing_note_title), extraText = null, name = file.name)
+            }
+            file.delete()
+            saved.onSuccess { reload() }.onFailure { err ->
+                Toast.makeText(this@NotesListActivity, getString(R.string.toast_error, err.message ?: err.javaClass.simpleName), Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
     private val pickImageLauncher = registerForActivityResult(
         ActivityResultContracts.PickVisualMedia()
     ) { uri ->
@@ -401,6 +418,9 @@ class NotesListActivity : ComponentActivity() {
                     },
                     onPickPhoto = {
                         if (requireVaultOrPromptSettings()) launchPicker(withOcr = false)
+                    },
+                    onDraw = {
+                        if (requireVaultOrPromptSettings()) drawLauncher.launch(Intent(this, DrawingActivity::class.java))
                     },
                     onOcrCamera = {
                         if (requireVaultOrPromptSettings()) launchCamera(withOcr = true)
@@ -848,6 +868,7 @@ private fun NotesListScreen(
     onNewNote: (String?) -> Unit,
     onTakePhoto: () -> Unit,
     onPickPhoto: () -> Unit,
+    onDraw: () -> Unit,
     onOcrCamera: () -> Unit,
     onOcrGallery: () -> Unit,
     isRecordingFlow: StateFlow<Boolean>,
@@ -1355,6 +1376,10 @@ private fun NotesListScreen(
                             },
                         )
                     }
+                }
+                Spacer(Modifier.height(12.dp))
+                SmallFloatingActionButton(onClick = onDraw) {
+                    Icon(Icons.Filled.Draw, contentDescription = stringResource(R.string.action_new_drawing))
                 }
                 Spacer(Modifier.height(12.dp))
                 // The main button of design A: amber with an ink edge and a hard shadow, and it presses in.
