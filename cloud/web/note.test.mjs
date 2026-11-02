@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { noteSummary, updateMetadata, toggleTask, attachmentPath, plainPreviewText, splitNote, joinNote, noteFilename, manualRank, betweenRank, noteUrls, urlHost, reminderBadge, repeatLabel, changedAgo } from './note.mjs';
+import { noteSummary, updateMetadata, toggleTask, attachmentPath, plainPreviewText, splitNote, joinNote, noteFilename, manualRank, betweenRank, noteUrls, urlHost, reminderBadge, repeatLabel, changedAgo, replaceAttachment } from './note.mjs';
 
 test('cards show the plugin reminder badge, its repeat and when the note changed', () => {
   const now = Date.parse('2026-10-29T10:00:00Z');
@@ -123,4 +123,11 @@ test('link chips list each web link once, like the plugin and Android', () => {
   assert.equal(urlHost('https://www.tiktok.com/@x/video/1'), 'tiktok.com');
   assert.equal(urlHost('http://localhost:8787/x'), 'localhost:8787');
   assert.deepEqual(noteUrls('No links here, just text.'), []);
+});
+
+test('editing a drawing points the note at the new file and leaves other links alone', () => {
+  const text = '# Drawing\n\n![[drawing-2026-11-02 140501.png]]\n![Source photo](../attachments/photo-1.png)\n![Old](../attachments/drawing-2026-11-02%20140501.png)\n';
+  const replaced = replaceAttachment(text, 'notes/test.md', 'attachments/drawing-2026-11-02 140501.png', 'attachments/drawing-2026-11-02 150000.png');
+  assert.equal(replaced, '# Drawing\n\n![[drawing-2026-11-02 150000.png]]\n![Source photo](../attachments/photo-1.png)\n![[drawing-2026-11-02 150000.png]]\n');
+  assert.equal(replaceAttachment('no link here', 'notes/test.md', 'attachments/a.png', 'attachments/b.png'), 'no link here');
 });

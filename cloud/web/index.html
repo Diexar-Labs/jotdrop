@@ -174,6 +174,7 @@
         <button id="new-note" class="primary" type="button">New note</button>
         <button id="new-photo-text" type="button">Text from photo</button>
         <button id="new-voice" type="button">Voice memo</button>
+        <button id="new-drawing" type="button">Drawing</button>
         <label class="upload-button" for="upload">Upload files<input id="upload" type="file" multiple></label>
         <label id="import-label" class="upload-button" for="import-notes" title="Google Keep (Takeout zip), Evernote (.enex), Apple Notes and other Markdown exports">Import notes<input id="import-notes" type="file" multiple></label>
       </header>
@@ -301,7 +302,7 @@
       <div id="repeat-editor" class="repeat-editor"></div>
       <p class="editor-hint">Reminders sync to Android, which rings them. This browser does not ring reminders in the background.</p>
       <label for="note-order">Manual position (lower comes first)</label><input id="note-order" type="number" step="any">
-      <div class="photo-actions"><button id="start-voice" type="button">Record voice memo</button><button id="stop-voice" type="button" hidden>Stop &amp; keep recording</button><button id="retry-voice" type="button" hidden>Retry keeping recording</button><button id="download-voice" type="button" hidden>Download recording</button></div>
+      <div class="photo-actions"><button id="add-drawing" type="button">Add drawing</button><button id="start-voice" type="button">Record voice memo</button><button id="stop-voice" type="button" hidden>Stop &amp; keep recording</button><button id="retry-voice" type="button" hidden>Retry keeping recording</button><button id="download-voice" type="button" hidden>Download recording</button></div>
       <p id="voice-message" role="status" aria-live="polite">Voice recording needs HTTPS or localhost and microphone permission. You can also upload an existing recording.</p>
       <details id="photo-tools">
         <summary>Photo &amp; text recognition</summary>
@@ -319,8 +320,9 @@
   <dialog id="photo-viewer" class="photo-viewer" aria-labelledby="photo-title">
     <div class="dialog-heading"><h2 id="photo-title">Photo</h2><button id="close-photo" type="button">Close</button></div>
     <img id="photo-large" alt="">
-    <div class="dialog-actions"><button id="photo-open-note" type="button">Open note</button><button id="photo-download" type="button">Download</button></div>
+    <div class="dialog-actions"><button id="photo-open-note" type="button">Open note</button><button id="photo-edit-drawing" type="button" hidden>Edit drawing</button><button id="photo-download" type="button">Download</button></div>
   </dialog>
+  <dialog id="drawing-dialog" class="drawing-dialog" aria-label="Drawing"></dialog>
   <dialog id="labels-dialog" aria-labelledby="labels-title">
     <div class="dialog-heading"><h2 id="labels-title">Edit labels</h2><button id="close-labels" type="button">Done</button></div>
     <p class="editor-hint">Renaming or deleting a label changes it on every note in Notes and Archive. Your notes always stay.</p>

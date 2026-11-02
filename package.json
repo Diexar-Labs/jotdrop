@@ -35,6 +35,7 @@
     "check:cloud": "node --test \"cloud/**/*.test.mjs\"",
     "check:cloud-browser": "python cloud/browser_check.py",
     "check:cloud-photo": "python cloud/photo_browser_check.py",
+    "check:cloud-drawing": "python cloud/drawing_browser_check.py",
     "check:cloud-parity": "python cloud/parity_browser_check.py",
     "check:cloud-grid": "python cloud/grid_browser_check.py",
     "check:cloud-cards": "python cloud/card_actions_browser_check.py",

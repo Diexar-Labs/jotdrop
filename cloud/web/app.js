@@ -6,7 +6,9 @@ import { acceptInvite, blockMember, createSpace, deleteSpace, leaveSpace, listSp
 import { accountInfo, approveDevice, attachAccount, availableProviders, changePassword, checkApproval, completeApproval, confirmLogin, confirmSignup, deleteAccount, disableTotp, enableTotp, listApprovals, logIn, newRecoveryCode, personCheckKey, providerApproval, providerRecover, providerSignUp, providerTicket, rejectDevice, requestApproval, resetWithRecoveryCode, setupTotp, signUp, startOver, startProviderSignIn, startReset } from '/shared/account.mjs';
 import { base64ToBytes, bytesToBase64, decodeRecovery, decryptEnvelope, encryptEnvelope, isSpacePath, objectId, sealLocal, unsealLocal } from '/shared/crypto.mjs';
 import { exportZip } from '/export.mjs';
-import { noteSummary, updateMetadata, toggleTask, attachmentPath, plainPreviewText, splitNote, joinNote, noteFilename, manualRank, betweenRank, noteUrls, urlHost, reminderBadge, repeatLabel, changedAgo } from '/note.mjs';
+import { noteSummary, updateMetadata, toggleTask, attachmentPath, plainPreviewText, splitNote, joinNote, noteFilename, manualRank, betweenRank, noteUrls, urlHost, reminderBadge, repeatLabel, changedAgo, replaceAttachment } from '/note.mjs';
+import { drawingFileName, isDrawingName, read as readDrawing } from '/shared/drawing.mjs';
+import { createDrawingEditor } from '/shared/drawing-editor.mjs';
 
 const $ = (id) => document.getElementById(id);
 try {
@@ -408,13 +410,17 @@ function noteAttachments(entry, parts, available) {
 let photoShown;
 function showPhoto(attachment, note) {
   if (photoShown) URL.revokeObjectURL(photoShown.url);
-  const url = URL.createObjectURL(new Blob([base64ToBytes(attachment.file.content)], { type: mediaType(attachment.file.path) }));
-  photoShown = { attachment, note, url };
+  const bytes = base64ToBytes(attachment.file.content);
+  const url = URL.createObjectURL(new Blob([bytes], { type: mediaType(attachment.file.path) }));
   const name = attachment.file.path.split('/').pop();
+  // A JotDrop drawing (its lines travel inside the PNG) opens again to draw on, from the note that shows it.
+  const drawing = isDrawingName(name) ? readDrawing(bytes) : null;
+  photoShown = { attachment, note, url, drawing };
   $('photo-title').textContent = name;
   $('photo-large').src = url;
   $('photo-large').alt = name;
   $('photo-open-note').hidden = !note || note.deleted || Boolean(moment) || $('editor').open;
+  $('photo-edit-drawing').hidden = !drawing || Boolean(moment) || activeSpace?.frozen || !($('editor').open || (note && !note.deleted));
   if (!$('photo-viewer').open) $('photo-viewer').showModal();
 }
 $('close-photo').addEventListener('click', () => $('photo-viewer').close());
@@ -424,11 +430,61 @@ $('photo-open-note').addEventListener('click', () => {
   $('photo-viewer').close();
   if (note && !note.deleted) openEditor(note);
 });
+$('photo-edit-drawing').addEventListener('click', () => {
+  const { attachment, note, drawing } = photoShown;
+  $('photo-viewer').close();
+  if (!$('editor').open) {
+    const current = note && files.get(note.id);
+    if (!current || current.deleted) return;
+    openEditor(current);
+  }
+  openDrawing(drawing, attachment.file.path);
+});
 $('photo-viewer').addEventListener('close', () => {
   $('photo-large').removeAttribute('src');
   if (photoShown) URL.revokeObjectURL(photoShown.url);
   photoShown = undefined;
 });
+
+// Drawing, for everyone (Eric, 2 Nov): the shared editor in a dialog over the note editor. Saving always makes a NEW
+// file, drawing-<date time>.png, kept like a photo; editing an existing drawing points the note at the new file and
+// leaves the earlier picture as it was, exactly like Android.
+let drawingEditor;
+function closeDrawing() {
+  $('drawing-dialog').close();
+  drawingEditor?.element.remove();
+  drawingEditor = undefined;
+}
+function openDrawing(initial, replaces) {
+  if (!$('editor').open || drawingEditor) return;
+  drawingEditor = createDrawingEditor({
+    initial,
+    confirm: async (text) => confirm(text),
+    onCancel: closeDrawing,
+    onSave: async ({ png }) => {
+      if (png.length > maxFileBytes) throw fileTooLarge(`This drawing is larger than ${maxFileText()}, your plan's maximum per file.`);
+      const path = `attachments/${drawingFileName()}`;
+      await queueFile(path, png);
+      if (!$('editor').open) return;
+      const text = $('note-content').value;
+      const replaced = replaces ? replaceAttachment(text, $('note-path').value, replaces, path) : text;
+      if (replaced !== text) { $('note-content').value = replaced; syncSimple(); refreshProperties(); }
+      else appendToNote(text.trim() ? `
+
+![[${path.split('/').pop()}]]
+` : `# Drawing
+
+![[${path.split('/').pop()}]]
+`);
+      $('editor-message').textContent = 'Drawing kept as an encrypted attachment. Select Save note to keep it in this note.';
+      closeDrawing();
+    },
+  });
+  $('drawing-dialog').replaceChildren(drawingEditor.element);
+  $('drawing-dialog').showModal();
+}
+$('drawing-dialog').addEventListener('cancel', (event) => { event.preventDefault(); void drawingEditor?.close(); });
+$('add-drawing').addEventListener('click', () => openDrawing());
 
 // The editor shows the note's photos and recordings above the text, like the plugin; a photo opens large.
 let editorMediaUrls = [];
@@ -2398,6 +2454,7 @@ $('new-note').addEventListener('click', () => openEditor());
 // Like the Android main screen: start the camera or the recording in a new note right away.
 $('new-photo-text').addEventListener('click', () => { openEditor(); $('photo-tools').open = true; $('start-camera').click(); });
 $('new-voice').addEventListener('click', () => { openEditor(); $('start-voice').click(); });
+$('new-drawing').addEventListener('click', () => { openEditor(); openDrawing(); });
 function stopCamera() {
   cameraRequest++;
   cameraStream?.getTracks().forEach((track) => track.stop());

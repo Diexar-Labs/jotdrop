@@ -209,6 +209,12 @@ export function attachmentPath(target, notePath, available) {
   }
 }
 
+/** The note text with every link to one attachment pointing at another file, as `![[name]]`; a link it does not have stays. */
+export function replaceAttachment(text, notePath, oldPath, newPath) {
+  const name = newPath.split('/').pop();
+  return text.replace(/!\[\[([^\]]+)\]\]|!?\[[^\]]*\]\(([^)]+)\)/g, (all, wiki, target) => (attachmentPath(wiki || target, notePath, [oldPath]) === oldPath ? `![[${name}]]` : all));
+}
+
 /** The editor's view of a note, like the plugin: frontmatter kept as is, an optional `# title`, then the text. */
 export function splitNote(text) {
   const front = /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/.exec(text)?.[0] || '';
