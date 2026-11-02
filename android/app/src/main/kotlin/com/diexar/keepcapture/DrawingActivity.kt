@@ -276,8 +276,12 @@ private fun DrawingScreen(initial: DrawingFormat.Drawing?, onCancel: () -> Unit,
                 }
             }
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                for ((name, value) in SIZES) FilterChip(selected = !erasing && size == value, onClick = { size = value; erasing = false }, label = { Text(stringResource(name)) },
-                    leadingIcon = { Icon(Icons.Filled.Draw, null, Modifier.size(18.dp)) })
+                for ((name, value) in SIZES) {
+                    val chosen = !erasing && size == value
+                    // The chosen size gets a check mark, not only a colour.
+                    FilterChip(selected = chosen, onClick = { size = value; erasing = false }, label = { Text(stringResource(name)) },
+                        leadingIcon = { Icon(if (chosen) Icons.Filled.Check else Icons.Filled.Draw, null, Modifier.size(18.dp)) })
+                }
                 FilterChip(selected = erasing, onClick = { erasing = !erasing }, label = { Text(stringResource(R.string.drawing_eraser)) },
                     leadingIcon = { if (erasing) Icon(Icons.Filled.Check, null, Modifier.size(18.dp)) })
             }
