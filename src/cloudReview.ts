@@ -1,6 +1,7 @@
 import { App, ButtonComponent, Modal, Notice, Setting } from "obsidian";
 import type { CloudController, CloudMoment } from "./cloud";
 import { ConfirmModal } from "./confirmModal";
+import { diffLines, foldUnchanged } from "../cloud/shared/diff.mjs";
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : "Something went wrong. Try again.";
 const decoder = new TextDecoder();
@@ -93,6 +94,23 @@ export class NoteHistoryModal extends Modal {
           const bytes = await this.cloud.readVersion(history.id, version.revision);
           shown.createEl("h4", { text: `Version ${version.revision}, ${when(version.updatedAt)}` });
           preview(shown, history.path, bytes, "");
+        } catch (error) { shown.createEl("p", { text: errorText(error) }); }
+        shown.scrollIntoView({ block: "nearest" });
+      }));
+      if (index > 0 && /\.md$/i.test(history.path)) row.addButton((button) => button.setButtonText("Compare with current").onClick(async () => {
+        shown.empty();
+        try {
+          const lines = diffLines(decoder.decode(await this.cloud.readVersion(history.id, version.revision)), await this.app.vault.adapter.read(this.file)) as { type: string; text?: string; count?: number }[] | null;
+          shown.createEl("h4", { text: `Version ${version.revision} compared with the note now` });
+          if (!lines) shown.createEl("p", { text: "This note is too long to compare here." });
+          else if (lines.every((line) => line.type === "same")) shown.createEl("p", { text: "This version is the same as the note now." });
+          else {
+            shown.createEl("p", { text: "From this version to the note now: + was added, - was removed." });
+            const box = shown.createDiv({ cls: "jotdrop-history-diff" });
+            for (const line of foldUnchanged(lines) as { type: string; text?: string; count?: number }[]) {
+              box.createDiv({ cls: `jotdrop-diff-line ${line.type}`, text: line.type === "gap" ? `${line.count} unchanged ${line.count === 1 ? "line" : "lines"}` : `${{ same: "  ", added: "+ ", removed: "- " }[line.type]}${line.text}` });
+            }
+          }
         } catch (error) { shown.createEl("p", { text: errorText(error) }); }
         shown.scrollIntoView({ block: "nearest" });
       }));

@@ -1926,3 +1926,10 @@ button.jotdrop-provider-github:not(.clickable-icon):hover { background: #32383f;
   font-size: var(--font-ui-smaller);
   order: 1;
 }
+
+/* Version compare: + and - and a strikethrough, so the change never depends on colour alone. */
+.jotdrop-history-diff { max-height: 40vh; overflow: auto; border: 1px solid var(--background-modifier-border); border-radius: 6px; padding: 4px 0; }
+.jotdrop-diff-line { white-space: pre-wrap; overflow-wrap: anywhere; font-family: var(--font-monospace); font-size: var(--font-smaller); padding: 1px 8px; }
+.jotdrop-diff-line.added { background: rgba(var(--color-yellow-rgb), 0.25); font-weight: 600; }
+.jotdrop-diff-line.removed { text-decoration: line-through; color: var(--text-muted); }
+.jotdrop-diff-line.gap { color: var(--text-muted); font-family: inherit; font-style: italic; }

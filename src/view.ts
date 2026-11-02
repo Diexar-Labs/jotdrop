@@ -29,6 +29,7 @@ import {
 import { discoverLabels, assignLabel, removeLabel, createLabel as managerCreateLabel, renameLabel as managerRenameLabel, deleteLabel as managerDeleteLabel, LabelInfo } from "./labelManager";
 import { voidAsync } from "./asyncUtil";
 import { ConflictReviewModal, NoteHistoryModal } from "./cloudReview";
+import { NoteLinkModal } from "./noteLink";
 import { SharedGroupsModal } from "./cloud";
 import { betweenRank, rankForManualOrder, respaceRanks } from "./manualOrder";
 import { t } from "./i18n";
@@ -2337,6 +2338,14 @@ export class JotDropView extends ItemView {
             .setTitle("Version history")
             .setIcon("history")
             .onClick(() => new NoteHistoryModal(this.app, this.plugin.cloud, file.path).open())
+        );
+      }
+      if (this.plugin.cloud?.enabled && !file.name.includes(".cloud-conflict-") && file.extension === "md") {
+        menu.addItem((i) =>
+          i
+            .setTitle("Share as a link")
+            .setIcon("link")
+            .onClick(() => new NoteLinkModal(this.app, this.plugin.cloud, file).open())
         );
       }
       // Attachments stay: the note in Trash still shows them and can come back.
