@@ -238,6 +238,30 @@
           <label for="totp-password">Password</label><input id="totp-password" type="password" maxlength="1024" autocomplete="current-password" required>
           <button id="totp-submit" type="submit" hidden>Turn on</button>
         </form>
+        <section id="mail-section" hidden aria-labelledby="mail-heading">
+          <h2 id="mail-heading">Mail to JotDrop</h2>
+          <p>Email anything to your own secret address and it becomes a note here, attachments included. Our server seals every incoming mail right away with a key that only your devices hold, so after that moment nobody but you can read it.</p>
+          <div id="mail-off">
+            <p>Mail to JotDrop is part of JotDrop Plus.</p>
+            <button id="mail-enable" type="button">Turn on Mail to JotDrop</button>
+          </div>
+          <div id="mail-on" hidden>
+            <label for="mail-address">Your secret address</label>
+            <div class="mail-address-row"><input id="mail-address" readonly spellcheck="false"><button id="mail-copy" type="button">Copy address</button></div>
+            <p>Anyone who knows this address can mail into your notes, so treat it like a key. Shared it by mistake? Make a new one; the old one stops at once.</p>
+            <button id="mail-rotate" type="button">New address</button>
+            <label class="check-label"><input id="mail-strict" type="checkbox">Only accept mail from senders I list</label>
+            <div id="mail-senders-row" hidden>
+              <label for="mail-senders">Allowed sender addresses, one per line</label>
+              <textarea id="mail-senders" rows="3" spellcheck="false" placeholder="name@example.com"></textarea>
+              <button id="mail-senders-save" type="button">Save sender list</button>
+              <p>A sender address can be faked, so this is a filter against noise, not proof of who really wrote a mail.</p>
+            </div>
+            <p id="mail-pending" role="status"></p>
+            <button id="mail-disable" type="button">Turn off Mail to JotDrop</button>
+          </div>
+          <p id="mail-message" class="message" role="status" aria-live="polite"></p>
+        </section>
         <h2>Recovery</h2><p>Your recovery code contains the keys to this workspace. Keep it in a password manager. We cannot recover encrypted files without your keys.</p>
         <p>The recovery code is shown when you create a workspace. Lost it? Make a new one here. The old code stops working.</p>
         <form id="new-recovery-form">

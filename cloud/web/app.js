@@ -8,6 +8,7 @@ import { base64ToBytes, bytesToBase64, decodeRecovery, decryptEnvelope, encryptE
 import { exportZip } from '/export.mjs';
 import { noteSummary, updateMetadata, toggleTask, attachmentPath, plainPreviewText, splitNote, joinNote, noteFilename, manualRank, betweenRank, noteUrls, urlHost, reminderBadge, repeatLabel, changedAgo, replaceAttachment } from '/note.mjs';
 import { drawingFileName, isDrawingName, read as readDrawing } from '/shared/drawing.mjs';
+import { addressHash, mailAddress, mailKeyPair, mailToNote, openMailBody, openMailKey, openMailPart, senderHash } from '/shared/mail.mjs';
 import { createDrawingEditor } from '/shared/drawing-editor.mjs';
 
 const $ = (id) => document.getElementById(id);
@@ -1212,6 +1213,7 @@ async function showPlan(activeClient, activeGeneration) {
   $('open-family').hidden = !plan.family;
   $('supporter-badge').hidden = !plan.supporter;
   $('plus-manage').hidden = !plan.subscribed;
+  await renderMail(status.mail);
   return status;
 }
 
@@ -1361,7 +1363,12 @@ async function performSync(signal) {
     shrinking({ done: 0, total: legacy });
     await activeClient.convertLegacy({ signal, onProgress: shrinking });
   }
-  await showPlan(activeClient, activeGeneration);
+  const refreshed = await showPlan(activeClient, activeGeneration);
+  if (activeGeneration !== generation) return;
+  if (!activeSpace && refreshed?.mail?.enabled && refreshed.mail.pending) {
+    try { await convertMail(activeClient, refreshed.mail, activeGeneration, signal); }
+    catch (error) { signal.throwIfAborted(); message(errorText(error)); }
+  }
   if (activeGeneration !== generation) return;
   const pending = await store('entries', keyPrefix);
   const conflicts = [...files.values()].filter((entry) => entry.conflict).length;
@@ -3598,6 +3605,132 @@ $('family-leave').addEventListener('click', async () => {
   } catch (error) { $('family-message').textContent = errorText(error); }
 });
 $('family-close').addEventListener('click', () => { $('family-link').value = ''; $('family-dialog').close(); });
+
+// --- Mail to JotDrop: a secret address whose mail turns into notes; the server can never read it. ---
+let mailPair = null, mailPairKey = null, mailPlain = null, currentMail = null, mailWarned = false;
+async function ownMailPair() {
+  const vaultKey = ownClient.credentials.vaultKey;
+  if (mailPairKey !== vaultKey) { mailPair = await mailKeyPair(vaultKey); mailPairKey = vaultKey; }
+  return mailPair;
+}
+async function renderMail(mail) {
+  currentMail = mail;
+  if (!mail || (!mail.domain && !mail.enabled) || activeSpace) { $('mail-section').hidden = true; return; }
+  $('mail-section').hidden = false;
+  $('mail-off').hidden = mail.enabled;
+  $('mail-on').hidden = !mail.enabled;
+  if (!mail.enabled) return;
+  mailPlain = null;
+  try {
+    mailPlain = await decryptEnvelope(ownClient.credentials.vaultKey, JSON.parse(mail.address), 'jotdrop:mail-address:v1');
+    $('mail-address').value = mailPlain.address;
+  } catch { $('mail-address').value = 'The address could not be read on this device.'; }
+  $('mail-strict').checked = mail.mode === 'senders';
+  $('mail-senders-row').hidden = mail.mode !== 'senders';
+  $('mail-senders').value = (mailPlain?.senders ?? []).join('\n');
+  $('mail-pending').textContent = mail.pending ? `${mail.pending === 1 ? '1 mail is' : `${mail.pending} mails are`} waiting to become notes. They are picked up by the next sync.` : '';
+}
+/** Enable, rotate or update: the server gets the public key, the address only hashed and sealed. */
+async function registerMail({ rotate = false, senders = mailPlain?.senders ?? [] } = {}) {
+  const pair = await ownMailPair();
+  const address = rotate || !mailPlain?.address ? mailAddress(currentMail.domain) : mailPlain.address;
+  const envelope = JSON.stringify(await encryptEnvelope(ownClient.credentials.vaultKey, { address, senders }, 'jotdrop:mail-address:v1'));
+  const result = await ownClient.call('/mail', 'POST', { action: 'enable', publicKey: pair.publicKey, addressHash: await addressHash(address), addressEnvelope: envelope, mode: $('mail-strict').checked ? 'senders' : 'open' });
+  await renderMail(result.mail);
+}
+$('mail-enable').addEventListener('click', async () => {
+  $('mail-message').textContent = '';
+  try { $('mail-strict').checked = false; await registerMail(); $('mail-message').textContent = 'Mail to JotDrop is on. Mail to your secret address becomes a note.'; }
+  catch (error) { $('mail-message').textContent = error.code === 'plus-required' ? 'Mail to JotDrop is part of JotDrop Plus. Get Plus in the sidebar to turn it on.' : errorText(error); }
+});
+$('mail-copy').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText($('mail-address').value); $('mail-message').textContent = 'Address copied.'; }
+  catch { $('mail-message').textContent = 'Clipboard unavailable. Select and copy the address yourself.'; }
+});
+$('mail-rotate').addEventListener('click', async () => {
+  if (!confirm('Make a new secret address? The old one stops working at once.')) return;
+  $('mail-message').textContent = '';
+  try { await registerMail({ rotate: true }); $('mail-message').textContent = 'This is your new address. The old one is gone.'; }
+  catch (error) { $('mail-message').textContent = errorText(error); }
+});
+$('mail-strict').addEventListener('change', async () => {
+  $('mail-message').textContent = '';
+  try {
+    const result = await ownClient.call('/mail', 'POST', { action: 'mode', mode: $('mail-strict').checked ? 'senders' : 'open' });
+    await renderMail(result.mail);
+    if (result.mail.mode === 'senders') $('mail-message').textContent = 'Only mail from your sender list is accepted now. Save the list below.';
+  } catch (error) { $('mail-strict').checked = !$('mail-strict').checked; $('mail-message').textContent = errorText(error); }
+});
+$('mail-senders-save').addEventListener('click', async () => {
+  $('mail-message').textContent = '';
+  const senders = [...new Set($('mail-senders').value.split('\n').map((line) => line.trim().toLowerCase()).filter(Boolean))];
+  if (senders.some((sender) => !sender.includes('@') || sender.length > 320) || senders.length > 200) { $('mail-message').textContent = 'Use one full email address per line, at most 200.'; return; }
+  try {
+    await ownClient.call('/mail/senders', 'POST', { senders: await Promise.all(senders.map(senderHash)) });
+    await registerMail({ senders });
+    $('mail-message').textContent = senders.length ? `Sender list saved: ${senders.length} address${senders.length === 1 ? '' : 'es'}.` : 'Sender list is empty: no mail is accepted while the filter is on.';
+  } catch (error) { $('mail-message').textContent = errorText(error); }
+});
+$('mail-disable').addEventListener('click', async () => {
+  if (!confirm('Turn off Mail to JotDrop? The address stops working. Mails that already arrived stay and still become notes.')) return;
+  $('mail-message').textContent = '';
+  try { const result = await ownClient.call('/mail', 'DELETE', {}); await renderMail(result.mail); $('mail-message').textContent = 'Mail to JotDrop is off.'; }
+  catch (error) { $('mail-message').textContent = errorText(error); }
+});
+/** Runs inside sync: opens waiting mail on this device, writes notes and attachments, and only deletes an item once every file of it is confirmed in the cloud. */
+async function convertMail(activeClient, mail, activeGeneration, signal) {
+  const vaultId = activeClient.credentials.vaultId;
+  let pair;
+  try { pair = await ownMailPair(); }
+  catch {
+    if (!mailWarned) { mailWarned = true; message('This browser cannot open mail for notes yet. Use a recent browser version.'); }
+    return;
+  }
+  if (pair.publicKey !== mail.publicKey) {
+    if (!mailWarned) { mailWarned = true; message('The mail key on the server does not match this workspace. Turn Mail to JotDrop off and on again under Devices.'); }
+    return;
+  }
+  const byPath = () => new Map([...files.values()].filter((entry) => !entry.deleted).map((entry) => [entry.file.path, entry]));
+  const { items } = await activeClient.call('/mail', 'GET');
+  let saved = 0, queued = false;
+  let failed = 0;
+  for (const item of items.slice(0, 25)) {
+    signal.throwIfAborted();
+    if (activeGeneration !== generation) return;
+    try {
+      const detail = await activeClient.call(`/mail/${item.id}`, 'GET');
+      const key = await openMailKey(pair.privateKey, pair.publicKey, detail.ephemeralKey, item.id);
+      const payload = await openMailBody(key, vaultId, item.id, detail.body);
+      const note = mailToNote(payload, item.id, item.receivedAt);
+      const existing = byPath();
+      const wanted = [note.path];
+      for (const attachment of note.attachments) {
+        const path = `attachments/${attachment.name}`;
+        wanted.push(path);
+        if (existing.has(path)) continue;
+        const part = await activeClient.call(`/mail/${item.id}/parts/${attachment.part}`, 'GET');
+        await queueFile(path, await openMailPart(key, vaultId, item.id, attachment.part, part.sealed));
+        queued = true;
+      }
+      if (!existing.has(note.path)) {
+        await queueFile(note.path, encoder.encode(note.content));
+        queued = true;
+        saved++;
+      }
+      // Another device may have converted it already; delete only what is fully confirmed in the cloud.
+      const confirmed = byPath();
+      if (wanted.every((path) => confirmed.get(path) && !confirmed.get(path).pending)) await activeClient.call(`/mail/${item.id}`, 'DELETE', {});
+    } catch (error) {
+      // One unreadable or clashing mail never blocks the rest; it stays on the server for a later try.
+      signal.throwIfAborted();
+      failed++;
+    }
+  }
+  if (saved) message(saved === 1 ? '1 email was saved as a note.' : `${saved} emails were saved as notes.`);
+  else if (failed && !mailWarned) { mailWarned = true; message('A waiting mail could not be turned into a note on this device. It stays safe in the cloud.'); }
+  // The freshly queued files go up with the next pass; after that the items above are deleted.
+  if (queued) setTimeout(() => { if (activeGeneration === generation) void sync(); }, 0);
+}
 
 /** Old versions of the apps can have put a group's folder in your own cloud. Nothing shows it, but it takes up storage. */
 function renderOldCopies() {
