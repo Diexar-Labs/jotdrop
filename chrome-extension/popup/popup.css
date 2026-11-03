@@ -31,6 +31,8 @@
 }
 
 * { box-sizing: border-box; }
+/* Hidden stays hidden, also for elements that set their own display (fields, buttons). */
+[hidden] { display: none !important; }
 
 body {
   margin: 0;
@@ -258,4 +260,41 @@ textarea { resize: vertical; }
 }
 @media (prefers-reduced-motion: reduce) {
   .preview-stamp { animation: fade-in 0.2s ease-out; }
+}
+
+/* Where the clip goes, in words (never only a color), and the cloud unlock just above Save. */
+.destination {
+  margin: 2px 0 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.destination strong { color: var(--fg); }
+.cloud-box {
+  margin: 0 0 8px;
+  padding: 8px 10px 2px;
+  border: 1px dashed var(--field-line);
+  border-radius: 10px;
+}
+.cloud-box input[type="password"] {
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1.5px solid var(--field-line);
+  background: var(--field);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 13px;
+}
+.cloud-box progress { width: 100%; margin: 0 0 8px; }
+.cloud-note { margin: 0 0 8px; font-size: 12px; }
+.cloud-actions { display: flex; gap: 8px; margin-bottom: 8px; }
+.cloud-actions:not(:has(button:not([hidden]))) { display: none; }
+.btn-link {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--fg);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  cursor: pointer;
 }

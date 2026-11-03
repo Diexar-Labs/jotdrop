@@ -2,52 +2,141 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>JotDrop Web Clipper — Background connection</title>
+  <title>JotDrop Web Clipper settings</title>
   <link rel="stylesheet" href="../popup/popup.css" />
   <style>
-    body { width: auto; max-width: 520px; padding: 24px; }
-    h1 { font-size: 16px; margin: 0 0 8px; }
+    body { width: auto; max-width: 560px; padding: 24px; }
+    h1 { font-size: 18px; margin: 0 0 12px; font-family: "Bricolage Grotesque", "Instrument Sans", sans-serif; }
+    h2 { font-size: 15px; margin: 0 0 6px; font-family: "Bricolage Grotesque", "Instrument Sans", sans-serif; }
     .lead { font-size: 13px; color: var(--fg); margin: 0 0 4px; }
     .hint { font-size: 12px; color: var(--muted); margin: 4px 0 12px; }
     .row { display: flex; gap: 8px; align-items: center; }
     .row input[type="text"] { flex: 1; font-family: monospace; }
+    input[type="password"], input[type="number"] {
+      padding: 6px 8px; border-radius: 8px; border: 1.5px solid var(--field-line);
+      background: var(--field); color: var(--fg); font-family: inherit; font-size: 13px;
+    }
+    textarea.code { font-family: monospace; font-size: 12px; }
     details { margin: 16px 0; }
     summary { cursor: pointer; font-size: 13px; color: var(--muted); }
     summary:hover { color: var(--fg); }
+    fieldset { border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px 4px; margin: 0 0 18px; }
+    legend { font-weight: 700; padding: 0 4px; }
+    .choice { display: flex; gap: 10px; align-items: flex-start; margin: 0 0 10px; cursor: pointer; }
+    .choice input { margin-top: 3px; }
+    .choice strong { display: block; font-size: 13px; }
+    .choice small { display: block; font-size: 12px; color: var(--muted); }
+    section.panel { border-top: 1px solid var(--border); padding-top: 14px; margin-top: 14px; }
+    section.panel[hidden] { display: none; }
+    ol.steps { margin: 4px 0 12px 18px; padding: 0; font-size: 13px; }
+    ol.steps li { margin-bottom: 4px; }
+    .state { font-size: 13px; font-weight: 600; margin: 0 0 8px; }
+    .stack { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+    .stack .btn-primary, .stack .btn-secondary { flex: 0 1 auto; }
+    #cloudMessage, #status { min-height: 1em; }
   </style>
 </head>
 <body>
-  <h1>Background connection</h1>
-  <p class="lead">
-    No setup is required — the clipper works out of the box by opening Obsidian for every save.
-    Connecting below is <strong>optional</strong>: it lets saves run quietly in the background
-    without bringing Obsidian to the foreground.
-  </p>
+  <h1>JotDrop Web Clipper settings</h1>
 
-  <label class="field">
-    <span>Token</span>
-    <div class="row">
-      <input id="token" type="text" placeholder="Paste token from plugin settings" />
-      <button id="paste" class="btn-secondary" type="button">Paste</button>
-    </div>
-    <p class="hint">In Obsidian → JotDrop settings → "Web clipper" → Enable clip server, then copy the token.</p>
-  </label>
-
-  <details>
-    <summary>Advanced</summary>
-    <label class="field">
-      <span>Plugin port</span>
-      <input id="port" type="number" min="1024" max="65535" value="27124" />
-      <p class="hint">Matches "Port" in the plugin settings. Default is 27124.</p>
+  <fieldset>
+    <legend>Where clips go</legend>
+    <label class="choice">
+      <input type="radio" name="destination" value="obsidian" id="destObsidian" />
+      <span><strong>Obsidian</strong><small>Plain Markdown in your vault, through the JotDrop plugin in Obsidian desktop. No account needed.</small></span>
     </label>
-  </details>
+    <label class="choice">
+      <input type="radio" name="destination" value="cloud" id="destCloud" />
+      <span><strong>JotDrop Cloud</strong><small>Straight into your end-to-end encrypted cloud at app.jotdrop.net. No Obsidian needed.</small></span>
+    </label>
+    <label class="choice">
+      <input type="radio" name="destination" value="both" id="destBoth" />
+      <span><strong>Both</strong><small>JotDrop Cloud and Obsidian. Only if your vault does not already sync with JotDrop Cloud, or every clip shows up twice.</small></span>
+    </label>
+    <p id="destinationStatus" class="hint" role="status"></p>
+  </fieldset>
 
-  <div class="row" style="margin-top: 16px;">
-    <button id="saveTest" class="btn-primary" type="button">Save and test connection</button>
-  </div>
+  <section id="cloudSection" class="panel" aria-labelledby="cloudHeading" hidden>
+    <h2 id="cloudHeading">JotDrop Cloud</h2>
+    <p id="cloudState" class="state" role="status">Checking...</p>
 
-  <p id="status" class="hint" aria-live="polite" style="margin-top: 12px;"></p>
+    <div id="cloudPair" hidden>
+      <ol class="steps">
+        <li>Open <strong>app.jotdrop.net</strong> and sign in (or create a free account).</li>
+        <li>Open <strong>Devices &amp; recovery</strong>, name the new device "Web clipper" and choose <strong>Create one-time pairing code</strong>.</li>
+        <li>Copy the code, paste it below and choose an unlock passphrase for this browser.</li>
+      </ol>
+      <label class="field">
+        <span>One-time pairing code</span>
+        <textarea id="cloudPairCode" class="code" rows="3" spellcheck="false" autocomplete="off"></textarea>
+      </label>
+      <label class="field">
+        <span>Unlock passphrase for this browser (at least 12 characters)</span>
+        <input id="cloudPairPassword" type="password" autocomplete="new-password" />
+      </label>
+      <label class="field">
+        <span>Repeat the unlock passphrase</span>
+        <input id="cloudPairRepeat" type="password" autocomplete="new-password" />
+      </label>
+      <p class="hint">The passphrase encrypts the cloud keys in this browser. It is not your account password and never leaves this computer. If you forget it, disconnect and pair again.</p>
+      <div class="stack">
+        <button id="cloudConnect" class="btn-primary" type="button">Connect to JotDrop Cloud</button>
+      </div>
+      <p class="hint">The clipper becomes one of your cloud devices. On the Free plan it counts toward the device limit.</p>
+    </div>
 
+    <div id="cloudConnected" hidden>
+      <div class="stack">
+        <button id="cloudAllow" class="btn-primary" type="button" hidden>Allow access to app.jotdrop.net</button>
+        <button id="cloudLockNow" class="btn-secondary" type="button" hidden>Lock now</button>
+      </div>
+      <details id="cloudDisconnectBox">
+        <summary>Disconnect this browser</summary>
+        <p class="hint">Removes the cloud keys and any unsent encrypted drafts from this browser. With the unlock passphrase (or while unlocked) the clipper also signs itself out of your cloud, which frees its device place. Your notes in the cloud stay.</p>
+        <label class="field">
+          <span>Unlock passphrase (optional)</span>
+          <input id="cloudDisconnectPassword" type="password" autocomplete="current-password" />
+        </label>
+        <button id="cloudDisconnect" class="btn-secondary" type="button">Disconnect</button>
+      </details>
+    </div>
+    <p id="cloudMessage" class="hint" role="status" aria-live="polite"></p>
+  </section>
+
+  <section id="obsidianSection" class="panel" aria-labelledby="obsidianHeading" hidden>
+    <h2 id="obsidianHeading">Obsidian: background connection (optional)</h2>
+    <p class="lead">
+      No setup is required: the clipper works out of the box by opening Obsidian for every save.
+      Connecting below is <strong>optional</strong>: it lets saves run quietly in the background
+      without bringing Obsidian to the foreground.
+    </p>
+
+    <label class="field">
+      <span>Token</span>
+      <div class="row">
+        <input id="token" type="text" placeholder="Paste token from plugin settings" />
+        <button id="paste" class="btn-secondary" type="button">Paste</button>
+      </div>
+      <p class="hint">In Obsidian → JotDrop settings → "Web clipper" → Enable clip server, then copy the token.</p>
+    </label>
+
+    <details>
+      <summary>Advanced</summary>
+      <label class="field">
+        <span>Plugin port</span>
+        <input id="port" type="number" min="1024" max="65535" value="27124" />
+        <p class="hint">Matches "Port" in the plugin settings. Default is 27124.</p>
+      </label>
+    </details>
+
+    <div class="row" style="margin-top: 16px;">
+      <button id="saveTest" class="btn-primary" type="button">Save and test connection</button>
+    </div>
+
+    <p id="status" class="hint" aria-live="polite" style="margin-top: 12px;"></p>
+  </section>
+
+  <script src="../cloud-client.js"></script>
   <script src="options.js"></script>
 </body>
 </html>

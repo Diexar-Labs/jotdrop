@@ -1,4 +1,5 @@
-"""Run: python cloud/clipper_browser_check.py. Real popup sources, mocked Chrome API, no extension build."""
+"""Run: python cloud/clipper_browser_check.py. Real popup sources and bundle, mocked Chrome API (no session storage).
+The real extension in a browser: cloud/clipper_extension_check.py."""
 import sys
 from pathlib import Path
 from urllib.parse import urlparse
@@ -49,19 +50,15 @@ def check_clipper(browser, url, token):
         relative = path.removeprefix("/")
         if path.startswith("/clipper/"):
             relative = "chrome-extension/" + path.removeprefix("/clipper/")
-        if path.endswith("/popup.js") and not route.request.url.endswith("?test"):
-            route.fulfill(status=200, content_type="text/javascript", body="")
-        else:
-            route.fulfill(path=str(root / relative), content_type="text/javascript" if path.endswith((".js", ".mjs")) else "text/css" if path.endswith(".css") else "text/html")
+        route.fulfill(path=str(root / relative), content_type="text/javascript" if path.endswith((".js", ".mjs")) else "text/css" if path.endswith(".css") else "text/html")
 
     context.route("**/clipper/**", source)
     context.route("**/cloud/shared/**", source)
 
+    # The popup as shipped: popup.html loads the bundled cloud-client.js (the store build), then popup.js.
     def load():
         page.goto(url + "/clipper/popup/popup.html", wait_until="networkidle")
-        page.add_script_tag(url=url + "/clipper/cloud.mjs", type="module")
-        page.wait_for_selector("#cloudUnlock", state="attached")
-        page.add_script_tag(url=url + "/clipper/popup/popup.js?test")
+        page.locator("#status").filter(has_text="Cloud: ").or_(page.locator("#status").filter(has_text="Direct mode")).wait_for()
 
     try:
         load()

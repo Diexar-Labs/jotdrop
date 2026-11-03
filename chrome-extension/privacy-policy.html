@@ -71,52 +71,57 @@
   <div class="container">
 
     <h1>JotDrop - Privacy Policy</h1>
-    <p class="meta">Effective date: 2026-09-12 &nbsp;|&nbsp; Publisher: DiexarLabs &nbsp;|&nbsp; License: MIT</p>
+    <p class="meta">Effective date: 2026-11-03 &nbsp;|&nbsp; Publisher: DiexarLabs &nbsp;|&nbsp; License: MIT</p>
 
-    <p>JotDrop is a Chrome extension that clips the current browser tab into a locally-running Obsidian instance. This page explains exactly what the extension does and does not do with your data.</p>
+    <p>JotDrop Web Clipper is a Chrome extension that saves the current browser tab as a JotDrop note. You choose where clips go: to the JotDrop plugin in Obsidian on your own computer, to your end-to-end encrypted JotDrop Cloud, or to both. This page explains exactly what the extension does and does not do with your data.</p>
 
-    <h2>1. Data collected externally</h2>
+    <h2>1. Data collected by us</h2>
     <div class="none-box">None.</div>
-    <p>JotDrop never contacts any external server, cloud service, or API outside your own device. There is no analytics, no telemetry, no crash reporting, and no advertising of any kind.</p>
+    <p>The extension has no analytics, no telemetry, no crash reporting and no advertising. In Obsidian mode it contacts no server at all. In JotDrop Cloud mode it sends your clips to your own JotDrop Cloud only in encrypted form, which we cannot read (see section 4).</p>
 
     <h2>2. What the extension reads from your browser</h2>
-    <p>When you trigger a clip, the extension reads:</p>
+    <p>When you open the extension, it reads:</p>
     <ul>
       <li>The current tab's <strong>title</strong> and <strong>URL</strong></li>
       <li>Any <strong>text you have selected</strong> on the page (if any)</li>
     </ul>
-    <p>This information is read on demand only - not continuously, not in the background.</p>
+    <p>This information is read on demand only, not continuously and not in the background. Nothing is saved until you press Save.</p>
 
-    <h2>3. What is stored locally</h2>
-    <p>JotDrop can store two values in <code>chrome.storage.local</code>, and both are <strong>optional</strong>:</p>
+    <h2>3. What is stored on this device</h2>
+    <p>JotDrop stores its settings in <code>chrome.storage.local</code>, which stays on this device and is never synced to your Google account:</p>
     <ul>
-      <li>A <strong>port number</strong> - the port your local Obsidian plugin listens on</li>
-      <li>A <strong>bearer token</strong> - used to authenticate requests to that local plugin</li>
+      <li><strong>Where clips go</strong>: Obsidian, JotDrop Cloud or both</li>
+      <li>For Obsidian (optional): the <strong>port number</strong> of the JotDrop plugin's clip server and the <strong>bearer token</strong> that authenticates requests to it</li>
+      <li>For JotDrop Cloud: the <strong>cloud keys</strong> of this browser (a device token and the key that encrypts your notes), <strong>sealed with an unlock passphrase</strong> you choose. The passphrase itself is never stored.</li>
+      <li>For JotDrop Cloud: <strong>encrypted clips</strong> that are waiting to be uploaded, for example after a lost connection. They are encrypted before they are stored.</li>
     </ul>
-    <p>If you never configure a token and port, nothing is stored. <code>chrome.storage.local</code> is stored only on this device and is never synced to your Google account or any remote service. No other data is ever written to storage.</p>
+    <p>If you tick "Stay unlocked until the browser closes", the unsealed cloud keys are kept in <code>chrome.storage.session</code>, which lives in memory only and is cleared when the browser closes or when you choose Lock now. "Disconnect this browser" in the settings removes the cloud keys and any waiting clips from this device.</p>
 
     <h2>4. Where your data goes</h2>
-    <p>Your clipped data travels over two possible <strong>local</strong> transports - it never leaves your device:</p>
+    <p><strong>Obsidian mode.</strong> Your clip never leaves your computer. It travels over one of two local routes:</p>
     <ul>
-      <li><strong>Background connection (optional):</strong> the title, URL, and selected text are sent in a single HTTP request to <code>http://127.0.0.1</code> (your own computer) on the port you configured, authenticated with the bearer token. The request is received by the JotDrop companion plugin running inside your local Obsidian installation.</li>
-      <li><strong>Direct mode (default):</strong> the extension opens a local <code>obsidian://jotdrop-clip</code> protocol URL that is handled directly by the JotDrop plugin in your local Obsidian installation. This URI is processed by your operating system and Obsidian on your own computer; the bearer token is never included in it.</li>
+      <li><strong>Background connection (optional):</strong> the title, URL, selected text, tags, color and pin are sent in a single HTTP request to <code>http://127.0.0.1</code> (your own computer) on the port you configured, authenticated with the bearer token. The request is received by the JotDrop plugin running inside Obsidian on your computer.</li>
+      <li><strong>Direct mode (default):</strong> the extension opens a local <code>obsidian://jotdrop-clip</code> link that is handled by the JotDrop plugin in Obsidian on your computer. The bearer token is never included in it.</li>
     </ul>
+    <p><strong>JotDrop Cloud mode.</strong> The extension turns the clip into a Markdown note and encrypts it in your browser with your cloud key (AES-GCM) before it is sent. Only the encrypted note goes to <code>https://app.jotdrop.net</code>, the JotDrop Cloud you paired with, together with the device token that proves this browser is one of your devices. The server stores the encrypted note and technical data such as its size and time, but it cannot read the title, URL, selection or tags. Your cloud account and the cloud itself are covered by the JotDrop Cloud privacy policy at <a href="https://app.jotdrop.net/privacy">app.jotdrop.net/privacy</a>.</p>
+    <p>Pairing uses a one-time code that you create yourself in the JotDrop web app. Connecting adds this browser as a device of your cloud, which is shown in the web app under Devices &amp; recovery, where you can also sign it out.</p>
 
     <h2>5. Third parties</h2>
     <div class="none-box">None.</div>
-    <p>JotDrop shares no data with any third party, period. There are no embedded SDKs, no tracking pixels, no external scripts.</p>
+    <p>JotDrop shares no data with any third party. There are no embedded SDKs, no tracking pixels and no external scripts. All code runs from the extension package.</p>
 
     <h2>6. Permissions used</h2>
     <p>The extension requests only the permissions it needs:</p>
     <ul>
-      <li><strong>activeTab</strong> - to read the title and URL of the current tab, only after you open or click the extension</li>
+      <li><strong>activeTab</strong> - to read the title and URL of the current tab, only after you open the extension</li>
       <li><strong>scripting</strong> - for a one-time read of the text you selected on the active tab when you open the extension</li>
-      <li><strong>storage</strong> - to save the optional port number and bearer token locally in <code>chrome.storage.local</code></li>
-      <li><strong>localhost host permissions</strong> (<code>http://127.0.0.1/*</code>, <code>http://localhost/*</code>) - to send clipped data only to the JotDrop plugin running on this computer</li>
+      <li><strong>storage</strong> - to keep the settings, sealed cloud keys and waiting encrypted clips described in section 3 on this device</li>
+      <li><strong>localhost host permissions</strong> (<code>http://127.0.0.1/*</code>, <code>http://localhost/*</code>) - to send clips only to the JotDrop plugin running on this computer</li>
+      <li><strong>optional access to <code>https://app.jotdrop.net/*</code></strong> - requested only when you connect JotDrop Cloud, to pair with your cloud and upload encrypted clips. You can remove it at any time in Chrome's extension settings.</li>
     </ul>
 
     <h2>7. Open source</h2>
-    <p>JotDrop is open source under the MIT license. You can inspect every line of code to verify these claims. The source is available at the project repository linked from the Chrome Web Store listing.</p>
+    <p>JotDrop is open source under the MIT license. You can inspect every line of code to verify these claims at <a href="https://github.com/Diexar-Labs/jotdrop">github.com/Diexar-Labs/jotdrop</a>.</p>
 
     <h2>8. Contact</h2>
     <p>Questions or concerns? Reach out to DiexarLabs at <a href="mailto:eric@diexar.com">eric@diexar.com</a> or open an issue on the project repository.</p>

@@ -8,6 +8,9 @@
 //    obsidian://jotdrop-clip URI; Obsidian launches and creates the card.
 //    With a saved token → POST to 127.0.0.1:<port>/clip; on network error or
 //    401 fall back to the same URI helper (shared, no duplicated logic).
+// 4. With JotDrop Cloud chosen in Settings ("cloud" or "both"), the clip is
+//    encrypted here and uploaded by ../cloud-client.js (JotDropCloud); "both"
+//    then also runs step 3.
 
 const $ = (id) => document.getElementById(id);
 const els = {
@@ -27,6 +30,14 @@ let activeTab = null;
 let currentTags = [];
 let cloudCaptureId = crypto.randomUUID();
 let cloudTransfer;
+// True when the chosen destination includes JotDrop Cloud.
+let cloudWanted = false;
+
+const DESTINATION_NAMES = {
+  obsidian: "Obsidian",
+  cloud: "JotDrop Cloud (encrypted)",
+  both: "JotDrop Cloud and Obsidian",
+};
 
 function setStatus(text, kind) {
   els.status.textContent = text;
@@ -79,8 +90,15 @@ async function init() {
   if (info.title) els.title.textContent = info.title;
   if (info.selection) els.selection.value = info.selection;
   const settings = await getSettings();
-  if (settings.cloudEnabled) {
-    setStatus("Cloud preview: unlock to save", "idle");
+  cloudWanted = settings.destination !== "obsidian";
+  $("destinationName").textContent = DESTINATION_NAMES[settings.destination];
+  const cloud = await refreshCloud().catch(() => null);
+  if (cloudWanted && !cloud?.connected) {
+    setStatus("Cloud: connect in Settings", "idle");
+  } else if (cloudWanted && !cloud.unlocked) {
+    setStatus("Cloud: unlock to save", "idle");
+  } else if (cloudWanted) {
+    setStatus("Ready", "idle");
   } else if (!settings.token) {
     // Zero-config default: saving opens Obsidian via the obsidian:// protocol.
     setStatus("Direct mode: Save opens Obsidian", "idle");
@@ -91,8 +109,10 @@ async function init() {
 
 async function getSettings() {
   const defaults = { port: 27124, token: "" };
-  const stored = await chrome.storage.local.get(["port", "token", "cloudEnabled"]);
-  return { ...defaults, ...stored };
+  const stored = await chrome.storage.local.get(["port", "token", "destination", "cloudEnabled"]);
+  // "cloudEnabled" is the 0.1 development preview's switch; "destination" replaces it.
+  const destination = DESTINATION_NAMES[stored.destination] ? stored.destination : stored.cloudEnabled ? "cloud" : "obsidian";
+  return { ...defaults, ...stored, destination };
 }
 
 function normalizeTag(raw) {
@@ -147,18 +167,17 @@ async function postClip(payload, settings) {
   return await res.json();
 }
 
-function openObsidianUri(payload, onOk) {
+function openObsidianUri(payload) {
   const serialized = JotDropProtocol.serializeDirectClip(payload);
   if (!serialized.ok) {
     setStatus(
-      "Selection too long for direct mode — shorten the selection or enable Background connection",
+      "Selection too long for direct mode: shorten the selection or enable the background connection in Settings",
       "error",
     );
     return false;
   }
   try {
     void chrome.tabs.update(activeTab.id, { url: serialized.uri });
-    onOk();
     return true;
   } catch {
     setStatus("Failed to open Obsidian", "error");
@@ -200,87 +219,157 @@ async function save() {
 
   const settings = await getSettings();
 
-  if (settings.cloudEnabled) {
+  if (settings.destination === "cloud") {
     await saveCloud(payload);
     return;
   }
+  if (settings.destination === "both") {
+    await saveBoth(payload, settings);
+    return;
+  }
 
+  const result = await sendToObsidian(payload, settings);
+  if (result === "saved") {
+    setStatus("Saved ✓", "ok");
+    stampPreview("Saved");
+    setTimeout(() => window.close(), 900);
+  } else if (result === "opened") {
+    setStatus("Opened in Obsidian", "ok");
+    setTimeout(() => window.close(), 800);
+  } else {
+    els.saveBtn.disabled = false;
+  }
+}
+
+/**
+ * The Obsidian route, unchanged since 0.1: without a token the obsidian:// link (Obsidian creates the card);
+ * with a token the plugin's clip server on 127.0.0.1, falling back to the link when it cannot be reached.
+ * Returns "saved" (clip server), "opened" (link) or false (the error is already shown).
+ */
+async function sendToObsidian(payload, settings) {
   // Zero-config: no token → open the clip URI directly; Obsidian creates the card.
   if (JotDropProtocol.pickRoute(settings) === "direct") {
-    if (openObsidianUri(payload, () => {
-      setStatus("Opened in Obsidian", "ok");
-      setTimeout(() => window.close(), 800);
-    })) {
-      return;
-    }
-    els.saveBtn.disabled = false;
-    return;
+    return openObsidianUri(payload) ? "opened" : false;
   }
 
   try {
     await postClip(payload, settings);
-    setStatus("Saved ✓", "ok");
-    stampPreview("Saved");
-    setTimeout(() => window.close(), 900);
+    return "saved";
   } catch (e) {
     console.warn("JotDrop: clip-server unreachable, falling back to obsidian:// URI", e);
     // Fallback opens Obsidian via the protocol handler. We cannot be certain the
     // plugin is active — the user will see the note in their vault once Obsidian
     // is open and the plugin is loaded.
-    if (openObsidianUri(payload, () => {
-      setStatus("Opened in Obsidian", "ok");
-      setTimeout(() => window.close(), 800);
-    })) {
-      return;
-    }
-    els.saveBtn.disabled = false;
+    return openObsidianUri(payload) ? "opened" : false;
   }
 }
 
-async function saveCloud(payload) {
-  if (cloudTransfer) return;
+// Both: the cloud first (it can ask for the passphrase before anything is saved), then Obsidian.
+async function saveBoth(payload, settings) {
+  const cloud = await saveCloud(payload, { finish: false });
+  if (cloud === "locked") return;
+  const cloudError = cloud === "ok" ? "" : els.status.textContent;
+  els.saveBtn.disabled = true;
+  const obsidian = await sendToObsidian(payload, settings);
+  els.saveBtn.disabled = false;
+  if (cloud === "ok" && obsidian) {
+    setStatus(obsidian === "saved" ? "Saved to JotDrop Cloud and Obsidian ✓" : "Saved to JotDrop Cloud ✓ Opened in Obsidian", "ok");
+    stampPreview("Saved");
+    setTimeout(() => window.close(), 900);
+  } else if (obsidian) {
+    setStatus(`Cloud: ${cloudError} ${obsidian === "saved" ? "Obsidian saved it." : "Obsidian was opened."}`, "error");
+  } else if (cloud === "ok") {
+    setStatus(`Saved to JotDrop Cloud ✓ Obsidian: ${els.status.textContent}`, "error");
+  }
+}
+
+/** Shows the unlock field, "stay unlocked" and the draft buttons as the cloud state asks. */
+async function refreshCloud() {
+  const box = $("cloudBox");
+  if (!cloudWanted) {
+    box.hidden = true;
+    return null;
+  }
+  box.hidden = false;
+  if (!globalThis.JotDropCloud) return null;
+  const state = await globalThis.JotDropCloud.status();
+  $("cloudUnlockField").hidden = !state.connected || state.unlocked;
+  $("cloudKeepField").hidden = !state.connected || state.unlocked || !state.canStayUnlocked;
+  $("cloudUnlocked").hidden = !state.unlocked;
+  $("cloudResume").hidden = !state.connected || state.drafts === 0;
+  return state;
+}
+
+/** Returns "ok", "locked" (nothing was sent: connect or unlock first) or "failed" (any encrypted draft is kept). */
+async function saveCloud(payload, { finish = true } = {}) {
+  if (cloudTransfer) return "failed";
   const controller = new AbortController();
   cloudTransfer = controller;
   els.saveBtn.disabled = true;
   const resume = $("cloudResume"), pause = $("cloudPause"), progress = $("cloudProgress");
-  if (resume) resume.disabled = true;
-  if (pause) pause.hidden = false;
+  const password = $("cloudUnlock");
+  const locked = (message) => Object.assign(new Error(message), { code: "locked" });
+  let outcome = "failed";
   try {
-    if (!globalThis.JotDropCloud) throw new Error("Cloud preview requires the local development extension build. Local mode is available in settings.");
-    const password = $("cloudUnlock");
-    if (!password?.value) throw new Error("Enter your cloud device unlock passphrase.");
-    const options = { signal: controller.signal, onCaptureCommitted: (captureId) => {
+    if (!globalThis.JotDropCloud) throw locked("Cloud support is missing from this build.");
+    const state = await globalThis.JotDropCloud.status();
+    if (!state.connected) throw locked("Connect JotDrop Cloud in Settings first.");
+    if (!state.unlocked && !password.value) throw locked("Enter your cloud unlock passphrase.");
+    if (state.server.startsWith("https:") && globalThis.chrome?.permissions && !await chrome.permissions.contains({ origins: [`${state.server}/*`] })) {
+      throw locked(`Open Settings and allow access to ${new URL(state.server).host}.`);
+    }
+    if (resume) resume.disabled = true;
+    if (pause) pause.hidden = false;
+    const options = { signal: controller.signal, keepUnlocked: !$("cloudKeepField").hidden && $("cloudKeep").checked, onCaptureCommitted: (captureId) => {
       if (captureId === cloudCaptureId) cloudCaptureId = crypto.randomUUID();
     }, onProgress: ({ phase, transferredBytes, totalBytes }) => {
       if (controller.signal.aborted) return;
       progress.hidden = false; progress.max = totalBytes; progress.value = transferredBytes;
       setStatus(phase === "committed" ? "Cloud version confirmed" : phase === "committing" ? "Finalizing cloud version..." : `${Math.floor(transferredBytes / 1024)} / ${Math.ceil(totalBytes / 1024)} KiB encrypted bytes confirmed`, "busy");
     } };
-    if (payload) await globalThis.JotDropCloud.save(payload, password.value, cloudCaptureId, options);
+    const secret = state.unlocked ? undefined : password.value;
+    if (payload) await globalThis.JotDropCloud.save(payload, secret, cloudCaptureId, options);
     else {
-      const count = await globalThis.JotDropCloud.resume(password.value, options);
+      const count = await globalThis.JotDropCloud.resume(secret, options);
       password.value = "";
       setStatus(count ? "Saved drafts confirmed in cloud. Current page was not clipped." : "No saved cloud drafts. Current page was not clipped.", "ok");
-      return;
+      outcome = "ok";
+      return outcome;
     }
     password.value = "";
-    setStatus("Encrypted clip saved to cloud", "ok");
-    stampPreview("Sealed");
-    setTimeout(() => window.close(), 900);
+    outcome = "ok";
+    if (finish) {
+      setStatus("Encrypted clip saved to cloud", "ok");
+      stampPreview("Sealed");
+      setTimeout(() => window.close(), 900);
+    }
   } catch (error) {
-    setStatus(controller.signal.aborted ? "Upload paused. Encrypted drafts are kept; select Resume saved drafts to continue." : `${error.message || "Cloud save failed."} Any queued encrypted draft is kept unchanged.`, "error");
+    if (error.code === "locked") {
+      outcome = "locked";
+      setStatus(error.message, "error");
+    } else {
+      setStatus(controller.signal.aborted ? "Upload paused. Encrypted drafts are kept; select Resume saved drafts to continue." : `${error.message || "Cloud save failed."} Any queued encrypted draft is kept unchanged.`, "error");
+    }
   } finally {
     cloudTransfer = undefined;
     els.saveBtn.disabled = false;
     if (resume) resume.disabled = false;
     if (pause) pause.hidden = true;
     if (progress) progress.hidden = true;
+    await refreshCloud().catch(() => null);
     if (controller.signal.aborted) resume?.focus();
+    else if (outcome === "locked" && !$("cloudUnlockField").hidden) password.focus();
   }
+  return outcome;
 }
 
-$("cloudPause")?.addEventListener("click", () => cloudTransfer?.abort());
-$("cloudResume")?.addEventListener("click", () => { void saveCloud(); });
+$("cloudPause").addEventListener("click", () => cloudTransfer?.abort());
+$("cloudResume").addEventListener("click", () => { void saveCloud(); });
+$("cloudLock").addEventListener("click", async () => {
+  await globalThis.JotDropCloud?.lock();
+  await refreshCloud();
+  setStatus("Cloud: unlock to save", "idle");
+});
 window.addEventListener("pagehide", () => cloudTransfer?.abort());
 
 els.saveBtn.addEventListener("click", () => { void save(); });

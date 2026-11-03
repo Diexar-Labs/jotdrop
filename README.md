@@ -33,7 +33,7 @@ Google Keep is great for dumping a thought in two seconds. But your notes live o
 - **Private sync, if you want it.** The optional JotDrop Cloud is end-to-end encrypted: your notes are encrypted on your device before they leave, and the server cannot read them. Even on the free plan.
 - **Or no cloud at all.** Without JotDrop Cloud there is no account and no server. Sync with Syncthing (Syncthing-Fork on Android), Obsidian Sync, iCloud or any folder sync you already use, or don't sync at all.
 - **Free forever.** The apps cost nothing and always will. Only the optional cloud has a paid plan, for people who want more storage.
-- **One set of notes, four ways in.** The Android app, the Obsidian plugin and the web app show the same cards, and the Chrome clipper adds to them through the Obsidian desktop plugin.
+- **One set of notes, four ways in.** The Android app, the Obsidian plugin and the web app show the same cards, and the Chrome clipper adds to them, through the Obsidian desktop plugin or straight into JotDrop Cloud.
 - **Open source.** The apps and the sync server are MIT-licensed and public. Read the code, run it, change it.
 
 ## All the little things, in one place
@@ -69,7 +69,7 @@ A card shows what matters at a glance: its title and text, ticked tasks with a p
 
 And the **web app** at [app.jotdrop.net](https://app.jotdrop.net/) puts the same cards in any browser, with JotDrop Cloud.
 
-Android and Obsidian work on their own, without an account. The web app needs JotDrop Cloud, and the Chrome clipper needs the Obsidian desktop plugin. Not every feature is everywhere: speech-to-text is Android only, and reminder notifications come from Android and from Obsidian while it runs, not from the web app.
+Android and Obsidian work on their own, without an account. The web app needs JotDrop Cloud, and the Chrome clipper needs either the Obsidian desktop plugin or JotDrop Cloud. Not every feature is everywhere: speech-to-text is Android only, and reminder notifications come from Android and from Obsidian while it runs, not from the web app.
 
 Already on Joplin? [JotDrop for Joplin](#jotdrop-for-joplin) turns the notes you have there into a card board, on Joplin desktop and Android. It is a separate plugin: your notes stay in Joplin and use Joplin's own sync. Connect JotDrop Cloud and notes from the JotDrop app come in too, one way.
 
@@ -80,7 +80,7 @@ Already on Joplin? [JotDrop for Joplin](#jotdrop-for-joplin) turns the notes you
 | **Obsidian** | Settings → Community plugins → Browse → search **JotDrop** → Install → Enable | [Plugin page](https://community.obsidian.md/plugins/jotdrop) |
 | **Android** | Install from Google Play, or download the APK and open it on your phone | [Google Play](https://play.google.com/store/apps/details?id=com.diexar.keepcapture) or [JotDrop 0.28.37 APK](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.37/jotdrop.apk) |
 | **Web** | Open the web app and sign in with Google, GitHub or email | [app.jotdrop.net](https://app.jotdrop.net/) |
-| **Chrome** | One click from the Chrome Web Store; works together with the Obsidian desktop plugin | [JotDrop Web Clipper](https://chromewebstore.google.com/detail/jotdrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo) |
+| **Chrome** | One click from the Chrome Web Store; saves to the Obsidian desktop plugin or to JotDrop Cloud | [JotDrop Web Clipper](https://chromewebstore.google.com/detail/jotdrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo) |
 | **Joplin** | Tools → Options → Plugins → search **JotDrop** → Install; on Android, first Configuration → Plugins → Enable plugin support | [JotDrop for Joplin](https://joplinapp.org/plugins/plugin/net.jotdrop.joplin/) |
 
 Step-by-step instructions for each part are under [Install](#install).
@@ -226,13 +226,19 @@ Open [app.jotdrop.net](https://app.jotdrop.net/) and sign in. The web app has ev
   <img src="https://raw.githubusercontent.com/Diexar-Labs/jotdrop/main/docs/store/screenshots/1-clip-any-page.png" alt="JotDrop Web Clipper popup on an article, with the selection, tags, color, pin and Save" width="760" />
 </p>
 
+The clipper saves to Obsidian, to JotDrop Cloud or to both; you choose under **Where clips go** in its settings (right-click the icon → **Options**).
+
+With Obsidian:
+
 1. Install the JotDrop plugin in Obsidian desktop.
 2. Install the [JotDrop Web Clipper](https://chromewebstore.google.com/detail/jotdrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo) from the Chrome Web Store.
 3. Click the JotDrop icon on any page and press **Save**. Obsidian opens and creates the card.
 
 That's the whole setup: saving works through Obsidian's own `obsidian://` link, with no token or port.
 
-**Optional: background connection.** To save silently without bringing Obsidian to the front, enable the clip server in Obsidian (Settings → JotDrop → Web clipper) and copy the token. In the clipper, right-click the icon → **Background connection**, paste the token and choose **Save and test connection**. The server listens only on `127.0.0.1`, never on your network. If it cannot be reached, the clipper falls back to the direct link, so a clip is never lost.
+**With JotDrop Cloud, no Obsidian needed.** In the web app open **Devices & recovery** and create a one-time pairing code. In the clipper settings choose **JotDrop Cloud**, paste the code and pick an unlock passphrase for this browser. Clips are encrypted in the browser and show up in the web app. The clipper counts as one of your cloud devices.
+
+**Optional: background connection.** To save silently without bringing Obsidian to the front, enable the clip server in Obsidian (Settings → JotDrop → Web clipper) and copy the token. In the clipper, open its settings, paste the token under **Obsidian: background connection** and choose **Save and test connection**. The server listens only on `127.0.0.1`, never on your network. If it cannot be reached, the clipper falls back to the direct link, so a clip is never lost.
 
 **Manual ZIP install:** download the ZIP from the [latest clipper release](https://github.com/Diexar-Labs/jotdrop/releases?q=web-clipper-v&expanded=false), extract it to a permanent folder, open `chrome://extensions` (also in Edge and Brave), turn on **Developer mode** and choose **Load unpacked**.
 
@@ -240,7 +246,7 @@ That's the whole setup: saving works through Obsidian's own `obsidian://` link, 
 | --- | --- |
 | Obsidian does not open on Save | Open Obsidian desktop once so the `obsidian://` link is registered, then save again. |
 | Background connection test fails | Obsidian desktop with the JotDrop plugin and its clip server must be running; copy the token again. |
-| Wrong port or token | Open **Background connection → Advanced**, correct the port (default 27124) and paste the token again. |
+| Wrong port or token | In the clipper settings open **Obsidian: background connection → Advanced**, correct the port (default 27124) and paste the token again. |
 | "Selection too long for direct mode" | Shorten the selection, or use the background connection, which handles much longer quotes. |
 
 ### JotDrop for Joplin
@@ -334,7 +340,7 @@ Not on the same notes. Two sync systems on one folder can produce conflicting ch
 Yes. Attachments synced with JotDrop Cloud are encrypted on your device like notes.
 
 **Does the Chrome clipper work without Obsidian?**
-It works together with the Obsidian desktop plugin, which creates the card.
+Yes. Choose JotDrop Cloud in its settings and clips go, encrypted, straight into your cloud and the web app. With Obsidian, the desktop plugin creates the card.
 
 **Will every saved link get a picture?**
 Not always. The website has to offer a preview picture and allow it to load.

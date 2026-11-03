@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { clipMarkdown, createClipperCloud } from '../chrome-extension/cloud.mjs';
+import { CLOUD_ORIGIN, clipMarkdown, clipPath, cloudOrigin, createClipperCloud, readPairingCode } from '../chrome-extension/cloud.mjs';
 import { createCloudServer } from './server.mjs';
 import { CloudClient } from './shared/client.mjs';
-import { randomToken, sealLocal } from './shared/crypto.mjs';
+import { base64ToBytes, bytesToBase64, randomToken, sealLocal } from './shared/crypto.mjs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,6 +16,87 @@ test('cloud clipper creates portable Markdown and escapes metadata and links', (
   assert.ok(markdown.includes('> one\n> two'));
   assert.ok(markdown.includes('[A \\[test\\] new line](<https://example.com/a%28b%29>)'));
   assert.throws(() => clipMarkdown({ url: 'javascript:alert(1)' }));
+});
+
+test('clipped text keeps its #words as text, like the plugin; only chosen tags are tags', () => {
+  const markdown = clipMarkdown({ url: 'https://example.com/#anchor', title: '#1 tips for #obsidian', selection: 'Try #keep and `#code` at https://x.test/#y', tags: ['chosen'] });
+  assert.ok(markdown.startsWith('---\ntags: ["chosen"]\n'));
+  assert.ok(markdown.includes('# #1 tips for \\#obsidian\n'), markdown);
+  assert.ok(markdown.includes('> Try \\#keep and `#code` at https://x.test/#y'), markdown);
+  assert.ok(markdown.includes('(<https://example.com/#anchor>)'), markdown);
+});
+
+test('a clip is named like an Obsidian clip, at the top of notes/, and stays unique per capture', () => {
+  const now = new Date(2026, 10, 3, 14, 5, 2);
+  const id = '3f9a0c1e-0000-4000-8000-000000000000';
+  assert.equal(clipPath({ url: 'https://example.com', title: 'A: "quoted" [page] / with *marks*?' }, id, now), 'notes/2026-11-03 140502 A quoted page  with marks 3f9a.md');
+  assert.equal(clipPath({ url: 'https://example.com', title: '...' }, id, now), 'notes/2026-11-03 140502 3f9a.md');
+  assert.equal(clipPath({ url: 'https://example.com', title: 'x'.repeat(80) }, id, now), `notes/2026-11-03 140502 ${'x'.repeat(40)} 3f9a.md`);
+  assert.notEqual(clipPath({ url: 'https://example.com', title: 'Same' }, id, now), clipPath({ url: 'https://example.com', title: 'Same' }, `aaaa${id.slice(4)}`, now));
+});
+
+test('the store clipper pairs only with app.jotdrop.net (api is the same server) or a cloud on this computer', () => {
+  assert.equal(cloudOrigin('https://app.jotdrop.net'), CLOUD_ORIGIN);
+  assert.equal(cloudOrigin('https://api.jotdrop.net/'), CLOUD_ORIGIN);
+  assert.equal(cloudOrigin('http://127.0.0.1:8787'), 'http://127.0.0.1:8787');
+  assert.equal(cloudOrigin('http://localhost:9000'), 'http://localhost:9000');
+  assert.throws(() => cloudOrigin('https://cloud.example.com'), /app\.jotdrop\.net/);
+  assert.throws(() => cloudOrigin('http://192.168.1.2:8787'), /HTTPS/);
+  const code = (url) => bytesToBase64(new TextEncoder().encode(JSON.stringify({ v: 1, url, pairingId: crypto.randomUUID(), claimToken: randomToken(), wrappingKey: randomToken() })));
+  const plain = code('https://app.jotdrop.net');
+  assert.deepEqual(readPairingCode(` ${plain.slice(0, 20)}\n${plain.slice(20)} `), { code: plain, origin: CLOUD_ORIGIN });
+  const alias = readPairingCode(code('https://api.jotdrop.net'));
+  assert.equal(alias.origin, CLOUD_ORIGIN);
+  assert.equal(JSON.parse(new TextDecoder().decode(base64ToBytes(alias.code))).url, CLOUD_ORIGIN);
+  assert.throws(() => readPairingCode(code('https://evil.example')), /another server/);
+  assert.throws(() => readPairingCode('not a code'), /not a JotDrop pairing code/);
+});
+
+test('pairing takes a device place, stays unlocked only in session memory, and disconnecting frees the place', async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'jotdrop-clipper-pair-'));
+  const enrollmentToken = randomToken(), app = await createCloudServer({ dataDir, enrollmentToken });
+  t.after(async () => { await app.close(); await rm(dataDir, { recursive: true, force: true }); });
+  const { client: owner } = await CloudClient.create({ url: `http://127.0.0.1:${app.port}`, enrollmentToken, deviceName: 'Synthetic web app' });
+  const area = () => { const data = {}; return { data, async get(keys) { return structuredClone(keys === null ? data : Object.fromEntries([keys].flat().filter((key) => key in data).map((key) => [key, data[key]]))); }, async set(value) { Object.assign(data, structuredClone(value)); }, async remove(keys) { for (const key of [keys].flat()) delete data[key]; } }; };
+  const local = area(), session = area();
+  local.data.destination = 'obsidian';
+  local.data.cloudEnabled = true;
+  const clipper = createClipperCloud(local, fetch, session);
+  const password = 'synthetic pairing passphrase';
+  await assert.rejects(clipper.connect((await owner.makePairing('Web clipper')).pairingCode, 'too short'), /at least 12/);
+  assert.equal(await clipper.connect((await owner.makePairing('Web clipper')).pairingCode, password, { keepUnlocked: true }), `http://127.0.0.1:${app.port}`);
+  assert.deepEqual(Object.keys(local.data).sort(), ['cloudConnection', 'cloudServer', 'destination']);
+  assert.equal(local.data.destination, 'cloud');
+  const { credentials } = session.data.cloudSession;
+  for (const secret of [credentials.token, credentials.vaultKey]) assert.ok(!JSON.stringify(local.data).includes(secret), 'Only sealed keys are stored');
+  assert.deepEqual(await clipper.status(), { connected: true, server: `http://127.0.0.1:${app.port}`, unlocked: true, canStayUnlocked: true, drafts: 0 });
+  // The clipper is a device like any other: on the free plan (2 devices) the cloud is now full.
+  const devices = (await owner.devices()).devices;
+  assert.deepEqual(devices.map((device) => [device.name, device.revoked]), [['Synthetic web app', false], ['Web clipper', false]]);
+  await assert.rejects(owner.makePairing('Third device'), (error) => error.status === 403 && error.code === 'device-limit');
+  // Unlocked: saves need no passphrase.
+  await clipper.save({ url: 'https://example.com', title: 'Unlocked clip', tags: ['a'] }, undefined, crypto.randomUUID());
+  const [change] = (await owner.listChanges()).changes;
+  const { file } = await owner.read(change.id);
+  assert.match(file.path, /^notes\/\d{4}-\d\d-\d\d \d{6} Unlocked clip [0-9a-f]{4}\.md$/);
+  assert.ok(new TextDecoder().decode(file.bytes).includes('# Unlocked clip'));
+  // Locked: the passphrase is needed again, and a wrong one says so.
+  await clipper.lock();
+  assert.equal((await clipper.status()).unlocked, false);
+  await assert.rejects(clipper.save({ url: 'https://example.com' }, undefined, crypto.randomUUID()), (error) => error.code === 'locked');
+  await assert.rejects(clipper.save({ url: 'https://example.com' }, 'wrong passphrase!!', crypto.randomUUID()), /Wrong unlock passphrase/);
+  assert.equal((await clipper.status()).drafts, 0, 'Nothing is queued while locked');
+  // A queued draft goes with the keys on disconnect; with the passphrase the clipper also signs itself out.
+  local.data[`cloudDraft:${credentials.vaultId}:${crypto.randomUUID()}`] = await owner.prepareWrite('notes/Queued.md', new TextEncoder().encode('queued'), 0);
+  await assert.rejects(clipper.disconnect('wrong passphrase!!'), /Wrong unlock passphrase/);
+  assert.deepEqual(await clipper.disconnect(password), { signedOut: true, signOutError: null, droppedDrafts: 1 });
+  assert.deepEqual(local.data, { destination: 'obsidian' });
+  assert.deepEqual(session.data, {});
+  assert.deepEqual((await owner.devices()).devices.map((device) => device.revoked), [false, true]);
+  await assert.rejects(new CloudClient(credentials).status(), (error) => error.status === 401);
+  // The freed place can be used again.
+  assert.ok((await owner.makePairing('Web clipper')).pairingCode);
+  assert.deepEqual(await clipper.status(), { connected: false, server: null, unlocked: false, canStayUnlocked: true, drafts: 0 });
 });
 
 test('clipper reconciles an error after COMMIT across server restart and preserves genuinely conflicting drafts', async (t) => {
@@ -73,11 +154,12 @@ test('clipper reconciles an error after COMMIT across server restart and preserv
   loseNetworkResponse = false;
   const conflictKey = Object.keys(data).find((key) => key.startsWith('cloudDraft:'));
   const pending = data[conflictKey];
-  await client.write(`notes/Inbox/${conflictId}.md`, new TextEncoder().encode('Different cloud version'), 1);
+  // The lost answer hid a save that did happen: the next version goes on top of it.
+  await client.write((await client.read(pending.id)).file.path, new TextEncoder().encode('Different cloud version'), 1);
   // The immutable receipt acknowledges our old write without overwriting the newer version.
   assert.equal(await clipper.resume(password), 1);
   assert.equal(data[conflictKey], undefined);
-  data[conflictKey] = await client.prepareWrite(`notes/Inbox/${conflictId}.md`, new TextEncoder().encode('A genuinely stale draft'), 0);
+  data[conflictKey] = await client.prepareWrite((await client.read(pending.id)).file.path, new TextEncoder().encode('A genuinely stale draft'), 0);
   const before = JSON.stringify(data);
   await assert.rejects(clipper.resume(password), /different cloud version/i);
   assert.equal(JSON.stringify(data), before);

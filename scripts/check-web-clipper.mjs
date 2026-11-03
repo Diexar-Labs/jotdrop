@@ -3,6 +3,10 @@
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { test } from "node:test";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { buildWebClipperBundle } from "./build-web-clipper.mjs";
+import { CLOUD_ORIGIN } from "../chrome-extension/cloud.mjs";
 
 const require = createRequire(import.meta.url);
 const proto = require("../chrome-extension/protocol.js");
@@ -73,4 +77,34 @@ test("short clip serializes to a usable direct URI", () => {
   const result = proto.serializeDirectClip({ url: "https://example.com", pinned: false });
   assert.equal(result.ok, true);
   assert.equal(result.uri.startsWith("obsidian://jotdrop-clip?url="), true);
+});
+// --- 0.2: JotDrop Cloud in the store build ---------------------------------------------------------------
+
+const extension = (name) => readFileSync(fileURLToPath(new URL(`../chrome-extension/${name}`, import.meta.url)), "utf8");
+const manifest = JSON.parse(extension("manifest.json"));
+
+test("store manifest asks for the narrowest access: localhost always, app.jotdrop.net only when cloud is turned on", () => {
+  assert.match(manifest.version, /^\d+\.\d+\.\d+$/);
+  assert.deepEqual([...manifest.permissions].sort(), ["activeTab", "scripting", "storage"]);
+  assert.deepEqual(manifest.host_permissions, ["http://127.0.0.1/*", "http://localhost/*"]);
+  assert.deepEqual(manifest.optional_host_permissions, [`${CLOUD_ORIGIN}/*`]);
+  assert.equal(CLOUD_ORIGIN, "https://app.jotdrop.net");
+  const all = JSON.stringify(manifest);
+  for (const wide of ["<all_urls>", "https://*/*", "http://*/*", "*://*/*"]) assert.equal(all.includes(wide), false, wide);
+  assert.equal(manifest.content_scripts, undefined);
+  assert.ok(manifest.description.length <= 132, "Chrome Web Store limit");
+});
+
+test("popup and settings load the bundled cloud client before their own script", () => {
+  for (const [page, own] of [["popup/popup.html", "popup.js"], ["options/options.html", "options.js"]]) {
+    const html = extension(page);
+    const bundle = html.indexOf('<script src="../cloud-client.js"></script>');
+    assert.ok(bundle > 0, page);
+    assert.ok(bundle < html.indexOf(`src="${own}"`), page);
+    assert.equal(/<script(?![^>]*src=)/.test(html), false, `${page}: inline scripts are blocked in extensions`);
+  }
+});
+
+test("committed cloud-client.js is the fresh build of chrome-extension/cloud.mjs", async () => {
+  assert.equal(extension("cloud-client.js").replace(/\r\n/g, "\n"), await buildWebClipperBundle());
 });

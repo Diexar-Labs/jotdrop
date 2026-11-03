@@ -50,11 +50,31 @@
     <span>Pin card</span>
   </label>
 
+  <p id="destination" class="destination">Saves to: <strong id="destinationName">Obsidian</strong></p>
+
+  <section id="cloudBox" class="cloud-box" aria-label="JotDrop Cloud" hidden>
+    <label class="field" id="cloudUnlockField">
+      <span>Cloud unlock passphrase</span>
+      <input id="cloudUnlock" type="password" autocomplete="current-password" />
+    </label>
+    <label class="field field-inline" id="cloudKeepField" hidden>
+      <input id="cloudKeep" type="checkbox" checked />
+      <span>Stay unlocked until the browser closes</span>
+    </label>
+    <p id="cloudUnlocked" class="cloud-note" hidden>Cloud unlocked until the browser closes. <button id="cloudLock" class="btn-link" type="button">Lock now</button></p>
+    <progress id="cloudProgress" aria-label="Encrypted upload" hidden></progress>
+    <div class="cloud-actions">
+      <button id="cloudPause" class="btn-secondary" type="button" hidden>Pause upload</button>
+      <button id="cloudResume" class="btn-secondary" type="button" hidden>Resume saved drafts</button>
+    </div>
+  </section>
+
   <footer class="foot">
-    <button id="optionsBtn" class="btn-secondary" type="button">Background connection</button>
+    <button id="optionsBtn" class="btn-secondary" type="button">Settings</button>
     <button id="saveBtn" class="btn-primary" type="button">Save to JotDrop</button>
   </footer>
 
+  <script src="../cloud-client.js"></script>
   <script src="../protocol.js"></script>
   <script src="popup.js"></script>
 </body>
