@@ -432,6 +432,14 @@
     remove(id, baseRevision) {
       return this.call(this.objectPath(id), "DELETE", { baseRevision });
     }
+    /**
+     * Delete forever: the cloud drops every version of the file at `path` and keeps only a deleted version without
+     * content (its path, encrypted, so other devices still see it as deleted). `baseRevision` is the version shown.
+     */
+    async purge(path, baseRevision) {
+      const { id, envelope } = await this.prepareWrite(path, new Uint8Array(0), baseRevision);
+      return this.call(`${this.objectPath(id)}/purge`, "POST", { baseRevision, envelope });
+    }
     history(id) {
       return this.call(`${this.objectPath(id)}/history`);
     }
