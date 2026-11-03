@@ -13,7 +13,6 @@ import android.view.View
 import android.widget.RemoteViews
 import android.widget.RemoteViewsService
 import android.widget.Toast
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
@@ -242,7 +241,7 @@ private class NoteWidgetRows(private val context: Context, private val id: Int) 
 }
 
 /** Placing a note widget asks which note it shows. */
-class NoteWidgetConfigureActivity : ComponentActivity() {
+class NoteWidgetConfigureActivity : ThemedComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setResult(RESULT_CANCELED)

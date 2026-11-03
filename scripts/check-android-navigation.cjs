@@ -175,7 +175,27 @@ const noteRow = fs.readFileSync(path.join(root, 'res', 'layout', 'widget_note_it
 assert(noteRow.includes('@+id/widget_note_item_box'), 'A ticked item must differ by shape, not only by colour');
 for (const folder of ['values', 'values-nl', 'values-de', 'values-es', 'values-fr', 'values-it']) {
   const strings = fs.readFileSync(path.join(root, 'res', folder, 'strings.xml'), 'utf8');
-  for (const name of ['widget_note_name', 'widget_note_description', 'widget_note_pick', 'widget_note_gone', 'widget_note_empty', 'widget_note_none']) assert(strings.includes(`name="${name}"`), `${folder}: ${name} is missing`);
+  for (const name of ['widget_note_name', 'widget_note_picker_name', 'widget_note_description', 'widget_note_pick', 'widget_note_gone', 'widget_note_empty', 'widget_note_none']) assert(strings.includes(`name="${name}"`), `${folder}: ${name} is missing`);
+}
+// Widget pickers (HyperOS among them) search by label: both labels carry the brand, the widget itself keeps the short name.
+assert(manifest.includes('android:label="@string/widget_note_picker_name"'), 'The note widget picker label must be the branded one');
+for (const folder of ['values', 'values-nl', 'values-de', 'values-es', 'values-fr', 'values-it']) {
+  const strings = fs.readFileSync(path.join(root, 'res', folder, 'strings.xml'), 'utf8');
+  for (const name of ['widget_name', 'widget_note_picker_name']) assert(new RegExp(`name="${name}">JotDrop `).test(strings), `${folder}: ${name} must start with JotDrop`);
+}
+// In-app theme (Settings > Theme): every screen must go through the themed base classes, or it ignores the choice on Android 8 to 11.
+const kotlinDir = path.join(root, 'kotlin', 'com', 'diexar', 'keepcapture');
+for (const file of fs.readdirSync(kotlinDir).filter(f => f.endsWith('.kt') && f !== 'AppTheme.kt')) {
+  const text = fs.readFileSync(path.join(kotlinDir, file), 'utf8');
+  assert(!/:\s*(ComponentActivity|AppCompatActivity)\(\)/.test(text), `${file}: extend ThemedComponentActivity or ThemedAppCompatActivity so the theme choice applies`);
+}
+const appTheme = source('AppTheme');
+assert(appTheme.includes('setApplicationNightMode') && appTheme.includes('applyOverrideConfiguration'), 'The theme choice needs the system API on 12+ and the override on older Android');
+const settingsLayout = fs.readFileSync(path.join(root, 'res', 'layout', 'activity_main.xml'), 'utf8');
+for (const label of ['@string/theme_system', '@string/theme_light', '@string/theme_dark']) assert(settingsLayout.includes(label), 'Each theme option needs a text label, not only a colour');
+for (const folder of ['values', 'values-nl', 'values-de', 'values-es', 'values-fr', 'values-it']) {
+  const strings = fs.readFileSync(path.join(root, 'res', folder, 'strings.xml'), 'utf8');
+  for (const name of ['section_theme', 'theme_system', 'theme_light', 'theme_dark']) assert(strings.includes(`name="${name}"`), `${folder}: ${name} is missing`);
 }
 // Plus: a weekly ZIP. A half-written file never gets the name of a finished one, and only our own files are cleared.
 const backup = source('CloudBackup');

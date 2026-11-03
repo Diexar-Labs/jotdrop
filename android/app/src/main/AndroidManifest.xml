@@ -97,7 +97,7 @@
         <receiver
             android:name=".NoteWidget"
             android:exported="false"
-            android:label="@string/widget_note_name">
+            android:label="@string/widget_note_picker_name">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>

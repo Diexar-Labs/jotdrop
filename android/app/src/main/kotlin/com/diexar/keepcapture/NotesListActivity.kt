@@ -11,7 +11,6 @@ import android.provider.DocumentsContract
 import android.util.Log
 import android.text.format.DateUtils
 import android.widget.Toast
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.compose.ReportDrawnWhen
@@ -244,7 +243,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.roundToInt
 
-class NotesListActivity : ComponentActivity() {
+class NotesListActivity : ThemedComponentActivity() {
 
     private val notesState = MutableStateFlow<NotesUiState>(NotesUiState.Loading)
     private val folderFlow = MutableStateFlow(NoteFolder.NOTES)

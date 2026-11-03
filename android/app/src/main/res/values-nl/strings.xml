@@ -328,12 +328,13 @@
         <item quantity="one">%d notitie</item>
         <item quantity="other">%d notities</item>
     </plurals>
-    <string name="widget_name">Snel vastleggen</string>
+    <string name="widget_name">JotDrop snel vastleggen</string>
     <string name="widget_description">Nieuwe notitie, spraakmemo of foto met één tik.</string>
     <string name="widget_note">Notitie</string>
     <string name="widget_voice">Spraakmemo</string>
     <string name="widget_photo">Foto</string>
     <string name="widget_note_name">Notitie of lijst</string>
+    <string name="widget_note_picker_name">JotDrop notitie of lijst</string>
     <string name="widget_note_description">Eén notitie of lijst op je startscherm. Vink daar meteen af.</string>
     <string name="widget_note_pick">Kies een notitie</string>
     <string name="widget_note_gone">Deze notitie is verplaatst of weg. Tik om een andere te kiezen.</string>
@@ -364,4 +365,8 @@
     <string name="action_insert_drawing">Tekening</string>
     <string name="action_edit_drawing">Tekening bewerken</string>
     <string name="drawing_note_title">Tekening</string>
+    <string name="section_theme">Thema</string>
+    <string name="theme_system">Systeem (zoals de telefoon)</string>
+    <string name="theme_light">Licht</string>
+    <string name="theme_dark">Donker</string>
 </resources>
