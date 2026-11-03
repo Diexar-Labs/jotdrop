@@ -19,6 +19,10 @@ const esbuild = require("esbuild");
   if (rankForManualOrder(null, "2026-10-03 120000 New.md") !== -20261003120000) throw new Error("stamped fallback rank mismatch");
   if (rankForManualOrder(null, "Imported.md") !== 0) throw new Error("unstamped rank must not change on edit");
   if (rankForManualOrder(4, "Imported.md") !== 4) throw new Error("explicit rank mismatch");
+  // A mail note (date, no time) ranks at the end of its day: above that day's captures, below the next day.
+  if (rankForManualOrder(null, "2026-11-03 Invoice ab12cd.md") !== -20261103235959) throw new Error("date-only rank mismatch");
+  if (!(rankForManualOrder(null, "2026-11-03 Invoice ab12cd.md") < rankForManualOrder(null, "2026-11-03 120000 Typed.md"))) throw new Error("mail note must sit above its day");
+  if (!(rankForManualOrder(null, "2026-11-04 000100 Next.md") < rankForManualOrder(null, "2026-11-03 Invoice ab12cd.md"))) throw new Error("next day must sit above a mail note");
 
   // Empty bucket → first card gets rank 0.
   if (betweenRank(null, null) !== 0) throw new Error("empty bucket rank mismatch");

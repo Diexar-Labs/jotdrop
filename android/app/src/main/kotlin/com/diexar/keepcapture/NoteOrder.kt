@@ -19,6 +19,12 @@ object NoteOrder {
     // herkent dezelfde gestempelde namen voor handmatige rangschikking.
     private val STAMP = Regex("^(\\d{4}-\\d{2}-\\d{2} \\d{6})")
 
+    // Een datum zonder tijd, zoals Mail to JotDrop zijn notities noemt
+    // (`yyyy-MM-dd onderwerp id6`), telt als het einde van die dag: nieuwe mail
+    // staat bovenaan zijn dag, onder de volgende dag (Eric, 3 nov). Zelfde regel
+    // als de web-app en de plugin.
+    private val DATED = Regex("^(\\d{4})-(\\d{2})-(\\d{2})(?: (\\d{6}))?")
+
     /** Aanmaaktijd uit de bestandsnaam-stamp, of null bij ontbrekende/ongeldige stamp. */
     fun stampedCreatedMs(filename: String, fmt: SimpleDateFormat): Long? {
         val m = STAMP.find(filename) ?: return null
@@ -41,8 +47,9 @@ object NoteOrder {
      */
     fun manualRank(order: Double?, filename: String): Double {
         order?.let { return it }
-        val stamped = STAMP.find(filename)?.value ?: return 0.0
-        return -stamped.filter(Char::isDigit).toDouble()
+        val m = DATED.find(filename) ?: return 0.0
+        val (year, month, day, time) = m.destructured
+        return -(year + month + day + time.ifEmpty { "235959" }).toDouble()
     }
 
     sealed interface DropPlan {

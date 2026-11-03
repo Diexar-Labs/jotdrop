@@ -482,6 +482,7 @@ object Storage {
                 thumbnailUri = firstImage?.let { attachments[it] },
                 audioBasename = firstAudio,
                 audioUri = firstAudio?.let { attachments[it] },
+                documents = findEmbeddedDocumentBasenames(parsed.body).mapNotNull { name -> attachments[name]?.let { NoteDocument(name, it) } },
             )
         }
         NotePreviewCache.save(context)
@@ -1341,6 +1342,11 @@ object Storage {
         return collectEmbedBasenames(content) { looksLikeImage(it) || looksLikeAudio(it) }
     }
 
+    /** Elke andere bijlage (PDF, document): geen foto, geen opname. Toont als chip op de kaart en in de editor, zoals de web-app (Eric, 3 nov). */
+    fun findEmbeddedDocumentBasenames(content: String): List<String> {
+        return collectEmbedBasenames(content) { !looksLikeImage(it) && !looksLikeAudio(it) }
+    }
+
     private fun collectEmbedBasenames(content: String, accept: (String) -> Boolean): List<String> {
         val result = LinkedHashSet<String>()
         val obsidian = Regex("!\\[\\[([^\\]\\n|]+)(?:\\|[^\\]\\n]+)?\\]\\]")
@@ -1830,8 +1836,13 @@ data class NoteSummary(
     val thumbnailUri: Uri? = null,
     val audioBasename: String? = null,
     val audioUri: Uri? = null,
+    /** The note's other files (a PDF, a document) that exist in the attachments folder, as chips. */
+    val documents: List<NoteDocument> = emptyList(),
     val space: NoteSpace? = null,
 )
+
+/** A file in a note that is not a photo or recording. */
+data class NoteDocument(val name: String, val uri: Uri)
 
 /** The shared group a note is in, for the mark on its card. */
 data class NoteSpace(val id: String, val name: String, val others: List<String>, val frozen: Boolean, val gone: Boolean)

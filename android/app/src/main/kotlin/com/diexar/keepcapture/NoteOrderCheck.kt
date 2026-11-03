@@ -40,6 +40,13 @@ private fun checkRanks() {
         NoteOrder.manualRank(null, "2026-01-01 090000 b.md")) { "newest-first manual" }
     require(NoteOrder.manualRank(null, "2026-01-02 090000 a.md") == -20260102090000.0) { "timezone-independent rank" }
 
+    // Alleen een datum (mailnotitie) → einde van die dag: boven de eigen dag, onder de volgende.
+    require(NoteOrder.manualRank(null, "2026-11-03 Invoice ab12cd.md") == -20261103235959.0) { "date-only rank" }
+    require(NoteOrder.manualRank(null, "2026-11-03 Invoice ab12cd.md") <
+        NoteOrder.manualRank(null, "2026-11-03 120000 typed.md")) { "mail note above its day" }
+    require(NoteOrder.manualRank(null, "2026-11-04 000100 next.md") <
+        NoteOrder.manualRank(null, "2026-11-03 Invoice ab12cd.md")) { "next day above a mail note" }
+
     // Unstamped zonder order → stabiel 0.0 (geen lastModified).
     require(NoteOrder.manualRank(null, "legacy-note.md") == 0.0) { "unstamped manual rank 0" }
     // Gestempelde rang is negatief en dus onder 0 → unstamped komt onderaan.

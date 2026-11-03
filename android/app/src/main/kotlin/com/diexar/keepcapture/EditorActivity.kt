@@ -1465,7 +1465,7 @@ private fun EditorBody(
             // breedte (max 260dp hoog, hele afbeelding zichtbaar) — pariteit met de
             // desktop-edit-modal. Bij meerdere embeds valt hij terug op de compacte
             // strip hieronder, anders eten de previews het halve scherm op.
-            val soloImage = embedItems.singleOrNull()?.takeIf { !isAudioBasename(it.first) }
+            val soloImage = embedItems.singleOrNull()?.takeIf { !isAudioBasename(it.first) && !isDocumentBasename(it.first) }
             if (soloImage != null) {
                 AsyncImage(
                     model = soloImage.second,
@@ -1490,6 +1490,9 @@ private fun EditorBody(
                     for ((name, uri) in embedItems) {
                         if (isAudioBasename(name)) {
                             AudioPlayerCard(uri = uri, foreground = foreground)
+                        } else if (isDocumentBasename(name)) {
+                            // A PDF or document: a chip that opens it, like the web app (Eric, 3 Nov).
+                            DocumentChip(name, foreground) { openAttachment(context, uri, name) }
                         } else {
                             AsyncImage(
                                 model = uri,
@@ -2163,6 +2166,14 @@ private val AUDIO_EXTENSIONS = setOf("m4a", "mp3", "wav", "ogg", "aac", "flac", 
 internal fun isAudioBasename(name: String): Boolean {
     val ext = name.substringAfterLast('.', "").lowercase()
     return ext in AUDIO_EXTENSIONS
+}
+
+// Same image extensions as Storage.looksLikeImage; anything else that is not audio is a document (a PDF, a file from a mail).
+private val IMAGE_EXTENSIONS = setOf("jpg", "jpeg", "png", "gif", "webp", "bmp", "svg")
+
+internal fun isDocumentBasename(name: String): Boolean {
+    val ext = name.substringAfterLast('.', "").lowercase()
+    return ext !in IMAGE_EXTENSIONS && ext !in AUDIO_EXTENSIONS
 }
 
 /**

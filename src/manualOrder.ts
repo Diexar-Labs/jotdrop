@@ -16,8 +16,10 @@ export const RANK_SPACING = 1;
 
 export function rankForManualOrder(order: number | null, filename: string): number {
   if (order != null) return order;
-  const stamp = filename.match(/^(\d{4})-(\d{2})-(\d{2}) (\d{6})/);
-  return stamp ? -Number(stamp.slice(1).join("")) : 0;
+  // A date without a time, as Mail to JotDrop names its notes, counts as the end of that day:
+  // new mail sits on top of its day instead of at rank 0 (Eric, 3 Nov). Same rule as the web app and Android.
+  const stamp = filename.match(/^(\d{4})-(\d{2})-(\d{2})(?: (\d{6}))?/);
+  return stamp ? -Number(stamp[1] + stamp[2] + stamp[3] + (stamp[4] || "235959")) : 0;
 }
 
 /**

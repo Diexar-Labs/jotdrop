@@ -2711,6 +2711,11 @@ private fun NoteCard(
                             onChipClick = if (selectionMode) ({ onClick() }) else onUrlClick,
                         )
                     }
+                    if (note.documents.isNotEmpty()) {
+                        Spacer(Modifier.height(8.dp))
+                        // A PDF or document from the note, like the web app's file chips; in selection mode a chip selects the card.
+                        DocumentChips(note.documents, foreground = fg, selectionMode = selectionMode, onCardClick = onClick)
+                    }
                     if (note.meta.labels.isNotEmpty() || note.meta.allTags.isNotEmpty()) {
                         Spacer(Modifier.height(8.dp))
                         // In selection mode a chip selects the card, like the rest of it.
