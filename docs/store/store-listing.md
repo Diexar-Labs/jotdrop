@@ -98,8 +98,10 @@ Support: https://github.com/Diexar-Labs/jotdrop/issues
 ## Privacy practices tab
 
 - **Single purpose:** `Save the current web page, its link and the text the user selected as a note in JotDrop, either in the user's Obsidian vault through the local JotDrop plugin or in the user's end-to-end encrypted JotDrop Cloud.`
-- **Data usage:** the extension handles "Website content" (title, link, selected
-  text) only to save the clip the user asked for. In cloud mode that content is
+- **Data usage:** tick "Website content" (title, link, selected text) and, to
+  be safe, "Authentication information" (in cloud mode the extension sends the
+  device token of its pairing to app.jotdrop.net to prove it is one of the
+  user's devices). Both are handled only to save the clip the user asked for. In cloud mode that content is
   encrypted in the browser before it is sent, so the developer cannot read it.
   No data is sold, used for advertising or credit decisions, or used for
   anything other than the single purpose. Tick the three certification boxes.
