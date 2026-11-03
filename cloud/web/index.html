@@ -284,7 +284,7 @@
     <form id="editor-form">
       <div class="dialog-heading"><h2 id="editor-title">Edit note</h2>
         <div class="editor-heading-actions"><button id="note-prev" type="button">Previous</button><button id="note-next" type="button">Next</button><button id="markdown-mode" type="button" aria-pressed="false">Markdown</button><button id="close-editor" type="button" aria-label="Close editor">Close</button></div></div>
-      <!-- Like the plugin editor: the note's photos and recordings on top; a photo opens large. -->
+      <!-- Like the plugin editor: the note's photos and recordings on top; a photo opens large; any other file is a chip that downloads. -->
       <div id="note-media" class="note-media" hidden></div>
       <!-- Like the plugin editor: title and text. The Markdown view shows the whole file. -->
       <div id="simple-editor">
@@ -328,7 +328,7 @@
       <div id="repeat-editor" class="repeat-editor"></div>
       <p class="editor-hint">Reminders sync to Android, which rings them. This browser does not ring reminders in the background.</p>
       <label for="note-order">Manual position (lower comes first)</label><input id="note-order" type="number" step="any">
-      <div class="photo-actions"><button id="add-drawing" type="button">Add drawing</button><button id="start-voice" type="button">Record voice memo</button><button id="stop-voice" type="button" hidden>Stop &amp; keep recording</button><button id="retry-voice" type="button" hidden>Retry keeping recording</button><button id="download-voice" type="button" hidden>Download recording</button></div>
+      <div class="photo-actions"><label class="upload-button" for="attach-file">Attach file<input id="attach-file" type="file" multiple></label><button id="add-drawing" type="button">Add drawing</button><button id="start-voice" type="button">Record voice memo</button><button id="stop-voice" type="button" hidden>Stop &amp; keep recording</button><button id="retry-voice" type="button" hidden>Retry keeping recording</button><button id="download-voice" type="button" hidden>Download recording</button></div>
       <p id="voice-message" role="status" aria-live="polite">Voice recording needs HTTPS or localhost and microphone permission. You can also upload an existing recording.</p>
       <details id="photo-tools">
         <summary>Photo &amp; text recognition</summary>

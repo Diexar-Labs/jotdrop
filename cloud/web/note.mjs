@@ -229,11 +229,12 @@ export function joinNote({ front, title, body }) {
 }
 
 /** The plugin's and Android's filename for a new note: `<yyyy-MM-dd HHmmss> <first words>.md`. */
-/** Manual card order, like the plugin and Android: `order`, else the filename's time stamp (newest first), else 0. */
+/** Manual card order, like the plugin and Android: `order`, else the filename's time stamp (newest first), else 0.
+ *  A date without a time, as Mail to JotDrop names its notes, counts as the end of that day: new mail sits on top of that day (Eric, 3 Nov). */
 export function manualRank(order, path) {
   if (order !== undefined) return order;
-  const stamp = /^(\d{4})-(\d{2})-(\d{2}) (\d{6})/.exec(path.split('/').pop());
-  return stamp ? -Number(stamp.slice(1).join('')) : 0;
+  const stamp = /^(\d{4})-(\d{2})-(\d{2})(?: (\d{6}))?/.exec(path.split('/').pop());
+  return stamp ? -Number(stamp[1] + stamp[2] + stamp[3] + (stamp[4] || '235959')) : 0;
 }
 
 /** The `order` for a card dropped between two ranks (null at an edge), like the plugin; null when no number fits between them. */

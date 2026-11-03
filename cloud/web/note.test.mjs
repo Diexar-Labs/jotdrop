@@ -103,6 +103,10 @@ test('manual order ranks and drops cards like the plugin and Android', () => {
   assert.equal(manualRank(2.5, 'notes/2026-10-27 083100 Shopping.md'), 2.5);
   assert.equal(manualRank(undefined, 'notes/Archive/2026-10-27 083100 Shopping.md'), -20261027083100);
   assert.equal(manualRank(undefined, 'notes/Plain.md'), 0);
+  // A mail note carries only the day; it ranks at the end of that day, above the notes typed earlier that day.
+  assert.equal(manualRank(undefined, 'notes/Mail/2026-11-03 Dit is een test a1b2c3.md'), -20261103235959);
+  assert.ok(manualRank(undefined, 'notes/Mail/2026-11-03 Dit is een test a1b2c3.md') < manualRank(undefined, 'notes/2026-11-03 143000 Typed.md'));
+  assert.ok(manualRank(undefined, 'notes/2026-11-04 070000 Next day.md') < manualRank(undefined, 'notes/Mail/2026-11-03 Dit is een test a1b2c3.md'));
   // A dropped card takes the middle of its neighbours, or one step past an edge; with no room the group is renumbered.
   assert.equal(betweenRank(null, null), 0);
   assert.equal(betweenRank(null, 3), 2);

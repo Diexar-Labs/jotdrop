@@ -344,6 +344,24 @@ function mediaType(path) {
   return ({ png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', m4a: 'audio/mp4', mp3: 'audio/mpeg', ogg: 'audio/ogg', webm: 'audio/webm', wav: 'audio/wav' })[extension];
 }
 
+// Any other file in a note (a PDF, a document) shows as a chip with its name and size, and a click downloads it (Eric, 3 Nov).
+function sizeText(bytes) { return bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MiB` : `${Math.max(1, Math.ceil(bytes / 1024))} KiB`; }
+function contentBytes(content) { return Math.floor(content.length * 3 / 4) - (content.endsWith('==') ? 2 : content.endsWith('=') ? 1 : 0); }
+function fileChip(attachment) {
+  const name = attachment.file.path.split('/').pop(), size = sizeText(contentBytes(attachment.file.content));
+  const chip = button(`${name} · ${size}`, () => download(base64ToBytes(attachment.file.content), name), 'file-chip');
+  chip.title = `Download ${name}`;
+  chip.setAttribute('aria-label', `Download ${name}, ${size}`);
+  return chip;
+}
+function appendFileChips(card, attachments) {
+  if (!attachments.length) return;
+  const row = document.createElement('div');
+  row.className = 'file-chips';
+  row.append(...attachments.map(fileChip));
+  card.append(row);
+}
+
 // Like the plugin and Android: up to three links as chips with the site's name, the rest as "+N".
 const LINK_CHIPS_VISIBLE = 3, CARD_CHIPS_VISIBLE = 4;
 function appendLinkChips(card, urls, owner) {
@@ -492,6 +510,38 @@ function openDrawing(initial, replaces) {
 $('drawing-dialog').addEventListener('cancel', (event) => { event.preventDefault(); void drawingEditor?.close(); });
 $('add-drawing').addEventListener('click', () => openDrawing());
 
+// Any file in a note (Eric, 3 Nov): kept encrypted in attachments/ like a photo and linked as ![[name]], the embed that
+// Obsidian, Android and the import use. A name that is taken by other bytes gets the next number, like the import.
+async function keepAttachment(original, bytes) {
+  const base = original.replace(/[\\/:?#^|[\]\x00-\x1f]/g, '_').trim() || 'file';
+  const dot = base.lastIndexOf('.') > 0 ? base.lastIndexOf('.') : base.length;
+  const find = (path) => [...files.values()].find((entry) => entry.file.path === path);
+  for (let n = 1; ; n++) {
+    const name = n === 1 ? base : `${base.slice(0, dot)} ${n}${base.slice(dot)}`;
+    const current = find(`attachments/${name}`);
+    if (current && !current.deleted && current.file.content !== bytesToBase64(bytes)) continue;
+    if (!current || current.deleted) await queueFile(`attachments/${name}`, bytes, current?.revision);
+    return name;
+  }
+}
+$('attach-file').addEventListener('change', async () => {
+  const picked = [...$('attach-file').files];
+  $('attach-file').value = '';
+  if (!picked.length) return;
+  try {
+    for (const file of picked) {
+      if (file.size > maxFileBytes) throw fileTooLarge(`"${file.name}" is larger than ${maxFileText()}, your plan's maximum per file. It has not been uploaded.`);
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      if (!$('editor').open) return;
+      const name = await keepAttachment(file.name, bytes);
+      if (!$('editor').open) return;
+      const stem = name.slice(0, name.lastIndexOf('.') > 0 ? name.lastIndexOf('.') : name.length);
+      appendToNote($('note-content').value.trim() ? `\n\n![[${name}]]\n` : `# ${stem}\n\n![[${name}]]\n`);
+    }
+    $('editor-message').textContent = `${picked.length === 1 ? 'File' : 'Files'} kept as encrypted attachments. Select Save note to keep ${picked.length === 1 ? 'it' : 'them'} in this note.`;
+  } catch (error) { $('editor-message').textContent = errorText(error); }
+});
+
 // The editor shows the note's photos and recordings above the text, like the plugin; a photo opens large.
 let editorMediaUrls = [];
 function renderNoteMedia(entry) {
@@ -501,9 +551,10 @@ function renderNoteMedia(entry) {
   strip.replaceChildren();
   const markdown = Boolean(entry) && isMarkdown(entry.file.path);
   const available = markdown ? [...files.values()].filter((item) => !item.deleted && !isMarkdown(item.file.path)) : [];
-  const shown = markdown ? noteAttachments(entry, noteParts(noteText(entry.file), entry.file.path), available).filter((item) => mediaType(item.file.path)) : [];
+  const shown = markdown ? noteAttachments(entry, noteParts(noteText(entry.file), entry.file.path), available) : [];
   for (const attachment of shown) {
     const type = mediaType(attachment.file.path), name = attachment.file.path.split('/').pop();
+    if (!type) { strip.append(fileChip(attachment)); continue; }
     const url = URL.createObjectURL(new Blob([base64ToBytes(attachment.file.content)], { type }));
     editorMediaUrls.push(url);
     if (type.startsWith('image/')) {
@@ -771,13 +822,16 @@ function render() {
       }
       // Like the plugin and Android: only the first photo shows, as the cover; a voice memo plays on the card.
       let photo = false;
+      const documents = [];
       for (const attachment of noteAttachments(entry, parts, available)) {
-        if (mediaType(attachment.file.path)?.startsWith('image/')) { if (photo) continue; photo = true; }
+        if (!mediaType(attachment.file.path)) { documents.push(attachment); continue; }
+        if (mediaType(attachment.file.path).startsWith('image/')) { if (photo) continue; photo = true; }
         appendMedia(card, attachment, entry.id);
       }
       // Like Keep: a note's first photo is the cover, edge to edge on top of the card.
       const cover = card.querySelector(':scope > img');
       if (cover) { cover.classList.add('card-cover'); card.prepend(cover); }
+      appendFileChips(card, documents);
     } else appendMedia(card, entry, entry.id);
     if (waiting) card.append(paragraph('Encrypted draft on this browser. Waiting for cloud.', 'note-meta'));
     if (entry.conflict) card.append(paragraph('Another device saved a different version. Review both before choosing.', 'message'));
