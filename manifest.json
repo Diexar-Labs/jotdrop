@@ -1,7 +1,7 @@
 {
   "id": "jotdrop",
   "name": "JotDrop",
-  "version": "0.24.1",
+  "version": "0.25.0",
   "minAppVersion": "1.8.7",
   "description": "A private Google Keep alternative for your vault: quick-capture note cards in plain Markdown, free forever and offline. Pairs with the JotDrop Android app and Chrome web clipper. Optional end-to-end encrypted cloud sync.",
   "author": "Diexar Labs",
