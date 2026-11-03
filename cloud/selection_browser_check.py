@@ -90,6 +90,13 @@ def check_selection(browser, url, token):
         card("Alpha").get_by_role("button", name="Select note").click()
         bar("Select all").click()
         assert count() == "2 selected"
+        # With everything chosen, the button turns into Deselect all, which ends the choice.
+        bar("Deselect all").click()
+        assert page.locator("#selection-bar").is_hidden()
+        card("Alpha").hover()
+        card("Alpha").get_by_role("button", name="Select note").click()
+        bar("Select all").click()
+        assert count() == "2 selected"
         bar("Unarchive").click()
         page.locator('[data-view="notes"]').click()
         card("Bravo").wait_for()

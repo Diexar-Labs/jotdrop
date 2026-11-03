@@ -1012,7 +1012,11 @@ function renderSelectionBar() {
   const count = selectedIds.size;
   const notes = `${count} ${count === 1 ? 'note' : 'notes'}`;
   const done = button('Done', () => { selectedIds.clear(); render(); });
-  const all = button('Select all', () => { for (const id of selectableIds) selectedIds.add(id); render(); });
+  // Once everything is chosen the same spot offers the way back (Eric, 3 Nov).
+  const everything = selectableIds.size > 0 && [...selectableIds].every((id) => selectedIds.has(id));
+  const all = everything
+    ? button('Deselect all', () => { selectedIds.clear(); render(); })
+    : button('Select all', () => { for (const id of selectableIds) selectedIds.add(id); render(); });
   bar.replaceChildren(done, paragraph(`${count} selected`, 'selection-count'), all);
   if (view === 'trash') {
     bar.append(button('Restore', () => confirm(`Restore ${notes}?`)
