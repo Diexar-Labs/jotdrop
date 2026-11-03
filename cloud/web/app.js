@@ -892,9 +892,9 @@ function render() {
       ]));
       if (activeSpace) actions.append(iconButton('pencil', 'Open note', () => openEditor(entry)), color, more);
       else actions.append(iconButton('pencil', 'Open note', () => openEditor(entry)), color, labels,
-        iconButton('archive', view === 'archive' ? 'Unarchive' : 'Archive', () => moveArchive(entry), 'archive-note'), more);
+        iconButton('archive', view === 'archive' ? 'Unarchive' : 'Archive', () => moveArchive(entry, false), 'archive-note'), more);
     } else {
-      if (markdown) actions.append(button('Open note', () => openEditor(entry)), button('Restore note', () => moveArchive(entry), 'archive-note'));
+      if (markdown) actions.append(button('Open note', () => openEditor(entry)), button('Restore note', () => moveArchive(entry, false), 'archive-note'));
       actions.append(button('Download', save));
       if (!markdown) actions.append(button('Move to trash', () => deleteEntry(entry), 'danger'));
     }
@@ -1041,7 +1041,8 @@ function renderSelectionBar() {
   ]));
   const archive = view === 'archive' ? 'Unarchive' : 'Archive';
   bar.append(color, labels,
-    button(archive, () => confirm(`${archive} ${notes}? Each original stays until its new cloud copy is confirmed.`) && runBulk((entry) => moveArchive(entry, false))),
+    // Archiving can always be undone, so it asks nothing first (Eric, 3 Nov).
+    button(archive, () => runBulk((entry) => moveArchive(entry, false))),
     button('Move to trash', () => confirm(`Move ${notes} to trash?`) && runBulk((entry) => deleteEntry(entry, false)), 'danger'));
 }
 
