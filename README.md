@@ -13,7 +13,7 @@ See it in action on [jotdrop.net, the private Google Keep alternative](https://j
 
 [**Website**](https://jotdrop.net/) · [**Web app**](https://app.jotdrop.net/) · [**Get it**](#get-jotdrop) · [**Features**](#features) · [**Switch from Keep**](#switch-from-google-keep) · [**JotDrop Cloud**](#jotdrop-cloud) · [**Joplin**](#jotdrop-for-joplin) · [**FAQ**](#faq)
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-f4c458.svg)](LICENSE) [![Obsidian plugin](https://img.shields.io/badge/Obsidian-plugin-14213d)](https://community.obsidian.md/plugins/jotdrop) [![Android APK](https://img.shields.io/badge/Android-APK-14213d)](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.31/jotdrop.apk) [![Chrome clipper](https://img.shields.io/badge/Chrome-clipper-14213d)](https://chromewebstore.google.com/detail/jotdrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo) [![Joplin plugin](https://img.shields.io/badge/Joplin-plugin-14213d)](https://joplinapp.org/plugins/plugin/net.jotdrop.joplin/) [![Build](https://github.com/Diexar-Labs/jotdrop/actions/workflows/android-build.yml/badge.svg)](https://github.com/Diexar-Labs/jotdrop/actions/workflows/android-build.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-f4c458.svg)](LICENSE) [![Obsidian plugin](https://img.shields.io/badge/Obsidian-plugin-14213d)](https://community.obsidian.md/plugins/jotdrop) [![Google Play](https://img.shields.io/badge/Google%20Play-Android-14213d)](https://play.google.com/store/apps/details?id=com.diexar.keepcapture) [![Chrome clipper](https://img.shields.io/badge/Chrome-clipper-14213d)](https://chromewebstore.google.com/detail/jotdrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo) [![Joplin plugin](https://img.shields.io/badge/Joplin-plugin-14213d)](https://joplinapp.org/plugins/plugin/net.jotdrop.joplin/) [![Build](https://github.com/Diexar-Labs/jotdrop/actions/workflows/android-build.yml/badge.svg)](https://github.com/Diexar-Labs/jotdrop/actions/workflows/android-build.yml)
 
 </div>
 
@@ -214,7 +214,7 @@ Notes go to the `Mini Notes` folder of your vault; you can choose another folder
 2. Open JotDrop. Choose **Continue with Google** for a free JotDrop Cloud, or **Use without cloud** and pick a folder for your notes (for example the vault folder you sync to your computer).
 3. From now on, the share menu of every app includes JotDrop.
 
-> **About the signing key:** Up to 0.28.30, GitHub APKs were signed with a key that is published in this repository, so anyone could sign an APK with it. From 0.28.31 on they use a private key (SHA-256 `C4:A1:00:72:D1:EB:98:8E:9E:1D:94:26:D9:03:8D:D9:BD:3F:DB:7C:C4:AB:90:00:3D:ED:F8:7D:FC:4A:43:3A`). On Android 9 and newer, updating is enough: you don't need to reinstall, and the old key can't update the app after that. Android 8 can't switch keys and keeps trusting the old one. Download APKs only from the versioned `Diexar-Labs/jotdrop` release URL above.
+> **About the signing key:** Up to 0.28.30, GitHub APKs were signed with a key that is published in this repository, so anyone could sign an APK with it. From 0.28.31 on they use a private key (SHA-256 `C4:A1:00:72:D1:EB:98:8E:9E:1D:94:26:D9:03:8D:D9:BD:3F:DB:7C:C4:AB:90:00:3D:ED:F8:7D:FC:4A:43:3A`). On Android 9 and newer, updating is enough: you don't need to reinstall, and the old key can't update the app after that. Android 8 can't switch keys and keeps trusting the old one. Download APKs only from the versioned `Diexar-Labs/jotdrop` release URL above. The Google Play version is signed by Google with a different key, so to switch between the GitHub APK and Google Play, uninstall the app first. Your notes stay in their folder: pick that folder again and sign in to JotDrop Cloud again.
 
 ### Web app
 
@@ -260,7 +260,7 @@ Your existing notes appear as cards, with pins, colors, checklists, reminders an
 ### Staying up to date
 
 - **Obsidian:** a plugin from Community plugins updates with one click when Obsidian shows "Update available". For a manual install, [BRAT](https://github.com/TfTHacker/obsidian42-brat) with `Diexar-Labs/jotdrop` keeps it current.
-- **Android:** an APK does not update itself. [Obtainium](https://github.com/ImranR98/Obtainium) can: add `https://github.com/Diexar-Labs/jotdrop`, use only releases tagged `v*` and the `jotdrop.apk` asset.
+- **Android:** the [Google Play version](https://play.google.com/store/apps/details?id=com.diexar.keepcapture) updates by itself. An APK from GitHub does not, but [Obtainium](https://github.com/ImranR98/Obtainium) can: add `https://github.com/Diexar-Labs/jotdrop`, use only releases tagged `v*` and the `jotdrop.apk` asset.
 - **Chrome:** the store version updates automatically.
 - **Everyone:** on this repository, choose **Watch → Custom → Releases** to hear about every new version.
 
