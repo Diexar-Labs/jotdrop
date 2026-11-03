@@ -171,6 +171,9 @@ test('the SMTP rules hold: order, size, unknown commands and connection limits',
   assert.equal((await smtp.send('.')).code, '552');
   assert.equal((await smtp.send('NOOP')).code, '250');
   assert.equal((await smtp.send('QUIT')).code, '221');
+  // The server only forgets this connection once its socket has closed, a moment after the client sees the goodbye.
+  await new Promise((resolve) => smtp.socket.once('close', resolve));
+  await new Promise((resolve) => setTimeout(resolve, 50));
   // The third connection from one address is turned away.
   const first = await open(cloud.mailin.port), second = await open(cloud.mailin.port);
   assert.equal((await first.readReply()).code, '220');
