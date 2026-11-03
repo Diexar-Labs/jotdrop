@@ -430,7 +430,7 @@ object Storage {
         val subfolder = openOrCreateNotesFolder(context).getOrElse { return Result.failure(it) }
         val children = queryChildren(context, vaultUri, subfolder.uri)
             .filter { !it.name.startsWith(".") && it.name.endsWith(".md", ignoreCase = true) }
-        return Result.success(buildNoteSummaries(context, vaultUri, children) + sharedNotes(context, vaultUri))
+        return Result.success(buildNoteSummaries(context, vaultUri, children) + mailNotes(context, vaultUri) + sharedNotes(context, vaultUri))
     }
 
     /**
@@ -608,6 +608,14 @@ object Storage {
             val mark = NoteSpace(space.id, space.name, space.others, space.frozen, space.gone)
             buildNoteSummaries(context, vaultUri, children, spaceAttachments(context, vaultUri, space.id)).map { it.copy(space = mark) }
         }
+    }
+
+    /** Mail to JotDrop puts its notes in the Mail folder, like the web app and the plugins; they belong in the list with the rest. */
+    private fun mailNotes(context: Context, vaultUri: Uri): List<NoteSummary> {
+        val tree = DocumentFile.fromTreeUri(context, vaultUri) ?: return emptyList()
+        val folder = traverseSubfolder(context, tree, "${getSubfolder(context)}/Mail") ?: return emptyList()
+        val children = queryChildren(context, vaultUri, folder.uri).filter { !it.name.startsWith(".") && it.name.endsWith(".md", ignoreCase = true) }
+        return buildNoteSummaries(context, vaultUri, children)
     }
 
     fun noteCountInSpace(context: Context, spaceId: String): Int {
