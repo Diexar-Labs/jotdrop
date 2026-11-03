@@ -199,7 +199,7 @@ const refusedInSpace = [
   ['GET', '/family'], ['POST', '/family/invites', {}], ['POST', '/family/join', { token: 'A'.repeat(43) }], ['DELETE', `/family/members/${other}`], ['POST', '/account/checkout', { interval: 'year', plan: 'family' }],
   ['GET', '/mail'], ['POST', '/mail', { action: 'enable', publicKey: 'A'.repeat(43), addressHash: id64, addressEnvelope: '{}' }], ['DELETE', '/mail'], ['POST', '/mail/senders', { senders: [] }], ['GET', `/mail/${other}`], ['GET', `/mail/${other}/parts/0`], ['DELETE', `/mail/${other}`],
   ['GET', '/devices'], ['DELETE', `/devices/${other}`], ['POST', '/pairings', { deviceName: 'X', deviceTokenHash: id64, claimTokenHash: id64, envelope: '{}' }], ['GET', '/pieces/legacy'],
-  ['POST', `/objects/${id64}/convert`, { from: id64 }], ['GET', `/objects/${id64}/uploads/0/${id64}`], ['POST', `/objects/${id64}/uploads/0/${id64}`, { size: 100 }], ['PUT', `/objects/${id64}/uploads/0/${id64}?offset=0`, {}], ['DELETE', `/objects/${id64}/uploads/0/${id64}`], ['POST', `/objects/${id64}/uploads/0/${id64}/commit`, {}],
+  ['POST', `/objects/${id64}/convert`, { from: id64 }], ['POST', `/objects/${id64}/purge`, { baseRevision: 1, envelope: '{}' }], ['GET', `/objects/${id64}/uploads/0/${id64}`], ['POST', `/objects/${id64}/uploads/0/${id64}`, { size: 100 }], ['PUT', `/objects/${id64}/uploads/0/${id64}?offset=0`, {}], ['DELETE', `/objects/${id64}/uploads/0/${id64}`], ['POST', `/objects/${id64}/uploads/0/${id64}/commit`, {}],
   ['GET', '/spaces'], ['POST', '/spaces', {}], ['GET', `/spaces/${other}`], ['DELETE', `/spaces/${other}`], ['PUT', `/spaces/${other}/key`, {}], ['POST', `/spaces/${other}/invites`, {}], ['DELETE', `/spaces/${other}/invites/${other}`], ['DELETE', `/spaces/${other}/members/${other}`], ['POST', `/spaces/${other}/leave`, {}], ['POST', `/spaces/${other}/takeover`, {}], ['POST', `/spaces/${other}/replace`, {}], ['POST', `/invites/${other}/claim`, {}],
   // The allowed paths with another method, and a route nobody knows.
   ['POST', '/changes', {}], ['POST', '/status', {}], ['GET', '/chunks/missing'], ['DELETE', `/chunks/${id64}`], ['POST', `/objects/${id64}`, {}], ['GET', `/objects/${id64}/restore`], ['POST', `/objects/${id64}/history`, {}], ['GET', '/something-new'],
@@ -216,6 +216,9 @@ test('with a space in the header every route outside the allowed list is refused
       assert.equal(answer.status, 403, `${method} ${path} gave ${answer.status}`);
     }
   }
+  // "Delete forever" is for your own notes: in a group nobody can remove a note and its history for everyone.
+  for (const who of [ana, owner]) await assert.rejects(who.files(space).purge('notes/keep.md', 1), (error) => error.status === 403);
+  assert.equal((await owner.files(space).history((await owner.files(space).listChanges()).changes[0].id)).versions.length, 1);
   // Nothing happened: no deleted space or account, no new device, no pairing, no plan, no recovery change.
   assert.equal((await owner.files(space).listChanges()).changes.length, 1);
   assert.equal((await ana.call('/account')).status, 200);

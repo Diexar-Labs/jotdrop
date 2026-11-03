@@ -613,7 +613,7 @@ function render() {
     notes: labelFilter ? [labelName, 'Notes with this label.'] : ['Notes', 'psst, only you can read these'],
     archive: ['Archive', 'Kept notes, out of your everyday list.'],
     files: ['Files', 'Images, recordings, and the files you choose to keep.'],
-    trash: ['Trash', 'Deleted files stay recoverable. Restoring adds a new cloud version.'],
+    trash: ['Trash', 'Deleted files stay recoverable until you delete them forever. Restoring adds a new cloud version.'],
     devices: ['Devices & recovery', 'You control which devices can access this workspace.'],
   };
   $('view-title').textContent = activeSpace ? spaceName(activeSpace) : descriptions[view][0];
@@ -623,7 +623,8 @@ function render() {
   const source = moment ? moment.files : files;
   const query = $('search').value.toLowerCase().trim();
   const inView = (entry) => {
-    if (isSpacePath(entry.file.path)) return false;
+    // What "Delete forever" left is only there so other devices see the note as deleted.
+    if (entry.purged || isSpacePath(entry.file.path)) return false;
     if (view === 'trash' ? !entry.deleted && !entry.file.path.startsWith('notes/Trash/') : entry.deleted) return false;
     if (view === 'notes' && !isMarkdown(entry.file.path)) return false;
     if (view === 'archive' && (!isMarkdown(entry.file.path) || !entry.file.path.startsWith('notes/Archive/'))) return false;
@@ -862,7 +863,9 @@ function render() {
     const actions = document.createElement('div');
     actions.className = 'card-actions';
     const save = () => download(base64ToBytes(entry.file.content), entry.file.path);
-    if (entry.deleted) actions.append(button('Restore', () => restoreEntry(entry)));
+    // Only in the trash, and only for your own notes: a group's notes belong to everyone in it.
+    const forever = view === 'trash' && !activeSpace ? button('Delete forever', () => purgeEntry(entry), 'danger') : undefined;
+    if (entry.deleted) actions.append(button('Restore', () => restoreEntry(entry)), ...(forever ? [forever] : []));
     else if (markdown && view !== 'trash') {
       // The plugin's card bar: edit, color, labels, archive and a menu with the rest.
       if (view === 'notes' && !moment && !activeSpace) {
@@ -897,6 +900,7 @@ function render() {
       if (markdown) actions.append(button('Open note', () => openEditor(entry)), button('Restore note', () => moveArchive(entry, false), 'archive-note'));
       actions.append(button('Download', save));
       if (!markdown) actions.append(button('Move to trash', () => deleteEntry(entry), 'danger'));
+      if (forever) actions.append(forever);
     }
     if (!moment) card.append(actions);
     // Path and confirmed revision stay out of sight: the editor shows the filename and version history.
@@ -1021,6 +1025,9 @@ function renderSelectionBar() {
   if (view === 'trash') {
     bar.append(button('Restore', () => confirm(`Restore ${notes}?`)
       && runBulk((entry) => (entry.deleted ? restoreEntry(entry, entry.revision, false) : moveArchive(entry, false)))));
+    // There is no undo, so this one asks first, and says so (Eric, 3 Nov).
+    if (!activeSpace) bar.append(button('Delete forever', () => confirm(`Delete ${notes} forever? ${count === 1 ? 'It is' : 'They are'} removed from your cloud and its history. This cannot be undone.`)
+      && runBulk((entry) => purgeEntry(entry, false)), 'danger'));
     return;
   }
   const labelSets = chosen.map((entry) => noteParts(noteText(entry.file), entry.file.path).labels);
@@ -1165,13 +1172,13 @@ function toggleLabel(entry, current, label) {
 
 async function cacheEntry(entry) {
   const prepared = await sealFile(entry.file.path, base64ToBytes(entry.file.content), entry.revision, entry.file.modifiedAt);
-  await store('put', `${cachePrefix()}${entry.id}`, { prepared, revision: entry.revision, deleted: entry.deleted, updatedAt: entry.updatedAt });
+  await store('put', `${cachePrefix()}${entry.id}`, { prepared, revision: entry.revision, deleted: entry.deleted, ...(entry.purged ? { purged: true } : {}), updatedAt: entry.updatedAt });
 }
 
 async function loadLocal() {
   for (const [, record] of await store('entries', cachePrefix())) {
     const file = await decryptEnvelope(client.credentials.vaultKey, JSON.parse(record.prepared.envelope), aad(record.prepared.id));
-    files.set(record.prepared.id, { id: record.prepared.id, file, revision: record.revision, deleted: record.deleted });
+    files.set(record.prepared.id, { id: record.prepared.id, file, revision: record.revision, deleted: record.deleted, ...(record.purged ? { purged: true } : {}) });
   }
   for (const [, record] of await store('entries', pendingPrefix())) {
     // `local` holds the whole file; a draft from before encrypted pieces has it in its envelope.
@@ -1220,6 +1227,35 @@ async function deleteEntry(entry, ask = true) {
     await store('queue', key, { prepared, deleted: true, queueId: crypto.randomUUID() });
     files.set(entry.id, { ...entry, deleted: true, pending: true });
   }
+  render();
+  void sync();
+}
+
+// Delete forever, from the trash: the cloud keeps no version, piece or history of the note, only a deleted version
+// without content so other devices remove it too. There is no undo, so it asks first.
+async function purgeEntry(entry, ask = true) {
+  if (activeSpace) throw new Error('Delete forever is only for your own notes, not for a group.');
+  const name = isMarkdown(entry.file.path) ? noteParts(noteText(entry.file), entry.file.path).title || entry.file.path.split('/').pop() : entry.file.path.split('/').pop();
+  if (ask && !confirm(`Delete "${name}" forever? It is removed from your cloud and its history. This cannot be undone.`)) return;
+  const activeClient = client, activeGeneration = generation;
+  if (syncing) await syncing;
+  // A note moved to the trash a moment ago goes up first.
+  if (files.get(entry.id)?.pending) await syncAgain();
+  const current = files.get(entry.id);
+  if (generation !== activeGeneration || !current || current.purged) return;
+  if (current.pending || current.conflict) throw new Error('Sync and resolve this note before deleting it forever.');
+  if (!current.deleted && !current.file.path.startsWith('notes/Trash/')) throw new Error('Only files in the trash can be deleted forever.');
+  const result = await activeClient.purge(current.file.path, current.revision);
+  if (generation !== activeGeneration) return;
+  const gone = { id: current.id, revision: result.revision, deleted: true, purged: true, file: { path: current.file.path, content: '', modifiedAt: current.file.modifiedAt } };
+  files.set(current.id, gone);
+  selectedIds.delete(current.id);
+  await cacheEntry(gone);
+  // Its steps leave the time machine too: the next sync reads the change feed from the start.
+  cursor = 0;
+  moments.clear();
+  // Several at once: the selection bar renders and syncs once at the end.
+  if (!ask) return;
   render();
   void sync();
 }

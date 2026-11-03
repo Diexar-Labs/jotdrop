@@ -335,6 +335,8 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         CREATE INDEX IF NOT EXISTS family_members_by_owner ON family_members(ownerAccountId);
         CREATE TABLE IF NOT EXISTS family_invites(tokenHash TEXT PRIMARY KEY, ownerAccountId TEXT NOT NULL, expiresAt INTEGER NOT NULL);
         CREATE INDEX IF NOT EXISTS family_invites_by_owner ON family_invites(ownerAccountId);`);
+      // "Delete forever": the revision of the content-free tombstone that replaced a note and all its history.
+      db.exec('CREATE TABLE IF NOT EXISTS purges(vaultId TEXT NOT NULL, id TEXT NOT NULL, revision INTEGER NOT NULL, purgedAt INTEGER NOT NULL, PRIMARY KEY(vaultId,id));');
       // Who uploaded a piece that no version uses yet; only set in a space, so one member cannot block the others.
       if (!all('PRAGMA table_info(chunks)').some((column) => column.name === 'deviceId')) db.exec('ALTER TABLE chunks ADD COLUMN deviceId TEXT;');
       db.exec('CREATE INDEX IF NOT EXISTS chunks_by_device ON chunks(deviceId) WHERE deviceId IS NOT NULL;');
@@ -694,6 +696,8 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   }
   const revisionQuery = 'SELECT r.*,e.envelope FROM revisions r JOIN envelopes e USING(vaultId,id,envelopeHash)';
   const latest = (vaultId, id) => one(`${revisionQuery} WHERE vaultId=? AND id=? ORDER BY revision DESC LIMIT 1`, vaultId, id);
+  // Set when `revision` is the content-free tombstone that "Delete forever" left of a note.
+  const purgedRevision = (vaultId, id, revision) => one('SELECT revision FROM purges WHERE vaultId=? AND id=? AND revision=?', vaultId, id, revision)?.revision;
   // ponytail: indexed row counts per mutation; use persisted counters if throughput requires it.
   const historyUsage = (vaultId) => ({ ...one('SELECT (SELECT COUNT(*) FROM revisions WHERE vaultId=?) AS revisionCount, (SELECT COUNT(*) FROM changes WHERE vaultId=?) AS changeCount', vaultId, vaultId), maxEntries: maxHistoryEntries });
   const memberOf = (spaceId, deviceVaultId) => one('SELECT 1 FROM space_members m JOIN accounts a ON a.id=m.accountId WHERE m.spaceId=? AND a.vaultId=?', spaceId, deviceVaultId);
@@ -743,8 +747,9 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   // A version is replaced when the next one is saved. After eviction the next remaining version still predates
   // the cutoff, because the cutoff only moves forward.
   const lockedVersions = 'FROM revisions r WHERE r.vaultId=? AND (SELECT n.updatedAt FROM revisions n WHERE n.vaultId=r.vaultId AND n.id=r.id AND n.revision>r.revision ORDER BY n.revision LIMIT 1)<?';
-  // A note deleted before the cutoff and still in the trash is locked as a whole.
-  const trashedNotes = 'FROM revisions r WHERE r.vaultId=? AND r.deleted=1 AND r.updatedAt<? AND r.revision=(SELECT MAX(m.revision) FROM revisions m WHERE m.vaultId=r.vaultId AND m.id=r.id)';
+  // A note deleted before the cutoff and still in the trash is locked as a whole. The tombstone of a note deleted
+  // forever holds nothing and stays, so devices that were away still see the note as deleted.
+  const trashedNotes = 'FROM revisions r WHERE r.vaultId=? AND r.deleted=1 AND r.updatedAt<? AND r.revision=(SELECT MAX(m.revision) FROM revisions m WHERE m.vaultId=r.vaultId AND m.id=r.id) AND NOT EXISTS (SELECT 1 FROM purges p WHERE p.vaultId=r.vaultId AND p.id=r.id AND p.revision=r.revision)';
   function requireOpenVersion(vaultId, id, revision) {
     const cutoff = lockedBefore(vaultId);
     if (!cutoff) return;
@@ -766,7 +771,8 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     // Group by envelope, oldest first; an envelope a newer open version still uses (a restore) is never freed.
     const groups = new Map();
     for (const entry of all(`SELECT r.id,r.revision,r.envelopeHash,r.size ${lockedVersions} ORDER BY r.updatedAt,r.revision`, vaultId, cutoff)) {
-      if (cleared.has(entry.id)) continue;
+      // A tombstone of a note deleted forever frees nothing worth having and keeps the note reading as deleted.
+      if (cleared.has(entry.id) || purgedRevision(vaultId, entry.id, entry.revision)) continue;
       const key = `${entry.id}:${entry.envelopeHash}`;
       if (!groups.has(key)) groups.set(key, { ...entry, revisions: [] });
       groups.get(key).revisions.push(entry.revision);
@@ -839,6 +845,36 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       run('INSERT INTO revisions VALUES(?,?,?,?,?,?,?,?)', vaultId, id, revision, envelopeHash, deleted ? 1 : 0, size, now, deviceId);
       const sequence = Number(run('INSERT INTO changes(vaultId,id,revision,deleted,size,updatedAt,deviceId) VALUES(?,?,?,?,?,?,?)', vaultId, id, revision, deleted ? 1 : 0, size, now, deviceId).lastInsertRowid);
       return { id, revision, sequence };
+    });
+  }
+  /**
+   * "Delete forever" from the trash, in your own cloud only. Every version, envelope, piece and change of the note
+   * goes; what stays is one deleted version whose envelope the device made without content (path only) and one change
+   * that says so. An upload another device has not finished stays until it expires: it can only end as a conflict. Devices that were away therefore read the note as deleted, like any trashed note,
+   * instead of finding it gone, and an old copy cannot come back unnoticed: an edit from before is a conflict.
+   * A note not deleted yet (one in notes/Trash/) is deleted and purged in the same step. The server cannot read
+   * the envelope, so `baseRevision` must be the version the device showed.
+   */
+  function purge(vaultId, deviceId, id, baseRevision, envelope) {
+    return transaction(() => {
+      requireAccess(vaultId, deviceId);
+      // Shared spaces never reach this (SPACE_ROUTES); their notes belong to everyone in them.
+      if (spaceRow(vaultId)) fail(403, 'This is not available in a shared space.');
+      const current = latest(vaultId, id);
+      if (!current) fail(404, 'File not found');
+      // Already gone (an answer that was lost, or another device was first): nothing is left to remove.
+      if (purgedRevision(vaultId, id, current.revision)) return { id, revision: current.revision, sequence: one('SELECT MAX(sequence) AS sequence FROM changes WHERE vaultId=? AND id=?', vaultId, id).sequence, purged: true };
+      if (current.revision !== baseRevision) fail(409, 'Another version was saved. Review it before deleting the note forever.', { currentRevision: current.revision });
+      const size = envelopeSize(envelope, 8192), envelopeHash = hash(envelope);
+      if (one('SELECT 1 FROM envelopes WHERE vaultId=? AND id=? AND envelopeHash=?', vaultId, id, envelopeHash)) fail(400, 'Invalid tombstone');
+      for (const table of ['revisions', 'envelope_chunks', 'retired_envelopes', 'envelopes', 'changes']) run(`DELETE FROM ${table} WHERE vaultId=? AND id=?`, vaultId, id);
+      dropUnusedPieces(vaultId);
+      const revision = baseRevision + 1, now = new Date(clock()).toISOString();
+      run('INSERT INTO envelopes(vaultId,id,envelopeHash,envelope,size,pieces) VALUES(?,?,?,?,?,1)', vaultId, id, envelopeHash, envelope, size);
+      run('INSERT INTO revisions VALUES(?,?,?,?,1,?,?,?)', vaultId, id, revision, envelopeHash, size, now, deviceId);
+      run('INSERT INTO purges VALUES(?,?,?,?) ON CONFLICT(vaultId,id) DO UPDATE SET revision=excluded.revision,purgedAt=excluded.purgedAt', vaultId, id, revision, clock());
+      const sequence = Number(run('INSERT INTO changes(vaultId,id,revision,deleted,size,updatedAt,deviceId) VALUES(?,?,?,1,?,?,?)', vaultId, id, revision, size, now, deviceId).lastInsertRowid);
+      return { id, revision, sequence, purged: true };
     });
   }
   // The owner's dashboard. Sessions live only in memory, keyed by the token's hash; a restart signs the owner out.
@@ -982,7 +1018,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   function deleteSpace(spaceId) {
     const next = one('SELECT * FROM spaces WHERE replaces=?', spaceId);
     if (next && unfinished(next)) deleteSpace(next.id);
-    for (const table of ['revisions', 'envelope_chunks', 'chunks', 'retired_envelopes', 'envelopes', 'changes']) run(`DELETE FROM ${table} WHERE vaultId=?`, spaceId);
+    for (const table of ['revisions', 'envelope_chunks', 'chunks', 'retired_envelopes', 'envelopes', 'changes', 'purges']) run(`DELETE FROM ${table} WHERE vaultId=?`, spaceId);
     for (const table of ['space_members', 'space_keys', 'space_invites']) run(`DELETE FROM ${table} WHERE spaceId=?`, spaceId);
     run('UPDATE spaces SET replacedBy=NULL WHERE replacedBy=?', spaceId);
     run('DELETE FROM spaces WHERE id=?', spaceId);
@@ -1026,7 +1062,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       run('DELETE FROM code_failures WHERE scope IN (?,?,?)', `login:${account.id}`, `reset:${account.id}`, `signup:${account.email}`);
       run('DELETE FROM accounts WHERE id=?', account.id);
     }
-    for (const table of ['uploads', 'pairings', 'revisions', 'envelope_chunks', 'chunks', 'retired_envelopes', 'envelopes', 'changes', 'signups', 'devices', 'plans', 'trials', 'subscriptions', 'mail_accounts', 'mail_senders', 'mail_items', 'mail_parts', 'mail_log']) run(`DELETE FROM ${table} WHERE vaultId=?`, vaultId);
+    for (const table of ['uploads', 'pairings', 'revisions', 'envelope_chunks', 'chunks', 'retired_envelopes', 'envelopes', 'changes', 'purges', 'signups', 'devices', 'plans', 'trials', 'subscriptions', 'mail_accounts', 'mail_senders', 'mail_items', 'mail_parts', 'mail_log']) run(`DELETE FROM ${table} WHERE vaultId=?`, vaultId);
     run('DELETE FROM vaults WHERE id=?', vaultId);
   }
   function forgetAddress(account, kind) {
@@ -1720,7 +1756,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           setCredentials(account.id, next);
           run('DELETE FROM device_approvals WHERE accountId=?', account.id);
           // Nobody can read the old ciphertext any more; deleting it is what the user confirmed.
-          for (const table of ['uploads', 'pairings', 'revisions', 'envelope_chunks', 'chunks', 'retired_envelopes', 'envelopes', 'changes', 'signups', 'devices']) run(`DELETE FROM ${table} WHERE vaultId=?`, account.vaultId);
+          for (const table of ['uploads', 'pairings', 'revisions', 'envelope_chunks', 'chunks', 'retired_envelopes', 'envelopes', 'changes', 'purges', 'signups', 'devices']) run(`DELETE FROM ${table} WHERE vaultId=?`, account.vaultId);
           run('DELETE FROM vaults WHERE id=?', account.vaultId);
           return addDevice(vaultId, value.deviceName, value.deviceTokenHash);
         })); return;
@@ -2156,10 +2192,13 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         // A full free cloud may have cleared the version from then: a gap in revision numbers, or a file whose
         // first remaining version is newer. That file is reported as cleared, never left out or replaced by an older version.
         // ponytail: scans the vault's revision rows per page; index revisions by time if large vaults make this slow.
-        const objects = all('SELECT o.id,o.first,r.revision,r.deleted,r.size,r.updatedAt,(SELECT n.revision FROM revisions n WHERE n.vaultId=o.vaultId AND n.id=o.id AND n.revision>r.revision ORDER BY n.revision LIMIT 1) AS nextRevision,(SELECT n.updatedAt FROM revisions n WHERE n.vaultId=o.vaultId AND n.id=o.id AND n.revision>r.revision ORDER BY n.revision LIMIT 1) AS replacedAt FROM (SELECT vaultId,id,MIN(revision) AS first FROM revisions WHERE vaultId=? AND id>? GROUP BY id) o LEFT JOIN revisions r ON r.vaultId=o.vaultId AND r.id=o.id AND r.revision=(SELECT MAX(m.revision) FROM revisions m WHERE m.vaultId=o.vaultId AND m.id=o.id AND m.updatedAt<=?) WHERE r.revision IS NOT NULL OR o.first>1 ORDER BY o.id LIMIT ?', vaultId, after, new Date(at).toISOString(), pageSize + 1);
+        const objects = all('SELECT o.id,o.first,r.revision,r.deleted,r.size,r.updatedAt,(SELECT n.revision FROM revisions n WHERE n.vaultId=o.vaultId AND n.id=o.id AND n.revision>r.revision ORDER BY n.revision LIMIT 1) AS nextRevision,(SELECT n.updatedAt FROM revisions n WHERE n.vaultId=o.vaultId AND n.id=o.id AND n.revision>r.revision ORDER BY n.revision LIMIT 1) AS replacedAt,(SELECT p.revision FROM purges p WHERE p.vaultId=o.vaultId AND p.id=o.id) AS purgedRevision FROM (SELECT vaultId,id,MIN(revision) AS first FROM revisions WHERE vaultId=? AND id>? GROUP BY id) o LEFT JOIN revisions r ON r.vaultId=o.vaultId AND r.id=o.id AND r.revision=(SELECT MAX(m.revision) FROM revisions m WHERE m.vaultId=o.vaultId AND m.id=o.id AND m.updatedAt<=?) WHERE r.revision IS NOT NULL OR o.first>1 ORDER BY o.id LIMIT ?', vaultId, after, new Date(at).toISOString(), pageSize + 1);
         const hasMore = objects.length > pageSize;
         if (hasMore) objects.pop();
-        reply(200, { objects: objects.map(({ first, nextRevision, replacedAt, ...entry }) => {
+        // A note deleted forever is left out of every moment until it was saved again: its tombstone is all that is
+        // left, and before it there is nothing (its first remaining version is the tombstone).
+        const forgotten = (entry) => entry.purgedRevision !== null && (entry.revision === entry.purgedRevision || entry.revision === null && entry.first === entry.purgedRevision);
+        reply(200, { objects: objects.filter((entry) => !forgotten(entry)).map(({ first, nextRevision, replacedAt, purgedRevision, ...entry }) => {
           if (entry.revision === null) return { id: entry.id, revision: null, deleted: false, size: 0, updatedAt: null, locked: true, cleared: true };
           const cleared = nextRevision !== null && nextRevision !== entry.revision + 1;
           return { ...entry, deleted: Boolean(entry.deleted), locked: cleared || Boolean(cutoff) && (replacedAt ? replacedAt < cutoff : Boolean(entry.deleted) && entry.updatedAt < cutoff), cleared };
@@ -2328,12 +2367,19 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         }
         fail(405, 'Method not allowed');
       }
-      const object = /^\/objects\/([0-9a-f]{64})(?:\/(history|restore|convert))?$/.exec(route);
+      const object = /^\/objects\/([0-9a-f]{64})(?:\/(history|restore|convert|purge))?$/.exec(route);
       if (!object) fail(404, 'Not found');
       const id = object[1], action = object[2];
       const current = latest(vaultId, id);
+      // A note deleted forever has no history left to show.
+      const purged = Boolean(current) && Boolean(purgedRevision(vaultId, id, current.revision));
+      if (method === 'POST' && action === 'purge') {
+        const value = await body(req, MAX_METADATA_BODY);
+        requireValue(Number.isSafeInteger(value.baseRevision) && value.baseRevision >= 1 && value.baseRevision < Number.MAX_SAFE_INTEGER && typeof value.envelope === 'string', 'Invalid delete');
+        reply(200, purge(vaultId, deviceId, id, value.baseRevision, value.envelope)); return;
+      }
       if (method === 'GET' && action === 'history') {
-        if (!current) fail(404, 'File not found');
+        if (!current || purged) fail(404, 'File not found');
         // Newest first: once a newer version is older than the cutoff, every older version is locked.
         const cutoff = lockedBefore(vaultId);
         // A note in the trash since before the cutoff is locked as a whole.
@@ -2387,18 +2433,19 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         }
         const entry = revision === undefined ? current : one(`${revisionQuery} WHERE vaultId=? AND id=? AND revision=?`, vaultId, id, revision);
         if (!entry) fail(404, 'File not found');
-        reply(200, withoutDevice({ id, revision: entry.revision, deleted: Boolean(entry.deleted), envelope: entry.envelope, updatedAt: entry.updatedAt, deviceId: entry.deviceId })); return;
+        reply(200, withoutDevice({ id, revision: entry.revision, deleted: Boolean(entry.deleted), envelope: entry.envelope, updatedAt: entry.updatedAt, deviceId: entry.deviceId, ...(purgedRevision(vaultId, id, entry.revision) ? { purged: true } : {}) })); return;
       }
       if ((method === 'PUT' || method === 'DELETE') && !action || method === 'POST' && action === 'restore') {
         const value = await body(req, method === 'PUT' ? MAX_BODY : MAX_METADATA_BODY);
         requireValue(Number.isSafeInteger(value.baseRevision) && value.baseRevision >= 0 && value.baseRevision < Number.MAX_SAFE_INTEGER, 'Invalid base revision');
         let envelope = value.envelope;
-        if (method === 'DELETE') { if (!current) fail(404, 'File not found'); envelope = current.envelope; }
+        if (method === 'DELETE') { if (!current) fail(404, 'File not found'); if (purged) fail(409, 'This note was deleted forever.', { currentRevision: current.revision }); envelope = current.envelope; }
         if (action === 'restore') {
           requireValue(Number.isSafeInteger(value.revision) && value.revision >= 1, 'Invalid restore revision');
           requireOpenVersion(vaultId, id, value.revision);
           const old = one(`${revisionQuery} WHERE vaultId=? AND id=? AND revision=?`, vaultId, id, value.revision);
-          if (!old) fail(404, 'Version not found');
+          // The tombstone of a note deleted forever holds no content to bring back.
+          if (!old || purgedRevision(vaultId, id, value.revision)) fail(404, 'Version not found');
           envelope = old.envelope;
         }
         let pieces = null;

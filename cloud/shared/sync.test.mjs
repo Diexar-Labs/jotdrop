@@ -357,3 +357,40 @@ test('reading the changes feed in a shared space keeps a known file whose newest
   assert.deepEqual(index.pending, {});
   assert.ok(!index.objects.new);
 });
+
+test('a note deleted forever reaches devices that were away as a deletion, and an old copy does not come back', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'jotdrop-sync-test-'));
+  const enrollmentToken = randomToken(), app = await createCloudServer({ dataDir: directory, enrollmentToken });
+  t.after(async () => { await app.close(); await rm(directory, { recursive: true, force: true }); });
+  const owner = (await CloudClient.create({ url: `http://127.0.0.1:${app.port}`, enrollmentToken, deviceName: 'Browser' })).client;
+  const other = await CloudClient.claim({ pairingCode: (await owner.makePairing('Desktop')).pairingCode });
+  const a = device(owner), b = device(other);
+  a.files.set('notes/Trash/Old.md', text('Old'));
+  a.files.set('notes/Edited.md', text('Edited'));
+  await a.sync();
+  await b.sync();
+  assert.ok(b.files.has('notes/Trash/Old.md') && b.files.has('notes/Edited.md'));
+
+  // The web app deletes both forever: one straight from notes/Trash/, one already deleted. The desktop edits one meanwhile.
+  const edited = await objectId(owner.credentials.vaultKey, 'notes/Edited.md');
+  await owner.purge('notes/Trash/Old.md', 1);
+  await owner.remove(edited, 1);
+  await owner.purge('notes/Edited.md', 2);
+  b.files.set('notes/Edited.md', text('Edited offline'));
+  // No "tracked cloud object disappeared": the unchanged note goes, the edited one stays here next to an empty copy.
+  const result = await b.sync();
+  assert.deepEqual([result.deleted, result.conflicts, result.uploaded], [1, 1, 0]);
+  assert.ok(!b.files.has('notes/Trash/Old.md'));
+  assert.equal(decode(b.files.get('notes/Edited.md')), 'Edited offline');
+  assert.equal(decode(b.files.get('notes/Edited.cloud-conflict-r3.md')), '');
+  assert.equal((await a.sync()).deleted, 2);
+  assert.equal(a.files.size, 0);
+  // A device that lost its baselines and still has an old copy keeps it locally, and does not upload it.
+  const c = device(other);
+  c.files.set('notes/Trash/Old.md', text('Old'));
+  assert.deepEqual([(await c.sync()).uploaded, c.files.has('notes/Trash/Old.md')], [0, true]);
+  for (const path of ['notes/Trash/Old.md', 'notes/Edited.md']) {
+    const read = await owner.read(await objectId(owner.credentials.vaultKey, path));
+    assert.deepEqual([read.deleted, read.purged], [true, true]);
+  }
+});
