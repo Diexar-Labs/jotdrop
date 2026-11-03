@@ -238,6 +238,11 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 #plus-manage summary { cursor: pointer; }
 #pair-form { margin-top: 2rem; }
 #pair-form button { margin-top: 1rem; }
+/* Room between a field and the button below it, and between a button and the message under it (Eric, 3 Nov). */
+#devices-panel form button, #mail-section button, #devices-panel > button { margin-top: 1rem; }
+#devices-panel .mail-address-row button { margin-top: 0; }
+#devices-panel .message, #devices-panel p[role="status"]:not(:empty) { margin-top: .75rem; }
+#devices-panel h2:not(:first-child), #delete-account-form h2 { margin-top: 2.5rem; }
 dialog { background: var(--surface); color: var(--ink); border: 1.5px solid var(--edge); box-shadow: 10px 10px 0 var(--amber); border-radius: 14px 14px 30px 14px; padding: 1.5rem; width: min(760px, calc(100% - 2rem)); max-height: calc(100dvh - 2rem); overflow: auto; }
 dialog::backdrop { background: rgb(15 23 36 / .4); }
 /* While a card or another window is open, the page behind it holds still: scrolling past the end of the window, or on the
