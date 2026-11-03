@@ -31,6 +31,9 @@ enum class NoteFolder { NOTES, ARCHIVE, TRASH }
  */
 enum class NoteSortMode { NEWEST, MANUAL }
 
+/** In-app theme: SYSTEM follows the phone (default), LIGHT and DARK override it. See [AppTheme]. */
+enum class ThemeChoice { SYSTEM, LIGHT, DARK }
+
 object Storage {
     /**
      * Serialiseert read-modify-write-cycli op notitiebestanden. Meta-updates
@@ -48,6 +51,7 @@ object Storage {
     private const val KEY_SPEECH_LANG = "speech_language"
     private const val KEY_DOWNLOAD_IMAGES = "download_images"
     private const val KEY_SORT_MODE = "sort_mode"
+    private const val KEY_THEME = "app_theme"
     private const val KEY_TUTORIAL_PENDING = "first_run_tutorial_pending"
     private const val JOURNAL_SEPARATOR = '\n'.code.toByte()
     // Journaal v2: magic + uri + separator + inhoud + CRC32. Oude journalen beginnen met "content:".
@@ -177,6 +181,19 @@ object Storage {
         PreferenceManager.getDefaultSharedPreferences(context)
             .edit()
             .putBoolean(KEY_DOWNLOAD_IMAGES, enabled)
+            .apply()
+    }
+
+    fun getThemeChoice(context: Context): ThemeChoice {
+        val raw = PreferenceManager.getDefaultSharedPreferences(context)
+            .getString(KEY_THEME, null)
+        return ThemeChoice.entries.firstOrNull { it.name == raw } ?: ThemeChoice.SYSTEM
+    }
+
+    fun saveThemeChoice(context: Context, choice: ThemeChoice) {
+        PreferenceManager.getDefaultSharedPreferences(context)
+            .edit()
+            .putString(KEY_THEME, choice.name)
             .apply()
     }
 

@@ -337,12 +337,13 @@
         <item quantity="one">%d note</item>
         <item quantity="other">%d notes</item>
     </plurals>
-    <string name="widget_name">Quick capture</string>
+    <string name="widget_name">JotDrop quick capture</string>
     <string name="widget_description">New note, voice memo or photo in one tap.</string>
     <string name="widget_note">Note</string>
     <string name="widget_voice">Voice memo</string>
     <string name="widget_photo">Photo</string>
     <string name="widget_note_name">Note or list</string>
+    <string name="widget_note_picker_name">JotDrop note or list</string>
     <string name="widget_note_description">One note or list on your home screen. Tick items right there.</string>
     <string name="widget_note_pick">Choose a note</string>
     <string name="widget_note_gone">This note moved or is gone. Tap to choose another.</string>
@@ -373,4 +374,8 @@
     <string name="action_insert_drawing">Drawing</string>
     <string name="action_edit_drawing">Edit drawing</string>
     <string name="drawing_note_title">Drawing</string>
+    <string name="section_theme">Theme</string>
+    <string name="theme_system">System (follow the phone)</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
 </resources>

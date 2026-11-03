@@ -3,7 +3,6 @@ package com.diexar.keepcapture
 import android.content.Intent
 import android.os.Bundle
 import android.widget.Toast
-import androidx.appcompat.app.AppCompatActivity
 
 /**
  * Onzichtbare activiteit die alleen wordt geactiveerd door een share-intent.
@@ -12,7 +11,7 @@ import androidx.appcompat.app.AppCompatActivity
  * daarna de OG-preview op en updatet de notitie als hij klaar is. Hierdoor
  * voelt elke share instant, ongeacht hoe traag de bron-site reageert.
  */
-class ShareActivity : AppCompatActivity() {
+class ShareActivity : ThemedAppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)

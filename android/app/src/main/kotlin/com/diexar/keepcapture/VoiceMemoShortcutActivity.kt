@@ -6,7 +6,6 @@ import android.content.pm.PackageManager
 import android.os.Bundle
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 
 /**
@@ -14,7 +13,7 @@ import androidx.core.content.ContextCompat
  * and the editor saves only on the way back, so this screen has its own task and an open note stays as it is.
  * Not exported: only the shortcut may start the microphone, not another app.
  */
-class VoiceMemoShortcutActivity : AppCompatActivity() {
+class VoiceMemoShortcutActivity : ThemedAppCompatActivity() {
     private val askMicrophone = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) record() else Toast.makeText(this, R.string.record_permission_denied, Toast.LENGTH_SHORT).show()
         openNotes()

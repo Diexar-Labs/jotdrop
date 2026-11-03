@@ -46,12 +46,13 @@
         <item quantity="one">%d Notiz</item>
         <item quantity="other">%d Notizen</item>
     </plurals>
-    <string name="widget_name">Schnell festhalten</string>
+    <string name="widget_name">JotDrop schnell festhalten</string>
     <string name="widget_description">Neue Notiz, Sprachmemo oder Foto mit einem Tipp.</string>
     <string name="widget_note">Notiz</string>
     <string name="widget_voice">Sprachmemo</string>
     <string name="widget_photo">Foto</string>
     <string name="widget_note_name">Notiz oder Liste</string>
+    <string name="widget_note_picker_name">JotDrop Notiz oder Liste</string>
     <string name="widget_note_description">Eine Notiz oder Liste auf dem Startbildschirm. Direkt dort abhaken.</string>
     <string name="widget_note_pick">Notiz auswählen</string>
     <string name="widget_note_gone">Diese Notiz wurde verschoben oder ist weg. Tippen, um eine andere zu wählen.</string>
@@ -82,4 +83,8 @@
     <string name="action_insert_drawing">Zeichnung</string>
     <string name="action_edit_drawing">Zeichnung bearbeiten</string>
     <string name="drawing_note_title">Zeichnung</string>
+    <string name="section_theme">Design</string>
+    <string name="theme_system">System (wie das Telefon)</string>
+    <string name="theme_light">Hell</string>
+    <string name="theme_dark">Dunkel</string>
 </resources>

@@ -11,11 +11,10 @@ import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.WindowCompat
 import com.diexar.keepcapture.databinding.ActivityMainBinding
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : ThemedAppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
 
@@ -83,8 +82,23 @@ class MainActivity : AppCompatActivity() {
             openExternalUrl("https://github.com/Diexar-Labs/jotdrop/blob/main/docs/android-privacy-policy.md")
         }
 
+        setupThemeChoice()
         setupSpeechLangSpinner()
         setupDownloadImagesSwitch()
+    }
+
+    private fun setupThemeChoice() {
+        val buttons = mapOf(
+            ThemeChoice.SYSTEM to R.id.themeSystem,
+            ThemeChoice.LIGHT to R.id.themeLight,
+            ThemeChoice.DARK to R.id.themeDark,
+        )
+        binding.themeGroup.check(buttons.getValue(Storage.getThemeChoice(this)))
+        binding.themeGroup.setOnCheckedChangeListener { _, checkedId ->
+            val choice = buttons.entries.firstOrNull { it.value == checkedId }?.key ?: return@setOnCheckedChangeListener
+            // Saving recreates the open screens in the new theme.
+            if (choice != Storage.getThemeChoice(this)) AppTheme.save(this, choice)
+        }
     }
 
     private fun openExternalUrl(url: String) {

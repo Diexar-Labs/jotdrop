@@ -46,12 +46,13 @@
         <item quantity="one">%d nota</item>
         <item quantity="other">%d notas</item>
     </plurals>
-    <string name="widget_name">Captura rápida</string>
+    <string name="widget_name">JotDrop captura rápida</string>
     <string name="widget_description">Nota nueva, nota de voz o foto con un toque.</string>
     <string name="widget_note">Nota</string>
     <string name="widget_voice">Nota de voz</string>
     <string name="widget_photo">Foto</string>
     <string name="widget_note_name">Nota o lista</string>
+    <string name="widget_note_picker_name">JotDrop nota o lista</string>
     <string name="widget_note_description">Una nota o lista en tu pantalla de inicio. Marca los elementos ahí mismo.</string>
     <string name="widget_note_pick">Elige una nota</string>
     <string name="widget_note_gone">Esta nota se movió o ya no está. Toca para elegir otra.</string>
@@ -82,4 +83,8 @@
     <string name="action_insert_drawing">Dibujo</string>
     <string name="action_edit_drawing">Editar dibujo</string>
     <string name="drawing_note_title">Dibujo</string>
+    <string name="section_theme">Tema</string>
+    <string name="theme_system">Sistema (como el teléfono)</string>
+    <string name="theme_light">Claro</string>
+    <string name="theme_dark">Oscuro</string>
 </resources>

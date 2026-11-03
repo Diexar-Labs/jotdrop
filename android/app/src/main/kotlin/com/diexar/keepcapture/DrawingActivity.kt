@@ -10,7 +10,6 @@ import android.graphics.Path as AndroidPath
 import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
-import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -94,7 +93,7 @@ import kotlin.math.hypot
  * The PNG goes to the cache and its path comes back as [RESULT_FILE].
  * With [EXTRA_SOURCE] (an existing drawing) its lines open to draw on; the result is still a new file.
  */
-class DrawingActivity : ComponentActivity() {
+class DrawingActivity : ThemedComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
