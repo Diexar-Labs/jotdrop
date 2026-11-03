@@ -347,7 +347,8 @@ const EN: Record<string, string> = {
   section_companions: "JotDrop is a trio",
   companions_blurb:
     "This plugin is one third of JotDrop. For the full Google Keep experience, also install the free Android app (share-sheet capture, OCR, voice memos) and the Chrome web clipper. All three meet in your vault.",
-  companions_download: "⬇ Get the Android app & web clipper",
+  companions_android: "Android app on Google Play",
+  companions_clipper: "Chrome web clipper",
 
   // Clip server (Chrome extension)
   settings_clip_server_section: "Web clipper (Chrome extension)",
@@ -705,7 +706,8 @@ const NL: Record<string, string> = {
   section_companions: "JotDrop is een trio",
   companions_blurb:
     "Deze plugin is een derde van JotDrop. Installeer voor de volledige Google Keep-ervaring ook de gratis Android-app (delen vanuit elke app, OCR, spraakmemo's) en de Chrome-web-clipper. Alle drie komen samen in je vault.",
-  companions_download: "⬇ Download de Android-app & web-clipper",
+  companions_android: "Android-app op Google Play",
+  companions_clipper: "Chrome-webclipper",
 
   settings_clip_server_section: "Web-clipper (Chrome-extensie)",
   settings_clip_server_desc:

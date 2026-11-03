@@ -98,15 +98,17 @@ export class JotDropSettingTab extends PluginSettingTab {
     new Setting(companions).setName(t("section_companions")).setHeading();
     companions.createEl("p", { text: t("companions_blurb") });
     const companionsRow = companions.createDiv({ cls: "jotdrop-support-buttons" });
-    const releasesLink = companionsRow.createEl("a", {
-      cls: "jotdrop-support-button",
-      attr: {
-        href: "https://github.com/Diexar-Labs/jotdrop/releases/latest",
-        target: "_blank",
-        rel: "noopener noreferrer",
-      },
-    });
-    releasesLink.setText(t("companions_download"));
+    const companionLinks: Array<[string, string]> = [
+      ["https://play.google.com/store/apps/details?id=com.diexar.keepcapture", t("companions_android")],
+      ["https://chromewebstore.google.com/detail/jotdrop-web-clipper/mkgcicjljogifeaccaclbcoemllmgjfo", t("companions_clipper")],
+    ];
+    for (const [href, label] of companionLinks) {
+      companionsRow.createEl("a", {
+        cls: "jotdrop-support-button",
+        text: label,
+        attr: { href, target: "_blank", rel: "noopener noreferrer" },
+      });
+    }
 
     new Setting(containerEl)
       .setName(t("settings_notes_folder"))
