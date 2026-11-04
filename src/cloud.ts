@@ -8,6 +8,8 @@ import { AuthenticatorModal, RecoveryCodeModal } from "./cloudAccount";
 import { ConflictReviewModal, TimeMachineModal } from "./cloudReview";
 import { base64ToBytes, decryptEnvelope, isSpacePath, MAX_CHUNKED_BYTES, MAX_FILE_BYTES, objectId, sha256Hex } from "../cloud/shared/crypto.mjs";
 import { cloudTimeline, conflictOriginal, copyName, fromHex, hash, isPreserved, remoteFiles, restorePlan, syncFolder, syncPath, unavailable } from "../cloud/shared/sync.mjs";
+import { listListLinks, removeListLink, syncList } from "../cloud/shared/list-links.mjs";
+import { splitNote } from "./noteLink";
 import { mailKeyPair, mailToNote, openMailBody, openMailKey, openMailPart } from "../cloud/shared/mail.mjs";
 
 export const DEFAULT_CLOUD_SERVER = "https://app.jotdrop.net";
@@ -41,6 +43,8 @@ type Prepared = { id: string; baseRevision: number; envelope: string };
 type RemoteIndex = { cursor: number; objects: Record<string, { path: string; revision: number; deleted: boolean; hash: string }>; pending?: Record<string, number> };
 /** A shared group as this device knows it, also after access ended: its folder stays until the person decides. */
 export type KnownSpace = { id: string; key: string; name: string; others: string[]; frozen: boolean; gone: boolean; owner: boolean };
+/** One of your live list links as `listListLinks` gives it; `key`, `path` and `base` are null when this device cannot open it. */
+export type ListLink = { id: string; revision: number; updatedAt: string; expiresAt: string | null; title: string; path: string | null; key: string | null; address: string | null; base: { revision: number; noteRevision: number; text: string } | null };
 type SpaceState = { tracked: Record<string, Base>; index: RemoteIndex; seen: Record<string, { size: number; modified: number; hash: string }>; upload?: Prepared; rescued: Record<string, string> };
 type SyncState = {
   vaultId: string; enabled: boolean; binding: string; tracked: Record<string, Base>; index: RemoteIndex;
@@ -54,7 +58,7 @@ export type CloudMoment ={ at: string; then: MomentFile[]; files: Array<{ path: 
 type Sealed = { key: CryptoKey; iv: Uint8Array; data: ArrayBuffer };
 
 /** fetch() on top of Obsidian's requestUrl: no CORS, so the same code works on desktop and mobile. */
-async function cloudFetch(url: string, init: RequestInit = {}): Promise<Response> {
+export async function cloudFetch(url: string, init: RequestInit = {}): Promise<Response> {
   const signal = init.signal ?? undefined;
   signal?.throwIfAborted();
   const headers = { ...(init.headers as Record<string, string> | undefined) };
@@ -358,6 +362,8 @@ export class CloudController {
   private personWaiting?: (token: string) => void;
   /** Vault paths the current or last sync stored in the cloud, for the "Sealed" stamp on a new card. */
   readonly lastUploaded = new Set<string>();
+  /** Your live list links as the last check saw them, for the question when a note with one goes to the trash. */
+  listLinks: ListLink[] = [];
 
   constructor(private plugin: JotDropPlugin, store?: KeyValues) {
     const app = plugin.app as unknown as { appId?: string };
@@ -624,6 +630,7 @@ export class CloudController {
       await save();
       this.status = state.message;
       if (report.conflicts) this.conflictNotice(report.conflicts);
+      if (await this.checkListLinks(client, folder, state, active)) redraw = true;
       // The own vault is done; a group that fails says so itself and never stops this.
       if (await this.syncSpaces(client, active, abort.signal)) redraw = true;
       const failed = this.spaces.filter((space) => this.spaceErrors.has(space.id));
@@ -643,6 +650,54 @@ export class CloudController {
       this.changed();
       if (redraw) this.plugin.refreshViews();
     }
+  }
+
+  /**
+   * Live list links, right after a sync of your own notes: what guests ticked or added goes into the note, and the
+   * note's own changes go to the link. Only a note that is in the cloud as it is here takes part; one still on its
+   * way up waits for the next round. A changed note is uploaded by the sync this asks for.
+   */
+  private async checkListLinks(client: CloudClient, folder: VaultFolder, state: SyncState, active: () => void): Promise<boolean> {
+    let changed = false;
+    try {
+      this.listLinks = await listListLinks(client, client.credentials.url) as ListLink[];
+      for (const link of this.listLinks) {
+        active();
+        try {
+          const path = link.path as string, tracked = link.key && link.path ? state.tracked[path] : undefined;
+          if (!tracked || tracked.deleted || tracked.revision < 1 || this.editing.has(folder.local(path))) continue;
+          const bytes = await folder.get(path);
+          if (!bytes || await hash(bytes) !== tracked.hash) continue;
+          const text = decoder.decode(bytes);
+          const { title, body } = splitNote(text);
+          const result = await syncList(client, link, { note: body, noteRevision: tracked.revision, title, ownerName: "Owner", now: Date.now(), fetcher: cloudFetch });
+          if (!result.noteChanged) continue;
+          if (await folder.compareAndSet(path, bytes, encoder.encode(text.slice(0, text.length - body.length) + result.text))) changed = true;
+        } catch (error) { console.warn("List link check failed:", error); }
+      }
+    } catch (error) { console.warn("List links could not be read:", error); }
+    if (changed) this.request(0);
+    return changed;
+  }
+
+  /** The live list links on a note in this vault, as the last check saw them. */
+  listLinksOf(path: string): ListLink[] {
+    try { const cloud = new VaultFolder(this.plugin, this.editing).cloudPath(path); return this.listLinks.filter((link) => link.path === cloud); }
+    catch { return []; }
+  }
+
+  /** Ends these links: the page says the link has ended, and the note stays as it is. */
+  async endListLinks(links: ListLink[]): Promise<void> {
+    await this.withClient(async (client) => { for (const link of links) await removeListLink(client, link.id); });
+    this.listLinks = this.listLinks.filter((link) => !links.includes(link));
+  }
+
+  /** The cloud path and uploaded version of a note that is in the cloud as it is now, or null while a change is still on its way up. */
+  async uploadedNote(path: string, text: string): Promise<{ path: string; revision: number } | null> {
+    const cloud = new VaultFolder(this.plugin, this.editing).cloudPath(path);
+    const tracked = cloud ? this.state?.tracked[cloud] : undefined;
+    if (!cloud || !tracked || tracked.deleted || tracked.revision < 1 || await hash(encoder.encode(text)) !== tracked.hash) return null;
+    return { path: cloud, revision: tracked.revision };
   }
 
   private mailWarned = false;

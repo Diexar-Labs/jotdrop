@@ -32,7 +32,7 @@ import {
 import { discoverLabels, assignLabel, removeLabel, createLabel as managerCreateLabel, renameLabel as managerRenameLabel, deleteLabel as managerDeleteLabel, LabelInfo } from "./labelManager";
 import { voidAsync } from "./asyncUtil";
 import { ConflictReviewModal, NoteHistoryModal } from "./cloudReview";
-import { NoteLinkModal } from "./noteLink";
+import { EndListLinkModal, NoteLinkModal } from "./noteLink";
 import { SharedGroupsModal } from "./cloud";
 import { betweenRank, rankForManualOrder, respaceRanks } from "./manualOrder";
 import { t } from "./i18n";
@@ -2498,7 +2498,13 @@ export class JotDropView extends ItemView {
           .setIcon("trash-2")
           .onClick(async () => {
             // A conflict copy is only on this device; any other note in a group is the group's.
-            if (!inGroup || file.name.includes(".cloud-conflict-")) { await this.moveToFolder(file, this.trashFolder(), "notice_trashed"); return; }
+            if (!inGroup || file.name.includes(".cloud-conflict-")) {
+              // A live list link stays on the note and does not bring it back: who throws the note away chooses whether the link ends too.
+              const linked = cloud && !inGroup ? cloud.listLinksOf(file.path) : [];
+              if (cloud && linked.length) { new EndListLinkModal(this.app, cloud, linked, () => void this.moveToFolder(file, this.trashFolder(), "notice_trashed")).open(); return; }
+              await this.moveToFolder(file, this.trashFolder(), "notice_trashed");
+              return;
+            }
             new ConfirmModal(
               this.app,
               {
