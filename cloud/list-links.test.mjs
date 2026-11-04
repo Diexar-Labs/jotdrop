@@ -100,6 +100,21 @@ test('anyone with the link reads and ticks the list; the server has sealed text,
   assert.equal((await rawPut(app, randomUUID(), { envelope, baseRevision: 1, writeProof: proof })).status, 404);
 });
 
+test('the list page holds no list, and search engines stay out', async (t) => {
+  const app = await fixture(t);
+  const me = await signUp(app, 'ana');
+  const { id } = await share(me.client, app);
+  const page = await fetch(`${app.url()}/l/${id}`);
+  assert.equal(page.status, 200);
+  assert.equal(page.headers.get('x-robots-tag'), 'noindex');
+  assert.equal(page.headers.get('referrer-policy'), 'no-referrer');
+  const html = await page.text();
+  assert.ok(html.includes('list-link.js') && !html.includes('milk'));
+  assert.equal((await fetch(`${app.url()}/list-link.js`)).status, 200);
+  assert.equal((await fetch(`${app.url()}/shared/list-links.mjs`)).status, 200);
+  assert.equal((await fetch(`${app.url()}/l/not-a-link`)).status, 404);
+});
+
 test('the owner takes over what guests did and writes its own changes back; the listing carries the number and the time', async (t) => {
   const app = await fixture(t);
   const me = await signUp(app, 'ana');

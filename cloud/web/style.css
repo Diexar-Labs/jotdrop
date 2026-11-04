@@ -433,6 +433,20 @@ html { scrollbar-color: color-mix(in srgb, var(--ink) 35%, transparent) transpar
 .note-link p, .note-link-task { overflow-wrap: anywhere; white-space: pre-wrap; margin: .3rem 0; }
 .note-link-task.done { text-decoration: line-through; color: var(--muted); }
 .note-link-about { border-top: 1px solid var(--line); padding-top: 1rem; color: var(--muted); }
+/* A shared list: real boxes, and who ticked what in words next to the item. */
+.list-link-task { display: flex; gap: .6rem; align-items: baseline; flex-wrap: wrap; margin: .5rem 0; font-weight: 400; overflow-wrap: anywhere; cursor: pointer; }
+.list-link-task input { width: auto; flex: none; }
+.list-link-task.done .list-link-text { text-decoration: line-through; color: var(--muted); }
+.list-link-by { color: var(--muted); font-size: .85rem; }
+.list-link-name { font-size: .9rem; }
+.list-link-add { display: flex; gap: .6rem; align-items: center; flex-wrap: wrap; margin-top: 1rem; }
+.list-link-add input { flex: 1 1 12rem; }
+.list-link-add label { flex: 0 0 100%; }
+.link-kind { border: 1.5px solid var(--line); border-radius: 10px; padding: .4rem 1rem .8rem; margin: 0 0 1rem; }
+.link-kind label { font-weight: 400; margin: .5rem 0 0; display: flex; gap: .5rem; align-items: baseline; }
+.link-kind input { width: auto; }
+.link-mark { color: var(--muted); font-size: .85rem; margin: 0; flex: 0 0 100%; }
+.note-card .live-link-chip { display: inline-block; border-radius: 20px; font-size: .75rem; font-weight: 500; }
 #note-report { display: grid; gap: .5rem; margin-top: .75rem; }
 .access .access-choice { color: var(--ink, inherit); font-weight: 600; border-left: 3px solid currentColor; padding-left: .75rem; }
 .plan-price { font-size: 1.6rem; font-weight: 700; margin: .25rem 0; }

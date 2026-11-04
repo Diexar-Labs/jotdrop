@@ -384,7 +384,13 @@
   <dialog id="link-dialog" aria-labelledby="link-title">
     <form id="link-form">
       <h2 id="link-title">Share by link</h2>
-      <p>Anyone with this link can read a copy of this note, without an account. Later changes do not go along. Photos and files stay out.</p>
+      <fieldset class="link-kind"><legend>What the link holds</legend>
+        <label><input type="radio" name="link-kind" value="copy" checked> Send a copy (read only)</label>
+        <label><input type="radio" name="link-kind" value="list"> Share a live list (people can tick items)</label>
+      </fieldset>
+      <p id="link-about-copy">Anyone with this link can read a copy of this note, without an account. Later changes do not go along. Photos and files stay out.</p>
+      <p id="link-about-list" hidden>Anyone with this link can read this list, tick items and add items, without an account. What they tick comes back into your note, and your changes go to them. Photos and files stay out.</p>
+      <p id="link-no-checklist" class="dialog-note" hidden>This note has no checklist.</p>
       <label for="link-days">The link ends</label>
       <select id="link-days"><option value="1">After 1 day</option><option value="7" selected>After 7 days</option><option value="30">After 30 days</option><option value="0">When I remove it</option></select>
       <p class="dialog-note">By sharing you accept the <a href="/terms" target="_blank" rel="noopener">terms of use</a>.</p>

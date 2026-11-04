@@ -2,6 +2,7 @@ import { CloudClient } from '/shared/client.mjs';
 import { mergeNote } from '/shared/merge.mjs';
 import { diffLines, foldUnchanged } from '/shared/diff.mjs';
 import { createLink, listLinks, removeLink } from '/shared/links.mjs';
+import { createListLink, hasChecklist, listListLinks, openList, removeListLink, syncList } from '/shared/list-links.mjs';
 import { acceptInvite, blockMember, createSpace, deleteSpace, leaveSpace, listSpaces, makeInvite, readInvite, removeMember, replaceSpace, reportSpace, saveSpacePrefs, setMemberName, spaceClient, spaceDetails, takeOverSpace, unreadableFile, withdrawInvite, writeUnderFreeName } from '/shared/spaces.mjs';
 import { accountInfo, approveDevice, attachAccount, availableProviders, changePassword, checkApproval, completeApproval, confirmLogin, confirmSignup, deleteAccount, disableTotp, enableTotp, listApprovals, logIn, newRecoveryCode, personCheckKey, providerApproval, providerRecover, providerSignUp, providerTicket, rejectDevice, requestApproval, resetWithRecoveryCode, setupTotp, signUp, startOver, startProviderSignIn, startReset } from '/shared/account.mjs';
 import { base64ToBytes, bytesToBase64, decodeRecovery, decryptEnvelope, encryptEnvelope, isSpacePath, objectId, sealLocal, unsealLocal } from '/shared/crypto.mjs';
@@ -850,6 +851,7 @@ function render() {
     if (entry.conflict) card.append(paragraph('Another device saved a different version. Review both before choosing.', 'message'));
     if (markdown) appendLinkChips(card, noteUrls(noteText(entry.file)), entry.id);
     if (markdown && activeSpace) card.append(paragraph(sharedWith(activeSpace), 'card-shared'));
+    if (markdown && !activeSpace && liveLists.some((link) => link.path === entry.file.path)) card.append(button('Live list link', () => showLink(entry, 'list'), 'live-link-chip'));
     if (markdown) {
       // Labels first, then #tags; at most four on a card and the rest as "+N", which opens the note (Eric, 29 Oct).
       const chips = [...parts.labels.map((label) => button(label, () => showLabel(label.toLowerCase()), 'label-chip is-label')),
@@ -902,7 +904,7 @@ function render() {
       ]));
       const more = iconButton('more', 'More', () => showMenu(more, [
         { label: 'Download', action: save },
-        ...(activeSpace ? [{ label: activeSpace.frozen ? 'Copy to my notes' : 'Move to my notes', action: () => moveToOwn(entry) }] : view === 'notes' ? [{ label: 'Share…', action: () => showShare(entry) }, ...(isMarkdown(entry.file.path) ? [{ label: 'Share by link…', action: () => showLink(entry) }] : [])] : []),
+        ...(activeSpace ? [{ label: activeSpace.frozen ? 'Copy to my notes' : 'Move to my notes', action: () => moveToOwn(entry) }] : view === 'notes' ? [{ label: 'Share…', action: () => showShare(entry) }, ...(isMarkdown(entry.file.path) ? [{ label: 'Share by link…', action: () => showLink(entry) }, ...(hasChecklist(noteText(entry.file)) ? [{ label: 'Share list by link…', action: () => showLink(entry, 'list') }] : [])] : [])] : []),
         ...(activeSpace?.frozen ? [] : [{ label: 'Move to trash', action: () => deleteEntry(entry) }]),
       ]));
       if (activeSpace) actions.append(iconButton('pencil', 'Open note', () => openEditor(entry)), color, more);
@@ -1299,6 +1301,12 @@ async function queueFile(path, bytes, expectedRevision, modifiedAt = new Date().
 async function deleteEntry(entry, ask = true) {
   if (activeSpace?.frozen) throw new Error('This group is read-only.');
   if (ask && !confirm(`Move "${entry.file.path}" to trash?`)) return;
+  // A list link stays on the note, and does not pull the note back: who throws the note away is asked whether the link ends with it.
+  const linked = ask && !activeSpace ? liveLists.filter((link) => link.path === entry.file.path) : [];
+  if (linked.length && confirm('This note has a live list link. End the link too?')) {
+    await Promise.all(linked.map((link) => removeListLink(ownClient, link.id)));
+    liveLists = liveLists.filter((link) => link.path !== entry.file.path);
+  }
   if (syncing) await syncing;
   entry = files.get(entry.id);
   if (!entry) return;
@@ -1569,7 +1577,7 @@ async function sync() {
   // Only a sync that takes a while can be paused: a quick check every 30 seconds that showed the button
   // and hid it again added a toolbar row on some widths and moved the whole page (Eric, 27 Oct).
   const showPause = setTimeout(() => { if (syncController === controller) $('pause-sync').hidden = false; }, 1000);
-  syncing = performSync(controller.signal).catch((error) => {
+  syncing = performSync(controller.signal).then(() => checkListLinks(activeGeneration)).catch((error) => {
     if (activeGeneration !== generation) return;
     // Removed from a group or the group went read-only: that goes for this group only.
     if (activeSpace && (error.status === 401 || error.code === 'space-frozen' || error.code === 'space-unfinished')) void refreshSpaces();
@@ -3367,9 +3375,26 @@ $('share-trial').addEventListener('click', async () => {
 $('share-buy').addEventListener('click', () => { $('share-dialog').close(); showPlusOffer(); });
 
 // A copy anyone with the link can read. Frontmatter and attachments stay behind: a link is for the words.
+// Or a live list: the same address, but guests tick and add items, and this app carries that into the note.
 let linkEntry;
-async function showLink(entry) {
+let liveLists = [];
+const LIST_LINK_TEXT_BYTES = 48 * 1024;
+const linkKind = () => $('link-form').querySelector('input[name="link-kind"]:checked').value;
+function showLinkKind() {
+  const list = linkKind() === 'list';
+  $('link-about-copy').hidden = list;
+  $('link-about-list').hidden = !list;
+}
+$('link-form').querySelectorAll('input[name="link-kind"]').forEach((input) => input.addEventListener('change', showLinkKind));
+// The text a list link holds: the body under the heading, so the note's labels and reminder stay out of it.
+const listText = (entry) => splitNote(noteText(entry.file)).body.replace(/\r\n?/g, '\n');
+async function showLink(entry, kind = 'copy') {
   linkEntry = entry;
+  const checklist = hasChecklist(noteText(entry.file));
+  $('link-form').querySelector('input[name="link-kind"][value="list"]').disabled = !checklist;
+  $('link-no-checklist').hidden = checklist;
+  $('link-form').querySelector(`input[name="link-kind"][value="${checklist ? kind : 'copy'}"]`).checked = true;
+  showLinkKind();
   $('link-days').value = '7';
   $('link-message').textContent = '';
   $('link-plus').hidden = true;
@@ -3379,19 +3404,65 @@ async function showLink(entry) {
   $('link-dialog').showModal();
   await refreshLinks();
 }
+const linkEnds = (link) => (link.expiresAt ? `ends ${new Date(link.expiresAt).toLocaleDateString()}` : 'until you remove it');
 async function refreshLinks() {
   try {
-    const links = await listLinks(ownClient, location.origin);
-    $('link-list-box').hidden = !links.length;
-    $('link-list').replaceChildren(...links.map((link) => {
+    const [links, lists] = await Promise.all([listLinks(ownClient, location.origin), listListLinks(ownClient, location.origin)]);
+    liveLists = lists;
+    $('link-list-box').hidden = !links.length && !lists.length;
+    const rows = links.map((link) => {
       const row = document.createElement('div');
       row.className = 'history-row';
-      row.append(paragraph(`${link.title || 'Untitled note'} - ${link.expiresAt ? `ends ${new Date(link.expiresAt).toLocaleDateString()}` : 'until you remove it'}`));
+      row.append(paragraph(`${link.title || 'Untitled note'} - ${linkEnds(link)}`));
       if (link.address) row.append(button('Copy', async () => { await navigator.clipboard.writeText(link.address); $('link-message').textContent = 'Link copied.'; }));
       row.append(button('Remove', async () => { await removeLink(ownClient, link.id); $('link-message').textContent = 'The link no longer works.'; await refreshLinks(); }));
       return row;
-    }));
+    });
+    // A live list: who ticked or added what, from the sealed list itself, newest first.
+    for (const link of lists) {
+      const row = document.createElement('div');
+      row.className = 'history-row';
+      const note = link.path && [...files.values()].some((entry) => !entry.deleted && entry.file.path === link.path) ? '' : ' - note not found';
+      row.append(paragraph(`${link.title || 'Untitled note'} - live list, ${linkEnds(link)}, updated ${changedAgo(link.updatedAt) || 'just now'}${note}`));
+      if (link.address) row.append(button('Copy', async () => { await navigator.clipboard.writeText(link.address); $('link-message').textContent = 'Link copied.'; }));
+      row.append(button('End link', async () => { await removeListLink(ownClient, link.id); $('link-message').textContent = 'The link no longer works.'; await refreshLinks(); render(); }));
+      if (link.key) {
+        openList(ownClient.credentials.url, link.id, link.key).then((opened) => {
+          const marks = opened.lines.filter((line) => line.task && line.mark && (line.ticked || line.mark.added)).sort((a, b) => b.mark.at - a.mark.at).slice(0, 5);
+          row.append(...marks.map((line) => paragraph(`${line.mark.added && !line.ticked ? `${line.mark.by} added` : `✓ ${line.mark.by} ticked`} "${line.text}" ${changedAgo(new Date(line.mark.at).toISOString())}`, 'link-mark')));
+        }).catch(() => {});
+      }
+      rows.push(row);
+    }
+    $('link-list').replaceChildren(...rows);
   } catch (error) { $('link-message').textContent = errorMessage(error); }
+}
+
+// Every 30 seconds, right after a sync that left nothing to upload: what guests ticked goes into the note, and the
+// note's own changes go to the link. A note still on its way up waits for the next round.
+async function checkListLinks(activeGeneration) {
+  if (!ownClient || activeSpace || activeGeneration !== generation) return;
+  const marked = (links) => links.map((link) => link.path).sort().join('\n');
+  const before = marked(liveLists);
+  let changed = false;
+  try {
+    liveLists = await listListLinks(ownClient, location.origin);
+    for (const link of liveLists) {
+      if (!link.key || activeGeneration !== generation) continue;
+      const entry = [...files.values()].find((other) => !other.deleted && other.file.path === link.path);
+      if (!entry || entry.pending || entry.conflict) continue;
+      const { front, title, body } = splitNote(noteText(entry.file));
+      const result = await syncList(ownClient, link, { note: body, noteRevision: entry.revision, title, ownerName: myName() || 'Owner' });
+      if (activeGeneration !== generation) return;
+      if (result.noteChanged && files.get(entry.id) === entry) {
+        await queueFile(entry.file.path, encoder.encode(joinNote({ front, title, body: result.text })), entry.revision);
+        changed = true;
+      }
+    }
+  } catch (error) { console.warn('List link check failed:', error); }
+  if (changed) setTimeout(() => { if (activeGeneration === generation) void sync(); }, 0);
+  // The "Live list link" mark on the cards follows the links; the cards are not redrawn for nothing.
+  else if (activeGeneration === generation && marked(liveLists) !== before) render();
 }
 function offerLinkPlus(reason) {
   const choice = plusChoice();
@@ -3405,9 +3476,18 @@ $('link-form').addEventListener('submit', async (event) => {
   $('link-create').disabled = true;
   $('link-message').textContent = 'Encrypting and sending...';
   try {
-    const { title, body } = splitNote(noteText(linkEntry.file));
-    const text = body.split(/\r?\n/).filter((line) => !/^\s*!\[/.test(line)).join('\n');
-    const link = await createLink(ownClient, { title, text }, { origin: location.origin, days: Number($('link-days').value) });
+    let link;
+    if (linkKind() === 'list') {
+      const entry = files.get(linkEntry.id);
+      if (!entry || entry.pending) throw new Error('This note is still on its way to the cloud. Sync, then make the link.');
+      const text = listText(entry);
+      if (encoder.encode(text).length > LIST_LINK_TEXT_BYTES) throw new Error('This list is too large for a link. A link holds about 48 KB of text.');
+      link = await createListLink(ownClient, { title: splitNote(noteText(entry.file)).title, text }, { origin: location.origin, days: Number($('link-days').value), path: entry.file.path, noteRevision: entry.revision });
+    } else {
+      const { title, body } = splitNote(noteText(linkEntry.file));
+      const text = body.split(/\r?\n/).filter((line) => !/^\s*!\[/.test(line)).join('\n');
+      link = await createLink(ownClient, { title, text }, { origin: location.origin, days: Number($('link-days').value) });
+    }
     $('link-plus').hidden = true;
     $('link-address').value = link.address;
     $('link-made').hidden = false;
@@ -3415,6 +3495,7 @@ $('link-form').addEventListener('submit', async (event) => {
     $('link-create').hidden = true;
     $('link-message').textContent = 'Send this link yourself. It holds the key, so we never see it.';
     await refreshLinks();
+    render();
   } catch (error) {
     if (error.code === 'plus-required') offerLinkPlus('JotDrop Plus keeps more links, for as long as you choose.');
     $('link-message').textContent = error.code === 'plus-required' ? error.message : errorMessage(error);

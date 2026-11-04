@@ -1603,6 +1603,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   assets.set('/human', [join(webRoot, 'human.html'), 'text/html']);
   assets.set('/human.js', [join(webRoot, 'human.js'), 'text/javascript']);
   assets.set('/note-link.js', [join(webRoot, 'note-link.js'), 'text/javascript']);
+  assets.set('/list-link.js', [join(webRoot, 'list-link.js'), 'text/javascript']);
   assets.set('/logo.svg', [join(webRoot, 'logo.svg'), 'image/svg+xml']);
   // The house fonts (SIL Open Font License), served from here like everything else the page loads.
   for (const name of ['instrument-sans.woff2', 'bricolage-grotesque.woff2', 'caveat.woff2']) assets.set(`/fonts/${name}`, [join(webRoot, 'fonts', name), 'font/woff2']);
@@ -1610,7 +1611,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   // An invitation link opens the app on its own path: /# is for the way back from Google or GitHub.
   assets.set('/join', [join(webRoot, 'index.html'), 'text/html']);
   assets.set('/family', [join(webRoot, 'index.html'), 'text/html']);
-  for (const name of ['account.mjs', 'words.mjs', 'merge.mjs', 'diff.mjs', 'spaces.mjs', 'links.mjs', 'drawing.mjs', 'drawing-editor.mjs', 'mail.mjs', 'paper.mjs', 'expiry.mjs']) assets.set(`/shared/${name}`, [join(directory, 'shared', name), 'text/javascript']);
+  for (const name of ['account.mjs', 'words.mjs', 'merge.mjs', 'diff.mjs', 'spaces.mjs', 'links.mjs', 'drawing.mjs', 'drawing-editor.mjs', 'mail.mjs', 'paper.mjs', 'expiry.mjs', 'list-links.mjs']) assets.set(`/shared/${name}`, [join(directory, 'shared', name), 'text/javascript']);
   assets.set('/vendor/hash-wasm.mjs', [join(directory, '../node_modules/hash-wasm/dist/index.esm.min.js'), 'text/javascript']);
   // The page's only inline script is its import map; allow exactly that content.
   const importMap = /<script type="importmap">([^<]*)<\/script>/.exec(readFileSync(join(webRoot, 'index.html'), 'utf8'))?.[1];
@@ -1664,6 +1665,13 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         res.setHeader('Content-Type', 'text/html');
         res.setHeader('X-Robots-Tag', 'noindex');
         res.end(readFileSync(join(webRoot, 'note.html')));
+        return;
+      }
+      // The same for a list link: the page ticks and adds items with the key after the #, and never holds the list itself.
+      if ((method === 'GET' || method === 'HEAD') && /^\/l\/[0-9a-f-]{36}$/.test(pathname)) {
+        res.setHeader('Content-Type', 'text/html');
+        res.setHeader('X-Robots-Tag', 'noindex');
+        res.end(readFileSync(join(webRoot, 'list.html')));
         return;
       }
       if (!pathname.startsWith('/api/v1/')) fail(404, 'Not found');

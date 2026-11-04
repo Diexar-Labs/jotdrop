@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>A list shared with JotDrop</title>
+  <link rel="icon" href="/logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="note-link-page">
+  <main class="note-link">
+    <p id="list-state" role="status">Opening...</p>
+    <article id="list-article" hidden>
+      <h1 id="list-title"></h1>
+      <label class="list-link-name" for="list-name">Your name, so others see who ticked what</label>
+      <input id="list-name" type="text" maxlength="40" placeholder="Someone" autocomplete="off">
+      <div id="list-body"></div>
+      <form id="list-add" class="list-link-add">
+        <label for="list-item">Add an item</label>
+        <input id="list-item" type="text" maxlength="500" autocomplete="off" required>
+        <button class="primary" type="submit">Add</button>
+      </form>
+      <p id="list-message" class="message" role="status" aria-live="polite"></p>
+      <p id="list-updated" class="dialog-note"></p>
+      <p id="list-until" class="dialog-note"></p>
+    </article>
+    <aside class="note-link-about">
+      <p>Encrypted on the sender's device. Anyone with this link can read it, tick items and add items; we cannot. Names are what people typed in themselves.</p>
+      <p><a href="https://jotdrop.net/">Make your own private notes with JotDrop</a></p>
+    </aside>
+    <details id="list-report-box" hidden>
+      <summary>Report this list</summary>
+      <form id="list-report">
+        <label for="list-report-reason">Why</label>
+        <select id="list-report-reason" required>
+          <option value="abuse">Abuse or harassment</option>
+          <option value="illegal">Illegal content</option>
+          <option value="spam">Spam</option>
+          <option value="other">Something else</option>
+        </select>
+        <label for="list-report-details">What is wrong? Paste the part it is about: we cannot read the list ourselves.</label>
+        <textarea id="list-report-details" rows="4" maxlength="2000"></textarea>
+        <button class="primary" type="submit">Send report</button>
+        <p id="list-report-message" role="status"></p>
+      </form>
+    </details>
+  </main>
+  <script type="module" src="/list-link.js"></script>
+</body>
+</html>
