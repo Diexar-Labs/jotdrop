@@ -13,8 +13,11 @@
         Google's document scanner brings an activity fixed to portrait, so Play would
         hide JotDrop from devices that only show landscape (car screens, some tablets).
         JotDrop works there too; only the scanner may not.
+        RECORD_AUDIO would likewise hide JotDrop from devices without a microphone; there
+        only recording and speech-to-text fail, with a message.
     -->
     <uses-feature android:name="android.hardware.screen.portrait" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
 
     <!--
         Package-visibility voor Android 11+: zonder dit blok geeft de implicit
