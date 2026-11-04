@@ -69,27 +69,57 @@ object PaperDrawer {
     }
 
     private val EXTRA = mapOf('ø' to "o", 'æ' to "ae", 'œ' to "oe", 'ł' to "l", 'đ' to "d", 'ß' to "ss", 'ı' to "i", 'þ' to "th")
-    private val MARKS = Regex("\\p{M}")
+    private val MARKS = Regex("[\\u0300-\\u036f\\u093c]")
 
-    /** Lower case without accents, so "Gültig" and an OCR'd "Gultig" read the same (as fold in cloud/shared/expiry.mjs). */
+    /**
+     * Lower case without Latin accents, so "Gültig" and an OCR'd "Gultig" read the same (as fold in
+     * cloud/shared/expiry.mjs). Hindi vowel signs stay; Devanagari and full-width digits and signs become plain ones.
+     */
     fun fold(text: String): String {
         val plain = MARKS.replace(java.text.Normalizer.normalize(text.lowercase(), java.text.Normalizer.Form.NFD), "")
-        return buildString { for (c in plain) append(EXTRA[c] ?: c) }
+        return buildString {
+            for (c in plain) when (c) {
+                in '०'..'९' -> append('0' + (c - '०'))
+                in '！'..'～' -> append(c - 0xfee0)
+                '　' -> append(' ')
+                else -> append(EXTRA[c] ?: c)
+            }
+        }
     }
 
     private fun escape(text: String): String = text.replace(Regex("[.*+?^\${}()|\\[\\]\\\\]")) { "\\" + it.value }
-    private fun phrases(words: List<String>) =
-        Regex("(?<![\\p{L}\\p{N}])(?:" + words.joinToString("|") { escape(it).replace(" ", "\\s+") } + ")(?!\\p{L})")
+    private fun isHan(word: String) = word.codePoints().anyMatch { Character.UnicodeScript.of(it) == Character.UnicodeScript.HAN }
+
+    /** The words as one pattern: Chinese anywhere, the others only between non-letters. */
+    private fun phrases(words: List<String>): Regex {
+        val all = words.map { escape(it).replace(" ", "\\s+") }
+        val others = all.filterNot(::isHan)
+        val han = all.filter(::isHan)
+        return Regex(listOfNotNull(
+            others.takeIf { it.isNotEmpty() }?.let { "(?<![\\p{L}\\p{M}\\p{N}])(?:" + it.joinToString("|") + ")(?![\\p{L}\\p{M}])" },
+            han.takeIf { it.isNotEmpty() }?.let { "(?:" + it.joinToString("|") + ")" },
+        ).joinToString("|"))
+    }
     private val END = phrases(ExpiryWords.END)
     private val PERIOD = phrases(ExpiryWords.PERIOD)
+    private val BEFORE = phrases(ExpiryWords.BEFORE)
+    private val SHELF = phrases(ExpiryWords.SHELF)
+    private val MADE = phrases(ExpiryWords.MADE)
+    private val UNIT_OF = ExpiryWords.UNITS.toMap()
+
+    /** A shelf life right at the start of the text: "9 months", ": 12个月". */
+    private val TERM = Regex("^[\\s:.-]*(\\d{1,3})\\s*(" +
+        ExpiryWords.UNITS.joinToString("|") { (w, _) -> if (isHan(w)) escape(w) else escape(w) + "(?![\\p{L}\\p{M}])" } + ")")
     private val MONTH_OF = ExpiryWords.MONTHS.toMap()
-    private val M = "(" + ExpiryWords.MONTHS.joinToString("|") { it.first } + ")(?!\\p{L})\\.?(?:\\s*/\\s*\\p{L}+\\.?)?"
+    private val M = "(" + ExpiryWords.MONTHS.joinToString("|") { it.first } + ")(?![\\p{L}\\p{M}])\\.?(?:\\s*/\\s*\\p{L}+\\.?)?"
 
     // Each date form with the order of its groups; the same list and order as FORMS in cloud/shared/expiry.mjs.
     private val FORMS = listOf(
+        Regex("(?<!\\d)(\\d{4})\\s*年\\s*(\\d{1,2})\\s*月\\s*(\\d{1,2})(?!\\d)\\s*[日号號]?") to "ymd",
+        Regex("(?<!\\d)(\\d{4})\\s*年\\s*(\\d{1,2})\\s*月") to "ym",
         Regex("(?<!\\d)(\\d{4})\\s*[-/.]\\s*(\\d{1,2})\\s*[-/.]\\s*(\\d{1,2})(?!\\d)") to "ymd",
         Regex("(?<!\\d)(\\d{1,2})\\s*[-/.]\\s*(\\d{1,2})\\s*[-/.]\\s*(\\d{4}|\\d{2})(?!\\d)") to "dmy",
-        Regex("(?<!\\d)(\\d{1,2})(?:st|nd|rd|th|er|e)?\\.?\\s*(?:de\\s+|d')?$M,?\\s*(?:de\\s+|del\\s+)?(\\d{4})(?!\\d)") to "dMy",
+        Regex("(?<!\\d)(\\d{1,2})(?:st|nd|rd|th|er|e)?\\.?[\\s-]*(?:de\\s+|d')?$M,?[\\s-]*(?:de\\s+|del\\s+)?(\\d{4})(?!\\d)") to "dMy",
         Regex("(?<!\\p{L})$M\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s+(\\d{4})(?!\\d)") to "Mdy",
         Regex("(?<!\\d)(\\d{4})\\.?\\s*(?:m\\.\\s*)?$M\\s+(\\d{1,2})(?!\\d)") to "yMd",
         Regex("(?<!\\d)(\\d{4})\\.?\\s*gada\\s+(\\d{1,2})\\.?\\s*$M") to "ydM",
@@ -104,6 +134,7 @@ object PaperDrawer {
         var day: Int? = null
         when (kind) {
             "ymd" -> { year = g[1].toInt(); month = g[2].toInt(); day = g[3].toInt() }
+            "ym" -> { year = g[1].toInt(); month = g[2].toInt() }
             "dmy" -> {
                 val a = g[1].toInt()
                 val b = g[2].toInt()
@@ -126,8 +157,8 @@ object PaperDrawer {
 
     private class Found(val start: Int, val end: Int, val day: String)
 
-    /** The dates in folded [text], in reading order; where two forms overlap, the earlier form in FORMS wins. */
-    private fun dates(text: String): List<String> {
+    /** The dates in folded [text] with where they stand, in reading order; where two forms overlap, the earlier form in FORMS wins. */
+    private fun spans(text: String): List<Found> {
         val taken = mutableListOf<Found>()
         for ((pattern, kind) in FORMS) {
             for (m in pattern.findAll(text)) {
@@ -138,7 +169,20 @@ object PaperDrawer {
                 if (day.isNotEmpty()) taken += Found(start, end, day)
             }
         }
-        return taken.sortedBy { it.start }.map { it.day }
+        return taken.sortedBy { it.start }
+    }
+
+    private fun dates(text: String): List<String> = spans(text).map { it.day }
+
+    /** [day] plus a shelf life of [n] days, weeks, months or years; a month too short keeps its last day. */
+    private fun addTerm(day: String, n: Int, unit: String): String {
+        val d = LocalDate.parse(day)
+        return when (unit) {
+            "d" -> d.plusDays(n.toLong())
+            "w" -> d.plusWeeks(n.toLong())
+            "y" -> d.plusYears(n.toLong())
+            else -> d.plusMonths(n.toLong())
+        }.toString()
     }
 
     private fun mrzValue(c: Char): Int = when {
@@ -176,16 +220,41 @@ object PaperDrawer {
         mrzExpiry(raw).takeIf { it.isNotEmpty() }?.let { return it }
         val lines = raw.map(::fold)
         var best = ""
+        fun offer(day: String) { if (day > best) best = day }
         lines.forEachIndexed { i, line ->
             for ((pattern, period) in listOf(END to false, PERIOD to true)) {
                 for (hit in pattern.findAll(line)) {
-                    var found = dates(line.substring(hit.range.last + 1))
-                    if (found.isEmpty()) found = dates(lines.getOrElse(i + 1) { "" })
-                    val day = if (period) found.maxOrNull() ?: "" else found.firstOrNull() ?: ""
-                    if (day > best) best = day
+                    val after = line.substring(hit.range.last + 1)
+                    var found = dates(after)
+                    // "Best before 9 months from mfg": a shelf life, not a date on the next line.
+                    if (found.isEmpty() && !TERM.containsMatchIn(after)) found = dates(lines.getOrElse(i + 1) { "" })
+                    offer(if (period) found.maxOrNull() ?: "" else found.firstOrNull() ?: "")
                 }
+            }
+            for (hit in BEFORE.findAll(line)) {
+                val before = line.substring(0, hit.range.first).replace(TRAILING, "")
+                val last = spans(before).lastOrNull()
+                if (last != null && last.end == before.length) offer(last.day)
+            }
+            for (hit in SHELF.findAll(line)) {
+                val term = TERM.find(line.substring(hit.range.last + 1)) ?: continue
+                val made = madeOn(lines)
+                if (made.isNotEmpty()) offer(addTerm(made, term.groupValues[1].toInt(), UNIT_OF[term.groupValues[2]] ?: "m"))
             }
         }
         return best
+    }
+
+    private val TRAILING = Regex("[\\s:,]+$")
+
+    /** The first date after a word for the day something was made or packed (same line, else the next). */
+    private fun madeOn(lines: List<String>): String {
+        lines.forEachIndexed { i, line ->
+            for (hit in MADE.findAll(line)) {
+                dates(line.substring(hit.range.last + 1)).firstOrNull()?.let { return it }
+                dates(lines.getOrElse(i + 1) { "" }).firstOrNull()?.let { return it }
+            }
+        }
+        return ""
     }
 }

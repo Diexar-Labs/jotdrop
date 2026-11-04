@@ -2,7 +2,7 @@
 // `npm run build:paper-words`; cloud/shared/expiry.test.mjs fails when the Kotlin file is out of date.
 import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { END_WORDS, PERIOD_WORDS, monthList, wordList } from '../cloud/shared/expiry.mjs';
+import { BEFORE_WORDS, END_WORDS, MADE_WORDS, PERIOD_WORDS, SHELF_WORDS, monthList, unitList, wordList } from '../cloud/shared/expiry.mjs';
 
 export const KOTLIN_FILE = new URL('../android/app/src/main/kotlin/com/diexar/keepcapture/ExpiryWords.kt', import.meta.url);
 
@@ -24,9 +24,29 @@ ${list(wordList(END_WORDS))}
 ${list(wordList(PERIOD_WORDS))}
     )
 
+    /** Words after a date; the date right before them counts. Folded, longest first. */
+    val BEFORE = listOf(
+${list(wordList(BEFORE_WORDS))}
+    )
+
+    /** Words before a shelf life; the made-on date plus that term counts. Folded, longest first. */
+    val SHELF = listOf(
+${list(wordList(SHELF_WORDS))}
+    )
+
+    /** Words before the date a product was made or packed. Folded, longest first. */
+    val MADE = listOf(
+${list(wordList(MADE_WORDS))}
+    )
+
     /** Month words, folded, longest first, with their month number. */
     val MONTHS = listOf(
 ${monthList().map(([w, n]) => `        ${literal(w)} to ${n},`).join('\n')}
+    )
+
+    /** Units of a shelf life, folded, longest first, with their kind: d, w, m or y. */
+    val UNITS = listOf(
+${unitList().map(([w, k]) => `        ${literal(w)} to ${literal(k)},`).join('\n')}
     )
 }
 `;

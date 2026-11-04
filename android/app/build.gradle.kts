@@ -156,6 +156,10 @@ dependencies {
     // het Latijns-schrift-model in de APK (~3-4MB), zodat de app ook werkt op
     // toestellen zonder Google Play (en op GitHub-gedistribueerde builds).
     implementation("com.google.mlkit:text-recognition:16.0.1")
+    // Paper drawer in China and India: Chinese and Devanagari readers from Play services (small;
+    // fetched when a scan starts). Without Play services the Latin reader above still works.
+    implementation("com.google.android.gms:play-services-mlkit-text-recognition-chinese:16.0.2")
+    implementation("com.google.android.gms:play-services-mlkit-text-recognition-devanagari:16.0.2")
     // Paper drawer: Google's document scanner, delivered by Play services (camera, edges, PDF).
     implementation("com.google.android.gms:play-services-mlkit-document-scanner:16.0.0")
     // Argon2id for cloud accounts (docs/cloud-accounts-design.md); used directly, not as a JCA provider.

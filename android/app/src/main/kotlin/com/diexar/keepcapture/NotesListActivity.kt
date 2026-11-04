@@ -548,6 +548,7 @@ class NotesListActivity : ThemedComponentActivity() {
             pendingPaper = true
             launchCamera(withOcr = true)
         }
+        OcrService.prepareOtherScripts(this)
         try {
             GmsDocumentScanning.getClient(options).getStartScanIntent(this)
                 .addOnSuccessListener { sender -> scanLauncher.launch(IntentSenderRequest.Builder(sender).build()) }

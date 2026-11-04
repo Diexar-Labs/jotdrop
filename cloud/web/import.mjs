@@ -2,7 +2,7 @@
 
 // cloud/shared/expiry.mjs
 var END_WORDS = {
-  en: ["valid until", "valid till", "valid through", "valid thru", "valid to", "good thru", "good through", "expiry date", "expiration date", "date of expiry", "expiry", "expires on", "expires", "expiration", "exp date", "exp", "best before end", "best before", "best by", "use by", "use before", "due date", "payment due", "due by", "pay by", "renewal date", "renews on", "end date", "ends on", "warranty until", "warranty expires", "guaranteed until"],
+  en: ["valid until", "valid till", "valid through", "valid thru", "valid upto", "valid up to", "valid to", "exp dt", "expiry dt", "good thru", "good through", "expiry date", "expiration date", "date of expiry", "expiry", "expires on", "expires", "expiration", "exp date", "exp", "best before end", "best before", "best by", "use by", "use before", "due date", "payment due", "due by", "pay by", "renewal date", "renews on", "end date", "ends on", "warranty until", "warranty expires", "guaranteed until"],
   nl: ["geldig tot en met", "geldig t/m", "geldig tm", "geldig tot", "vervaldatum", "vervalt op", "verloopt op", "verloopt", "einddatum", "eindigt op", "ten minste houdbaar tot", "tenminste houdbaar tot", "houdbaar tot", "tht", "te gebruiken tot", "tgt", "uiterste betaaldatum", "uiterlijk betalen voor", "te betalen voor", "betalen voor", "verlengingsdatum", "looptijd tot", "garantie tot"],
   de: ["g\xFCltig bis", "ablaufdatum", "l\xE4uft ab am", "verf\xE4llt am", "verfallsdatum", "mindestens haltbar bis", "mhd", "zu verbrauchen bis", "haltbar bis", "f\xE4llig am", "f\xE4llig bis", "zahlbar bis", "zahlungsziel", "enddatum", "endet am", "g\xFCltigkeit bis", "garantie bis", "verl\xE4ngerung am"],
   fr: ["valable jusqu'au", "valable jusqu'\xE0", "valide jusqu'au", "date d'expiration", "expire le", "date de fin", "\xE0 consommer de pr\xE9f\xE9rence avant", "\xE0 consommer jusqu'au", "\xE0 consommer avant", "dlc", "dluo", "ddm", "date limite", "date d'\xE9ch\xE9ance", "\xE9ch\xE9ance", "\xE0 payer avant le", "payable avant le", "garantie jusqu'au", "fin de validit\xE9"],
@@ -25,10 +25,32 @@ var END_WORDS = {
   lv: ["der\u012Bgs l\u012Bdz", "der\u012Bga l\u012Bdz", "der\u012Bguma termi\u0146\u0161", "ieteicams l\u012Bdz", "izlietot l\u012Bdz", "apmaksas termi\u0146\u0161", "garantija l\u012Bdz"],
   lt: ["galioja iki", "galiojimo pabaiga", "tinka vartoti iki", "geriausias iki", "mok\u0117jimo terminas", "apmok\u0117ti iki", "garantija iki"],
   tr: ["son kullanma tarihi", "skt", "son ge\xE7erlilik tarihi", "ge\xE7erlilik tarihi", "son t\xFCketim tarihi", "tavsiye edilen t\xFCketim tarihi", "ttt", "son \xF6deme tarihi", "vade tarihi", "garanti biti\u015F"],
-  id: ["berlaku hingga", "berlaku sampai", "tanggal kedaluwarsa", "kedaluwarsa", "baik digunakan sebelum", "tarikh luput", "sah sehingga", "tanggal jatuh tempo", "jatuh tempo", "garansi hingga"]
+  id: ["berlaku hingga", "berlaku sampai", "tanggal kedaluwarsa", "kedaluwarsa", "baik digunakan sebelum", "tarikh luput", "sah sehingga", "tanggal jatuh tempo", "jatuh tempo", "garansi hingga"],
+  hi: ["\u0938\u092E\u093E\u092A\u094D\u0924\u093F \u0924\u093F\u0925\u093F", "\u0938\u092E\u093E\u092A\u094D\u0924\u093F \u0915\u0940 \u0924\u093F\u0925\u093F", "\u0938\u092E\u093E\u092A\u094D\u0924\u093F \u0915\u0940 \u0924\u093E\u0930\u0940\u0916", "\u0905\u0902\u0924\u093F\u092E \u0924\u093F\u0925\u093F", "\u0909\u092A\u092F\u094B\u0917 \u0915\u0940 \u0905\u0902\u0924\u093F\u092E \u0924\u093F\u0925\u093F", "\u0926\u0947\u092F \u0924\u093F\u0925\u093F", "\u092D\u0941\u0917\u0924\u093E\u0928 \u0915\u0940 \u0905\u0902\u0924\u093F\u092E \u0924\u093F\u0925\u093F", "\u090F\u0915\u094D\u0938\u092A\u093E\u092F\u0930\u0940 \u0921\u0947\u091F", "\u090F\u0915\u094D\u0938\u092A\u093E\u092F\u0930\u0940 \u0924\u093F\u0925\u093F"],
+  zh: ["\u6709\u6548\u671F\u81F3", "\u6709\u6548\u671F\u5230", "\u6709\u6548\u671F\u622A\u6B62", "\u6709\u6548\u81F3", "\u6709\u6548\u65E5\u671F", "\u6709\u6548\u671F\u9650\u81F3", "\u622A\u6B62\u65E5\u671F", "\u622A\u81F3\u65E5\u671F", "\u5230\u671F\u65E5", "\u5230\u671F\u65E5\u671F", "\u5931\u6548\u65E5\u671F", "\u4FDD\u8D28\u671F\u81F3", "\u4FDD\u5B58\u671F\u9650\u81F3", "\u6700\u4F73\u98DF\u7528\u65E5\u671F", "\u9650\u7528\u65E5\u671F", "\u4F7F\u7528\u671F\u9650", "\u6700\u540E\u8FD8\u6B3E\u65E5", "\u8FD8\u6B3E\u65E5", "\u4ED8\u6B3E\u622A\u6B62\u65E5\u671F", "\u7F34\u8D39\u622A\u6B62\u65E5\u671F", "\u4FDD\u4FEE\u671F\u81F3", "\u7EC8\u6B62\u65E5\u671F", "\u7E73\u8CBB\u622A\u6B62\u65E5", "\u4ED8\u6B3E\u671F\u9650", "\u6700\u5F8C\u9084\u6B3E\u65E5"]
+};
+var BEFORE_WORDS = {
+  hi: ["\u0924\u0915", "\u0938\u0947 \u092A\u0939\u0932\u0947", "\u0915\u0947 \u092C\u093E\u0926 \u0909\u092A\u092F\u094B\u0917 \u0928 \u0915\u0930\u0947\u0902"],
+  zh: ["\u4E4B\u524D", "\u4EE5\u524D", "\u524D", "\u5230\u671F", "\u622A\u6B62", "\u6B62"]
+};
+var SHELF_WORDS = {
+  en: ["best before", "use before", "use by", "use within", "consume within", "shelf life"],
+  hi: ["\u0928\u093F\u0930\u094D\u092E\u093E\u0923 \u0938\u0947", "\u0928\u093F\u0930\u094D\u092E\u093E\u0923 \u0915\u0940 \u0924\u093F\u0925\u093F \u0938\u0947", "\u092A\u0948\u0915\u093F\u0902\u0917 \u0938\u0947"],
+  zh: ["\u4FDD\u8D28\u671F", "\u4FDD\u5B58\u671F", "\u4FDD\u5B58\u671F\u9650", "\u4FDD\u8CEA\u671F"]
+};
+var MADE_WORDS = {
+  en: ["mfg", "mfd", "mfg date", "mfg dt", "date of manufacture", "manufactured on", "manufacturing date", "mfg/pkd", "pkd", "packed on", "date of packing", "packing date", "production date"],
+  hi: ["\u0928\u093F\u0930\u094D\u092E\u093E\u0923 \u0924\u093F\u0925\u093F", "\u0928\u093F\u0930\u094D\u092E\u093E\u0923 \u0915\u0940 \u0924\u093F\u0925\u093F", "\u092A\u0948\u0915\u093F\u0902\u0917 \u0924\u093F\u0925\u093F", "\u0909\u0924\u094D\u092A\u093E\u0926\u0928 \u0924\u093F\u0925\u093F"],
+  zh: ["\u751F\u4EA7\u65E5\u671F", "\u5236\u9020\u65E5\u671F", "\u51FA\u5382\u65E5\u671F", "\u5305\u88C5\u65E5\u671F", "\u751F\u7522\u65E5\u671F", "\u88FD\u9020\u65E5\u671F"]
+};
+var TERM_UNITS = {
+  d: ["days", "day", "\u0926\u093F\u0928", "\u5929", "\u65E5"],
+  w: ["weeks", "week", "wks", "\u0938\u092A\u094D\u0924\u093E\u0939", "\u5468", "\u661F\u671F"],
+  m: ["months", "month", "mths", "mth", "mo", "\u092E\u0939\u0940\u0928\u0947", "\u092E\u0939\u0940\u0928\u093E", "\u092E\u093E\u0939", "\u4E2A\u6708", "\u500B\u6708", "\u6708"],
+  y: ["years", "year", "yrs", "yr", "\u0935\u0930\u094D\u0937", "\u0938\u093E\u0932", "\u5E74"]
 };
 var PERIOD_WORDS = {
-  en: ["valid from", "validity period", "period of validity", "period of cover", "coverage period", "policy period", "insurance period", "contract term"],
+  en: ["valid from", "validity period", "validity", "period of validity", "period of cover", "coverage period", "policy period", "insurance period", "contract term"],
   nl: ["geldig van", "geldigheidsduur", "geldigheid", "looptijd", "dekkingsperiode", "verzekeringsperiode", "contractduur"],
   de: ["g\xFCltig von", "g\xFCltig ab", "g\xFCltigkeitsdauer", "g\xFCltigkeit", "laufzeit", "versicherungszeitraum", "vertragslaufzeit"],
   fr: ["p\xE9riode de validit\xE9", "valable du", "validit\xE9", "dur\xE9e du contrat", "p\xE9riode d'assurance"],
@@ -45,30 +67,43 @@ var PERIOD_WORDS = {
   hu: ["\xE9rv\xE9nyess\xE9gi id\u0151"],
   ro: ["perioada de valabilitate", "valabil de la"],
   tr: ["ge\xE7erlilik s\xFCresi", "poli\xE7e s\xFCresi"],
-  id: ["masa berlaku", "tempoh sah"]
+  id: ["masa berlaku", "tempoh sah"],
+  hi: ["\u0935\u0948\u0927\u0924\u093E \u0905\u0935\u0927\u093F", "\u0935\u0948\u0927\u0924\u093E", "\u0905\u0935\u0927\u093F"],
+  zh: ["\u6709\u6548\u671F\u9650", "\u6709\u6548\u671F", "\u6709\u6548\u671F\u9593", "\u5408\u540C\u671F\u9650", "\u4FDD\u9669\u671F\u95F4", "\u4FDD\u9669\u671F\u9650", "\u4FDD\u96AA\u671F\u9593", "\u81F3"]
 };
 var MONTH_WORDS = [
-  ["jan", "january", "januari", "januar", "janvier", "janv", "enero", "ene", "gennaio", "gen", "janeiro", "styczen", "stycznia", "sty", "leden", "ledna", "januara", "janu\xE1ra", "sijecanj", "sijecnja", "tammikuu", "tammikuuta", "tammi", "jaanuar", "janvaris", "janvara", "sausis", "sausio", "ocak", "ianuarie", "ian", "gener", "janu\xE1r"],
-  ["feb", "february", "februari", "februar", "fevrier", "fevr", "fev", "febrero", "febbraio", "fevereiro", "luty", "lutego", "lut", "unor", "unora", "februara", "febru\xE1ra", "veljaca", "veljace", "helmikuu", "helmikuuta", "helmi", "veebruar", "februaris", "vasaris", "vasario", "subat", "februarie", "febr", "febrer", "febru\xE1r"],
-  ["mar", "march", "maart", "mrt", "marz", "maerz", "mars", "marzo", "marco", "marzec", "marca", "brezen", "brezna", "marec", "ozujak", "ozujka", "mart", "marta", "maaliskuu", "maaliskuuta", "maalis", "marts", "kovas", "kovo", "maret", "martie", "marc", "m\xE1rcius", "marcius", "marts"],
-  ["apr", "april", "avril", "avr", "abril", "abr", "aprile", "kwiecien", "kwietnia", "kwi", "duben", "dubna", "travanj", "travnja", "aprila", "apr\xEDl", "huhtikuu", "huhtikuuta", "huhti", "aprill", "aprilis", "balandis", "balandzio", "nisan", "aprilie", "\xE1prilis", "aprilis"],
-  ["may", "mei", "mai", "mayo", "maggio", "mag", "maio", "maj", "maja", "kveten", "kvetna", "m\xE1j", "m\xE1ja", "svibanj", "svibnja", "toukokuu", "toukokuuta", "touko", "maijs", "maija", "geguze", "geguzes", "mayis", "maig", "m\xE1jus", "majus"],
-  ["jun", "june", "juni", "juin", "junio", "giugno", "giu", "junho", "czerwiec", "czerwca", "cze", "cerven", "cervna", "j\xFAn", "j\xFAna", "lipanj", "lipnja", "junij", "junija", "kesakuu", "kesakuuta", "kesa", "juuni", "junijs", "birzelis", "birzelio", "haziran", "iunie", "iun", "juny", "j\xFAnius", "junius", "jun"],
-  ["jul", "july", "juli", "juillet", "juil", "julio", "luglio", "lug", "julho", "lipiec", "lipca", "lip", "cervenec", "cervence", "j\xFAl", "j\xFAla", "srpanj", "srpnja", "julij", "julija", "heinakuu", "heinakuuta", "heina", "juuli", "julijs", "liepa", "liepos", "temmuz", "iulie", "iul", "juliol", "j\xFAlius", "julius"],
-  ["aug", "august", "augustus", "augusti", "aout", "agosto", "ago", "sierpien", "sierpnia", "sie", "srpen", "srpna", "augusta", "kolovoz", "kolovoza", "avgust", "avgusta", "elokuu", "elokuuta", "elo", "augusts", "rugpjutis", "rugpjucio", "agustos", "agustus", "agost", "augusztus"],
-  ["sep", "sept", "september", "septembre", "septiembre", "settembre", "set", "setembro", "wrzesien", "wrzesnia", "wrz", "zari", "septembra", "septembar", "rujan", "rujna", "syyskuu", "syyskuuta", "syys", "septembris", "rugsejis", "rugsejo", "eylul", "septembrie", "setembre", "szeptember", "szept"],
-  ["oct", "october", "oktober", "octobre", "octubre", "ottobre", "ott", "outubro", "out", "pazdziernik", "pazdziernika", "paz", "rijen", "rijna", "okt\xF3bra", "oktobra", "oktobar", "lokakuu", "lokakuuta", "loka", "oktoober", "oktobris", "spalis", "spalio", "ekim", "octombrie", "okt", "okt\xF3ber"],
-  ["nov", "november", "novembre", "noviembre", "novembro", "listopad", "listopada", "listopadu", "lis", "novembra", "novembar", "studeni", "studenog", "marraskuu", "marraskuuta", "marras", "novembris", "lapkritis", "lapkricio", "kasim", "noiembrie", "noi"],
-  ["dec", "december", "decembre", "diciembre", "dicembre", "dic", "dezembro", "dez", "dezember", "grudzien", "grudnia", "gru", "prosinec", "prosince", "decembra", "decembar", "prosinac", "prosinca", "joulukuu", "joulukuuta", "joulu", "detsember", "decembris", "gruodis", "gruodzio", "aralik", "desember", "decembrie", "desembre"]
+  ["jan", "january", "januari", "januar", "janvier", "janv", "enero", "ene", "gennaio", "gen", "janeiro", "styczen", "stycznia", "sty", "leden", "ledna", "januara", "janu\xE1ra", "sijecanj", "sijecnja", "tammikuu", "tammikuuta", "tammi", "jaanuar", "janvaris", "janvara", "sausis", "sausio", "ocak", "ianuarie", "ian", "gener", "janu\xE1r", "\u091C\u0928\u0935\u0930\u0940"],
+  ["feb", "february", "februari", "februar", "fevrier", "fevr", "fev", "febrero", "febbraio", "fevereiro", "luty", "lutego", "lut", "unor", "unora", "februara", "febru\xE1ra", "veljaca", "veljace", "helmikuu", "helmikuuta", "helmi", "veebruar", "februaris", "vasaris", "vasario", "subat", "februarie", "febr", "febrer", "febru\xE1r", "\u092B\u093C\u0930\u0935\u0930\u0940", "\u092B\u0930\u0935\u0930\u0940"],
+  ["mar", "march", "maart", "mrt", "marz", "maerz", "mars", "marzo", "marco", "marzec", "marca", "brezen", "brezna", "marec", "ozujak", "ozujka", "mart", "marta", "maaliskuu", "maaliskuuta", "maalis", "marts", "kovas", "kovo", "maret", "martie", "marc", "m\xE1rcius", "marcius", "marts", "\u092E\u093E\u0930\u094D\u091A"],
+  ["apr", "april", "avril", "avr", "abril", "abr", "aprile", "kwiecien", "kwietnia", "kwi", "duben", "dubna", "travanj", "travnja", "aprila", "apr\xEDl", "huhtikuu", "huhtikuuta", "huhti", "aprill", "aprilis", "balandis", "balandzio", "nisan", "aprilie", "\xE1prilis", "aprilis", "\u0905\u092A\u094D\u0930\u0948\u0932"],
+  ["may", "mei", "mai", "mayo", "maggio", "mag", "maio", "maj", "maja", "kveten", "kvetna", "m\xE1j", "m\xE1ja", "svibanj", "svibnja", "toukokuu", "toukokuuta", "touko", "maijs", "maija", "geguze", "geguzes", "mayis", "maig", "m\xE1jus", "majus", "\u092E\u0908"],
+  ["jun", "june", "juni", "juin", "junio", "giugno", "giu", "junho", "czerwiec", "czerwca", "cze", "cerven", "cervna", "j\xFAn", "j\xFAna", "lipanj", "lipnja", "junij", "junija", "kesakuu", "kesakuuta", "kesa", "juuni", "junijs", "birzelis", "birzelio", "haziran", "iunie", "iun", "juny", "j\xFAnius", "junius", "jun", "\u091C\u0942\u0928"],
+  ["jul", "july", "juli", "juillet", "juil", "julio", "luglio", "lug", "julho", "lipiec", "lipca", "lip", "cervenec", "cervence", "j\xFAl", "j\xFAla", "srpanj", "srpnja", "julij", "julija", "heinakuu", "heinakuuta", "heina", "juuli", "julijs", "liepa", "liepos", "temmuz", "iulie", "iul", "juliol", "j\xFAlius", "julius", "\u091C\u0941\u0932\u093E\u0908"],
+  ["aug", "august", "augustus", "augusti", "aout", "agosto", "ago", "sierpien", "sierpnia", "sie", "srpen", "srpna", "augusta", "kolovoz", "kolovoza", "avgust", "avgusta", "elokuu", "elokuuta", "elo", "augusts", "rugpjutis", "rugpjucio", "agustos", "agustus", "agost", "augusztus", "\u0905\u0917\u0938\u094D\u0924"],
+  ["sep", "sept", "september", "septembre", "septiembre", "settembre", "set", "setembro", "wrzesien", "wrzesnia", "wrz", "zari", "septembra", "septembar", "rujan", "rujna", "syyskuu", "syyskuuta", "syys", "septembris", "rugsejis", "rugsejo", "eylul", "septembrie", "setembre", "szeptember", "szept", "\u0938\u093F\u0924\u0902\u092C\u0930", "\u0938\u093F\u0924\u092E\u094D\u092C\u0930"],
+  ["oct", "october", "oktober", "octobre", "octubre", "ottobre", "ott", "outubro", "out", "pazdziernik", "pazdziernika", "paz", "rijen", "rijna", "okt\xF3bra", "oktobra", "oktobar", "lokakuu", "lokakuuta", "loka", "oktoober", "oktobris", "spalis", "spalio", "ekim", "octombrie", "okt", "okt\xF3ber", "\u0905\u0915\u094D\u091F\u0942\u092C\u0930", "\u0905\u0915\u094D\u0924\u0942\u092C\u0930"],
+  ["nov", "november", "novembre", "noviembre", "novembro", "listopad", "listopada", "listopadu", "lis", "novembra", "novembar", "studeni", "studenog", "marraskuu", "marraskuuta", "marras", "novembris", "lapkritis", "lapkricio", "kasim", "noiembrie", "noi", "\u0928\u0935\u0902\u092C\u0930", "\u0928\u0935\u092E\u094D\u092C\u0930"],
+  ["dec", "december", "decembre", "diciembre", "dicembre", "dic", "dezembro", "dez", "dezember", "grudzien", "grudnia", "gru", "prosinec", "prosince", "decembra", "decembar", "prosinac", "prosinca", "joulukuu", "joulukuuta", "joulu", "detsember", "decembris", "gruodis", "gruodzio", "aralik", "desember", "decembrie", "desembre", "\u0926\u093F\u0938\u0902\u092C\u0930", "\u0926\u093F\u0938\u092E\u094D\u092C\u0930"]
 ];
 var EXTRA = { "\xF8": "o", "\xE6": "ae", "\u0153": "oe", "\u0142": "l", "\u0111": "d", "\xDF": "ss", "\u0131": "i", "\xFE": "th" };
-var fold = (text) => String(text ?? "").toLowerCase().normalize("NFD").replace(/\p{M}/gu, "").replace(/[øæœłđßıþ]/g, (c) => EXTRA[c]);
+var fold = (text) => String(text ?? "").toLowerCase().normalize("NFD").replace(/[̀-़ͯ]/g, "").replace(/[øæœłđßıþ]/g, (c) => EXTRA[c]).replace(/[०-९]/g, (c) => String(c.charCodeAt(0) - 2406)).replace(/[！-～]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 65248)).replace(/　/g, " ");
 var escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 var byLength = (a, b) => b.length - a.length || (a < b ? -1 : a > b ? 1 : 0);
 var wordList = (table) => [...new Set(Object.values(table).flat().map(fold))].sort(byLength);
-var phrases = (table) => new RegExp(`(?<![\\p{L}\\p{N}])(?:${wordList(table).map((w) => escape(w).replace(/ /g, "\\s+")).join("|")})(?!\\p{L})`, "gu");
+var HAN = /\p{Script=Han}/u;
+var phrases = (table) => {
+  const words = wordList(table).map((w) => escape(w).replace(/ /g, "\\s+"));
+  const others = words.filter((w) => !HAN.test(w)), han = words.filter((w) => HAN.test(w));
+  return new RegExp([others.length && `(?<![\\p{L}\\p{M}\\p{N}])(?:${others.join("|")})(?![\\p{L}\\p{M}])`, han.length && `(?:${han.join("|")})`].filter(Boolean).join("|"), "gu");
+};
 var END = phrases(END_WORDS);
 var PERIOD = phrases(PERIOD_WORDS);
+var BEFORE = phrases(BEFORE_WORDS);
+var SHELF = phrases(SHELF_WORDS);
+var MADE = phrases(MADE_WORDS);
+var unitList = () => Object.entries(TERM_UNITS).flatMap(([kind, words]) => words.map((w) => [fold(w), kind])).sort((a, b) => byLength(a[0], b[0]));
+var UNITS = new Map(unitList());
+var TERM = new RegExp(`^[\\s:.-]*(\\d{1,3})\\s*(${[...UNITS.keys()].map((w) => HAN.test(w) ? escape(w) : `${escape(w)}(?![\\p{L}\\p{M}])`).join("|")})`, "u");
 var monthList = () => {
   const map = /* @__PURE__ */ new Map();
   MONTH_WORDS.forEach((words, i) => words.forEach((w) => {
@@ -77,11 +112,13 @@ var monthList = () => {
   return [...map].sort((a, b) => byLength(a[0], b[0]));
 };
 var MONTHS = new Map(monthList());
-var M = `(${[...MONTHS.keys()].join("|")})(?!\\p{L})\\.?(?:\\s*/\\s*\\p{L}+\\.?)?`;
+var M = `(${[...MONTHS.keys()].join("|")})(?![\\p{L}\\p{M}])\\.?(?:\\s*/\\s*\\p{L}+\\.?)?`;
 var FORMS = [
+  [/(?<!\d)(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})(?!\d)\s*[日号號]?/gu, "ymd"],
+  [/(?<!\d)(\d{4})\s*年\s*(\d{1,2})\s*月/gu, "ym"],
   [/(?<!\d)(\d{4})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{1,2})(?!\d)/gu, "ymd"],
   [/(?<!\d)(\d{1,2})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{4}|\d{2})(?!\d)/gu, "dmy"],
-  [new RegExp(`(?<!\\d)(\\d{1,2})(?:st|nd|rd|th|er|e)?\\.?\\s*(?:de\\s+|d')?${M},?\\s*(?:de\\s+|del\\s+)?(\\d{4})(?!\\d)`, "gu"), "dMy"],
+  [new RegExp(`(?<!\\d)(\\d{1,2})(?:st|nd|rd|th|er|e)?\\.?[\\s-]*(?:de\\s+|d')?${M},?[\\s-]*(?:de\\s+|del\\s+)?(\\d{4})(?!\\d)`, "gu"), "dMy"],
   [new RegExp(`(?<!\\p{L})${M}\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s+(\\d{4})(?!\\d)`, "gu"), "Mdy"],
   [new RegExp(`(?<!\\d)(\\d{4})\\.?\\s*(?:m\\.\\s*)?${M}\\s+(\\d{1,2})(?!\\d)`, "gu"), "yMd"],
   [new RegExp(`(?<!\\d)(\\d{4})\\.?\\s*gada\\s+(\\d{1,2})\\.?\\s*${M}`, "gu"), "ydM"],
