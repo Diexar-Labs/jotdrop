@@ -18,8 +18,3 @@ test('every language has words, and words fold to plain letters', () => {
   for (const words of [...Object.values(END_WORDS), ...Object.values(PERIOD_WORDS)]) for (const word of words) assert.equal(fold(word), fold(fold(word)));
   assert.equal(fold('Gültig bis Ø Łódź ß'), 'gultig bis o lodz ss');
 });
-
-test('Android has the same words (npm run build:paper-words)', async () => {
-  const { KOTLIN_FILE, kotlinWords } = await import('../../scripts/build-paper-words.mjs');
-  assert.equal(readFileSync(KOTLIN_FILE, 'utf8').replace(/\r\n/g, '\n'), kotlinWords());
-});

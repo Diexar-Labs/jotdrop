@@ -1,6 +1,6 @@
 # JotDrop Android Privacy Policy
 
-Last updated: October 31, 2026
+Last updated: November 4, 2026
 
 JotDrop (`com.diexar.keepcapture`) is a local-first Android notes app from Diexar Labs. Contact us at [eric@diexar.com](mailto:eric@diexar.com) about privacy questions.
 
@@ -9,6 +9,8 @@ JotDrop (`com.diexar.keepcapture`) is a local-first Android notes app from Diexa
 JotDrop does not require an account. Unless you turn on the optional JotDrop Cloud described below, it does not send your notes, photos, voice memos, or OCR results to a Diexar Labs server. Markdown notes and their attachments are stored in the vault folder you select on your device. Photos you capture or share are saved there in their original quality; voice memos are recorded there as audio files. OCR runs on the device. JotDrop does not include advertising, its own analytics, or a crash-reporting service.
 
 OCR uses Google's bundled ML Kit SDK. Google documents that this SDK sends limited device and app information, a per-installation identifier, and performance and usage metrics to Google over HTTPS for diagnostics and usage analytics. Images supplied for OCR and the recognized text are processed on-device, not sent to Google. See [ML Kit's data disclosure](https://developers.google.com/ml-kit/android-data-disclosure) and [privacy terms](https://developers.google.com/ml-kit/terms).
+
+Scanning a document uses Google's ML Kit document scanner, which Google Play services provides. It opens the camera, finds the edges of the page and gives JotDrop only the pages you keep, as images and a PDF; JotDrop itself does not need camera access for this. Google [documents](https://developers.google.com/ml-kit/vision/doc-scanner) that the scanning runs on the device. Google Play services downloads the scanner the first time you use it, and the ML Kit data disclosure above applies. JotDrop then reads the text and looks for an expiry date on the device. It only suggests that date: nothing is saved until you choose Save.
 
 If you choose to sync your vault with another app or service, such as Syncthing or Obsidian Sync, that service handles your files under its own privacy policy. The vault is not automatically encrypted by JotDrop. You can edit, export, or delete your files in your chosen folder at any time.
 
