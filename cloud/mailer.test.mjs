@@ -39,6 +39,10 @@ test('a report reads clearly, and what its writer typed cannot pose as our own l
   assert.match(link.body, /^Owner: owner@example\.test$/m);
   assert.match(link.body, /^> From: someone@example\.test$/m);
   assert.ok(mailText({ kind: 'link-removed' }).body.includes('removed a link'));
+  const list = mailText({ kind: 'list-report', report: { reason: 'abuse', owner: 'owner@example.test', linkId: 'def', details: 'A list of bad things' } });
+  assert.match(list.subject, /list report: abuse/);
+  assert.match(list.body, /List ID: def/);
+  assert.match(list.body, /> A list of bad things/);
   const { subject, body } = mailText({ kind: 'space-report', report });
   assert.equal(subject, 'JotDrop report: abuse');
   assert.match(body, /^From: writer@example\.test$/m);

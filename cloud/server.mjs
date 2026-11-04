@@ -21,6 +21,10 @@ const REPORT_ADDRESS = 'hello@jotdrop.net';
 const REPORT_REASONS = ['abuse', 'illegal', 'spam', 'other'];
 // A note anyone with its link can read. Text only: the key stays in the link, so nobody here can read or moderate it.
 const LINK_DAYS = [1, 7, 30, 0], LINK_FREE_DAYS = 7, MAX_LINK_BYTES = 64 * 1024, MAX_LINKS = 100;
+// A list anyone with its link can tick, without an account: sealed like a note link, with a version number a writer
+// names (409 when it moved on) and a proof of the key, of which only the hash is kept. The owner's envelope also holds
+// the last version an owner wrote, so it may be a note longer than a note link's.
+const MAX_LIST_OWNER_BYTES = MAX_LINK_BYTES + 4096, LIST_WRITES_A_MINUTE = 60, LIST_WRITES_EACH_A_MINUTE = 600;
 const MAX_REPORTS_A_DAY = 10;
 const LOOPBACK_ADDRESSES = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const TRANSFER_CHUNK_BYTES = 64 * 1024;
@@ -330,6 +334,8 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         CREATE INDEX IF NOT EXISTS space_reports_by_account ON space_reports(accountId);
         CREATE TABLE IF NOT EXISTS note_links(id TEXT PRIMARY KEY, accountId TEXT NOT NULL, envelope TEXT NOT NULL, ownerEnvelope TEXT NOT NULL, createdAt INTEGER NOT NULL, expiresAt INTEGER);
         CREATE INDEX IF NOT EXISTS note_links_by_account ON note_links(accountId);
+        CREATE TABLE IF NOT EXISTS list_links(id TEXT PRIMARY KEY, accountId TEXT NOT NULL, revision INTEGER NOT NULL, envelope TEXT NOT NULL, ownerEnvelope TEXT NOT NULL, writeProofHash TEXT NOT NULL, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL, expiresAt INTEGER);
+        CREATE INDEX IF NOT EXISTS list_links_by_account ON list_links(accountId);
         CREATE TABLE IF NOT EXISTS family_subscriptions(subscriptionId TEXT PRIMARY KEY);
         CREATE TABLE IF NOT EXISTS family_members(accountId TEXT PRIMARY KEY, ownerAccountId TEXT NOT NULL, joinedAt INTEGER NOT NULL);
         CREATE INDEX IF NOT EXISTS family_members_by_owner ON family_members(ownerAccountId);
@@ -997,6 +1003,18 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       if (email) sendMailLater({ to: email, kind: 'link-removed' });
       reply(200, { deleted: true }); return;
     }
+    if (method === 'POST' && pathname === '/api/admin/delete-list') {
+      adminSession(req);
+      const value = await body(req, MAX_METADATA_BODY);
+      requireValue(value.confirm === 'DELETE LIST' && validId(value.listId), 'Confirm deleting the list');
+      const email = transaction(() => {
+        const link = one('SELECT l.id,a.email FROM list_links l LEFT JOIN accounts a ON a.id=l.accountId WHERE l.id=?', value.listId) ?? fail(404, 'List not found');
+        run('DELETE FROM list_links WHERE id=?', link.id);
+        return link.email;
+      });
+      if (email) sendMailLater({ to: email, kind: 'link-removed' });
+      reply(200, { deleted: true }); return;
+    }
     if (method === 'POST' && pathname === '/api/admin/close-account') {
       adminSession(req);
       const value = await body(req, MAX_METADATA_BODY);
@@ -1071,7 +1089,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       .catch((error) => console.warn(`Could not remove a deleted account from the mailing list: ${error.message}`));
   }
   function leaveAllSpaces(account) {
-    run('DELETE FROM note_links WHERE accountId=?', account.id);
+    for (const table of ['note_links', 'list_links']) run(`DELETE FROM ${table} WHERE accountId=?`, account.id);
     run('DELETE FROM space_blocks WHERE accountId=? OR blockedAccountId=?', account.id, account.id);
     for (const table of ['revisions', 'changes']) run(`UPDATE ${table} SET deviceId='removed' WHERE vaultId IN (SELECT id FROM spaces) AND deviceId IN (SELECT id FROM devices WHERE vaultId=?)`, account.vaultId);
     for (const space of all('SELECT * FROM spaces WHERE ownerAccountId=? AND ownerGoneAt IS NULL', account.id)) ownerGone(space);
@@ -1086,7 +1104,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     const used = storageUsage(account.vaultId) + liveSpaceBytes(account.id);
     const devices = one('SELECT COUNT(*) AS count FROM devices WHERE vaultId=? AND revoked=0', account.vaultId).count;
     const groups = liveSpaces(account.id);
-    const links = all('SELECT createdAt,expiresAt FROM note_links WHERE accountId=?', account.id).filter((link) => (link.expiresAt === null || link.expiresAt > now) && link.createdAt + LINK_FREE_DAYS * DAY <= now).length;
+    const links = allLinks(account).filter((link) => (link.expiresAt === null || link.expiresAt > now) && link.createdAt + LINK_FREE_DAYS * DAY <= now).length;
     return { usedMb: used > quotaBytes ? Math.ceil(used / 1048576) : 0, quotaMb: Math.round(quotaBytes / 1048576), devices: devices > freeDeviceLimit ? devices : 0, deviceLimit: freeDeviceLimit, groups: groups > 1 ? groups : 0, links };
   }
   // Two mails per trial: three days before the end, and on the day itself. A cloud that pays or has a family gets neither;
@@ -1110,7 +1128,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     transaction(() => {
       const now = clock();
       run('DELETE FROM space_invites WHERE expiresAt<=?', now);
-      run('DELETE FROM note_links WHERE expiresAt<=? OR accountId NOT IN (SELECT id FROM accounts)', now);
+      for (const table of ['note_links', 'list_links']) run(`DELETE FROM ${table} WHERE expiresAt<=? OR accountId NOT IN (SELECT id FROM accounts)`, now);
       // An older server may have run for a while and deleted accounts without knowing about spaces.
       for (const table of ['space_members', 'space_keys', 'space_blocks']) run(`DELETE FROM ${table} WHERE accountId NOT IN (SELECT id FROM accounts)`);
       run('DELETE FROM space_blocks WHERE blockedAccountId NOT IN (SELECT id FROM accounts)');
@@ -1153,6 +1171,14 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     const free = link.createdAt + LINK_FREE_DAYS * DAY;
     return link.expiresAt === null ? free : Math.min(link.expiresAt, free);
   }
+  // Note links and list links count together, on every plan.
+  const allLinks = (account) => ['note_links', 'list_links'].flatMap((table) => all(`SELECT createdAt,expiresAt FROM ${table} WHERE accountId=?`, account.id));
+  function linkRoom(account, vaultId, days) {
+    const now = clock(), plus = isPlus(vaultId), live = allLinks(account).filter((link) => { const end = linkEnd(link, vaultId); return end === null || end > now; }).length;
+    if (!plus && days !== LINK_FREE_DAYS) fail(402, 'On the free plan a link lasts 7 days. JotDrop Plus chooses how long.', { code: 'plus-required' });
+    if (!plus && live >= 1) fail(402, 'The free plan has one link at a time. JotDrop Plus has more.', { code: 'plus-required' });
+    if (live >= MAX_LINKS) fail(409, `You can have ${MAX_LINKS} links at most.`, { code: 'too-many-links' });
+  }
   async function linkRequest(req, reply, method, route, account, vaultId, deviceId) {
     const change = (action) => transaction(() => { requireAccess(vaultId, deviceId); return action(); });
     if (route === '/links' && method === 'GET') {
@@ -1167,10 +1193,8 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       envelopeSize(value.envelope, MAX_LINK_BYTES);
       envelopeSize(value.ownerEnvelope, 4096);
       const expiresAt = change(() => {
-        const now = clock(), plus = isPlus(vaultId), live = all('SELECT createdAt,expiresAt FROM note_links WHERE accountId=?', account.id).filter((link) => { const end = linkEnd(link, vaultId); return end === null || end > now; }).length;
-        if (!plus && value.days !== LINK_FREE_DAYS) fail(402, 'On the free plan a link lasts 7 days. JotDrop Plus chooses how long.', { code: 'plus-required' });
-        if (!plus && live >= 1) fail(402, 'The free plan has one link at a time. JotDrop Plus has more.', { code: 'plus-required' });
-        if (live >= MAX_LINKS) fail(409, `You can have ${MAX_LINKS} links at most.`, { code: 'too-many-links' });
+        const now = clock();
+        linkRoom(account, vaultId, value.days);
         if (one('SELECT 1 FROM note_links WHERE id=?', value.id)) fail(409, 'Choose another ID for this link.');
         const end = value.days === 0 ? null : now + value.days * DAY;
         run('INSERT INTO note_links(id,accountId,envelope,ownerEnvelope,createdAt,expiresAt) VALUES(?,?,?,?,?,?)', value.id, account.id, value.envelope, value.ownerEnvelope, now, end);
@@ -1187,6 +1211,69 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         run('DELETE FROM note_links WHERE id=?', target[1]);
       });
       reply(200, { ok: true });
+      return;
+    }
+    fail(404, 'Not found');
+  }
+  // The sealed list is at most a note link's size; the owner's envelope carries the last version an owner wrote as well.
+  function listEnvelope(value) {
+    if (typeof value === 'string' && Buffer.byteLength(value) > MAX_LINK_BYTES) fail(413, 'This list is too long for a link.');
+    envelopeSize(value, MAX_LINK_BYTES);
+  }
+  function listOwnerEnvelope(value) {
+    if (typeof value === 'string' && Buffer.byteLength(value) > MAX_LIST_OWNER_BYTES) fail(413, 'This list is too long for a link.');
+    envelopeSize(value, MAX_LIST_OWNER_BYTES);
+  }
+  async function listLinkRequest(req, reply, method, route, account, vaultId, deviceId) {
+    const change = (action) => transaction(() => { requireAccess(vaultId, deviceId); return action(); });
+    if (route === '/list-links' && method === 'GET') {
+      reply(200, { links: change(() => all('SELECT * FROM list_links WHERE accountId=? ORDER BY createdAt DESC', account.id)).map((link) => ({ id: link.id, revision: link.revision, ownerEnvelope: link.ownerEnvelope, createdAt: isoTime(link.createdAt), updatedAt: isoTime(link.updatedAt), expiresAt: isoTime(linkEnd(link, vaultId)) })) });
+      return;
+    }
+    if (route === '/list-links' && method === 'POST') {
+      limit(`link:${vaultId}`, 30);
+      const value = await body(req, 3 * MAX_LINK_BYTES);
+      requireValue(validId(value.id) && LINK_DAYS.includes(value.days) && validHash(value.writeProofHash), 'Invalid list link');
+      listEnvelope(value.envelope);
+      listOwnerEnvelope(value.ownerEnvelope);
+      const expiresAt = change(() => {
+        const now = clock();
+        linkRoom(account, vaultId, value.days);
+        if (one('SELECT 1 FROM list_links WHERE id=?', value.id)) fail(409, 'Choose another ID for this link.');
+        const end = value.days === 0 ? null : now + value.days * DAY;
+        run('INSERT INTO list_links(id,accountId,revision,envelope,ownerEnvelope,writeProofHash,createdAt,updatedAt,expiresAt) VALUES(?,?,1,?,?,?,?,?,?)', value.id, account.id, value.envelope, value.ownerEnvelope, value.writeProofHash, now, now, end);
+        return end;
+      });
+      reply(201, { id: value.id, expiresAt: isoTime(expiresAt) });
+      return;
+    }
+    const target = /^\/list-links\/([0-9a-f-]+)$/.exec(route);
+    if (target && method === 'DELETE') {
+      requireValue(validId(target[1]), 'Invalid list link');
+      change(() => {
+        if (!one('SELECT 1 FROM list_links WHERE id=? AND accountId=?', target[1], account.id)) fail(404, 'Link not found');
+        run('DELETE FROM list_links WHERE id=?', target[1]);
+      });
+      reply(200, { ok: true });
+      return;
+    }
+    // The owner moves the base it keeps in its envelope, and with `envelope` writes a new version for everyone: both
+    // only when the number it read still holds. Without `envelope` the number stays, so guests fetch nothing new.
+    if (target && method === 'PUT') {
+      requireValue(validId(target[1]), 'Invalid list link');
+      const value = await body(req, 3 * MAX_LINK_BYTES);
+      requireValue(Number.isSafeInteger(value.baseRevision) && value.baseRevision >= 1, 'Invalid list link');
+      const writes = value.envelope !== undefined;
+      if (writes) listEnvelope(value.envelope);
+      listOwnerEnvelope(value.ownerEnvelope);
+      const revision = change(() => {
+        const link = one('SELECT id,revision FROM list_links WHERE id=? AND accountId=?', target[1], account.id) ?? fail(404, 'Link not found');
+        if (link.revision !== value.baseRevision) fail(409, 'Someone else changed the list.', { currentRevision: link.revision });
+        if (writes) run('UPDATE list_links SET revision=revision+1,envelope=?,ownerEnvelope=?,updatedAt=? WHERE id=?', value.envelope, value.ownerEnvelope, clock(), link.id);
+        else run('UPDATE list_links SET ownerEnvelope=? WHERE id=?', value.ownerEnvelope, link.id);
+        return link.revision + (writes ? 1 : 0);
+      });
+      reply(200, { revision });
       return;
     }
     fail(404, 'Not found');
@@ -1264,6 +1351,48 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       const value = await body(req, MAX_METADATA_BODY);
       requireValue(REPORT_REASONS.includes(value.reason) && (value.details === undefined || (typeof value.details === 'string' && value.details.length <= 2000)), 'Invalid report');
       await sendMail({ to: REPORT_ADDRESS, kind: 'link-report', report: { reason: value.reason, owner: link.email, linkId: link.id, details: value.details ?? '' } });
+      reply(200, { ok: true });
+      return;
+    }
+    fail(404, 'Not found');
+  }
+  // No account: the link is all someone has. The list comes back sealed with its number; a write names the number it
+  // read and proves the key. The server swaps only when the number still holds, so two writers never lose each other's.
+  async function publicListRequest(req, reply, method, route, ip) {
+    const match = /^\/public-lists\/([^/]+)(\/report)?$/.exec(route);
+    if (!match) fail(404, 'Not found');
+    requireValue(validId(match[1]), 'Invalid link');
+    const link = one('SELECT l.*,a.vaultId,a.email FROM list_links l JOIN accounts a ON a.id=l.accountId WHERE l.id=?', match[1]) ?? fail(404, 'This link has ended.');
+    const end = linkEnd(link, link.vaultId);
+    const stillOpen = () => { if (end !== null && end <= clock()) fail(410, 'This link has ended.'); };
+    if (method === 'GET' && !match[2]) {
+      limit(`open-list:${ip}`, 120);
+      stillOpen();
+      reply(200, { envelope: link.envelope, revision: link.revision, expiresAt: isoTime(end) });
+      return;
+    }
+    if (method === 'PUT' && !match[2]) {
+      limit(`write-list:${ip}`, LIST_WRITES_A_MINUTE);
+      limit(`write-list:${link.id}`, LIST_WRITES_EACH_A_MINUTE);
+      const value = await body(req, 2 * MAX_LINK_BYTES);
+      requireValue(Number.isSafeInteger(value.baseRevision) && value.baseRevision >= 1 && typeof value.writeProof === 'string' && value.writeProof.length <= 256, 'Invalid list write');
+      stillOpen();
+      if (!equal(hash(value.writeProof), link.writeProofHash)) fail(403, 'This link cannot be written to.');
+      listEnvelope(value.envelope);
+      const revision = transaction(() => {
+        const current = one('SELECT revision FROM list_links WHERE id=?', link.id) ?? fail(410, 'This link has ended.');
+        if (current.revision !== value.baseRevision) fail(409, 'Someone else changed the list.', { currentRevision: current.revision });
+        run('UPDATE list_links SET revision=revision+1,envelope=?,updatedAt=? WHERE id=?', value.envelope, clock(), link.id);
+        return current.revision + 1;
+      });
+      reply(200, { revision });
+      return;
+    }
+    if (method === 'POST' && match[2]) {
+      limit(`link-report:${ip}`, 5);
+      const value = await body(req, MAX_METADATA_BODY);
+      requireValue(REPORT_REASONS.includes(value.reason) && (value.details === undefined || (typeof value.details === 'string' && value.details.length <= 2000)), 'Invalid report');
+      await sendMail({ to: REPORT_ADDRESS, kind: 'list-report', report: { reason: value.reason, owner: link.email, linkId: link.id, details: value.details ?? '' } });
       reply(200, { ok: true });
       return;
     }
@@ -1540,6 +1669,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       if (!pathname.startsWith('/api/v1/')) fail(404, 'Not found');
       const route = pathname.slice('/api/v1'.length);
       if (route.startsWith('/public-links/')) { await publicLinkRequest(req, reply, method, route, clientAddress(req)); return; }
+      if (route.startsWith('/public-lists/')) { await publicListRequest(req, reply, method, route, clientAddress(req)); return; }
       if (method === 'POST' && route === '/vaults') {
         limit(`enroll:${clientAddress(req)}`, 10);
         if (!enrollmentToken || !equal(req.headers.authorization || '', `Bearer ${enrollmentToken}`)) fail(401, 'Invalid enrollment token');
@@ -2160,6 +2290,11 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       if (route === '/links' || route.startsWith('/links/')) {
         const account = one('SELECT id,email,vaultId FROM accounts WHERE vaultId=?', vaultId) ?? fail(403, 'Links need an account. Add one to this cloud first.', { code: 'account-required' });
         await linkRequest(req, reply, method, route, account, vaultId, deviceId);
+        return;
+      }
+      if (route === '/list-links' || route.startsWith('/list-links/')) {
+        const account = one('SELECT id,email,vaultId FROM accounts WHERE vaultId=?', vaultId) ?? fail(403, 'Links need an account. Add one to this cloud first.', { code: 'account-required' });
+        await listLinkRequest(req, reply, method, route, account, vaultId, deviceId);
         return;
       }
       if (route === '/family' || route.startsWith('/family/')) {

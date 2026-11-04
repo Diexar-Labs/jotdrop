@@ -196,6 +196,7 @@ const refusedInSpace = [
   ['POST', '/account/password', {}], ['POST', '/account/delete', { confirm: 'DELETE MY CLOUD' }], ['POST', '/recovery', { recoveryTokenHash: id64 }],
   ['POST', '/account/trial', {}], ['GET', '/account/roadmap'], ['POST', '/account/roadmap', { itemId: 'mail-in', vote: true }], ['POST', '/account/checkout', { interval: 'month' }], ['GET', '/snapshot?at=2026-11-02T08:00:00Z'],
   ['GET', '/links'], ['POST', '/links', { id: other, days: 7 }], ['DELETE', `/links/${other}`],
+  ['GET', '/list-links'], ['POST', '/list-links', { id: other, days: 7 }], ['PUT', `/list-links/${other}`, { baseRevision: 1 }], ['DELETE', `/list-links/${other}`],
   ['GET', '/family'], ['POST', '/family/invites', {}], ['POST', '/family/join', { token: 'A'.repeat(43) }], ['DELETE', `/family/members/${other}`], ['POST', '/account/checkout', { interval: 'year', plan: 'family' }],
   ['GET', '/mail'], ['POST', '/mail', { action: 'enable', publicKey: 'A'.repeat(43), addressHash: id64, addressEnvelope: '{}' }], ['DELETE', '/mail'], ['POST', '/mail/senders', { senders: [] }], ['GET', `/mail/${other}`], ['GET', `/mail/${other}/parts/0`], ['DELETE', `/mail/${other}`],
   ['GET', '/devices'], ['DELETE', `/devices/${other}`], ['POST', '/pairings', { deviceName: 'X', deviceTokenHash: id64, claimTokenHash: id64, envelope: '{}' }], ['GET', '/pieces/legacy'],

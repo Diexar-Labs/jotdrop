@@ -263,6 +263,9 @@ test('after a report the owner can delete a group or close an account, and only 
   assert.equal((await app.call('POST', '/api/admin/delete-link', { body: { linkId: spaceId, confirm: 'DELETE LINK' } })).status, 401);
   assert.equal((await app.call('POST', '/api/admin/delete-link', { cookie, body: { linkId: spaceId } })).status, 400);
   assert.equal((await app.call('POST', '/api/admin/delete-link', { cookie, body: { linkId: spaceId, confirm: 'DELETE LINK' } })).status, 404);
+  assert.equal((await app.call('POST', '/api/admin/delete-list', { body: { listId: spaceId, confirm: 'DELETE LIST' } })).status, 401);
+  assert.equal((await app.call('POST', '/api/admin/delete-list', { cookie, body: { listId: spaceId } })).status, 400);
+  assert.equal((await app.call('POST', '/api/admin/delete-list', { cookie, body: { listId: spaceId, confirm: 'DELETE LIST' } })).status, 404);
   assert.equal((await app.call('POST', '/api/admin/delete-group', { body: group })).status, 401);
   assert.equal((await app.call('POST', '/api/admin/close-account', { body: close })).status, 401);
   assert.equal((await app.call('POST', '/api/admin/delete-group', { cookie, body: { spaceId } })).status, 400);
