@@ -73,6 +73,7 @@
     "cloud:backup": "node cloud/backup.mjs",
     "build:web-clipper": "node scripts/build-web-clipper.mjs",
     "build:cloud-import": "node scripts/build-cloud-import.mjs",
+    "build:paper-words": "node scripts/build-paper-words.mjs",
     "package:web-clipper": "node scripts/package-web-clipper.mjs",
     "deploy:local": "node scripts/deploy-local.mjs",
     "android:release": "node scripts/build-android-release.mjs",

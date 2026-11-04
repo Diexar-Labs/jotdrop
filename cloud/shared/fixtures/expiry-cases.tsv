@@ -1,0 +1,86 @@
+# Expiry dates found in scanned text. Read by cloud/shared/expiry.test.mjs and android/checks/PaperDrawerCheck.kt.
+# expected<TAB>text, with \n for a new line; an empty expected means no date may be offered.
+# English
+2031-03-12	Policy certificate\nStart date: 04-11-2026\nValid until: 12-03-2031\nPremium: EUR 214.00
+2033-09-23	Date of expiry / Date d'expiration\n23 SEP/SEPT 2033
+2027-06-30	Best before 2027-06-30
+2028-06-30	Expires: 06/30/2028
+2031-06-15	Expires on June 15, 2031
+2027-12-31	VALID THRU 12/27
+2026-12-01	Invoice 4471\nDue date: 1st December 2026\nTotal 12.50
+2027-01-31	Renewal date: 31 Jan 2027
+2027-12-31	Validity period 01/01/2027 - 31/12/2027
+	Invoice date 04-11-2026\nTotal 12.00
+	Valid until 31-02-2031
+
+# Dutch
+2030-02-01	Geldig tot 01.02.2030
+2032-03-15	VERVALDATUM\n15 mrt 2032
+2027-03-12	THT 12.03.27
+2026-12-31	Geldig van 01-01-2026 tot 31-12-2026
+2026-11-30	Uiterste betaaldatum: 30 november 2026
+2028-05-31	Ten minste houdbaar tot: 05-2028
+# German
+2029-04-30	Gültig bis 30.04.2029
+2027-08-15	Mindestens haltbar bis: 15.08.2027
+2026-12-14	Zahlbar bis 14. Dezember 2026
+2028-12-31	Vertragslaufzeit 01.01.2027 - 31.12.2028
+# French
+2030-01-31	Valable jusqu'au 31/01/2030
+2027-09-01	À consommer de préférence avant le 1er septembre 2027
+2026-12-15	Date d'échéance : 15/12/2026
+# Spanish and Catalan
+2031-05-05	Fecha de caducidad: 5 de mayo de 2031
+2031-05-05	Válido hasta 05/05/2031
+2027-02-28	Consumir preferentemente antes del: 28.02.2027
+2028-07-01	Data de caducitat: 1 de juliol de 2028
+# Italian
+2029-10-31	Data di scadenza 31/10/2029
+2027-06-30	Da consumarsi preferibilmente entro il 30 giugno 2027
+# Portuguese
+2030-08-20	Válido até 20/08/2030
+2027-11-30	Data de validade: 30 de novembro de 2027
+# Polish
+2031-03-01	Ważny do: 01.03.2031
+2027-06-10	Najlepiej spożyć przed: 10 czerwca 2027
+# Czech and Slovak
+2029-12-31	Platnost do: 31. 12. 2029
+2027-04-15	Spotřebujte do 15. dubna 2027
+2028-01-20	Dátum platnosti 20.01.2028
+# Slovenian and Croatian
+2030-09-30	Veljavno do 30. 9. 2030
+2027-05-18	Najbolje upotrijebiti do: 18.05.2027.
+# Hungarian (year first)
+2031-06-15	Érvényes: 2031. június 15.
+2029-03-01	Lejárati dátum: 2029.03.01.
+# Romanian
+2030-11-11	Valabil până la 11.11.2030
+2027-07-31	Data expirării: 31 iulie 2027
+# Swedish, Danish, Norwegian
+2028-10-31	Giltig t.o.m. 2028-10-31
+2027-03-20	Bäst före 20 mars 2027
+2029-02-28	Udløbsdato: 28-02-2029
+2027-08-01	Best før 01.08.2027
+# Finnish and Estonian
+2030-05-31	Voimassa 31.5.2030 asti
+2027-12-24	Parasta ennen 24.12.2027
+2028-06-30	Kehtib kuni 30.06.2028
+# Latvian and Lithuanian
+2029-01-15	Derīgs līdz 15.01.2029
+2031-06-15	Galioja iki 2031 m. birželio 15 d.
+2030-06-15	Derīguma termiņš 2030. gada 15. jūnijs
+# Turkish
+2028-09-30	Son kullanma tarihi: 30.09.2028
+2027-01-10	S.K.T 10/01/2027\nSKT 10/01/2027
+# Indonesian and Malay
+2030-03-31	Berlaku hingga 31 Maret 2030
+2027-04-30	Tarikh luput 30 April 2027
+# Words without diacritics, as text recognition sometimes reads them
+2029-04-30	Gultig bis 30.04.2029
+# Passports and ID cards (ICAO 9303 samples): checked with the check digit
+2012-04-15	P<UTOERIKSSON<<ANNA<MARIA<<<<<<<<<<<<<<<<<<<\nL898902C36UTO7408122F1204159ZE184226B<<<<<10
+2012-04-15	L898902C3 6UTO7408122F1204159ZE184226B<<<<< 10
+2032-04-15	L898902C36UTO7408122F1204158ZE184226B<<<<<10\nDate of expiry 15 APR 2032
+2012-04-15	7408122F1204159UTO<<<<<<<<<<<6
+# The latest end date counts
+2031-03-12	Valid until 12-03-2031\nexpires 01-01-2029

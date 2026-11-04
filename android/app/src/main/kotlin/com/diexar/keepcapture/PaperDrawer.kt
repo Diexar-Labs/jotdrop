@@ -68,53 +68,77 @@ object PaperDrawer {
         return labels.any { if (drawerName(want).isNotEmpty()) it.trim().equals(want, ignoreCase = true) else isPaperDrawer(it) }
     }
 
-    private val MONTHS = listOf(
-        listOf("jan", "january", "januari", "enero", "januar", "janvier", "ene"),
-        listOf("feb", "february", "februari", "febrero", "februar", "février", "fevrier", "fév", "fev"),
-        listOf("mar", "march", "maart", "mrt", "marzo", "märz", "marz", "mars"),
-        listOf("apr", "april", "abril", "avril", "abr", "avr"),
-        listOf("may", "mei", "mayo", "mai"),
-        listOf("jun", "june", "juni", "junio", "juin"),
-        listOf("jul", "july", "juli", "julio", "juillet", "juil"),
-        listOf("aug", "august", "augustus", "agosto", "août", "aout", "ago"),
-        listOf("sep", "sept", "september", "septiembre", "septembre"),
-        listOf("oct", "october", "oktober", "okt", "octubre", "octobre"),
-        listOf("nov", "november", "noviembre", "novembre"),
-        listOf("dec", "december", "diciembre", "dezember", "décembre", "decembre", "dic", "dez", "déc"),
-    )
-    private val KEYWORD = Regex(
-        "valid\\s+(?:until|thru|through|to)|date\\s+of\\s+expiry|expir(?:y|es|ation)(?:\\s+date)?|exp\\.?\\s*date|best\\s+before|use\\s+by|" +
-            "geldig\\s+(?:tot|t/m)|vervaldatum|verloopt(?:\\s+op)?|houdbaar\\s+tot|te\\s+gebruiken\\s+tot|\\bt\\.?h\\.?t\\.?(?=[\\s:])|caducidad|" +
-            "v[áa]lid[oa]\\s+hasta|vencimiento|g[üu]ltig\\s+bis|ablaufdatum|date\\s+d['’]expiration|valable\\s+jusqu",
-        RegexOption.IGNORE_CASE,
-    )
-    private val DATE = Regex(
-        "(\\d{4})-(\\d{2})-(\\d{2})|(\\d{1,2})\\s*[-/.]\\s*(\\d{1,2})\\s*[-/.]\\s*(\\d{4}|\\d{2})(?!\\d)|" +
-            "(\\d{1,2})\\.?\\s+([A-Za-zÀ-ÿ]{3,10})\\.?,?\\s+(\\d{4})",
+    private val EXTRA = mapOf('ø' to "o", 'æ' to "ae", 'œ' to "oe", 'ł' to "l", 'đ' to "d", 'ß' to "ss", 'ı' to "i", 'þ' to "th")
+    private val MARKS = Regex("\\p{M}")
+
+    /** Lower case without accents, so "Gültig" and an OCR'd "Gultig" read the same (as fold in cloud/shared/expiry.mjs). */
+    fun fold(text: String): String {
+        val plain = MARKS.replace(java.text.Normalizer.normalize(text.lowercase(), java.text.Normalizer.Form.NFD), "")
+        return buildString { for (c in plain) append(EXTRA[c] ?: c) }
+    }
+
+    private fun escape(text: String): String = text.replace(Regex("[.*+?^\${}()|\\[\\]\\\\]")) { "\\" + it.value }
+    private fun phrases(words: List<String>) =
+        Regex("(?<![\\p{L}\\p{N}])(?:" + words.joinToString("|") { escape(it).replace(" ", "\\s+") } + ")(?!\\p{L})")
+    private val END = phrases(ExpiryWords.END)
+    private val PERIOD = phrases(ExpiryWords.PERIOD)
+    private val MONTH_OF = ExpiryWords.MONTHS.toMap()
+    private val M = "(" + ExpiryWords.MONTHS.joinToString("|") { it.first } + ")(?!\\p{L})\\.?(?:\\s*/\\s*\\p{L}+\\.?)?"
+
+    // Each date form with the order of its groups; the same list and order as FORMS in cloud/shared/expiry.mjs.
+    private val FORMS = listOf(
+        Regex("(?<!\\d)(\\d{4})\\s*[-/.]\\s*(\\d{1,2})\\s*[-/.]\\s*(\\d{1,2})(?!\\d)") to "ymd",
+        Regex("(?<!\\d)(\\d{1,2})\\s*[-/.]\\s*(\\d{1,2})\\s*[-/.]\\s*(\\d{4}|\\d{2})(?!\\d)") to "dmy",
+        Regex("(?<!\\d)(\\d{1,2})(?:st|nd|rd|th|er|e)?\\.?\\s*(?:de\\s+|d')?$M,?\\s*(?:de\\s+|del\\s+)?(\\d{4})(?!\\d)") to "dMy",
+        Regex("(?<!\\p{L})$M\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s+(\\d{4})(?!\\d)") to "Mdy",
+        Regex("(?<!\\d)(\\d{4})\\.?\\s*(?:m\\.\\s*)?$M\\s+(\\d{1,2})(?!\\d)") to "yMd",
+        Regex("(?<!\\d)(\\d{4})\\.?\\s*gada\\s+(\\d{1,2})\\.?\\s*$M") to "ydM",
+        Regex("(?<!\\p{L})$M\\s+(\\d{4})(?!\\d)") to "My",
+        Regex("(?<![\\d/.-])(\\d{1,2})\\s*/\\s*(\\d{4}|\\d{2})(?![\\d/.-])|(?<![\\d/.-])(\\d{1,2})\\s*[-.]\\s*(\\d{4})(?![\\d/.-])") to "my",
     )
 
-    /** The first date in [text] as "YYYY-MM-DD", or "". Day first, unless only a month-first reading makes sense. */
-    private fun firstDate(text: String): String {
-        val g = DATE.find(text)?.groupValues ?: return ""
+    private fun toDay(kind: String, g: List<String>): String {
+        fun year4(v: String) = if (v.length == 2) 2000 + v.toInt() else v.toInt()
         val year: Int
         val month: Int
-        val day: Int
-        when {
-            g[1].isNotEmpty() -> { year = g[1].toInt(); month = g[2].toInt(); day = g[3].toInt() }
-            g[4].isNotEmpty() -> {
-                val a = g[4].toInt()
-                val b = g[5].toInt()
-                year = if (g[6].length == 2) 2000 + g[6].toInt() else g[6].toInt()
+        var day: Int? = null
+        when (kind) {
+            "ymd" -> { year = g[1].toInt(); month = g[2].toInt(); day = g[3].toInt() }
+            "dmy" -> {
+                val a = g[1].toInt()
+                val b = g[2].toInt()
+                year = year4(g[3])
                 if (b > 12 && a <= 12) { day = b; month = a } else { day = a; month = b }
             }
-            else -> {
-                day = g[7].toInt()
-                val word = g[8].lowercase().removeSuffix(".")
-                month = MONTHS.indexOfFirst { word in it } + 1
-                year = g[9].toInt()
+            "dMy" -> { day = g[1].toInt(); month = MONTH_OF[g[2]] ?: 0; year = g[3].toInt() }
+            "Mdy" -> { month = MONTH_OF[g[1]] ?: 0; day = g[2].toInt(); year = g[3].toInt() }
+            "yMd" -> { year = g[1].toInt(); month = MONTH_OF[g[2]] ?: 0; day = g[3].toInt() }
+            "ydM" -> { year = g[1].toInt(); day = g[2].toInt(); month = MONTH_OF[g[3]] ?: 0 }
+            "My" -> { month = MONTH_OF[g[1]] ?: 0; year = g[2].toInt() }
+            else -> if (g[1].isNotEmpty()) { month = g[1].toInt(); year = year4(g[2]) } else { month = g[3].toInt(); year = g[4].toInt() }
+        }
+        if (month !in 1..12 || year !in 1900..2199) return ""
+        val last = java.time.YearMonth.of(year, month).lengthOfMonth()
+        val d = day ?: last
+        if (d !in 1..last) return ""
+        return String.format(java.util.Locale.US, "%04d-%02d-%02d", year, month, d)
+    }
+
+    private class Found(val start: Int, val end: Int, val day: String)
+
+    /** The dates in folded [text], in reading order; where two forms overlap, the earlier form in FORMS wins. */
+    private fun dates(text: String): List<String> {
+        val taken = mutableListOf<Found>()
+        for ((pattern, kind) in FORMS) {
+            for (m in pattern.findAll(text)) {
+                val start = m.range.first
+                val end = m.range.last + 1
+                if (taken.any { start < it.end && it.start < end }) continue
+                val day = toDay(kind, m.groupValues)
+                if (day.isNotEmpty()) taken += Found(start, end, day)
             }
         }
-        return validExpires(String.format(java.util.Locale.US, "%04d-%02d-%02d", year, month, day)) ?: ""
+        return taken.sortedBy { it.start }.map { it.day }
     }
 
     private fun mrzValue(c: Char): Int = when {
@@ -137,20 +161,30 @@ object PaperDrawer {
                 else -> continue
             }
             if (!field.all(Char::isDigit) || !digit.isDigit() || !mrzCheck(field, digit)) continue
-            validExpires("20${field.substring(0, 2)}-${field.substring(2, 4)}-${field.substring(4, 6)}")?.let { return it }
+            val day = toDay("ymd", listOf("", "20" + field.substring(0, 2), field.substring(2, 4), field.substring(4, 6)))
+            if (day.isNotEmpty()) return day
         }
         return ""
     }
 
-    /** The expiry date offered after a scan: from a passport line, else the latest date after words like "valid until" or "geldig tot". */
+    /**
+     * The expiry date offered after a scan: from a passport or ID card line, else the latest date
+     * that follows words that end something ("valid until", "THT", "due date") or close a period.
+     */
     fun findExpiry(text: String?): String {
-        val lines = (text ?: "").split(Regex("\\r?\\n"))
-        mrzExpiry(lines).takeIf { it.isNotEmpty() }?.let { return it }
+        val raw = (text ?: "").split(Regex("\\r?\\n"))
+        mrzExpiry(raw).takeIf { it.isNotEmpty() }?.let { return it }
+        val lines = raw.map(::fold)
         var best = ""
         lines.forEachIndexed { i, line ->
-            val hit = KEYWORD.find(line) ?: return@forEachIndexed
-            val found = firstDate(line.substring(hit.range.last + 1)).ifEmpty { firstDate(lines.getOrElse(i + 1) { "" }) }
-            if (found > best) best = found
+            for ((pattern, period) in listOf(END to false, PERIOD to true)) {
+                for (hit in pattern.findAll(line)) {
+                    var found = dates(line.substring(hit.range.last + 1))
+                    if (found.isEmpty()) found = dates(lines.getOrElse(i + 1) { "" })
+                    val day = if (period) found.maxOrNull() ?: "" else found.firstOrNull() ?: ""
+                    if (day > best) best = day
+                }
+            }
         }
         return best
     }

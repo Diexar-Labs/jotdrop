@@ -3,7 +3,7 @@ package com.diexar.keepcapture
 import java.time.LocalDate
 
 /** The same cases as cloud/shared/paper.test.mjs, so every platform reads and warns alike. */
-fun main() {
+fun main(args: Array<String>) {
     require(PaperDrawer.validExpires("2027-03-12") == "2027-03-12")
     require(PaperDrawer.validExpires(" 2028-02-29 ") == "2028-02-29")
     for (bad in listOf("2027-02-29", "2027-13-01", "2027-3-12", "12-03-2027", "", null, "2027-03-12T09:00")) {
@@ -63,30 +63,16 @@ fun main() {
     require(!PaperDrawer.inDrawer(listOf("Paper drawer"), "Paper drawer/Work"))
     require(!PaperDrawer.inDrawer(listOf("Home"), "Home"))
 
-    // Expiry dates found in scanned text, the same texts as cloud/shared/paper.test.mjs.
-    val expiry = linkedMapOf(
-        "Policy certificate\nStart date: 04-11-2026\nValid until: 12-03-2031\nPremium: EUR 214.00" to "2031-03-12",
-        "Geldig tot 01.02.2030" to "2030-02-01",
-        "VERVALDATUM\n15 mrt 2032" to "2032-03-15",
-        "Date of expiry / Date d'expiration\n23 SEP 2033" to "2033-09-23",
-        "Best before 2027-06-30" to "2027-06-30",
-        "Expires: 06/30/2028" to "2028-06-30",
-        "THT 12.03.27" to "2027-03-12",
-        "Fecha de caducidad: 5 de mayo de 2031" to "",
-        "Válido hasta 05/05/2031" to "2031-05-05",
-        "Valid until 12-03-2031\nexpires 01-01-2029" to "2031-03-12",
-        "Invoice date 04-11-2026\nTotal 12.00" to "",
-        "Valid until 31-02-2031" to "",
-        "" to "",
-        "P<UTOERIKSSON<<ANNA<MARIA<<<<<<<<<<<<<<<<<<<\nL898902C36UTO7408122F1204159ZE184226B<<<<<10" to "2012-04-15",
-        "L898902C3 6UTO7408122F1204159ZE184226B<<<<< 10" to "2012-04-15",
-        "L898902C36UTO7408122F1204158ZE184226B<<<<<10\nDate of expiry 15 APR 2032" to "2032-04-15",
-        "7408122F1204159UTO<<<<<<<<<<<6" to "2012-04-15",
-    )
-    for ((text, expected) in expiry) {
+    // Expiry dates found in scanned text: the shared cases in cloud/shared/fixtures/expiry-cases.tsv.
+    val cases = java.io.File(args[0]).readLines(Charsets.UTF_8).filter { '\t' in it && !it.startsWith("#") }
+    require(cases.size >= 60) { "only ${cases.size} cases" }
+    for (line in cases) {
+        val expected = line.substringBefore('\t')
+        val text = line.substringAfter('\t').replace("\\n", "\n")
         val actual = PaperDrawer.findExpiry(text)
-        require(actual == expected) { "findExpiry(${text.take(40)}) gave $actual, expected $expected" }
+        require(actual == expected) { "findExpiry(${text.take(50)}) gave $actual, expected $expected" }
     }
+    require(PaperDrawer.fold("Gültig bis Ø Łódź ß") == "gultig bis o lodz ss")
 
     println("PaperDrawer checks passed")
 }

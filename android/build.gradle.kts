@@ -144,7 +144,7 @@ tasks.register<JavaExec>("checkDrawingFormat") {
 val paperDrawerClasses = layout.buildDirectory.dir("paper-drawer-check")
 val paperDrawerSources = files("app/src/main/kotlin/com/diexar/keepcapture/PaperDrawer.kt",
     "app/src/main/kotlin/com/diexar/keepcapture/Metadata.kt", "app/src/main/kotlin/com/diexar/keepcapture/InlineTags.kt",
-    "checks/PaperDrawerR.kt", "checks/PaperDrawerColor.kt", "checks/PaperDrawerCheck.kt")
+    "app/src/main/kotlin/com/diexar/keepcapture/ExpiryWords.kt", "checks/PaperDrawerR.kt", "checks/PaperDrawerColor.kt", "checks/PaperDrawerCheck.kt")
 val paperDrawerCompile = tasks.register<JavaExec>("paperDrawerCompile") {
     inputs.files(paperDrawerSources)
     outputs.dir(paperDrawerClasses)
@@ -164,6 +164,7 @@ tasks.register<JavaExec>("checkPaperDrawer") {
     classpath(paperDrawerClasses)
     classpath(provider { project(":app").configurations.getByName("debugCompileClasspath") })
     mainClass.set("com.diexar.keepcapture.PaperDrawerCheckKt")
+    args(file("../cloud/shared/fixtures/expiry-cases.tsv").absolutePath)
 }
 
 val inlineTagsClasses = layout.buildDirectory.dir("inline-tags-check")
