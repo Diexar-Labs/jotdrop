@@ -1,0 +1,162 @@
+[
+  {
+    "name": "a tick counts",
+    "base": "# Groceries\n- [ ] milk\n- [ ] eggs\n",
+    "next": "# Groceries\n- [x] milk\n- [ ] eggs\n",
+    "accepted": "# Groceries\n- [x] milk\n- [ ] eggs\n"
+  },
+  {
+    "name": "an untick counts, and a capital X is a tick too",
+    "base": "- [x] milk\n- [ ] eggs",
+    "next": "- [ ] milk\n- [X] eggs",
+    "accepted": "- [ ] milk\n- [X] eggs"
+  },
+  {
+    "name": "a new task line at the end counts",
+    "base": "- [ ] milk\n- [ ] eggs\n",
+    "next": "- [ ] milk\n- [ ] eggs\n- [ ] bread\n",
+    "accepted": "- [ ] milk\n- [ ] eggs\n- [ ] bread\n"
+  },
+  {
+    "name": "a new task line in the middle counts, indented or ticked as well",
+    "base": "- [ ] milk\n- [ ] eggs",
+    "next": "- [ ] milk\n  - [x] skimmed\n- [ ] eggs",
+    "accepted": "- [ ] milk\n  - [x] skimmed\n- [ ] eggs"
+  },
+  {
+    "name": "changed text goes back, the tick next to it stays",
+    "base": "- [ ] milk\n- [ ] eggs",
+    "next": "- [ ] milk 2L\n- [x] eggs",
+    "accepted": "- [ ] milk\n- [x] eggs"
+  },
+  {
+    "name": "a removed line comes back, a new line still counts",
+    "base": "# Groceries\n- [ ] milk\n- [ ] eggs\nNotes",
+    "next": "# Groceries\n- [ ] eggs\n- [ ] bread\nNotes",
+    "accepted": "# Groceries\n- [ ] milk\n- [ ] eggs\n- [ ] bread\nNotes"
+  },
+  {
+    "name": "a moved line stays where it was",
+    "base": "- [ ] milk\n- [ ] eggs\n- [ ] bread",
+    "next": "- [ ] eggs\n- [ ] bread\n- [x] milk",
+    "accepted": "- [ ] milk\n- [ ] eggs\n- [ ] bread"
+  },
+  {
+    "name": "a line that is not a task is not added",
+    "base": "- [ ] milk\n- [ ] eggs",
+    "next": "- [ ] milk\nBuy everything\n- [ ] eggs\n\n# Heading",
+    "accepted": "- [ ] milk\n- [ ] eggs"
+  },
+  {
+    "name": "a new line of 501 characters is not added, one of 500 is",
+    "base": "- [ ] milk",
+    "next": "- [ ] milk\n- [ ] 12345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890a\n- [ ] 12345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890",
+    "accepted": "- [ ] milk\n- [ ] 12345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890"
+  },
+  {
+    "name": "equal lines: the second one ticked stays the second one",
+    "base": "- [ ] milk\n- [ ] milk\n- [ ] eggs",
+    "next": "- [ ] milk\n- [x] milk\n- [ ] eggs",
+    "accepted": "- [ ] milk\n- [x] milk\n- [ ] eggs"
+  },
+  {
+    "name": "everything wiped comes back",
+    "base": "# Groceries\n- [ ] milk\n- [x] eggs\n",
+    "next": "",
+    "accepted": "# Groceries\n- [ ] milk\n- [x] eggs\n"
+  },
+  {
+    "name": "an empty line or a blank task line is not added",
+    "base": "- [ ] milk",
+    "next": "- [ ] milk\n\n- [ ]  \n- [ ] eggs",
+    "accepted": "- [ ] milk\n- [ ] eggs"
+  },
+  {
+    "name": "a list with no task lines takes nothing",
+    "base": "Just text\nMore text",
+    "next": "Just text\n- [ ] milk\nMore text\nAdded",
+    "accepted": "Just text\n- [ ] milk\nMore text"
+  },
+  {
+    "name": "CRLF line ends are read as LF",
+    "base": "- [ ] milk\r\n- [ ] eggs\r\n",
+    "next": "- [x] milk\r\n- [ ] eggs\r\n- [ ] bread\r\n",
+    "accepted": "- [x] milk\n- [ ] eggs\n- [ ] bread\n"
+  },
+  {
+    "name": "nothing changed",
+    "base": "- [ ] milk\n- [ ] eggs\n",
+    "next": "- [ ] milk\n- [ ] eggs\n",
+    "accepted": "- [ ] milk\n- [ ] eggs\n"
+  },
+  {
+    "name": "apply: a heading above and a tick on the second of two equal lines, done twice, ticks that one only",
+    "base": "- [ ] melk\n- [ ] melk\n- [ ] kaas\n",
+    "accepted": "- [ ] melk\n- [x] melk\n- [ ] kaas\n",
+    "mine": "# Shop\n\n- [ ] melk\n- [x] melk\n- [ ] kaas\n",
+    "result": "# Shop\n\n- [ ] melk\n- [x] melk\n- [ ] kaas\n"
+  },
+  {
+    "name": "apply: a tick goes on your line, wherever it moved to",
+    "base": "- [ ] milk\n- [ ] eggs\n",
+    "accepted": "- [ ] milk\n- [x] eggs\n",
+    "mine": "# Groceries\n\n- [ ] eggs\n- [ ] milk\n",
+    "result": "# Groceries\n\n- [x] eggs\n- [ ] milk\n"
+  },
+  {
+    "name": "apply: a line you removed or rewrote no longer takes the tick",
+    "base": "- [ ] milk\n- [ ] eggs\n- [ ] bread\n",
+    "accepted": "- [x] milk\n- [x] eggs\n- [ ] bread\n",
+    "mine": "- [ ] milk 2L\n- [ ] bread\n",
+    "result": "- [ ] milk 2L\n- [ ] bread\n"
+  },
+  {
+    "name": "apply: a guest tick wins over your untick of the same line",
+    "base": "- [x] milk\n",
+    "accepted": "- [ ] milk\n",
+    "mine": "- [x] milk\n",
+    "result": "- [ ] milk\n"
+  },
+  {
+    "name": "apply: a new line goes in after the line above it in theirs, and only once",
+    "base": "- [ ] milk\n- [ ] eggs\n",
+    "accepted": "- [ ] milk\n- [ ] butter\n- [ ] eggs\n- [ ] jam\n",
+    "mine": "- [ ] eggs\n- [ ] milk\n- [ ] jam\nNotes\n",
+    "result": "- [ ] eggs\n- [ ] milk\n- [ ] butter\n- [ ] jam\nNotes\n"
+  },
+  {
+    "name": "apply: a new line with nothing above it goes before your first task line",
+    "base": "# List\n- [ ] milk\n",
+    "accepted": "# List\n- [ ] eggs\n- [ ] milk\n",
+    "mine": "# List\n\nText\n- [ ] milk\n",
+    "result": "# List\n\nText\n- [ ] eggs\n- [ ] milk\n"
+  },
+  {
+    "name": "apply: a new line after a line you removed goes in after the nearest line you still have",
+    "base": "- [ ] milk\n- [ ] eggs\n- [ ] bread\n",
+    "accepted": "- [ ] milk\n- [ ] eggs\n- [ ] butter\n- [ ] bread\n",
+    "mine": "- [ ] milk\n- [ ] bread\n",
+    "result": "- [ ] milk\n- [ ] butter\n- [ ] bread\n"
+  },
+  {
+    "name": "apply: no task lines left in yours: new lines go at the end, before blank lines",
+    "base": "- [ ] milk\n",
+    "accepted": "- [ ] milk\n- [ ] eggs\n",
+    "mine": "Done\n\n",
+    "result": "Done\n- [ ] eggs\n\n"
+  },
+  {
+    "name": "apply: two equal new lines both go in",
+    "base": "- [ ] milk\n",
+    "accepted": "- [ ] milk\n- [ ] brood\n- [ ] brood\n",
+    "mine": "- [ ] milk\n",
+    "result": "- [ ] milk\n- [ ] brood\n- [ ] brood\n"
+  },
+  {
+    "name": "apply: nothing to do when yours has it all",
+    "base": "- [ ] milk\n",
+    "accepted": "- [x] milk\n- [ ] eggs\n",
+    "mine": "- [x] milk\n- [ ] eggs\n- [ ] jam\n",
+    "result": "- [x] milk\n- [ ] eggs\n- [ ] jam\n"
+  }
+]
