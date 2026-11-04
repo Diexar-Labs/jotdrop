@@ -10,6 +10,7 @@ import { noteSummary, updateMetadata, toggleTask, attachmentPath, plainPreviewTe
 import { drawingFileName, isDrawingName, read as readDrawing } from '/shared/drawing.mjs';
 import { addressHash, mailAddress, mailKeyPair, mailToNote, openMailBody, openMailKey, openMailPart, senderHash } from '/shared/mail.mjs';
 import { createDrawingEditor } from '/shared/drawing-editor.mjs';
+import { WARN_OPTIONS, expiresBadge, isPaperDrawer, validExpires, warnReminder, withPaperDrawer } from '/shared/paper.mjs';
 
 const $ = (id) => document.getElementById(id);
 try {
@@ -195,6 +196,8 @@ const icons = {
   check: '<circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/>',
   people: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>',
   lock: '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+  // A cabinet with two drawers, for the Paper drawer label.
+  drawer: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 12h18"/><path d="M10 7.5h4"/><path d="M10 16.5h4"/>',
 };
 
 // A paper card sits a little askew, always at the same angle for the same note.
@@ -821,6 +824,9 @@ function render() {
         const repeat = parts.reminder && repeatLabel(parts.repeat);
         if (repeat) card.append(paragraph(`🔁 ${repeat}`, 'card-repeat'));
       }
+      // "Expires" or "Expired" in words with the date, so it never depends on colour.
+      const expiry = expiresBadge(parts.expires);
+      if (expiry) card.append(paragraph(`${expiry.expired ? '⚠' : '📄'} ${expiry.text}`, `card-expires${expiry.expired ? ' is-expired' : ''}`));
       // Like the plugin and Android: only the first photo shows, as the cover; a voice memo plays on the card.
       let photo = false;
       const documents = [];
@@ -1068,7 +1074,7 @@ function renderLabelList() {
   if (!counts.has(labelFilter)) labelFilter = '';
   $('label-list').replaceChildren(...[...counts].sort((a, b) => a[1].label.localeCompare(b[1].label)).map(([key, { label, count }]) => {
     const item = button('', () => showLabel(key), 'label-nav');
-    item.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${icons.tag}</svg>`;
+    item.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${isPaperDrawer(label) ? icons.drawer : icons.tag}</svg>`;
     const name = document.createElement('span');
     name.className = 'label-name';
     name.textContent = label;
@@ -1511,6 +1517,7 @@ function openEditor(entry) {
   $('editor').classList.toggle('in-space', Boolean(activeSpace));
   editing = entry;
   editingRevision = entry?.revision;
+  $('note-warn').value = '';
   $('note-path').value = entry?.file.path || `notes/${new Date().toISOString().replace(/[:.]/g, '-')}-${crypto.randomUUID().slice(0, 8)}.md`;
   $('note-path').readOnly = Boolean(entry);
   pathTyped = false;
@@ -1615,6 +1622,7 @@ function refreshProperties() {
   $('tag-options').replaceChildren(...allTags().map((tag) => new Option(tag)));
   $('note-order').value = parts.order ?? '';
   $('note-reminder').value = parts.reminder;
+  $('note-expires').value = validExpires(parts.expires);
   // Re-render the repeat picker only when its value changed, so typing in it keeps focus.
   const key = JSON.stringify([parts.reminder ? 1 : 0, parts.repeat, parts.until, parts.limit]);
   if (key !== repeatShown) { repeatShown = key; renderRepeat(parts); }
@@ -1645,6 +1653,20 @@ for (const [id, field] of [['label-input', 'labels'], ['tag-input', 'tags']]) {
 $('note-pinned').addEventListener('click', () => changeProperties({ pinned: $('note-pinned').getAttribute('aria-pressed') === 'true' ? null : true }));
 $('note-reminder').addEventListener('change', () => changeProperties({ reminder: $('note-reminder').value || null }));
 $('clear-reminder').addEventListener('click', () => changeProperties({ reminder: null }));
+// An expiry date puts the note in the Paper drawer; "Warn me" sets the reminder that early, replacing any other reminder.
+$('note-warn').append(new Option('No warning', ''), ...WARN_OPTIONS.map(({ key, label }) => new Option(label, key)));
+function changeExpires() {
+  const expires = validExpires($('note-expires').value);
+  if (!expires) { changeProperties({ expires: null }); return; }
+  const parts = noteParts($('note-content').value, $('note-path').value);
+  const changes = { expires, jotdrop_labels: withPaperDrawer(parts.labels) };
+  const reminder = warnReminder(expires, $('note-warn').value);
+  if (reminder) Object.assign(changes, { reminder, reminder_repeat: null, reminder_until: null, reminder_limit: null });
+  changeProperties(changes);
+}
+$('note-expires').addEventListener('change', changeExpires);
+$('note-warn').addEventListener('change', changeExpires);
+$('clear-expires').addEventListener('click', () => { $('note-warn').value = ''; changeProperties({ expires: null }); });
 $('note-order').addEventListener('change', () => {
   const value = $('note-order').value.trim();
   if (value !== '' && !Number.isFinite(Number(value))) { $('editor-message').textContent = 'Manual position must be a finite number.'; refreshProperties(); return; }

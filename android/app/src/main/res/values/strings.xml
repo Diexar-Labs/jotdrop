@@ -378,4 +378,22 @@
     <string name="theme_system">System (follow the phone)</string>
     <string name="theme_light">Light</string>
     <string name="theme_dark">Dark</string>
+    <!-- Paper drawer: scanned papers and expiry dates -->
+    <string name="action_scan_document">Scan document</string>
+    <string name="scan_unavailable">The document scanner needs Google Play services. Taking a photo with text recognition instead.</string>
+    <string name="scan_failed">Scanning failed: %1$s</string>
+    <string name="scan_running">Reading the text in your scan…</string>
+    <string name="scan_note_title">Scan %1$s</string>
+    <string name="scan_text_heading">Text from scan</string>
+    <string name="action_expires">Expires on…</string>
+    <string name="expires_badge">Expires %1$s</string>
+    <string name="expires_badge_expired">Expired %1$s</string>
+    <string name="expires_warn_title">Warn me</string>
+    <string name="expires_warn_none">No warning</string>
+    <string name="expires_warn_1w">1 week before</string>
+    <string name="expires_warn_1m">1 month before</string>
+    <string name="expires_warn_2m">2 months before</string>
+    <string name="expires_warn_3m">3 months before</string>
+    <string name="expires_help">An expiry date puts the note in the Paper drawer. A warning replaces the note\'s current reminder.</string>
+    <string name="expires_clear">Clear</string>
 </resources>

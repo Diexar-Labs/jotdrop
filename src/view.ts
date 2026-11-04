@@ -1,4 +1,5 @@
 import { App, ItemView, Menu, Modal, Notice, TFile, WorkspaceLeaf, normalizePath, setIcon } from "obsidian";
+import { isPaperDrawer } from "../cloud/shared/paper.mjs";
 import type JotDropPlugin from "./main";
 import { QuickCaptureModal, createNoteInFolder } from "./capture";
 import { AttachmentPreviewHint, EditNoteModal } from "./edit";
@@ -14,6 +15,7 @@ import {
   COLOR_NAMES,
   DEFAULT_META,
   formatChangedAgo,
+  formatExpiresBadge,
   formatReminderShort,
   formatRepeatShort,
   NoteMeta,
@@ -43,6 +45,8 @@ const TITLE_MAX_CHARS = 80;
 const PREVIEW_MAX_CHARS = 240;
 const LINK_CHIPS_VISIBLE = 3;
 const CARD_CHIPS_VISIBLE = 4;
+// A paper tray for the Paper drawer label; "archive" already means the Archive here.
+const PAPER_DRAWER_ICON = "inbox";
 const TAG_CHIPS_TOP_N = 8;
 const LONG_PRESS_MS = 500;
 // Cards are rendered in windows of this size; an IntersectionObserver sentinel
@@ -1651,6 +1655,7 @@ export class JotDropView extends ItemView {
     });
     const check = chip.createSpan({ cls: "jotdrop-filter-chip-check" });
     check.setText(isSelected ? "✓" : "");
+    if (isPaperDrawer(label.name)) setIcon(chip.createSpan({ cls: "jotdrop-filter-chip-icon" }), PAPER_DRAWER_ICON);
     chip.createSpan({ cls: "jotdrop-filter-chip-label", text: label.name });
     if (label.count > 0) {
       chip.createSpan({
@@ -1711,7 +1716,7 @@ export class JotDropView extends ItemView {
         menu.addItem((i) =>
           i
             .setTitle(`${label.name}  (${label.count})`)
-            .setIcon(isSelected ? "check" : "folder")
+            .setIcon(isSelected ? "check" : isPaperDrawer(label.name) ? PAPER_DRAWER_ICON : "folder")
             .onClick(() => {
               if (isSelected) this.deleteLabelSelected(label.name);
               else this.selectedLabels.add(label.name);
@@ -2122,6 +2127,12 @@ export class JotDropView extends ItemView {
       }
     }
 
+    // A paper's expiry date: the words say expired or not, the class only adds emphasis.
+    const expiresBadge = formatExpiresBadge(meta.expires);
+    if (expiresBadge) {
+      body.createDiv({ cls: `jotdrop-card-expires${expiresBadge.expired ? " is-expired" : ""}`, text: expiresBadge.text });
+    }
+
     if (meta.reminder && meta.reminderRepeat) {
       const repeatLabel = formatRepeatShort(meta.reminderRepeat);
       if (repeatLabel) {
@@ -2214,7 +2225,7 @@ export class JotDropView extends ItemView {
       // Label icon in front: a label differs from a #tag by shape, not by color.
       for (const label of meta.labels) {
         const chip = tagWrap.createSpan({ cls: "jotdrop-card-tag jotdrop-card-label", attr: { role: "button", tabindex: "0" } });
-        setIcon(chip.createSpan({ cls: "jotdrop-card-label-icon" }), "tag");
+        setIcon(chip.createSpan({ cls: "jotdrop-card-label-icon" }), isPaperDrawer(label) ? PAPER_DRAWER_ICON : "tag");
         chip.createSpan({ text: label });
         filterBy(chip, () => this.toggleLabelFilter(label));
         chips.push(chip);

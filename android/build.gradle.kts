@@ -141,6 +141,31 @@ tasks.register<JavaExec>("checkDrawingFormat") {
     args(file("checks/fixtures/drawing-v1.png").absolutePath)
 }
 
+val paperDrawerClasses = layout.buildDirectory.dir("paper-drawer-check")
+val paperDrawerSources = files("app/src/main/kotlin/com/diexar/keepcapture/PaperDrawer.kt",
+    "app/src/main/kotlin/com/diexar/keepcapture/Metadata.kt", "app/src/main/kotlin/com/diexar/keepcapture/InlineTags.kt",
+    "checks/PaperDrawerR.kt", "checks/PaperDrawerColor.kt", "checks/PaperDrawerCheck.kt")
+val paperDrawerCompile = tasks.register<JavaExec>("paperDrawerCompile") {
+    inputs.files(paperDrawerSources)
+    outputs.dir(paperDrawerClasses)
+    classpath(buildscript.configurations.getByName("classpath"))
+    mainClass.set("org.jetbrains.kotlin.cli.jvm.K2JVMCompiler")
+    doFirst {
+        args("-Xdisable-default-scripting-plugin", "-no-stdlib", "-no-reflect", "-jvm-target", "17", "-classpath",
+            project(":app").configurations.getByName("debugCompileClasspath").asPath,
+            "-d", paperDrawerClasses.get().asFile.absolutePath)
+        args(paperDrawerSources.files.map { it.absolutePath })
+    }
+}
+
+// Paper drawer: the same expiry and warning rules as cloud/shared/paper.mjs.
+tasks.register<JavaExec>("checkPaperDrawer") {
+    dependsOn(paperDrawerCompile)
+    classpath(paperDrawerClasses)
+    classpath(provider { project(":app").configurations.getByName("debugCompileClasspath") })
+    mainClass.set("com.diexar.keepcapture.PaperDrawerCheckKt")
+}
+
 val inlineTagsClasses = layout.buildDirectory.dir("inline-tags-check")
 val inlineTagsSources = files("app/src/main/kotlin/com/diexar/keepcapture/InlineTags.kt",
     "app/src/main/kotlin/com/diexar/keepcapture/CardText.kt", "checks/InlineTagsCheck.kt")

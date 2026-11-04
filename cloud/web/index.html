@@ -327,6 +327,9 @@
       <div class="reminder-row"><label for="note-reminder">Reminder</label><input id="note-reminder" type="datetime-local"><button id="clear-reminder" type="button">Clear</button></div>
       <div id="repeat-editor" class="repeat-editor"></div>
       <p class="editor-hint">Reminders sync to Android, which rings them. This browser does not ring reminders in the background.</p>
+      <div class="reminder-row"><label for="note-expires">Expires on</label><input id="note-expires" type="date"><button id="clear-expires" type="button">Clear</button></div>
+      <div class="reminder-row"><label for="note-warn">Warn me</label><select id="note-warn"></select></div>
+      <p class="editor-hint">An expiry date puts the note in the Paper drawer. A warning replaces the note's current reminder.</p>
       <label for="note-order">Manual position (lower comes first)</label><input id="note-order" type="number" step="any">
       <div class="photo-actions"><label class="upload-button" for="attach-file">Attach file<input id="attach-file" type="file" multiple></label><button id="add-drawing" type="button">Add drawing</button><button id="start-voice" type="button">Record voice memo</button><button id="stop-voice" type="button" hidden>Stop &amp; keep recording</button><button id="retry-voice" type="button" hidden>Retry keeping recording</button><button id="download-voice" type="button" hidden>Download recording</button></div>
       <p id="voice-message" role="status" aria-live="polite">Voice recording needs HTTPS or localhost and microphone permission. You can also upload an existing recording.</p>

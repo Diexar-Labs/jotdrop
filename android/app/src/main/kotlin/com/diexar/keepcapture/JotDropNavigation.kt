@@ -61,7 +61,8 @@ internal fun JotDropDrawer(
             items(labels, key = { it }) { label ->
                 NavigationDrawerItem(
                     label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    icon = { Icon(Icons.Filled.Label, null) },
+                    // The Paper drawer is a label with a drawer of its own, like on the website and in Obsidian.
+                    icon = { Icon(if (PaperDrawer.isPaperDrawer(label)) Icons.Filled.Inbox else Icons.Filled.Label, null) },
                     selected = folder == NoteFolder.NOTES && label.equals(selectedLabel, true),
                     onClick = { onNavigate(NoteFolder.NOTES, false, label) },
                     modifier = Modifier.padding(horizontal = 12.dp),

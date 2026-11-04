@@ -818,6 +818,49 @@
   gap: 8px;
 }
 
+/* Paper drawer: same shape as the reminder badge; "Expires"/"Expired" in the text carries the meaning. */
+.jotdrop-card-expires {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 0 6px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 0.78em;
+  background: var(--background-modifier-hover);
+  color: var(--text-muted);
+  border: 1px solid var(--background-modifier-border);
+}
+
+.jotdrop-card-reminder + .jotdrop-card-expires {
+  margin-left: 6px;
+}
+
+.jotdrop-card-expires.is-expired {
+  border-style: dashed;
+  font-weight: 600;
+  color: var(--text-normal);
+}
+
+.jotdrop-expires-row {
+  align-items: center;
+  gap: 8px;
+}
+
+.jotdrop-edit-hint {
+  font-size: 0.8em;
+  color: var(--text-muted);
+  margin: -4px 0 8px;
+}
+
+.jotdrop-filter-chip-icon {
+  display: inline-flex;
+}
+
+.jotdrop-filter-chip-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
 .jotdrop-edit-reminder {
   padding: 4px 8px;
   border-radius: 6px;

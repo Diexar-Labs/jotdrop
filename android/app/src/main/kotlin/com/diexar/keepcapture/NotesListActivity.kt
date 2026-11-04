@@ -17,7 +17,11 @@ import androidx.activity.compose.ReportDrawnWhen
 import androidx.activity.enableEdgeToEdge
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.PickVisualMediaRequest
+import com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions
+import com.google.mlkit.vision.documentscanner.GmsDocumentScanning
+import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.FileProvider
 import java.io.File
@@ -58,7 +62,9 @@ import androidx.compose.foundation.text.ClickableText
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddAPhoto
+import androidx.compose.material.icons.filled.DocumentScanner
 import androidx.compose.material.icons.filled.Draw
+import androidx.compose.material.icons.filled.EventBusy
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
@@ -255,6 +261,8 @@ class NotesListActivity : ThemedComponentActivity() {
     // OCR-modus blijft staan tot de capture-flow afgerond is. Met deze flag weet
     // de result-callback of er na de copy ook nog OCR moet draaien.
     private var pendingOcr: Boolean = false
+    // Paper drawer: the camera stands in for the document scanner, so the photo goes in the drawer.
+    private var pendingPaper: Boolean = false
 
     // Sorteermodus (newest/manual), gepersisteerd in prefs. Gedeeld met Compose
     // zodat de top-bar het actieve vinkje kan tonen en de grid weet of slepen aan staat.
@@ -283,11 +291,13 @@ class NotesListActivity : ThemedComponentActivity() {
         val uri = pendingCameraUri
         val file = pendingCameraFile
         val ocr = pendingOcr
+        val paper = pendingPaper
         pendingCameraUri = null
         pendingCameraFile = null
         pendingOcr = false
+        pendingPaper = false
         if (success && uri != null) {
-            saveCapturedImage(uri, deleteSourceAfter = file, withOcr = ocr)
+            saveCapturedImage(uri, deleteSourceAfter = file, withOcr = ocr, paper = paper)
         } else {
             // Gebruiker annuleerde of capture mislukte — temp file opruimen.
             file?.delete()
@@ -308,6 +318,12 @@ class NotesListActivity : ThemedComponentActivity() {
                 Toast.makeText(this@NotesListActivity, getString(R.string.toast_error, err.message ?: err.javaClass.simpleName), Toast.LENGTH_LONG).show()
             }
         }
+    }
+
+    // Paper drawer: Google's document scanner (Play services) hands back the pages and a PDF.
+    private val scanLauncher = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+        if (result.resultCode != RESULT_OK) return@registerForActivityResult
+        GmsDocumentScanningResult.fromActivityResultIntent(result.data)?.let(::saveScan)
     }
 
     private val pickImageLauncher = registerForActivityResult(
@@ -427,6 +443,9 @@ class NotesListActivity : ThemedComponentActivity() {
                     onOcrGallery = {
                         if (requireVaultOrPromptSettings()) launchPicker(withOcr = true)
                     },
+                    onScanDocument = {
+                        if (requireVaultOrPromptSettings()) launchScanner()
+                    },
                     isRecordingFlow = isRecording.asStateFlow(),
                     pendingMemoFlow = pendingMemo.asStateFlow(),
                     isSavingMemoFlow = isSavingMemo.asStateFlow(),
@@ -503,7 +522,52 @@ class NotesListActivity : ThemedComponentActivity() {
         )
     }
 
-    private fun saveCapturedImage(uri: Uri, deleteSourceAfter: File?, withOcr: Boolean) {
+    /** Opens Google's document scanner; without Play services a photo with text recognition goes in the drawer instead. */
+    private fun launchScanner() {
+        val options = GmsDocumentScannerOptions.Builder()
+            .setGalleryImportAllowed(true)
+            .setPageLimit(20)
+            .setResultFormats(GmsDocumentScannerOptions.RESULT_FORMAT_JPEG, GmsDocumentScannerOptions.RESULT_FORMAT_PDF)
+            .setScannerMode(GmsDocumentScannerOptions.SCANNER_MODE_FULL)
+            .build()
+        val fallback = {
+            Toast.makeText(this, R.string.scan_unavailable, Toast.LENGTH_LONG).show()
+            pendingPaper = true
+            launchCamera(withOcr = true)
+        }
+        try {
+            GmsDocumentScanning.getClient(options).getStartScanIntent(this)
+                .addOnSuccessListener { sender -> scanLauncher.launch(IntentSenderRequest.Builder(sender).build()) }
+                .addOnFailureListener { fallback() }
+        } catch (e: Exception) {
+            fallback()
+        }
+    }
+
+    /** Every page is read on this device, so search finds the paper; the note goes in the Paper drawer. */
+    private fun saveScan(scan: GmsDocumentScanningResult) {
+        val pages = scan.pages.orEmpty().map { it.imageUri }
+        if (pages.isEmpty() && scan.pdf == null) return
+        stateEpoch++
+        lifecycleScope.launch {
+            Toast.makeText(this@NotesListActivity, R.string.scan_running, Toast.LENGTH_SHORT).show()
+            val text = pages.mapNotNull { OcrService.recognizeFromUri(this@NotesListActivity, it).getOrNull()?.takeIf(String::isNotBlank) }
+                .joinToString("\n\n")
+            val title = text.lineSequence().map(String::trim).firstOrNull { line -> line.count(Char::isLetter) >= 4 }?.take(60)
+                ?: getString(R.string.scan_note_title, java.text.DateFormat.getDateInstance().format(java.util.Date()))
+            val result = withContext(Dispatchers.IO) {
+                Storage.saveScanNote(this@NotesListActivity, scan.pdf?.uri, pages.firstOrNull(), text, title, getString(R.string.scan_text_heading))
+            }
+            result.onSuccess { filename ->
+                Toast.makeText(this@NotesListActivity, getString(R.string.toast_saved, filename), Toast.LENGTH_SHORT).show()
+                reload()
+            }.onFailure { err ->
+                Toast.makeText(this@NotesListActivity, getString(R.string.scan_failed, err.message ?: err.javaClass.simpleName), Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    private fun saveCapturedImage(uri: Uri, deleteSourceAfter: File?, withOcr: Boolean, paper: Boolean = false) {
         stateEpoch++
         lifecycleScope.launch {
             if (withOcr) {
@@ -533,6 +597,7 @@ class NotesListActivity : ThemedComponentActivity() {
                     uri,
                     subject = null,
                     extraText = ocrText.ifBlank { null },
+                    labels = if (paper) listOf(PaperDrawer.LABEL) else emptyList(),
                 )
             }
             deleteSourceAfter?.delete()
@@ -870,6 +935,7 @@ private fun NotesListScreen(
     onDraw: () -> Unit,
     onOcrCamera: () -> Unit,
     onOcrGallery: () -> Unit,
+    onScanDocument: () -> Unit,
     isRecordingFlow: StateFlow<Boolean>,
     pendingMemoFlow: StateFlow<VoiceMemoRecorder.RecordedMemo?>,
     isSavingMemoFlow: StateFlow<Boolean>,
@@ -925,6 +991,8 @@ private fun NotesListScreen(
     var helpOpen by remember { mutableStateOf(false) }
     // The note a card's own menu acts on; without it the dialogs act on the selected notes.
     var cardTarget by remember { mutableStateOf<Uri?>(null) }
+    // Paper drawer: the note whose expiry date is being set from its card.
+    var expiresTarget by remember { mutableStateOf<NoteSummary?>(null) }
     var cardFolderCopy by remember { mutableStateOf<Boolean?>(null) }
     var cardFolders by remember { mutableStateOf<List<String>?>(null) }
 
@@ -1075,6 +1143,7 @@ private fun NotesListScreen(
         when (action) {
             CardAction.COLOR -> { cardTarget = note.uri; bulkColorOpen = true }
             CardAction.LABELS -> { cardTarget = note.uri; bulkLabelsOpen = true }
+            CardAction.EXPIRES -> expiresTarget = note
             CardAction.DELETE -> { cardTarget = note.uri; showBulkDeleteDialog = true }
             CardAction.MOVE, CardAction.COPY -> {
                 cardTarget = note.uri
@@ -1342,6 +1411,14 @@ private fun NotesListScreen(
                         expanded = photoMenuExpanded,
                         onDismissRequest = { photoMenuExpanded = false },
                     ) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.action_scan_document)) },
+                            leadingIcon = { Icon(Icons.Filled.DocumentScanner, contentDescription = null) },
+                            onClick = {
+                                photoMenuExpanded = false
+                                onScanDocument()
+                            },
+                        )
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.action_take_photo)) },
                             leadingIcon = { Icon(Icons.Filled.CameraAlt, contentDescription = null) },
@@ -1623,6 +1700,25 @@ private fun NotesListScreen(
                 onRefresh()
             },
             onDismiss = { labelManagerOpen = false },
+        )
+    }
+    expiresTarget?.let { note ->
+        ExpiresDialog(
+            initial = note.meta.expires,
+            onSave = { day, lead ->
+                expiresTarget = null
+                scope.launch {
+                    val result = withContext(Dispatchers.IO) { Storage.setExpires(context, note.uri, day, lead) }
+                    result.onSuccess { reminder ->
+                        if (reminder != null) {
+                            ReminderScheduler.cancel(context, note.uri)
+                            ReminderScheduler.schedule(context, note.uri, reminder)
+                        }
+                    }.onFailure { Toast.makeText(context, context.getString(R.string.toast_error, it.message ?: ""), Toast.LENGTH_LONG).show() }
+                    onRefresh()
+                }
+            },
+            onDismiss = { expiresTarget = null },
         )
     }
     if (bulkColorOpen) {
@@ -2627,6 +2723,10 @@ private fun NoteCard(
                         Spacer(Modifier.height(6.dp))
                         ReminderBadge(reminderAt, foreground = fg)
                     }
+                    note.meta.expires?.let { expires ->
+                        Spacer(Modifier.height(6.dp))
+                        ExpiresBadge(expires, foreground = fg)
+                    }
                     // A cloud conflict copy says what it is and opens the comparison, like in Obsidian.
                     if (note.filename.contains(CLOUD_CONFLICT_MARK)) {
                         Spacer(Modifier.height(6.dp))
@@ -2833,13 +2933,13 @@ internal fun conflictOriginalName(filename: String): String =
     filename.replace(Regex("\\.cloud-conflict-r\\d+(?:-[0-9a-fA-F-]+)?(?=\\.[^.]*$|$)"), "")
 
 /** What a card's own menu can do, depending on the folder it is shown in. */
-internal enum class CardAction { COLOR, LABELS, ARCHIVE, RESTORE, MOVE, COPY, DELETE, SHARE, LINK, GROUP, MOVE_TO_MINE }
+internal enum class CardAction { COLOR, LABELS, EXPIRES, ARCHIVE, RESTORE, MOVE, COPY, DELETE, SHARE, LINK, GROUP, MOVE_TO_MINE }
 /** Pin, labels and archive are per person, so a shared note's card offers what goes for everyone. */
 internal val SHARED_CARD_ACTIONS = listOf(CardAction.COLOR, CardAction.GROUP, CardAction.MOVE_TO_MINE, CardAction.DELETE)
 
 internal fun cardActionsFor(folder: NoteFolder): List<CardAction> = when (folder) {
-    NoteFolder.NOTES -> listOf(CardAction.COLOR, CardAction.LABELS, CardAction.ARCHIVE, CardAction.SHARE, CardAction.MOVE, CardAction.COPY, CardAction.DELETE)
-    NoteFolder.ARCHIVE -> listOf(CardAction.COLOR, CardAction.LABELS, CardAction.RESTORE, CardAction.MOVE, CardAction.COPY, CardAction.DELETE)
+    NoteFolder.NOTES -> listOf(CardAction.COLOR, CardAction.LABELS, CardAction.EXPIRES, CardAction.ARCHIVE, CardAction.SHARE, CardAction.MOVE, CardAction.COPY, CardAction.DELETE)
+    NoteFolder.ARCHIVE -> listOf(CardAction.COLOR, CardAction.LABELS, CardAction.EXPIRES, CardAction.RESTORE, CardAction.MOVE, CardAction.COPY, CardAction.DELETE)
     NoteFolder.TRASH -> listOf(CardAction.RESTORE, CardAction.DELETE)
 }
 
@@ -2861,6 +2961,7 @@ private fun CardMenu(actions: List<CardAction>, foreground: Color, onAction: (Ca
                 val (icon, text) = when (action) {
                     CardAction.COLOR -> Icons.Filled.Palette to R.string.action_color
                     CardAction.LABELS -> Icons.Filled.Label to R.string.nav_labels
+                    CardAction.EXPIRES -> Icons.Filled.EventBusy to R.string.action_expires
                     CardAction.ARCHIVE -> Icons.Filled.Archive to R.string.action_archive
                     CardAction.RESTORE -> Icons.Filled.Restore to R.string.action_restore
                     CardAction.MOVE -> Icons.Filled.DriveFileMove to R.string.action_move_to_folder

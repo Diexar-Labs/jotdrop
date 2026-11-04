@@ -1,5 +1,6 @@
 import { App, TFile } from "obsidian";
 import { parseRepeat } from "./recurrence";
+import { expiresBadge, shortDate, validExpires } from "../cloud/shared/paper.mjs";
 
 export type ColorName =
   | "default"
@@ -28,7 +29,7 @@ export const COLOR_NAMES: ColorName[] = [
   "gray",
 ];
 
-import { t } from "./i18n";
+import { getLang, t } from "./i18n";
 
 /** Localized display label for a note color (looks up `color_<name>`). */
 export function colorLabel(name: ColorName): string {
@@ -55,6 +56,8 @@ export interface NoteMeta {
   reminderDone: number;
   /** Manual-sort `order` rank (finite number), or null when unset. */
   order: number | null;
+  /** `expires` date (YYYY-MM-DD) of a paper in the Paper drawer, or null. */
+  expires: string | null;
 }
 
 export const DEFAULT_META: NoteMeta = {
@@ -69,6 +72,7 @@ export const DEFAULT_META: NoteMeta = {
   reminderLimit: null,
   reminderDone: 0,
   order: null,
+  expires: null,
 };
 
 export function isColorName(value: unknown): value is ColorName {
@@ -164,7 +168,9 @@ export function readMeta(app: App, file: TFile): NoteMeta {
     order = fm.order;
   }
 
-  return { color, tags, inlineTags, labels, pinned, reminder, reminderRepeat, reminderUntil, reminderLimit, reminderDone, order };
+  const expires = typeof fm.expires === "string" ? validExpires(fm.expires) || null : null;
+
+  return { color, tags, inlineTags, labels, pinned, reminder, reminderRepeat, reminderUntil, reminderLimit, reminderDone, order, expires };
 }
 
 /**
@@ -236,6 +242,11 @@ export async function updateMeta(
       if (patch.order === null || !Number.isFinite(patch.order)) delete fm.order;
       else fm.order = patch.order;
     }
+    if (patch.expires !== undefined) {
+      const day = validExpires(patch.expires);
+      if (day) fm.expires = day;
+      else delete fm.expires;
+    }
   });
 }
 
@@ -260,6 +271,16 @@ export function parseReminderMs(reminder: string | null): number {
   if (!reminder) return NaN;
   const ms = Date.parse(reminder);
   return Number.isFinite(ms) ? ms : NaN;
+}
+
+/** The card badge for `expires`: "Expires 12 Mar 2027" or "Expired 12 Mar 2027", in the UI language. Null without a date. */
+export function formatExpiresBadge(expires: string | null): { expired: boolean; text: string } | null {
+  const badge = expiresBadge(expires);
+  if (!badge || !expires) return null;
+  const [year, month, day] = expires.split("-").map(Number);
+  const date = getLang() === "en" ? shortDate(expires)
+    : new Date(year, month - 1, day).toLocaleDateString(getLang(), { day: "numeric", month: "short", year: "numeric" });
+  return { expired: badge.expired, text: t(badge.expired ? "expired_badge" : "expires_badge", date) };
 }
 
 /**

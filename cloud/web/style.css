@@ -207,8 +207,9 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .link-more, .chip-more { color: var(--muted); border: 1px dashed var(--line); }
 .chip-more { display: inline-block; width: fit-content; margin: .25rem 0 0; padding: .15rem .6rem; border-radius: 999px; font-size: .75rem; font-weight: 500; }
 .note-card button.label-chip.is-label::before { content: "🏷 " / ""; opacity: .7; }
-.card-reminder, .card-repeat { display: inline-block; width: fit-content; margin: .35rem .3rem 0 0; padding: .1rem .55rem; border: 1px solid var(--line); border-radius: 999px; font-size: .75rem; font-weight: 500; }
+.card-reminder, .card-repeat, .card-expires { display: inline-block; width: fit-content; margin: .35rem .3rem 0 0; padding: .1rem .55rem; border: 1px solid var(--line); border-radius: 999px; font-size: .75rem; font-weight: 500; }
 .card-reminder.is-overdue { border-style: dashed; border-color: currentColor; font-weight: 700; }
+.card-expires.is-expired { border-style: dashed; border-color: currentColor; font-weight: 700; }
 .card-date { margin: .5rem 0 0; color: var(--muted); font-size: .78rem; }
 .note-card.is-archived > :not(.card-paper, .card-tape, .card-actions) { opacity: .7; }
 .tag-filter { display: flex; flex-wrap: wrap; gap: .4rem; padding-bottom: 1rem; }

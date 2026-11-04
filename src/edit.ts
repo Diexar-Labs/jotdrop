@@ -5,6 +5,7 @@ import { LightboxModal } from "./lightbox";
 import { DrawingModal, isDrawingName, readDrawingAt, saveDrawingFile } from "./drawing";
 import { voidAsync } from "./asyncUtil";
 import { RepeatEditor } from "./repeat";
+import { WARN_OPTIONS, warnReminder, withPaperDrawer } from "../cloud/shared/paper.mjs";
 import { MarkdownHelpModal } from "./markdownHelp";
 import { t } from "./i18n";
 import { keepModalAboveKeyboard } from "./mobileKeyboard";
@@ -53,6 +54,7 @@ interface EditableNote {
   reminderRepeat: string | null;
   reminderUntil: string | null;
   reminderLimit: number | null;
+  expires: string | null;
 }
 
 /**
@@ -82,6 +84,8 @@ export class EditNoteModal extends Modal {
   private touchOnTextField = false;
   private cleanupKeyboard: (() => void) | null = null;
   private cleanupListEditor: (() => void) | null = null;
+  // The warning picked in this modal; it is not stored, the reminder it made is.
+  private warnChoice = "";
 
   constructor(
     app: App,
@@ -119,6 +123,7 @@ export class EditNoteModal extends Modal {
     // title and the card keeps deriving one from the first words of the body.
     const { title, body, level } = splitHeadingTitle(textPart);
     this.titleLevel = level;
+    this.warnChoice = "";
     const meta = readMeta(this.app, this.file);
 
     this.state = {
@@ -133,6 +138,7 @@ export class EditNoteModal extends Modal {
       reminderRepeat: meta.reminderRepeat,
       reminderUntil: meta.reminderUntil,
       reminderLimit: meta.reminderLimit,
+      expires: meta.expires,
     };
     this.originalTitle = title;
     this.originalBody = body;
@@ -434,7 +440,10 @@ export class EditNoteModal extends Modal {
       }
     }));
 
-    if (!inGroup) this.renderRepeatControls(parent);
+    if (!inGroup) {
+      this.renderRepeatControls(parent);
+      this.renderExpiresControls(parent);
+    }
 
     // Tags + chip input — input lives inside the chips container so it always
     // follows the last chip, even when chips wrap to a new line.
@@ -524,6 +533,61 @@ export class EditNoteModal extends Modal {
       },
     );
     editor.render();
+  }
+
+  /**
+   * "Expires on" for papers: the date goes to `expires`, the note into the Paper drawer, and a chosen
+   * warning becomes the note's reminder (cloud/shared/paper.mjs, the same on the web and Android).
+   */
+  private renderExpiresControls(parent: HTMLElement): void {
+    const row = parent.createDiv({ cls: "jotdrop-edit-row jotdrop-expires-row" });
+    row.createSpan({ text: t("label_expires"), cls: "jotdrop-edit-label" });
+    const dateInput = row.createEl("input", { cls: "jotdrop-edit-expires", attr: { type: "date" } });
+    if (this.state.expires) dateInput.value = this.state.expires;
+    row.createSpan({ text: t("label_warn"), cls: "jotdrop-edit-label" });
+    const warnSelect = row.createEl("select", { cls: "dropdown jotdrop-edit-warn" });
+    warnSelect.createEl("option", { value: "", text: t("warn_none") });
+    for (const option of WARN_OPTIONS) warnSelect.createEl("option", { value: option.key, text: t(`warn_${option.key}`) });
+    warnSelect.value = this.warnChoice;
+    const clear = row.createEl("button", { cls: "jotdrop-edit-linkbtn", text: t("action_clear_expires") });
+    parent.createDiv({ cls: "jotdrop-edit-hint", text: t("expires_hint") });
+    const apply = voidAsync(async () => {
+      this.warnChoice = warnSelect.value;
+      const expires = dateInput.value.trim() || null;
+      if (!expires) return;
+      const reminder = warnReminder(expires, warnSelect.value);
+      this.state.expires = expires;
+      if (reminder) {
+        this.state.reminder = reminder;
+        this.state.reminderRepeat = null;
+        this.state.reminderUntil = null;
+        this.state.reminderLimit = null;
+      }
+      try {
+        await updateMeta(this.app, this.file, {
+          expires,
+          labels: withPaperDrawer(readMeta(this.app, this.file).labels),
+          ...(reminder ? { reminder, reminderRepeat: null, reminderUntil: null, reminderLimit: null } : {}),
+        });
+        // Shows the new reminder in its own field and resets the repeat picker.
+        if (reminder) this.renderControls(parent);
+        this.plugin.refreshViews();
+      } catch (err) {
+        new Notice(t("notice_error", err instanceof Error ? err.message : String(err)));
+      }
+    });
+    dateInput.addEventListener("change", apply);
+    warnSelect.addEventListener("change", apply);
+    clear.addEventListener("click", voidAsync(async () => {
+      dateInput.value = "";
+      this.state.expires = null;
+      try {
+        await updateMeta(this.app, this.file, { expires: null });
+        this.plugin.refreshViews();
+      } catch (err) {
+        new Notice(t("notice_error", err instanceof Error ? err.message : String(err)));
+      }
+    }));
   }
 
   private renderChips(): void {

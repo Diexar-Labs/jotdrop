@@ -88,6 +88,8 @@ data class NoteMeta(
     // `#hashtags` uit de body, zoals Obsidian ze telt. Alleen tonen en filteren;
     // de editor en FrontmatterWriter gebruiken uitsluitend `tags`.
     val inlineTags: List<String> = emptyList(),
+    // Paper drawer: "YYYY-MM-DD". Only read here; FrontmatterWriter.applyExpires sets it, every other write keeps it.
+    val expires: String? = null,
 ) {
     val allTags: List<String> get() = tags + inlineTags
 }
@@ -130,6 +132,7 @@ object FrontmatterParser {
         var reminderUntil: String? = null
         var reminderLimit: Int? = null
         var reminderDone = 0
+        var expires: String? = null
         val tags = mutableListOf<String>()
         val seen = mutableSetOf<String>()
         val labels = mutableListOf<String>()
@@ -178,6 +181,7 @@ object FrontmatterParser {
                 "reminder_done" -> {
                     reminderDone = unquote(rawValue).trim().toIntOrNull()?.coerceAtLeast(0) ?: 0
                 }
+                "expires" -> expires = PaperDrawer.validExpires(unquote(rawValue))
                 "tags", "jotdrop_labels" -> {
                     val isTag = key.equals("tags", true)
                     val values = if (isTag) tags else labels
@@ -230,6 +234,7 @@ object FrontmatterParser {
             reminderLimit = reminderLimit,
             reminderDone = reminderDone,
             labels = labels.toList(),
+            expires = expires,
         )
     }
 
@@ -307,6 +312,22 @@ object FrontmatterWriter {
 
     fun applyLabels(content: String, labels: List<String>): String =
         write(content, NoteMeta(), labels, labelsOnly = true)
+
+    /** Sets or clears only `expires` (Paper drawer); everything else in the frontmatter stays as it is. */
+    fun applyExpires(content: String, expires: String?): String {
+        val parsed = FrontmatterParser.parse(content)
+        val lines = if (parsed.frontmatter.isNotEmpty()) extractYamlLines(parsed.frontmatter) else emptyList()
+        val kept = lines.filterNot { it.trim().substringBefore(':').trim().equals("expires", ignoreCase = true) && it.trim().contains(':') }
+        val day = PaperDrawer.validExpires(expires)
+        val newLines = if (day != null) kept + "expires: ${yamlString(day)}" else kept
+        if (newLines.isEmpty()) return parsed.body
+        return buildString {
+            append("---\n")
+            for (l in newLines) { append(l); append('\n') }
+            append("---\n")
+            append(parsed.body)
+        }
+    }
 
     private fun write(content: String, meta: NoteMeta, labels: List<String>?, labelsOnly: Boolean): String {
         val parsed = FrontmatterParser.parse(content)

@@ -283,6 +283,7 @@ object Storage {
         subject: String?,
         extraText: String?,
         name: String? = null,
+        labels: List<String> = emptyList(),
     ): Result<String> {
         val basename = copyImageToAttachments(context, imageUri, name = name).getOrElse {
             return Result.failure(it)
@@ -298,7 +299,42 @@ object Storage {
                 append(extraText.trim())
             }
         }
-        return saveNote(context, body)
+        return saveNote(context, if (labels.isEmpty()) body else FrontmatterWriter.applyLabels(body, labels))
+    }
+
+    /**
+     * Paper drawer: a scanned document becomes a note with the first page as its picture, the PDF,
+     * and the recognized text at the bottom, so search finds it. It goes in the Paper drawer.
+     */
+    fun saveScanNote(context: Context, pdfUri: Uri?, firstPage: Uri?, text: String, title: String, textHeading: String): Result<String> {
+        val stamp = SimpleDateFormat("yyyy-MM-dd HHmmss", Locale.US).format(Date())
+        val picture = firstPage?.let { copyImageToAttachments(context, it, name = "scan-$stamp.jpg").getOrElse { e -> return Result.failure(e) } }
+        val pdf = pdfUri?.let { copyFileToAttachments(context, it, "application/pdf", "scan-$stamp.pdf").getOrElse { e -> return Result.failure(e) } }
+        val body = buildString {
+            append("# "); append(sanitizeTitleFromShare(title).ifEmpty { "Scan $stamp" }); append("\n\n")
+            if (picture != null) { append("![["); append(picture); append("]]\n") }
+            if (pdf != null) { append("![["); append(pdf); append("]]\n") }
+            if (text.isNotBlank()) { append("\n## "); append(textHeading); append("\n\n"); append(text.trim()); append("\n") }
+        }
+        return saveNote(context, FrontmatterWriter.applyLabels(body, listOf(PaperDrawer.LABEL)))
+    }
+
+    /** Copies any file into the attachments folder under [basename]. */
+    private fun copyFileToAttachments(context: Context, source: Uri, mime: String, basename: String): Result<String> {
+        synchronized(cloudFileLock) {
+            val folder = getOrCreateAttachmentsFolder(context).getOrElse { return Result.failure(it) }
+            val target = folder.createFile(mime, basename) ?: return Result.failure(IllegalStateException("Kan bijlage niet aanmaken."))
+            return try {
+                val copied = context.contentResolver.openInputStream(source)?.use { input ->
+                    context.contentResolver.openOutputStream(target.uri, "wt")?.use { out -> input.copyTo(out) }
+                }
+                if (copied == null) { target.delete(); Result.failure(IllegalStateException("Kan bijlage niet schrijven.")) }
+                else Result.success(target.name ?: basename)
+            } catch (e: Exception) {
+                target.delete()
+                Result.failure(e)
+            }
+        }
     }
 
     /**
@@ -1239,6 +1275,30 @@ object Storage {
             },
             onFailure = { Result.failure(it) },
         )
+    }
+
+    /**
+     * Paper drawer: sets or clears `expires`. A date also puts the note in the Paper drawer, and with a
+     * [warnLead] the warning replaces the note's reminder. Returns the reminder to schedule (null = none changed).
+     */
+    suspend fun setExpires(context: Context, uri: Uri, expires: String?, warnLead: String?): Result<String?> = noteWriteMutex.withLock {
+        runCatching {
+            var content = FrontmatterWriter.applyExpires(readNote(context, uri).getOrThrow(), expires)
+            val day = PaperDrawer.validExpires(expires)
+            var reminder: String? = null
+            if (day != null) {
+                val meta = FrontmatterParser.parse(content).meta
+                content = FrontmatterWriter.applyLabels(content, PaperDrawer.withLabel(meta.labels))
+                reminder = PaperDrawer.warnReminder(day, warnLead)
+                if (reminder != null) {
+                    content = FrontmatterWriter.apply(content, FrontmatterParser.parse(content).meta.copy(
+                        reminder = reminder, reminderRepeat = null, reminderUntil = null, reminderLimit = null, reminderDone = 0,
+                    ))
+                }
+            }
+            updateNote(context, uri, content).getOrThrow()
+            reminder
+        }
     }
 
     suspend fun updateLabels(context: Context, uri: Uri, added: Set<String>, removed: Set<String>): Result<List<String>> = noteWriteMutex.withLock {

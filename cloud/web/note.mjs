@@ -48,11 +48,11 @@ export function noteSummary(text, path) {
     .map((match) => match[1]).filter((tag) => /\D/.test(tag) && !seen.has(tag.toLowerCase()) && seen.add(tag.toLowerCase()));
   const color = scalar(header, 'color');
   const order = scalar(header, 'order');
-  return { title, body, preview: body.replace(/^\s*#\s+.+(?:\r?\n|$)/, '').trim(), labels, tags, inlineTags, color: colors.has(color) ? color : 'default', pinned: /^(true|yes|on|1)$/i.test(scalar(header, 'pinned')), reminder: scalar(header, 'reminder'), repeat: scalar(header, 'reminder_repeat'), until: scalar(header, 'reminder_until'), limit: scalar(header, 'reminder_limit'), order: order && Number.isFinite(Number(order)) ? Number(order) : undefined };
+  return { title, body, preview: body.replace(/^\s*#\s+.+(?:\r?\n|$)/, '').trim(), labels, tags, inlineTags, color: colors.has(color) ? color : 'default', pinned: /^(true|yes|on|1)$/i.test(scalar(header, 'pinned')), reminder: scalar(header, 'reminder'), expires: scalar(header, 'expires'), repeat: scalar(header, 'reminder_repeat'), until: scalar(header, 'reminder_until'), limit: scalar(header, 'reminder_limit'), order: order && Number.isFinite(Number(order)) ? Number(order) : undefined };
 }
 
 export function updateMetadata(text, changes) {
-  const allowed = new Set(['color', 'pinned', 'jotdrop_labels', 'tags', 'order', 'reminder', 'reminder_repeat', 'reminder_until', 'reminder_limit', 'reminder_done']);
+  const allowed = new Set(['color', 'pinned', 'jotdrop_labels', 'tags', 'order', 'reminder', 'reminder_repeat', 'reminder_until', 'reminder_limit', 'reminder_done', 'expires']);
   if (Object.keys(changes).some((key) => !allowed.has(key))) throw new Error('Unsupported note property.');
   const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text);
   if (!match && /^---\r?\n/.test(text)) throw new Error('Close the YAML frontmatter before changing note properties.');

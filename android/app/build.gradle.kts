@@ -156,6 +156,8 @@ dependencies {
     // het Latijns-schrift-model in de APK (~3-4MB), zodat de app ook werkt op
     // toestellen zonder Google Play (en op GitHub-gedistribueerde builds).
     implementation("com.google.mlkit:text-recognition:16.0.1")
+    // Paper drawer: Google's document scanner, delivered by Play services (camera, edges, PDF).
+    implementation("com.google.android.gms:play-services-mlkit-document-scanner:16.0.0")
     // Argon2id for cloud accounts (docs/cloud-accounts-design.md); used directly, not as a JCA provider.
     implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
     // Android's own Google account picker for "Continue with Google"; the browser stays the fallback.

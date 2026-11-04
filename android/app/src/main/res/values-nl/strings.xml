@@ -369,4 +369,22 @@
     <string name="theme_system">Systeem (zoals de telefoon)</string>
     <string name="theme_light">Licht</string>
     <string name="theme_dark">Donker</string>
+    <!-- Paper drawer: gescande papieren en vervaldatums -->
+    <string name="action_scan_document">Document scannen</string>
+    <string name="scan_unavailable">De documentscanner heeft Google Play-services nodig. Je maakt nu een foto met tekstherkenning.</string>
+    <string name="scan_failed">Scannen mislukt: %1$s</string>
+    <string name="scan_running">De tekst in je scan wordt gelezen…</string>
+    <string name="scan_note_title">Scan %1$s</string>
+    <string name="scan_text_heading">Tekst uit de scan</string>
+    <string name="action_expires">Verloopt op…</string>
+    <string name="expires_badge">Verloopt %1$s</string>
+    <string name="expires_badge_expired">Verlopen %1$s</string>
+    <string name="expires_warn_title">Waarschuw me</string>
+    <string name="expires_warn_none">Geen waarschuwing</string>
+    <string name="expires_warn_1w">1 week vooraf</string>
+    <string name="expires_warn_1m">1 maand vooraf</string>
+    <string name="expires_warn_2m">2 maanden vooraf</string>
+    <string name="expires_warn_3m">3 maanden vooraf</string>
+    <string name="expires_help">Met een vervaldatum komt de notitie in de Paper drawer. Een waarschuwing vervangt de huidige herinnering van de notitie.</string>
+    <string name="expires_clear">Wissen</string>
 </resources>

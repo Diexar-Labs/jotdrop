@@ -135,3 +135,17 @@ test('editing a drawing points the note at the new file and leaves other links a
   assert.equal(replaced, '# Drawing\n\n![[drawing-2026-11-02 150000.png]]\n![Source photo](../attachments/photo-1.png)\n![[drawing-2026-11-02 150000.png]]\n');
   assert.equal(replaceAttachment('no link here', 'notes/test.md', 'attachments/a.png', 'attachments/b.png'), 'no link here');
 });
+
+test('an expiry date is read and written as a quoted date, like Android and the plugin', () => {
+  const text = updateMetadata('# Passport\n', { expires: '2027-03-12', jotdrop_labels: ['Paper drawer'], reminder: '2027-02-12T09:00' });
+  assert(text.includes('expires: "2027-03-12"\n'));
+  const summary = noteSummary(text, 'notes/passport.md');
+  assert.equal(summary.expires, '2027-03-12');
+  assert.deepEqual(summary.labels, ['Paper drawer']);
+  assert.equal(summary.reminder, '2027-02-12T09:00');
+  assert.equal(noteSummary("---\nexpires: '2028-01-01'\n---\nx", 'notes/a.md').expires, '2028-01-01');
+  const cleared = updateMetadata(text, { expires: null });
+  assert(!cleared.includes('expires'));
+  assert.equal(noteSummary(cleared, 'notes/passport.md').reminder, '2027-02-12T09:00');
+  assert.equal(noteSummary('# none', 'notes/none.md').expires, '');
+});
