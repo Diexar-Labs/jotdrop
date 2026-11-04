@@ -497,6 +497,69 @@ object CloudSyncManager {
         }
     }
 
+    /**
+     * Live list links, right after a sync of the own notes: what guests ticked or added goes into the note, and the
+     * note's own changes go to the link. Only a note that is in the cloud as it is here takes part (clean, and not
+     * open in an editor); one still on its way up waits for the next round. One link's failure never stops the sync.
+     * Returns true when a note changed, so the caller uploads it.
+     */
+    private fun checkListLinks(client: CloudClient, adapter: CloudVaultAdapter, tracked: Map<String, CloudSyncBase>, checkActive: () -> Unit): Boolean {
+        val links = try { CloudListLinks.list(client) } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            Log.i("JotDropCloud", "List links not read: ${error.javaClass.simpleName}")
+            return false
+        }
+        listed.value = links
+        var changed = false
+        for (link in links) {
+            checkActive()
+            try {
+                val path = link.path ?: continue
+                if (link.key == null) continue
+                val base = tracked[path]?.takeIf { !it.deleted && it.revision >= 1 } ?: continue
+                val bytes = runCatching { adapter.read(path) }.getOrNull() ?: continue
+                if (CloudSyncEngine.hash(bytes) != base.hash) continue
+                val text = String(bytes, Charsets.UTF_8)
+                val parts = CloudListLinks.splitNote(text)
+                val result = CloudListLinks.sync(client, link, parts.body, base.revision, parts.title)
+                if (result.noteChanged && adapter.compareAndSet(path, bytes, (parts.head + result.text).toByteArray(Charsets.UTF_8))) changed = true
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                Log.w("JotDropCloud", "List link check failed: ${error.javaClass.simpleName}")
+            }
+        }
+        return changed
+    }
+
+    private val listed = MutableStateFlow(emptyList<CloudListLinks.Link>())
+    /** The live list links as the last sync or the share screen saw them, for the question before a note goes to the trash. */
+    val listLinks = listed.asStateFlow()
+    fun rememberListLinks(links: List<CloudListLinks.Link>) { listed.value = links }
+
+    /** The live list links on a note, as last seen. */
+    fun listLinksOf(context: Context, note: Uri): List<CloudListLinks.Link> {
+        val path = CloudListLinks.cloudPath(context, note) ?: return emptyList()
+        return listed.value.filter { it.path == path }
+    }
+
+    /** Ends these links: the page says the link has ended, and the note stays as it is. */
+    suspend fun endListLinks(context: Context, links: List<CloudListLinks.Link>) = withContext(Dispatchers.IO) {
+        val client = client(context) ?: throw CloudSyncException("Sign in to JotDrop Cloud first.")
+        for (link in links) CloudListLinks.remove(client, link.id)
+        listed.value = listed.value.filter { known -> links.none { it.id == known.id } }
+    }
+
+    /** The cloud path and uploaded version of a note that is in the cloud as it is now, or null while a change is still on its way up. */
+    fun uploadedNote(context: Context, note: Uri, text: String): Pair<String, Int>? {
+        val store = CloudPreviewStore(context)
+        val client = client(context) ?: return null
+        val binding = store.settings().optString("binding").takeIf { it.isNotEmpty() } ?: return null
+        val path = CloudListLinks.cloudPath(context, note) ?: return null
+        val tracked = store.syncState(scope(client, binding))?.optJSONObject("tracked")?.optJSONObject(path) ?: return null
+        if (tracked.optBoolean("deleted") || tracked.optInt("revision") < 1 || tracked.optString("hash") != CloudSyncEngine.hash(text.toByteArray(Charsets.UTF_8))) return null
+        return path to tracked.getInt("revision")
+    }
+
     /** While this runs no sync touches a space's folder or the list of spaces. */
     internal suspend fun <T> exclusive(block: suspend () -> T): T = serialized(block)
 
@@ -656,7 +719,7 @@ object CloudSyncManager {
                 }
             }
             phase = CloudDiagnostics.Phase.RECONCILE
-            val report = try {
+            fun engine(): CloudSyncReport = try {
                 CloudSyncEngine.sync(remote, adapter, tracked, uploadActive, seen, progress("Syncing..."), maxFileBytes) { values ->
                     phase = CloudDiagnostics.Phase.STATE_SAVE
                     val next = JSONObject()
@@ -669,6 +732,19 @@ object CloudSyncManager {
                 }
             } finally {
                 runCatching { saveIndex(store, client, index); saveSeen(store, scope, seen) }
+            }
+            val report = engine()
+            // Live list links: what guests ticked goes into the notes and up in this same run, and the check after that
+            // moves the base and writes the notes' own ticks to the links.
+            if (checkListLinks(client, adapter, tracked, checkActive)) {
+                val again = engine()
+                report.uploaded += again.uploaded
+                report.downloaded += again.downloaded
+                report.deleted += again.deleted
+                report.conflicts += again.conflicts
+                report.conflictPaths += again.conflictPaths
+                report.uploadedPaths += again.uploadedPaths
+                checkListLinks(client, adapter, tracked, checkActive)
             }
             phase = CloudDiagnostics.Phase.STATE_SAVE
             settings.put("lastSynced", Instant.now().toString()).put("conflicts", report.conflicts).put("conflictPaths", JSONArray(report.conflictPaths))

@@ -1657,7 +1657,47 @@ private fun NotesListScreen(
     }
     if (showBulkDeleteDialog) {
         val single = cardTarget != null
-        AlertDialog(
+        // A note with a live list link (one card, not in the trash yet): end the link too, or keep it, before the note goes.
+        val knownLinks by CloudSyncManager.listLinks.collectAsState()
+        val linked = remember(cardTarget, knownLinks) { cardTarget?.takeIf { folder != NoteFolder.TRASH }?.let { CloudSyncManager.listLinksOf(context, it) }.orEmpty() }
+        val deleteNow = {
+            showBulkDeleteDialog = false
+            val toDelete = actionUris.toList()
+            scope.launch {
+                val (ok, fail) = bulkPerform(toDelete) { uri ->
+                    ReminderScheduler.cancel(context, uri)
+                    withContext(Dispatchers.IO) {
+                        Storage.noteWriteMutex.withLock { Storage.deleteOrTrashNote(context, uri) }
+                    }
+                }
+                val msg = if (fail == 0) {
+                    if (toDelete.size == 1) context.getString(R.string.toast_deleted)
+                    else context.getString(R.string.toast_bulk_deleted, ok)
+                } else {
+                    context.getString(R.string.toast_bulk_partial, ok, fail)
+                }
+                Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
+                finishAction()
+                onRefresh()
+            }
+            Unit
+        }
+        if (linked.isNotEmpty()) AlertDialog(
+            onDismissRequest = { showBulkDeleteDialog = false; cardTarget = null },
+            title = { Text("Live list link") },
+            text = { Text("This note has a live list link. End the link too?") },
+            confirmButton = {
+                TextButton(onClick = {
+                    scope.launch {
+                        val ended = runCatching { CloudSyncManager.endListLinks(context, linked) }
+                        ended.onFailure { Toast.makeText(context, context.getString(R.string.toast_error, it.message ?: ""), Toast.LENGTH_LONG).show() }
+                        if (ended.isSuccess) deleteNow()
+                    }
+                }) { Text("End the link") }
+            },
+            dismissButton = { TextButton(onClick = deleteNow) { Text("Keep the link") } },
+        )
+        else AlertDialog(
             onDismissRequest = { showBulkDeleteDialog = false; cardTarget = null },
             title = { Text(if (single) stringResource(R.string.delete_title) else stringResource(R.string.bulk_delete_title, actionUris.size)) },
             text = {
@@ -1669,27 +1709,7 @@ private fun NotesListScreen(
                 }))
             },
             confirmButton = {
-                TextButton(onClick = {
-                    showBulkDeleteDialog = false
-                    val toDelete = actionUris.toList()
-                    scope.launch {
-                        val (ok, fail) = bulkPerform(toDelete) { uri ->
-                            ReminderScheduler.cancel(context, uri)
-                            withContext(Dispatchers.IO) {
-                                Storage.noteWriteMutex.withLock { Storage.deleteOrTrashNote(context, uri) }
-                            }
-                        }
-                        val msg = if (fail == 0) {
-                            if (toDelete.size == 1) context.getString(R.string.toast_deleted)
-                            else context.getString(R.string.toast_bulk_deleted, ok)
-                        } else {
-                            context.getString(R.string.toast_bulk_partial, ok, fail)
-                        }
-                        Toast.makeText(context, msg, Toast.LENGTH_SHORT).show()
-                        finishAction()
-                        onRefresh()
-                    }
-                }) {
+                TextButton(onClick = deleteNow) {
                     Text(stringResource(R.string.action_delete))
                 }
             },

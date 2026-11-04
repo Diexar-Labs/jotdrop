@@ -190,6 +190,33 @@ tasks.register<JavaExec>("checkInlineTags") {
     mainClass.set("com.diexar.keepcapture.InlineTagsCheckKt")
 }
 
+// Live list links: the same rules for what a guest may change and the same sealing as cloud/shared/list-links.mjs.
+val listLinkClasses = layout.buildDirectory.dir("list-link-check")
+val listLinkSources = files("app/src/main/kotlin/com/diexar/keepcapture/CloudCrypto.kt",
+    "app/src/main/kotlin/com/diexar/keepcapture/CloudListRules.kt", "checks/ListLinkCheck.kt")
+val listLinkCompile = tasks.register<JavaExec>("listLinkCompile") {
+    inputs.files(listLinkSources)
+    outputs.dir(listLinkClasses)
+    classpath(buildscript.configurations.getByName("classpath"))
+    mainClass.set("org.jetbrains.kotlin.cli.jvm.K2JVMCompiler")
+    doFirst {
+        args("-Xdisable-default-scripting-plugin", "-no-stdlib", "-no-reflect", "-jvm-target", "17", "-classpath",
+            project(":app").configurations.getByName("debugCompileClasspath").asPath,
+            "-d", listLinkClasses.get().asFile.absolutePath)
+        args(listLinkSources.files.map { it.absolutePath })
+    }
+}
+
+tasks.register<JavaExec>("checkListLinks") {
+    dependsOn(listLinkCompile)
+    classpath(listLinkClasses)
+    classpath(provider { project(":app").configurations.getByName("debugCompileClasspath") })
+    mainClass.set("com.diexar.keepcapture.ListLinkCheckKt")
+    doFirst {
+        args(requireNotNull(System.getenv("JOTDROP_LIST_LINK_INPUT")), requireNotNull(System.getenv("JOTDROP_LIST_LINK_OUTPUT")))
+    }
+}
+
 val cloudAccountClasses = layout.buildDirectory.dir("cloud-account-check")
 val cloudAccountSources = files("app/src/main/kotlin/com/diexar/keepcapture/CloudCrypto.kt",
     "app/src/main/kotlin/com/diexar/keepcapture/CloudAccountCrypto.kt", "app/src/main/kotlin/com/diexar/keepcapture/CloudWords.kt",

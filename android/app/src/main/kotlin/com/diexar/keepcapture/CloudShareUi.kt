@@ -22,6 +22,7 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Group
@@ -53,6 +54,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
@@ -90,10 +92,13 @@ internal fun ShareNoteScreen(note: Uri, startWithLink: Boolean, onOpenCloud: () 
     var me by rememberSaveable { mutableStateOf("") }
     var sharedIn by rememberSaveable { mutableStateOf<String?>(null) }
     var invite by rememberSaveable { mutableStateOf<String?>(null) }
-    // Read-only link.
+    // Read-only link, or a live list anyone with the link can tick.
+    var liveList by rememberSaveable { mutableStateOf(false) }
+    var checklist by remember { mutableStateOf(false) }
     var days by rememberSaveable { mutableStateOf(7) }
     var made by rememberSaveable { mutableStateOf<String?>(null) }
     var links by remember { mutableStateOf<List<CloudNoteLinks.Link>>(emptyList()) }
+    var lists by remember { mutableStateOf<List<ListLinkRow>>(emptyList()) }
 
     suspend fun client(): CloudClient = withContext(Dispatchers.IO) { CloudSyncManager.client(context) ?: throw CloudSyncException("Sign in to JotDrop Cloud first.") }
     fun run(action: suspend () -> Unit) {
@@ -112,11 +117,21 @@ internal fun ShareNoteScreen(note: Uri, startWithLink: Boolean, onOpenCloud: () 
     fun send(text: String, chooserTitle: String) {
         context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text), chooserTitle))
     }
-    suspend fun loadLinks() { val own = client(); links = withContext(Dispatchers.IO) { CloudNoteLinks.list(own) } }
+    suspend fun loadLinks() {
+        val own = client()
+        links = withContext(Dispatchers.IO) { CloudNoteLinks.list(own) }
+        lists = withContext(Dispatchers.IO) {
+            val known = CloudListLinks.list(own)
+            CloudSyncManager.rememberListLinks(known)
+            known.map { link -> ListLinkRow(link, link.key?.let { key -> runCatching { CloudListLinks.open(own.credentials.url, link.id, key) }.getOrNull() }) }
+        }
+    }
 
     LaunchedEffect(note) {
         connected = withContext(Dispatchers.IO) { runCatching { CloudSyncManager.client(context) != null }.getOrDefault(false) }
-        title = withContext(Dispatchers.IO) { Storage.readNote(context, note).map { CloudNoteLinks.parts(it).first }.getOrDefault("") }
+        val text = withContext(Dispatchers.IO) { Storage.readNote(context, note).getOrDefault("") }
+        title = CloudNoteLinks.parts(text).first
+        checklist = CloudListRules.hasChecklist(CloudListLinks.splitNote(text).body)
         if (connected != true) return@LaunchedEffect
         groups = withContext(Dispatchers.IO) { CloudSpacesFlow.known(context).filter { !it.gone && !it.frozen } }
         runCatching {
@@ -150,7 +165,9 @@ internal fun ShareNoteScreen(note: Uri, startWithLink: Boolean, onOpenCloud: () 
                 Text("How do you want to share it?", style = MaterialTheme.typography.titleMedium)
                 Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     ShareChoice(Icons.Filled.Group, "Work on it together", "The people you invite can read and change this note. They need a free JotDrop account.", together, !busy) { together = true }
-                    ShareChoice(Icons.Filled.Link, "Send a read-only copy", "Anyone with the link can read a copy, without an account. Later changes do not go along. Photos and files stay out.", !together, !busy) { together = false }
+                    ShareChoice(Icons.Filled.Link, "Send a read-only copy", "Anyone with the link can read a copy, without an account. Later changes do not go along. Photos and files stay out.", !together && !liveList, !busy) { together = false; liveList = false }
+                    ShareChoice(Icons.Filled.Checklist, "Share a live list", if (checklist) "Anyone with the link can tick items and add items, without an account. What they tick comes back into this note." else "This note has no checklist.",
+                        !together && liveList, !busy && checklist) { together = false; liveList = true }
                 }
             }
             if (together) {
@@ -210,8 +227,17 @@ internal fun ShareNoteScreen(note: Uri, startWithLink: Boolean, onOpenCloud: () 
                             val own = client()
                             try {
                                 made = withContext(Dispatchers.IO) {
-                                    val (heading, text) = CloudNoteLinks.parts(Storage.readNote(context, note).getOrThrow())
-                                    CloudNoteLinks.create(own, heading, text, days)
+                                    val content = Storage.readNote(context, note).getOrThrow()
+                                    if (liveList) {
+                                        // A list link belongs to the note's version in the cloud: every device of yours finds it by that.
+                                        val parts = CloudListLinks.splitNote(content)
+                                        val (path, revision) = CloudSyncManager.uploadedNote(context, note, content) ?: throw CloudSyncException("Sync first, then make the link.")
+                                        if (parts.body.toByteArray(Charsets.UTF_8).size > CloudListLinks.MAX_TEXT_BYTES) throw CloudSyncException("This list is too long for a link. Keep it under about 48 KB of text.")
+                                        CloudListLinks.create(own, parts.title, parts.body, days, path, revision).address
+                                    } else {
+                                        val (heading, text) = CloudNoteLinks.parts(content)
+                                        CloudNoteLinks.create(own, heading, text, days)
+                                    }
                                 }
                                 loadLinks()
                             } catch (failure: CloudRequestException) {
@@ -224,12 +250,13 @@ internal fun ShareNoteScreen(note: Uri, startWithLink: Boolean, onOpenCloud: () 
                 } else {
                     item {
                         DoneRow("The link is ready.")
-                        Text("Send it yourself. The key is in the link, so JotDrop never sees the note.", style = MaterialTheme.typography.bodyMedium)
+                        Text(if (liveList) "Send it yourself. Anyone with the link can tick items and add items; what they do comes back into this note after a sync. The key is in the link, so JotDrop never sees the list."
+                            else "Send it yourself. The key is in the link, so JotDrop never sees the note.", style = MaterialTheme.typography.bodyMedium)
                         LinkBox(link, onSend = { send(link, "Send link") }, onCopy = { clipboard.setText(AnnotatedString(link)); notice = "Link copied." }, another = null)
                     }
                     item { OutlinedButton(onClick = onClose, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) { Text("Done") } }
                 }
-                if (links.isNotEmpty()) item {
+                if (links.isNotEmpty() || lists.isNotEmpty()) item {
                     Text("Your links", style = MaterialTheme.typography.titleMedium)
                     for (item in links) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text("${item.title.ifBlank { "Untitled note" }}, ${item.expiresAt?.let { "ends ${it.take(10)}" } ?: "until you remove it"}", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
@@ -241,8 +268,50 @@ internal fun ShareNoteScreen(note: Uri, startWithLink: Boolean, onOpenCloud: () 
                             loadLinks()
                         } }, enabled = !busy) { Text("Remove") }
                     }
+                    // A live list: who ticked or added what, from the sealed list itself. Word and check mark, not only a colour.
+                    for (row in lists) Column(Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text(row.summary(), Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                            TextButton(onClick = { run {
+                                CloudSyncManager.endListLinks(context, listOf(row.link))
+                                if (made == row.link.address) made = null
+                                notice = "The link has ended."
+                                loadLinks()
+                            } }, enabled = !busy) { Text("End link") }
+                        }
+                        for (line in row.recent()) Text(line, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(start = 12.dp))
+                    }
                 }
             }
+        }
+    }
+}
+
+/** One of your live list links with what the page holds now; `opened` is null when the link does not open (ended or paused). */
+private class ListLinkRow(val link: CloudListLinks.Link, val opened: CloudListLinks.Opened?) {
+    fun summary(): String {
+        val ends = link.expiresAt?.let { "ends ${it.take(10)}" } ?: "until you end it"
+        val updated = opened?.marks?.maxOfOrNull { it.at }?.let { ", updated ${ago(it)}" }.orEmpty()
+        val state = if (opened == null) ", cannot be opened now" else ""
+        return "${link.title.ifBlank { "Untitled note" }}, live list, $ends$updated$state"
+    }
+
+    /** The last five ticks and additions, newest first, with the name people typed in themselves. */
+    fun recent(): List<String> {
+        val lines = opened?.lines ?: return emptyList()
+        return opened.marks.sortedByDescending { it.at }.take(5).map { mark ->
+            val text = lines.firstOrNull { it.task && it.key == mark.line && it.n == mark.n }?.text ?: mark.line
+            if (mark.added) "${mark.by} added \"$text\", ${ago(mark.at)}" else "✓ ${mark.by} ticked \"$text\", ${ago(mark.at)}"
+        }
+    }
+
+    private fun ago(at: Long): String {
+        val seconds = ((System.currentTimeMillis() - at) / 1000).coerceAtLeast(0)
+        return when {
+            seconds < 60 -> "just now"
+            seconds < 3600 -> "${seconds / 60} min. ago"
+            seconds < 86400 -> "${seconds / 3600} h ago"
+            else -> "${seconds / 86400} days ago"
         }
     }
 }
@@ -251,7 +320,7 @@ internal fun ShareNoteScreen(note: Uri, startWithLink: Boolean, onOpenCloud: () 
 private fun ShareChoice(icon: ImageVector, title: String, text: String, selected: Boolean, enabled: Boolean, onClick: () -> Unit) {
     val colors = if (selected) CardDefaults.outlinedCardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer) else CardDefaults.outlinedCardColors()
     OutlinedCard(colors = colors, border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant),
-        modifier = Modifier.fillMaxWidth().selectable(selected = selected, enabled = enabled, role = Role.RadioButton, onClick = onClick)) {
+        modifier = Modifier.fillMaxWidth().alpha(if (enabled) 1f else 0.55f).selectable(selected = selected, enabled = enabled, role = Role.RadioButton, onClick = onClick)) {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.Top) {
             Icon(icon, null, Modifier.size(28.dp))
             Spacer(Modifier.width(14.dp))
