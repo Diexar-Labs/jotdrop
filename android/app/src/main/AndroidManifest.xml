@@ -10,6 +10,13 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!--
+        Google's document scanner brings an activity fixed to portrait, so Play would
+        hide JotDrop from devices that only show landscape (car screens, some tablets).
+        JotDrop works there too; only the scanner may not.
+    -->
+    <uses-feature android:name="android.hardware.screen.portrait" android:required="false" />
+
+    <!--
         Package-visibility voor Android 11+: zonder dit blok geeft de implicit
         intent voor RecognizerIntent.ACTION_RECOGNIZE_SPEECH geen resolver terug
         en faalt de spraak-naar-tekst-knop met ActivityNotFoundException.
