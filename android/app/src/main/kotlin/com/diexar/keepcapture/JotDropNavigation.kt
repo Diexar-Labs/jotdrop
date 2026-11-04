@@ -51,6 +51,23 @@ internal fun JotDropDrawer(
                     onClick = { onNavigate(NoteFolder.NOTES, true, null) },
                     modifier = Modifier.padding(horizontal = 12.dp),
                 )
+                // The Paper drawer is always here, so a new user finds it; its small drawers sit inside.
+                NavigationDrawerItem(
+                    label = { Text(PaperDrawer.LABEL) },
+                    icon = { Icon(Icons.Filled.Inbox, null) },
+                    selected = folder == NoteFolder.NOTES && selectedLabel.equals(PaperDrawer.LABEL, true),
+                    onClick = { onNavigate(NoteFolder.NOTES, false, PaperDrawer.LABEL) },
+                    modifier = Modifier.padding(horizontal = 12.dp),
+                )
+                for (drawer in labels.filter { PaperDrawer.drawerName(it).isNotEmpty() }) {
+                    NavigationDrawerItem(
+                        label = { Text(PaperDrawer.drawerName(drawer), maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        icon = { Icon(Icons.Filled.FolderOpen, null) },
+                        selected = folder == NoteFolder.NOTES && drawer.equals(selectedLabel, true),
+                        onClick = { onNavigate(NoteFolder.NOTES, false, drawer) },
+                        modifier = Modifier.padding(start = 36.dp, end = 12.dp),
+                    )
+                }
                 HorizontalDivider(Modifier.padding(vertical = 12.dp))
                 Row(Modifier.fillMaxWidth().padding(start = 28.dp, end = 12.dp)) {
                     Text(stringResource(R.string.nav_labels), style = MaterialTheme.typography.titleSmall,
@@ -58,11 +75,10 @@ internal fun JotDropDrawer(
                     TextButton(onClick = onManageLabels) { Text(stringResource(R.string.nav_edit_labels)) }
                 }
             }
-            items(labels, key = { it }) { label ->
+            items(labels.filterNot { PaperDrawer.isPaperDrawer(it) }, key = { it }) { label ->
                 NavigationDrawerItem(
                     label = { Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    // The Paper drawer is a label with a drawer of its own, like on the website and in Obsidian.
-                    icon = { Icon(if (PaperDrawer.isPaperDrawer(label)) Icons.Filled.Inbox else Icons.Filled.Label, null) },
+                    icon = { Icon(Icons.Filled.Label, null) },
                     selected = folder == NoteFolder.NOTES && label.equals(selectedLabel, true),
                     onClick = { onNavigate(NoteFolder.NOTES, false, label) },
                     modifier = Modifier.padding(horizontal = 12.dp),

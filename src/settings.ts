@@ -50,6 +50,8 @@ export interface JotDropSettings {
    * folders; these persist separately so empty collections survive reloads.
    */
   localLabels: string[];
+  /** The Paper drawer tip was closed: it does not come back. */
+  paperTipClosed: boolean;
 }
 
 export const DEFAULT_SETTINGS: JotDropSettings = {
@@ -66,6 +68,7 @@ export const DEFAULT_SETTINGS: JotDropSettings = {
   cloudServer: DEFAULT_CLOUD_SERVER,
   sortMigratedToCreated: false,
   localLabels: [],
+  paperTipClosed: false,
 };
 
 export class JotDropSettingTab extends PluginSettingTab {

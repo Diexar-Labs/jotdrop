@@ -65,6 +65,7 @@ import androidx.compose.material.icons.filled.AddAPhoto
 import androidx.compose.material.icons.filled.DocumentScanner
 import androidx.compose.material.icons.filled.Draw
 import androidx.compose.material.icons.filled.EventBusy
+import androidx.compose.material.icons.filled.Inbox
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
@@ -263,6 +264,7 @@ class NotesListActivity : ThemedComponentActivity() {
     private var pendingOcr: Boolean = false
     // Paper drawer: the camera stands in for the document scanner, so the photo goes in the drawer.
     private var pendingPaper: Boolean = false
+    private val pendingScan = MutableStateFlow<PendingScan?>(null)
 
     // Sorteermodus (newest/manual), gepersisteerd in prefs. Gedeeld met Compose
     // zodat de top-bar het actieve vinkje kan tonen en de grid weet of slepen aan staat.
@@ -400,6 +402,17 @@ class NotesListActivity : ThemedComponentActivity() {
         sortModeFlow.value = Storage.getSortMode(this)
         setContent {
             JotDropTheme {
+                val scan by pendingScan.collectAsState()
+                scan?.let { pending ->
+                    val labels by labelsState.collectAsState()
+                    ScanSaveDialog(
+                        expiresFound = pending.expires,
+                        drawers = (labels.filter { PaperDrawer.drawerName(it).isNotEmpty() } +
+                            PaperDrawer.SUGGESTED_DRAWERS.map(PaperDrawer::drawerLabel))
+                            .distinctBy { it.lowercase() },
+                        onSave = { drawer, expires, lead -> finishScan(pending, drawer, expires, lead) },
+                    )
+                }
                 NotesListScreen(
                     stateFlow = notesState.asStateFlow(),
                     folderFlow = folderFlow.asStateFlow(),
@@ -555,12 +568,20 @@ class NotesListActivity : ThemedComponentActivity() {
                 .joinToString("\n\n")
             val title = text.lineSequence().map(String::trim).firstOrNull { line -> line.count(Char::isLetter) >= 4 }?.take(60)
                 ?: getString(R.string.scan_note_title, java.text.DateFormat.getDateInstance().format(java.util.Date()))
+            pendingScan.value = PendingScan(scan.pdf?.uri, pages.firstOrNull(), text, title, PaperDrawer.findExpiry(text).ifEmpty { null })
+        }
+    }
+
+    /** Saves the scan in the chosen drawer, with the expiry date and its warning when the user kept them. */
+    private fun finishScan(scan: PendingScan, drawer: String, expires: String?, lead: String?) {
+        pendingScan.value = null
+        lifecycleScope.launch {
             val result = withContext(Dispatchers.IO) {
-                Storage.saveScanNote(this@NotesListActivity, scan.pdf?.uri, pages.firstOrNull(), text, title, getString(R.string.scan_text_heading))
+                Storage.saveScanNote(this@NotesListActivity, scan.pdf, scan.firstPage, scan.text, scan.title, drawer, expires, PaperDrawer.warnReminder(expires, lead))
             }
             result.onSuccess { filename ->
                 Toast.makeText(this@NotesListActivity, getString(R.string.toast_saved, filename), Toast.LENGTH_SHORT).show()
-                reload()
+                reload(rescheduleReminders = true)
             }.onFailure { err ->
                 Toast.makeText(this@NotesListActivity, getString(R.string.scan_failed, err.message ?: err.javaClass.simpleName), Toast.LENGTH_LONG).show()
             }
@@ -986,6 +1007,7 @@ private fun NotesListScreen(
     var remindersOnly by remember { mutableStateOf(false) }
     var labelManagerOpen by remember { mutableStateOf(false) }
     var selectedLabel by rememberSaveable { mutableStateOf<String?>(null) }
+    var paperTipClosed by remember { mutableStateOf(context.getSharedPreferences(PAPER_PREFS, android.content.Context.MODE_PRIVATE).getBoolean(PAPER_TIP_CLOSED, false)) }
     var bulkLabelsOpen by remember { mutableStateOf(false) }
     var bulkColorOpen by remember { mutableStateOf(false) }
     var helpOpen by remember { mutableStateOf(false) }
@@ -1500,9 +1522,16 @@ private fun NotesListScreen(
                 is NotesUiState.Loaded -> {
                     if (s.notes.isEmpty()) {
                         if (folder == NoteFolder.NOTES && !remindersOnly && selectedLabel == null && selectedTags.isEmpty()) EmptyNotesHint()
+                        else if (folder == NoteFolder.NOTES && PaperDrawer.isPaperDrawer(selectedLabel)) PaperDrawerIntro(onScan = onScanDocument)
                         else CenteredText(stringResource(R.string.empty_collection))
                     } else {
                         Column(modifier = Modifier.fillMaxSize()) {
+                            if (folder == NoteFolder.NOTES && PaperDrawer.isPaperDrawer(selectedLabel) && !paperTipClosed && filtered.isNotEmpty()) {
+                                PaperDrawerTip(onClose = {
+                                    paperTipClosed = true
+                                    context.getSharedPreferences(PAPER_PREFS, android.content.Context.MODE_PRIVATE).edit().putBoolean(PAPER_TIP_CLOSED, true).apply()
+                                })
+                            }
                             updateInfo?.let { info ->
                                 UpdateBanner(
                                     version = info.version,
@@ -1539,7 +1568,9 @@ private fun NotesListScreen(
                             }
                             Box(modifier = Modifier.weight(1f).fillMaxWidth().clipToBounds().nestedScroll(pullState.nestedScrollConnection)) {
                                 if (filtered.isEmpty()) {
-                                    CenteredText(stringResource(R.string.empty_no_results))
+                                    // A drawer without papers yet explains itself instead of saying nothing matched.
+                                    if (folder == NoteFolder.NOTES && PaperDrawer.isPaperDrawer(selectedLabel) && searchQuery.isBlank()) PaperDrawerIntro(onScan = onScanDocument)
+                                    else CenteredText(stringResource(R.string.empty_no_results))
                                 } else {
                                     NotesGrid(
                                         notes = filtered,
@@ -2280,7 +2311,9 @@ private fun applyFilters(
         // OR-semantiek binnen tags: notitie matcht als 'ie minstens één van de gekozen tags heeft.
         // Sparse handmatige tags maken AND-mode (vrijwel) altijd leeg, daarom OR.
         val matchesTags = LabelNames.matchesSelection(note.meta.allTags, selectedTags)
-        val matchesLabel = selectedLabel == null || note.meta.labels.any { it.equals(selectedLabel, true) }
+        val matchesLabel = selectedLabel == null ||
+            if (PaperDrawer.isPaperDrawer(selectedLabel)) PaperDrawer.inDrawer(note.meta.labels, selectedLabel)
+            else note.meta.labels.any { it.equals(selectedLabel, true) }
         matchesQuery && matchesTags && matchesLabel
     }
 }
@@ -2691,7 +2724,8 @@ private fun NoteCard(
                             .build(),
                         contentDescription = null,
                         contentScale = ContentScale.Crop,
-                        alignment = Alignment.Center,
+                        // A scanned paper shows its top, where its name is.
+                        alignment = if (note.thumbnailBasename?.startsWith("scan-") == true) Alignment.TopCenter else Alignment.Center,
                         modifier = Modifier
                             .fillMaxWidth()
                             .aspectRatio(16f / 9f)
@@ -3294,10 +3328,12 @@ private fun LabelChip(label: String, foreground: Color, onClick: () -> Unit) {
             modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(Icons.Filled.Label, contentDescription = null, modifier = Modifier.size(12.dp))
+            // A paper shows its drawer as "Work" with the drawer icon, not "Paper drawer/Work".
+            val paper = PaperDrawer.isPaperDrawer(label)
+            Icon(if (paper) Icons.Filled.Inbox else Icons.Filled.Label, contentDescription = null, modifier = Modifier.size(12.dp))
             Spacer(Modifier.size(3.dp))
             Text(
-                text = label,
+                text = PaperDrawer.drawerName(label).ifEmpty { label },
                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Medium),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,

@@ -68,6 +68,12 @@ h3 { font-size: 1.05rem; }
 .sidebar-labels-heading { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: 0 .3rem 0 .9rem; color: var(--muted); font-size: .75rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
 .sidebar-labels-heading button { padding: .3rem .5rem; border-color: transparent; background: transparent; color: var(--accent); font-size: .8rem; letter-spacing: normal; text-transform: none; }
 #label-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: .2rem; margin-top: .3rem; }
+.sidebar-drawer, #drawer-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: .2rem; }
+.sidebar nav .drawer-sub { margin-left: 1.4rem; padding-block: .35rem; font-size: .92rem; }
+.sidebar nav .add-drawer { justify-content: flex-start; margin-left: 1.4rem; padding: .3rem .9rem; color: var(--accent); font-size: .85rem; }
+.new-drawer { display: flex; flex-wrap: wrap; gap: .4rem; margin: .2rem 0 0 1.4rem; }
+.new-drawer input { flex: 1 1 8rem; min-width: 0; }
+.sidebar nav .new-drawer button { padding: .35rem .6rem; border-color: var(--line); font-size: .85rem; }
 .sidebar nav .label-nav { display: flex; align-items: center; gap: .6rem; padding: .5rem .9rem; font-weight: 500; }
 .label-nav svg { flex: none; width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .label-nav .label-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -219,6 +225,19 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .empty-state { grid-column: 1 / -1; padding: 3rem 0; max-width: 480px; }
 .empty-state h2 { margin-top: 0; }
 .empty-state p { color: var(--muted); }
+/* The Paper drawer explains itself: what it does, each point with its own picture. */
+.paper-intro { max-width: 560px; padding-top: 1rem; }
+.paper-points { list-style: none; margin: 1rem 0; padding: 0; display: grid; gap: .8rem; }
+.paper-points li { display: flex; align-items: flex-start; gap: .75rem; }
+.paper-points svg { flex: none; width: 26px; height: 26px; padding: 6px; border: 1.5px solid var(--edge); border-radius: 10px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; background: var(--surface); }
+.paper-points p { margin: .2rem 0 0; color: var(--ink); }
+.empty-state .paper-phone { font-family: "Caveat", "Instrument Sans", cursive; font-weight: 600; font-size: 1.3rem; color: var(--hand); }
+.paper-tip { position: relative; margin: 0 0 1.2rem; padding: .8rem 2.6rem .6rem 1rem; max-width: 760px; background: var(--surface); border: 1.5px solid var(--edge); border-radius: 12px 12px 22px 12px; box-shadow: 5px 5px 0 var(--amber); }
+.paper-tip-title { margin: 0; font-weight: 700; }
+.paper-tip .paper-points { margin: .5rem 0 .2rem; gap: .45rem; }
+.paper-tip .paper-points svg { width: 20px; height: 20px; padding: 4px; }
+.paper-tip .paper-points p { margin: 0; font-size: .92rem; }
+.paper-tip-close { position: absolute; top: .45rem; right: .45rem; padding: .2rem .55rem; border-color: transparent; background: transparent; font-size: 1rem; }
 .device-row, .history-row, .history-plus { padding: 1rem 0; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; justify-content: space-between; }
 .device-row p, .history-row p, .history-plus p { margin: 0; }
 .history-row.locked { color: var(--muted); }

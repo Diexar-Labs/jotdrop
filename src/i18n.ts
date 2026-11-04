@@ -12,6 +12,7 @@
  */
 
 import { getLanguage } from "obsidian";
+import { INTRO } from "../cloud/shared/paper.mjs";
 
 export type Lang = "en" | "nl" | "es" | "de" | "fr" | "it";
 
@@ -295,6 +296,18 @@ const EN: Record<string, string> = {
   warn_3m: "3 months before",
   action_clear_expires: "Clear",
   expires_hint: "Goes into the Paper drawer. A warning replaces this note's reminder.",
+  // Paper drawer: the drawer, its small drawers and what it does (text from cloud/shared/paper.mjs)
+  paper_drawer: "Paper drawer",
+  paper_new_drawer: "New drawer",
+  paper_new_drawer_title: "Name of the new drawer",
+  paper_new_drawer_placeholder: "For example Work",
+  paper_intro_title: INTRO.title,
+  paper_intro_lead: INTRO.lead,
+  paper_intro_scan: INTRO.points[0].text,
+  paper_intro_search: INTRO.points[1].text,
+  paper_intro_alarm: INTRO.points[2].text,
+  paper_intro_phone: INTRO.phone,
+  paper_tip_close: "Close this tip",
   notice_reminder_fired: "Reminder: {0}",
 
   // Recurring reminders
@@ -668,6 +681,17 @@ const NL: Record<string, string> = {
   warn_3m: "3 maanden vooraf",
   action_clear_expires: "Wissen",
   expires_hint: "Gaat in de Paper drawer. Een waarschuwing vervangt de herinnering van deze notitie.",
+  paper_drawer: "Paper drawer",
+  paper_new_drawer: "Nieuw laatje",
+  paper_new_drawer_title: "Naam van het nieuwe laatje",
+  paper_new_drawer_placeholder: "Bijvoorbeeld Werk",
+  paper_intro_title: "Je papierla",
+  paper_intro_lead: "Scan een brief, een polis of een paspoort en hij komt hier terecht.",
+  paper_intro_scan: "De camera zoekt de randen van het papier en trekt het recht, zodat elke scan een nette PDF wordt.",
+  paper_intro_search: "Elk woord op het papier is doorzoekbaar. Typ een polisnummer en het papier komt tevoorschijn.",
+  paper_intro_alarm: "Staat er een vervaldatum op het papier, dan ziet JotDrop die en biedt aan je een week vooraf te herinneren.",
+  paper_intro_phone: "Scannen doe je met de JotDrop-app op je telefoon. Je scans verschijnen ook hier.",
+  paper_tip_close: "Deze tip sluiten",
   notice_reminder_fired: "Herinnering: {0}",
 
   label_repeat: "Herhaling:",

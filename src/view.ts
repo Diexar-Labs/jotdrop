@@ -1,5 +1,5 @@
 import { App, ItemView, Menu, Modal, Notice, TFile, WorkspaceLeaf, normalizePath, setIcon } from "obsidian";
-import { isPaperDrawer } from "../cloud/shared/paper.mjs";
+import { PAPER_DRAWER, drawerLabel, drawerName, inDrawer, isPaperDrawer } from "../cloud/shared/paper.mjs";
 import type JotDropPlugin from "./main";
 import { QuickCaptureModal, createNoteInFolder } from "./capture";
 import { AttachmentPreviewHint, EditNoteModal } from "./edit";
@@ -1410,6 +1410,15 @@ export class JotDropView extends ItemView {
     }
     if (this.selectionMode) this.updateSelectionToolbar();
 
+    // An empty drawer explains itself; a filled one shows a tip until it is closed.
+    const paper = this.showTrash ? null : this.selectedPaper();
+    if (paper && filtered.length === 0 && !this.query && this.selectedTags.size === 0) {
+      this.renderPaperIntro(this.gridEl, false);
+      this.hasRendered = true;
+      return;
+    }
+    if (paper && filtered.length > 0 && !this.plugin.settings.paperTipClosed) this.renderPaperIntro(this.gridEl, true);
+
     if (filtered.length === 0) {
       const empty = this.gridEl.createDiv({ cls: "jotdrop-empty" });
       if (cards.length === 0 && this.showTrash) {
@@ -1616,10 +1625,17 @@ export class JotDropView extends ItemView {
       }
     }
 
-    // Label chips — show when there are any labels (discovered or local).
-    if (this.allLabels.length > 0) {
+    // The Paper drawer is always there, also before the first paper, so people find it.
+    if (!this.showTrash) {
       this.filterBarEl.toggleClass("is-hidden", false);
-      const byName = [...this.allLabels].sort((a, b) => a.name.localeCompare(b.name));
+      this.renderPaperChips(cards);
+    }
+
+    // Label chips — show when there are any labels (discovered or local); papers have their own chips above.
+    const plainLabels = this.allLabels.filter((label) => !isPaperDrawer(label.name));
+    if (plainLabels.length > 0) {
+      this.filterBarEl.toggleClass("is-hidden", false);
+      const byName = [...plainLabels].sort((a, b) => a.name.localeCompare(b.name));
       for (const label of byName) {
         this.renderLabelChip(label, this.hasLabelSelected(label.name));
       }
@@ -1637,6 +1653,96 @@ export class JotDropView extends ItemView {
         void this.render();
       });
     }
+  }
+
+  /** The selected Paper drawer or small drawer, or null. */
+  private selectedPaper(): string | null {
+    return Array.from(this.selectedLabels).find((label) => isPaperDrawer(label)) ?? null;
+  }
+
+  /** The Paper drawer chip; once open, its small drawers and "New drawer" follow it. */
+  private renderPaperChips(cards: CardData[]): void {
+    const open = this.selectedPaper();
+    const count = (selected: string) => cards.filter((c) => inDrawer(c.meta.labels, selected)).length;
+    const chip = (text: string, selected: boolean, icon: string | null, n: number | null, extra = "") => {
+      const el = this.filterBarEl.createEl("button", {
+        cls: `jotdrop-filter-chip jotdrop-filter-chip-label jotdrop-paper-chip${extra}${selected ? " is-selected" : ""}`,
+      });
+      el.createSpan({ cls: "jotdrop-filter-chip-check" }).setText(selected ? "✓" : "");
+      if (icon) setIcon(el.createSpan({ cls: "jotdrop-filter-chip-icon" }), icon);
+      el.createSpan({ cls: "jotdrop-filter-chip-label", text });
+      if (n) el.createSpan({ cls: "jotdrop-filter-chip-count", text: String(n) });
+      return el;
+    };
+    const drawer = chip(t("paper_drawer"), open !== null && !drawerName(open), PAPER_DRAWER_ICON, count(PAPER_DRAWER));
+    drawer.addEventListener("click", () => this.selectPaper(open === null ? PAPER_DRAWER : null));
+    if (open === null) return;
+    const small = this.allLabels.filter((label) => drawerName(label.name))
+      .sort((a, b) => drawerName(a.name).localeCompare(drawerName(b.name)));
+    for (const label of small) {
+      const selected = open.toLowerCase() === label.name.toLowerCase();
+      chip(drawerName(label.name), selected, null, count(label.name), " is-small-drawer")
+        .addEventListener("click", () => this.selectPaper(selected ? PAPER_DRAWER : label.name));
+    }
+    chip(t("paper_new_drawer"), false, "plus", null, " is-small-drawer is-new-drawer")
+      .addEventListener("click", () => { void this.promptCreateDrawer(); });
+  }
+
+  /** Opens the drawer or one small drawer (other labels stay selected), or closes it with null. */
+  private selectPaper(label: string | null): void {
+    for (const sel of Array.from(this.selectedLabels)) if (isPaperDrawer(sel)) this.selectedLabels.delete(sel);
+    if (label) this.selectedLabels.add(label);
+    this.renderLimit = RENDER_CHUNK;
+    void this.render();
+  }
+
+  /** A small drawer is a label "Paper drawer/<name>", made like any other empty label. */
+  private async promptCreateDrawer(): Promise<void> {
+    const input = (await this.prompt(t("paper_new_drawer_title"), t("paper_new_drawer_placeholder")))?.replace(/\//g, " ").trim();
+    if (!input) return;
+    const label = drawerLabel(input);
+    const result = await managerCreateLabel(
+      this.plugin.app,
+      label,
+      normalizePath(this.plugin.settings.notesFolder),
+      normalizePath(this.plugin.settings.archiveFolder),
+      this.plugin.settings.localLabels ?? [],
+    );
+    if (!result.success) {
+      new Notice(result.error ?? t("notice_error", "Could not create label"));
+      return;
+    }
+    if (result.labels) {
+      this.plugin.settings.localLabels = readLabels([...(this.plugin.settings.localLabels ?? []), label]);
+      await this.plugin.saveSettings();
+    }
+    await this.refreshLabels();
+    this.selectPaper(label);
+  }
+
+  /** What the drawer does: in full while it is empty, as a closable tip above the papers. */
+  private renderPaperIntro(parent: HTMLElement, tip: boolean): void {
+    const box = parent.createDiv({ cls: `jotdrop-paper-intro${tip ? " is-tip" : ""}` });
+    if (tip) {
+      const close = box.createEl("button", { cls: "jotdrop-paper-intro-close clickable-icon", attr: { "aria-label": t("paper_tip_close"), title: t("paper_tip_close") } });
+      setIcon(close, "x");
+      close.addEventListener("click", voidAsync(async () => {
+        this.plugin.settings.paperTipClosed = true;
+        await this.plugin.saveSettings();
+        box.remove();
+      }));
+    }
+    const head = box.createDiv({ cls: "jotdrop-paper-intro-head" });
+    setIcon(head.createSpan({ cls: "jotdrop-paper-intro-icon" }), PAPER_DRAWER_ICON);
+    head.createEl(tip ? "strong" : "h3", { text: t("paper_intro_title") });
+    if (!tip) box.createEl("p", { cls: "jotdrop-paper-intro-lead", text: t("paper_intro_lead") });
+    const list = box.createEl("ul", { cls: "jotdrop-paper-intro-points" });
+    for (const [icon, key] of [["scan", "paper_intro_scan"], ["search", "paper_intro_search"], ["alarm-clock", "paper_intro_alarm"]]) {
+      const item = list.createEl("li");
+      setIcon(item.createSpan({ cls: "jotdrop-paper-intro-point-icon" }), icon);
+      item.createSpan({ text: t(key) });
+    }
+    box.createEl("p", { cls: "jotdrop-paper-intro-phone", text: t("paper_intro_phone") });
   }
 
   private renderTagChip(tag: string, isSelected: boolean): void {
@@ -1972,7 +2078,10 @@ export class JotDropView extends ItemView {
     if (!matchesQuery) return false;
 
     if (this.selectedLabels.size > 0) {
-      if (!card.meta.labels.some((l) => this.hasLabelSelected(l))) return false;
+      // The Paper drawer holds its small drawers too; a small drawer only its own papers.
+      const labels = card.meta.labels;
+      if (!Array.from(this.selectedLabels).some((sel) =>
+        isPaperDrawer(sel) ? inDrawer(labels, sel) : labels.some((l) => l.toLowerCase() === sel.toLowerCase()))) return false;
     }
 
     if (this.selectedTags.size === 0) return true;
@@ -2226,8 +2335,9 @@ export class JotDropView extends ItemView {
       for (const label of meta.labels) {
         const chip = tagWrap.createSpan({ cls: "jotdrop-card-tag jotdrop-card-label", attr: { role: "button", tabindex: "0" } });
         setIcon(chip.createSpan({ cls: "jotdrop-card-label-icon" }), isPaperDrawer(label) ? PAPER_DRAWER_ICON : "tag");
-        chip.createSpan({ text: label });
-        filterBy(chip, () => this.toggleLabelFilter(label));
+        // A small drawer shows its own name next to the drawer icon and opens that drawer.
+        chip.createSpan({ text: drawerName(label) || label });
+        filterBy(chip, () => (isPaperDrawer(label) ? this.selectPaper(label) : this.toggleLabelFilter(label)));
         chips.push(chip);
       }
       for (const tag of cardTags(meta)) {

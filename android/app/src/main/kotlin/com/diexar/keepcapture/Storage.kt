@@ -306,17 +306,27 @@ object Storage {
      * Paper drawer: a scanned document becomes a note with the first page as its picture, the PDF,
      * and the recognized text at the bottom, so search finds it. It goes in the Paper drawer.
      */
-    fun saveScanNote(context: Context, pdfUri: Uri?, firstPage: Uri?, text: String, title: String, textHeading: String): Result<String> {
+    fun saveScanNote(
+        context: Context, pdfUri: Uri?, firstPage: Uri?, text: String, title: String,
+        drawer: String = PaperDrawer.LABEL, expires: String? = null, reminder: String? = null,
+    ): Result<String> {
         val stamp = SimpleDateFormat("yyyy-MM-dd HHmmss", Locale.US).format(Date())
         val picture = firstPage?.let { copyImageToAttachments(context, it, name = "scan-$stamp.jpg").getOrElse { e -> return Result.failure(e) } }
         val pdf = pdfUri?.let { copyFileToAttachments(context, it, "application/pdf", "scan-$stamp.pdf").getOrElse { e -> return Result.failure(e) } }
+        val heading = sanitizeTitleFromShare(title).ifEmpty { "Scan $stamp" }
+        // The text from the page follows the pictures; its first line is usually the title already.
+        val lines = text.trim().lines()
+        val rest = (if (lines.firstOrNull()?.trim() == heading.trim()) lines.drop(1) else lines).joinToString("\n").trim()
         val body = buildString {
-            append("# "); append(sanitizeTitleFromShare(title).ifEmpty { "Scan $stamp" }); append("\n\n")
+            append("# "); append(heading); append("\n\n")
             if (picture != null) { append("![["); append(picture); append("]]\n") }
             if (pdf != null) { append("![["); append(pdf); append("]]\n") }
-            if (text.isNotBlank()) { append("\n## "); append(textHeading); append("\n\n"); append(text.trim()); append("\n") }
+            if (rest.isNotEmpty()) { append("\n"); append(rest); append("\n") }
         }
-        return saveNote(context, FrontmatterWriter.applyLabels(body, listOf(PaperDrawer.LABEL)))
+        var content = FrontmatterWriter.applyLabels(body, listOf(drawer))
+        if (expires != null) content = FrontmatterWriter.applyExpires(content, expires)
+        if (reminder != null) content = FrontmatterWriter.apply(content, FrontmatterParser.parse(content).meta.copy(reminder = reminder))
+        return saveNote(context, content)
     }
 
     /** Copies any file into the attachments folder under [basename]. */

@@ -10,7 +10,7 @@ import { noteSummary, updateMetadata, toggleTask, attachmentPath, plainPreviewTe
 import { drawingFileName, isDrawingName, read as readDrawing } from '/shared/drawing.mjs';
 import { addressHash, mailAddress, mailKeyPair, mailToNote, openMailBody, openMailKey, openMailPart, senderHash } from '/shared/mail.mjs';
 import { createDrawingEditor } from '/shared/drawing-editor.mjs';
-import { WARN_OPTIONS, expiresBadge, isPaperDrawer, validExpires, warnReminder, withPaperDrawer } from '/shared/paper.mjs';
+import { DEFAULT_WARN, INTRO, PAPER_DRAWER, SUGGESTED_DRAWERS, WARN_OPTIONS, drawerLabel, drawerName, expiresBadge, inDrawer, isPaperDrawer, validExpires, warnReminder, withPaperDrawer } from '/shared/paper.mjs';
 
 const $ = (id) => document.getElementById(id);
 try {
@@ -198,6 +198,10 @@ const icons = {
   lock: '<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
   // A cabinet with two drawers, for the Paper drawer label.
   drawer: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 12h18"/><path d="M10 7.5h4"/><path d="M10 16.5h4"/>',
+  // The three things the Paper drawer does, each with its own picture (never an emoji).
+  scan: '<path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 12h10"/>',
+  search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+  alarm: '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2 2"/><path d="M5 3 2 6"/><path d="m22 6-3-3"/>',
 };
 
 // A paper card sits a little askew, always at the same angle for the same note.
@@ -611,9 +615,9 @@ function render() {
   renderSpaceList();
   renderSpacePanel();
   $('time-machine').hidden = $('import-label').hidden = Boolean(activeSpace);
-  document.querySelector('.sidebar-labels').hidden = Boolean(activeSpace);
+  document.querySelector('.sidebar-labels').hidden = $('drawer-nav').hidden = Boolean(activeSpace);
   const descriptions = {
-    notes: labelFilter ? [labelName, 'Notes with this label.'] : ['Notes', 'psst, only you can read these'],
+    notes: labelFilter ? [labelName, isPaperDrawer(labelFilter) ? INTRO.lead : 'Notes with this label.'] : ['Notes', 'psst, only you can read these'],
     archive: ['Archive', 'Kept notes, out of your everyday list.'],
     files: ['Files', 'Images, recordings, and the files you choose to keep.'],
     trash: ['Trash', 'Deleted files stay recoverable until you delete them forever. Restoring adds a new cloud version.'],
@@ -656,13 +660,15 @@ function render() {
   const matching = [...source.values()].filter((entry) => {
     if (!inView(entry)) return false;
     if (selectedTags.size && !(isMarkdown(entry.file.path) && noteTags(entry).some((tag) => selectedTags.has(tag.toLowerCase())))) return false;
-    if (labelFilter && (!isMarkdown(entry.file.path) || !noteParts(noteText(entry.file), entry.file.path).labels.some((label) => label.toLowerCase() === labelFilter))) return false;
+    if (labelFilter && (!isMarkdown(entry.file.path) || !inLabel(noteParts(noteText(entry.file), entry.file.path).labels))) return false;
     return !query || entry.file.path.toLowerCase().includes(query) || (isMarkdown(entry.file.path) && noteText(entry.file).toLowerCase().includes(query));
   }).sort(compare);
   // Dragging counts the notes a search or filter hides too, so clearing it never reshuffles them.
   const draggable = $('sort').value === 'manual' && !moment && !activeSpace && (view === 'notes' || view === 'archive');
   const viewNotes = draggable ? [...source.values()].filter((entry) => inView(entry) && isMarkdown(entry.file.path)).sort(compare) : [];
-  if (!matching.length) {
+  renderPaperTip(view === 'notes' && !activeSpace && isPaperDrawer(labelFilter) && matching.length > 0);
+  if (!matching.length && view === 'notes' && isPaperDrawer(labelFilter) && !query && !selectedTags.size) $('items').append(paperIntro());
+  else if (!matching.length) {
     const empty = document.createElement('div');
     empty.className = 'empty-state';
     const heading = document.createElement('h2');
@@ -1059,6 +1065,77 @@ function renderSelectionBar() {
     button('Move to trash', () => confirm(`Move ${notes} to trash?`) && runBulk((entry) => deleteEntry(entry, false)), 'danger'));
 }
 
+// The Paper drawer opens every paper, a small drawer only its own; any other label matches itself.
+const inLabel = (labels) => (isPaperDrawer(labelFilter) ? inDrawer(labels, labelFilter) : labels.some((label) => label.toLowerCase() === labelFilter));
+const PAPER_KEY = PAPER_DRAWER.toLowerCase();
+
+// What the drawer does for you, with a picture per point.
+function paperPoints() {
+  const list = document.createElement('ul');
+  list.className = 'paper-points';
+  list.append(...INTRO.points.map(({ icon, text }) => {
+    const item = document.createElement('li');
+    item.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${icons[icon]}</svg>`;
+    item.append(paragraph(text));
+    return item;
+  }));
+  return list;
+}
+// An empty drawer explains itself instead of saying "no notes".
+function paperIntro() {
+  const panel = document.createElement('div');
+  panel.className = 'empty-state paper-intro';
+  const heading = document.createElement('h2');
+  heading.textContent = INTRO.title;
+  // The lead line is already the page's subtitle.
+  panel.append(heading, paperPoints(), paragraph(INTRO.phone, 'paper-phone'));
+  return panel;
+}
+// Above the papers the same points come as a short tip; closing it is remembered on this device for this workspace.
+const paperTipKey = () => `jotdrop-paper-tip:${client.credentials.vaultId}`;
+function paperTipClosed() {
+  try { return localStorage.getItem(paperTipKey()) === 'closed'; } catch { return false; }
+}
+function renderPaperTip(show) {
+  const tip = $('paper-tip');
+  tip.hidden = !show || paperTipClosed();
+  if (tip.hidden) { tip.replaceChildren(); return; }
+  const close = button('✕', () => {
+    try { localStorage.setItem(paperTipKey(), 'closed'); } catch { /* Hidden for this page only. */ }
+    tip.hidden = true;
+    tip.replaceChildren();
+  }, 'paper-tip-close');
+  close.setAttribute('aria-label', 'Close tip');
+  const heading = document.createElement('p');
+  heading.className = 'paper-tip-title';
+  heading.textContent = INTRO.title;
+  tip.replaceChildren(close, heading, paperPoints());
+}
+
+// The Paper drawer always has its place under Notes, also before the first paper, with its small drawers below it.
+function renderDrawerList(counts) {
+  const subs = [...counts].filter(([, { label }]) => drawerName(label)).sort((a, b) => drawerName(a[1].label).localeCompare(drawerName(b[1].label)));
+  let total = 0;
+  for (const entry of files.values()) {
+    if (entry.deleted || !isMarkdown(entry.file.path) || isSpacePath(entry.file.path) || /^notes\/(Archive|Trash)\//.test(entry.file.path)) continue;
+    if (inDrawer(noteParts(noteText(entry.file), entry.file.path).labels, PAPER_DRAWER)) total++;
+  }
+  const navItem = (key, name, count, sub) => {
+    const item = button('', () => showLabel(key), `label-nav ${sub ? 'drawer-sub' : 'paper-nav'}`);
+    item.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${icons.drawer}</svg>`;
+    const text = document.createElement('span');
+    text.className = 'label-name';
+    text.textContent = name;
+    item.title = sub ? `${PAPER_DRAWER}: ${name}` : name;
+    item.append(text, String(count));
+    if (view === 'notes' && labelFilter === key) item.setAttribute('aria-current', 'page');
+    return item;
+  };
+  $('drawer-list').replaceChildren(navItem(PAPER_KEY, PAPER_DRAWER, total, false), ...subs.map(([key, { label, count }]) => navItem(key, drawerName(label), count, true)));
+  const taken = new Set(subs.map(([, { label }]) => drawerName(label).toLowerCase()));
+  $('drawer-suggestions').replaceChildren(...SUGGESTED_DRAWERS.filter((name) => !taken.has(name.toLowerCase())).map((name) => new Option(name)));
+}
+
 // Labels live in the sidebar, like Keep: each opens the notes with that label, with their count.
 // Returns the name of the label shown, if any.
 function renderLabelList() {
@@ -1071,10 +1148,12 @@ function renderLabelList() {
       counts.set(label.toLowerCase(), { label: known?.label || label, count: (known?.count || 0) + Number(!entry.file.path.startsWith('notes/Archive/')) });
     }
   }
-  if (!counts.has(labelFilter)) labelFilter = '';
-  $('label-list').replaceChildren(...[...counts].sort((a, b) => a[1].label.localeCompare(b[1].label)).map(([key, { label, count }]) => {
+  if (!counts.has(labelFilter) && labelFilter !== PAPER_KEY) labelFilter = '';
+  renderDrawerList(counts);
+  // Paper drawer labels have their own place above; the rest are ordinary labels.
+  $('label-list').replaceChildren(...[...counts].filter(([, { label }]) => !isPaperDrawer(label)).sort((a, b) => a[1].label.localeCompare(b[1].label)).map(([key, { label, count }]) => {
     const item = button('', () => showLabel(key), 'label-nav');
-    item.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${isPaperDrawer(label) ? icons.drawer : icons.tag}</svg>`;
+    item.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${icons.tag}</svg>`;
     const name = document.createElement('span');
     name.className = 'label-name';
     name.textContent = label;
@@ -1087,7 +1166,8 @@ function renderLabelList() {
     if (item.dataset.view === view && !labelFilter && !activeSpace) item.setAttribute('aria-current', 'page');
     else item.removeAttribute('aria-current');
   }
-  return counts.get(labelFilter)?.label;
+  if (labelFilter === PAPER_KEY) return PAPER_DRAWER;
+  return drawerName(counts.get(labelFilter)?.label) || counts.get(labelFilter)?.label;
 }
 
 function showLabel(key) {
@@ -1517,7 +1597,8 @@ function openEditor(entry) {
   $('editor').classList.toggle('in-space', Boolean(activeSpace));
   editing = entry;
   editingRevision = entry?.revision;
-  $('note-warn').value = '';
+  // A note without an expiry date gets the usual warning, a week before, as soon as a date is filled in.
+  $('note-warn').value = entry && validExpires(noteParts(noteText(entry.file), entry.file.path).expires) ? '' : DEFAULT_WARN;
   $('note-path').value = entry?.file.path || `notes/${new Date().toISOString().replace(/[:.]/g, '-')}-${crypto.randomUUID().slice(0, 8)}.md`;
   $('note-path').readOnly = Boolean(entry);
   pathTyped = false;
@@ -1666,7 +1747,7 @@ function changeExpires() {
 }
 $('note-expires').addEventListener('change', changeExpires);
 $('note-warn').addEventListener('change', changeExpires);
-$('clear-expires').addEventListener('click', () => { $('note-warn').value = ''; changeProperties({ expires: null }); });
+$('clear-expires').addEventListener('click', () => { $('note-warn').value = DEFAULT_WARN; changeProperties({ expires: null }); });
 $('note-order').addEventListener('change', () => {
   const value = $('note-order').value.trim();
   if (value !== '' && !Number.isFinite(Number(value))) { $('editor-message').textContent = 'Manual position must be a finite number.'; refreshProperties(); return; }
@@ -2912,6 +2993,28 @@ $('edit-labels').addEventListener('click', () => {
   $('labels-dialog').showModal();
 });
 $('close-labels').addEventListener('click', () => $('labels-dialog').close());
+// A new small drawer in the Paper drawer is a label on this device until a note has it, like any new label.
+function showDrawerForm(open) {
+  $('new-drawer-form').hidden = !open;
+  $('add-drawer').hidden = open;
+  if (open) $('new-drawer').focus();
+  else $('new-drawer').value = '';
+}
+$('add-drawer').addEventListener('click', () => showDrawerForm(true));
+$('cancel-drawer').addEventListener('click', () => showDrawerForm(false));
+$('new-drawer-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  try {
+    const name = $('new-drawer').value.trim();
+    if (!name || /[\x00-\x1f/]/.test(name)) throw new Error('Type a drawer name, without a slash.');
+    const label = drawerLabel(name);
+    if (allLabels().some((own) => own.toLowerCase() === label.toLowerCase())) throw new Error('That drawer already exists.');
+    await saveLocalLabels([...localLabels, label]);
+    showDrawerForm(false);
+    await goHome();
+    showLabel(label.toLowerCase());
+  } catch (error) { message(errorText(error)); }
+});
 $('new-label-form').addEventListener('submit', async (event) => {
   event.preventDefault();
   $('labels-message').textContent = '';

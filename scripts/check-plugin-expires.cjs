@@ -52,5 +52,34 @@ const mockObsidianPath = path.join(__dirname, "mock-obsidian.cjs");
   if (!past || !past.expired || past.text !== "📅 Expired 5 Jan 2001") fail(`past badge: ${JSON.stringify(past)}`);
   if (formatExpiresBadge(null) !== null) fail("no badge without a date");
 
+  // Paper drawer texts: English straight from cloud/shared/paper.mjs, Dutch complete, no em-dashes.
+  const i18nBuild = await esbuild.build({
+    stdin: { contents: `export { t, resetLangCache } from "./src/i18n.ts"; export { INTRO } from "./cloud/shared/paper.mjs";`, resolveDir: ROOT },
+    bundle: true, platform: "node", format: "cjs", write: false,
+    alias: { obsidian: mockObsidianPath },
+  });
+  const i18n = { exports: {} };
+  new Function("module", "exports", "require", i18nBuild.outputFiles[0].text)(i18n, i18n.exports, require);
+  const { t, INTRO } = i18n.exports;
+  const keys = ["paper_drawer", "paper_new_drawer", "paper_new_drawer_title", "paper_new_drawer_placeholder", "paper_intro_title",
+    "paper_intro_lead", "paper_intro_scan", "paper_intro_search", "paper_intro_alarm", "paper_intro_phone", "paper_tip_close"];
+  if (t("paper_intro_title") !== INTRO.title || t("paper_intro_alarm") !== INTRO.points[2].text || t("paper_intro_phone") !== INTRO.phone) fail("English intro comes from INTRO");
+  const fs = require("fs");
+  const source = fs.readFileSync(path.join(ROOT, "src/i18n.ts"), "utf8");
+  const nl = source.slice(source.indexOf("const NL"), source.indexOf("const ES"));
+  for (const key of keys) {
+    const line = nl.split("\n").find((l) => l.trim().startsWith(`${key}:`));
+    if (!line) fail(`Dutch text for ${key}`);
+    if (line.includes("—")) fail(`em-dash in Dutch ${key}`);
+  }
+
+  // The drawer is always in the filter bar, opens its small drawers, and a new date warns a week before by default.
+  const view = fs.readFileSync(path.join(ROOT, "src/view.ts"), "utf8");
+  if (!/if \(!this\.showTrash\) \{\s*this\.filterBarEl\.toggleClass\("is-hidden", false\);\s*this\.renderPaperChips\(cards\);/.test(view)) fail("Paper drawer chip is always shown");
+  if (!view.includes("isPaperDrawer(sel) ? inDrawer(labels, sel)")) fail("drawer filter uses inDrawer");
+  if (!view.includes("this.plugin.settings.paperTipClosed = true")) fail("closing the tip is remembered");
+  const edit = fs.readFileSync(path.join(ROOT, "src/edit.ts"), "utf8");
+  if (!edit.includes("this.warnChoice = meta.expires ? \"\" : DEFAULT_WARN;")) fail("one week warning by default");
+
   console.log("check-plugin-expires: all checks passed");
 })().catch((err) => { console.error(err); process.exit(1); });

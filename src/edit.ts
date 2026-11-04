@@ -5,7 +5,7 @@ import { LightboxModal } from "./lightbox";
 import { DrawingModal, isDrawingName, readDrawingAt, saveDrawingFile } from "./drawing";
 import { voidAsync } from "./asyncUtil";
 import { RepeatEditor } from "./repeat";
-import { WARN_OPTIONS, warnReminder, withPaperDrawer } from "../cloud/shared/paper.mjs";
+import { DEFAULT_WARN, WARN_OPTIONS, warnReminder, withPaperDrawer } from "../cloud/shared/paper.mjs";
 import { MarkdownHelpModal } from "./markdownHelp";
 import { t } from "./i18n";
 import { keepModalAboveKeyboard } from "./mobileKeyboard";
@@ -123,8 +123,9 @@ export class EditNoteModal extends Modal {
     // title and the card keeps deriving one from the first words of the body.
     const { title, body, level } = splitHeadingTitle(textPart);
     this.titleLevel = level;
-    this.warnChoice = "";
     const meta = readMeta(this.app, this.file);
+    // A new expiry date warns a week before unless changed; a date that is already there keeps its reminder.
+    this.warnChoice = meta.expires ? "" : DEFAULT_WARN;
 
     this.state = {
       file: this.file,

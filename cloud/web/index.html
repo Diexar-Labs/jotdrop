@@ -141,6 +141,11 @@
       <div class="wordmark"><img class="brand-mark" src="/logo.svg" alt=""> JotDrop <span>Cloud</span></div>
       <nav aria-label="Library">
         <button data-view="notes" aria-current="page">Notes <span id="note-count"></span></button>
+        <div id="drawer-nav" class="sidebar-drawer" role="group" aria-label="Paper drawer">
+          <div id="drawer-list"></div>
+          <button id="add-drawer" class="add-drawer" type="button">+ New drawer</button>
+          <form id="new-drawer-form" class="new-drawer" hidden><input id="new-drawer" maxlength="80" autocomplete="off" list="drawer-suggestions" aria-label="New drawer name" placeholder="Drawer name, like Work"><datalist id="drawer-suggestions"></datalist><button type="submit">Add</button><button id="cancel-drawer" type="button">Cancel</button></form>
+        </div>
         <div class="sidebar-labels" role="group" aria-labelledby="labels-heading">
           <div class="sidebar-labels-heading"><span id="labels-heading">Labels</span><button id="edit-labels" type="button">Edit labels</button></div>
           <div id="label-list"></div>
@@ -192,6 +197,7 @@
       <div id="plus-nudge" class="plus-nudge" hidden><p id="plus-reason" role="status"></p><button id="start-trial" class="primary" type="button">Try JotDrop Plus free for 14 days</button><button id="get-plus" class="primary" type="button">Get JotDrop Plus</button><button id="plus-not-now" type="button">Not now</button></div>
       <div id="selection-bar" class="selection-bar" role="toolbar" aria-label="Selected notes" hidden></div>
       <div id="tag-filter" class="tag-filter" role="group" aria-label="Filter by tag" hidden></div>
+      <div id="paper-tip" class="paper-tip" role="note" aria-label="About the Paper drawer" hidden></div>
       <section id="items" class="note-grid" aria-label="Notes"></section>
       <section id="devices-panel" hidden aria-label="Devices and recovery">
         <h2>Connected devices</h2><p>Revoking access prevents future cloud requests. It cannot erase files already downloaded.</p>

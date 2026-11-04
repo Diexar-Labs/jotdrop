@@ -384,7 +384,6 @@
     <string name="scan_failed">Scanning failed: %1$s</string>
     <string name="scan_running">Reading the text in your scan…</string>
     <string name="scan_note_title">Scan %1$s</string>
-    <string name="scan_text_heading">Text from scan</string>
     <string name="action_expires">Expires on…</string>
     <string name="expires_badge">Expires %1$s</string>
     <string name="expires_badge_expired">Expired %1$s</string>
@@ -396,4 +395,15 @@
     <string name="expires_warn_3m">3 months before</string>
     <string name="expires_help">An expiry date puts the note in the Paper drawer. A warning replaces the note\'s current reminder.</string>
     <string name="expires_clear">Clear</string>
+    <string name="paper_intro_title">Your paper drawer</string>
+    <string name="paper_intro_lead">Scan a letter, a policy or a passport and it lands here.</string>
+    <string name="paper_intro_scan">The camera finds the edges of the page and straightens it, so every scan comes out as a clean PDF.</string>
+    <string name="paper_intro_search">Every word on the page is searchable. Type a policy number and the paper turns up.</string>
+    <string name="paper_intro_alarm">If the paper has an expiry date, JotDrop spots it and offers to remind you a week before.</string>
+    <string name="paper_tip_close">Close tip</string>
+    <string name="scan_save_title">Where does this paper go?</string>
+    <string name="scan_save_new_drawer">New drawer</string>
+    <string name="scan_save_drawer_name">Name of the drawer</string>
+    <string name="scan_save_expires">Expires %1$s. Remind me a week before.</string>
+    <string name="scan_save_no_expiry">No expiry date found on this paper. You can add one later from the card menu.</string>
 </resources>
