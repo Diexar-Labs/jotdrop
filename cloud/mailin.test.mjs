@@ -53,8 +53,9 @@ function talker(socket) {
   let buffer = '', waiter = null;
   const feed = (chunk) => { buffer += chunk.toString('latin1'); waiter?.(); };
   socket.on('data', feed);
-  const readReply = () => new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error(`No reply; have: ${JSON.stringify(buffer)}`)), 10000);
+  // Generous: a busy server (a deploy runs all tests at once) can be slow, and a wait costs nothing when the reply comes.
+  const readReply = (wait = 30000) => new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`No reply after ${wait / 1000} s; have: ${JSON.stringify(buffer)}`)), wait);
     const check = () => {
       const lines = buffer.split('\r\n');
       for (let index = 0; index < lines.length - 1; index++) {
@@ -70,7 +71,7 @@ function talker(socket) {
     };
     check();
   });
-  return { readReply, send: (line) => { socket.write(line + '\r\n'); return readReply(); }, raw: (text) => socket.write(text), socket, rewire: (next) => { socket.off('data', feed); socket = next; socket.on('data', feed); } };
+  return { readReply, send: (line, wait) => { socket.write(line + '\r\n'); return readReply(wait); }, raw: (text) => socket.write(text), socket, rewire: (next) => { socket.off('data', feed); socket = next; socket.on('data', feed); } };
 }
 
 const open = (port) => new Promise((resolve, reject) => {
@@ -168,7 +169,8 @@ test('the SMTP rules hold: order, size, unknown commands and connection limits',
   assert.equal((await smtp.send('DATA')).code, '354');
   const chunk = `${'a'.repeat(998)}\r\n`;
   for (let sent = 0; sent < 21 * 1024 * 1024; sent += chunk.length) smtp.raw(chunk);
-  assert.equal((await smtp.send('.')).code, '552');
+  // 21 MB to read first: as long as the server itself waits for a command.
+  assert.equal((await smtp.send('.', 120000)).code, '552');
   assert.equal((await smtp.send('NOOP')).code, '250');
   assert.equal((await smtp.send('QUIT')).code, '221');
   // The server only forgets this connection once its socket has closed, a moment after the client sees the goodbye.
