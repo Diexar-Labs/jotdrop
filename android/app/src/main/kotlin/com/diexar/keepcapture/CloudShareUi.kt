@@ -65,6 +65,9 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -97,8 +100,9 @@ internal fun ShareNoteScreen(note: Uri, startWithLink: Boolean, onOpenCloud: () 
     var checklist by remember { mutableStateOf(false) }
     var days by rememberSaveable { mutableStateOf(7) }
     var made by rememberSaveable { mutableStateOf<String?>(null) }
-    var links by remember { mutableStateOf<List<CloudNoteLinks.Link>>(emptyList()) }
-    var lists by remember { mutableStateOf<List<ListLinkRow>>(emptyList()) }
+    // Last seen on this run of the app, so "Your links" shows at once and then refreshes.
+    var links by remember { mutableStateOf(ShareLinksSeen.links) }
+    var lists by remember { mutableStateOf(ShareLinksSeen.lists) }
 
     suspend fun client(): CloudClient = withContext(Dispatchers.IO) { CloudSyncManager.client(context) ?: throw CloudSyncException("Sign in to JotDrop Cloud first.") }
     fun run(action: suspend () -> Unit) {
@@ -117,13 +121,27 @@ internal fun ShareNoteScreen(note: Uri, startWithLink: Boolean, onOpenCloud: () 
     fun send(text: String, chooserTitle: String) {
         context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text), chooserTitle))
     }
+    // Both lists at once and every live list opened at the same time: one after the other took seconds.
     suspend fun loadLinks() {
         val own = client()
-        links = withContext(Dispatchers.IO) { CloudNoteLinks.list(own) }
-        lists = withContext(Dispatchers.IO) {
-            val known = CloudListLinks.list(own)
-            CloudSyncManager.rememberListLinks(known)
-            known.map { link -> ListLinkRow(link, link.key?.let { key -> runCatching { CloudListLinks.open(own.credentials.url, link.id, key) }.getOrNull() }) }
+        if (ShareLinksSeen.vaultId != own.credentials.vaultId) {
+            ShareLinksSeen.vaultId = own.credentials.vaultId
+            ShareLinksSeen.links = emptyList()
+            ShareLinksSeen.lists = emptyList()
+            links = emptyList()
+            lists = emptyList()
+        }
+        coroutineScope {
+            val noteLinks = async(Dispatchers.IO) { CloudNoteLinks.list(own) }
+            val listRows = async(Dispatchers.IO) {
+                val known = CloudListLinks.list(own)
+                CloudSyncManager.rememberListLinks(known)
+                known.map { link ->
+                    async { ListLinkRow(link, link.key?.let { key -> runCatching { CloudListLinks.open(own.credentials.url, link.id, key) }.getOrNull() }) }
+                }.awaitAll()
+            }
+            links = noteLinks.await().also { ShareLinksSeen.links = it }
+            lists = listRows.await().also { ShareLinksSeen.lists = it }
         }
     }
 
@@ -134,11 +152,16 @@ internal fun ShareNoteScreen(note: Uri, startWithLink: Boolean, onOpenCloud: () 
         checklist = CloudListRules.hasChecklist(CloudListLinks.splitNote(text).body)
         if (connected != true) return@LaunchedEffect
         groups = withContext(Dispatchers.IO) { CloudSpacesFlow.known(context).filter { !it.gone && !it.frozen } }
-        runCatching {
-            val own = client()
-            if (me.isEmpty()) me = withContext(Dispatchers.IO) { CloudSpacesFlow.myName(own, CloudSpacesFlow.known(context)) }
+        // Your name in a group asks the server once per group; the links should not wait for it.
+        coroutineScope {
+            launch {
+                runCatching {
+                    val own = client()
+                    if (me.isEmpty()) me = withContext(Dispatchers.IO) { CloudSpacesFlow.myName(own, CloudSpacesFlow.known(context)) }
+                }
+            }
+            launch { runCatching { loadLinks() } }
         }
-        runCatching { loadLinks() }
     }
     BackHandler(onBack = onClose)
 
@@ -285,6 +308,13 @@ internal fun ShareNoteScreen(note: Uri, startWithLink: Boolean, onOpenCloud: () 
             }
         }
     }
+}
+
+/** "Your links" as last loaded in this process, for the account it belongs to. */
+private object ShareLinksSeen {
+    var vaultId: String? = null
+    var links: List<CloudNoteLinks.Link> = emptyList()
+    var lists: List<ListLinkRow> = emptyList()
 }
 
 /** One of your live list links with what the page holds now; `opened` is null when the link does not open (ended or paused). */

@@ -274,6 +274,7 @@ private fun EditorScreen(
     var bodyText by rememberSaveable(stateSaver = TextFieldValue.Saver) {
         mutableStateOf(TextFieldValue(""))
     }
+    val staleBody = remember { StaleField() }
     var originalBody by rememberSaveable { mutableStateOf("") }
     var bodyEditing by rememberSaveable { mutableStateOf(initialUri == null) }
     // Expliciete titel (de eerste `# kop`-regel). Leeg → de kaart leidt zoals
@@ -1127,8 +1128,15 @@ private fun EditorScreen(
                 else -> EditorBody(
                     showReminder = Storage.spaceIdOf(initialUri) == null,
                     value = bodyText,
-                    onValueChange = { next ->
+                    onValueChange = { field ->
                         val current = bodyText
+                        // Right after a list edit the field can still send changes on the text from before it.
+                        val replayed = staleBody.replay(current.text, field.text)
+                        val next = if (replayed == null) field else TextFieldValue(
+                            text = replayed.text,
+                            selection = TextRange(replayed.map(field.selection.start), replayed.map(field.selection.end)),
+                            composition = field.composition?.let { TextRange(replayed.map(it.start), replayed.map(it.end)) },
+                        )
                         val start = current.selection.min
                         val end = current.selection.max
                         // Only a committed single newline; leave bulk edits and IME composition alone.
@@ -1136,10 +1144,23 @@ private fun EditorScreen(
                             next.selection.start == start + 1 &&
                             next.text == current.text.replaceRange(start, end, "\n")
                         ) listEnterEdit(current.text, start, end) else null
-                        bodyText = if (edit == null) next else TextFieldValue(
-                            text = current.text.replaceRange(edit.from, edit.to, edit.insert),
-                            selection = TextRange(edit.from + edit.insert.length),
-                        )
+                        // Keyboards often swap the word being typed in the same update as Enter.
+                        val changed = if (edit == null && next.composition == null && next.selection.collapsed &&
+                            next.text != current.text
+                        ) listEnterAfterChange(current.text, next.text, next.selection.start) else null
+                        val shown = when {
+                            edit != null -> TextFieldValue(
+                                text = current.text.replaceRange(edit.from, edit.to, edit.insert),
+                                selection = TextRange(edit.from + edit.insert.length),
+                            )
+                            changed != null -> TextFieldValue(
+                                text = changed.first,
+                                selection = TextRange(changed.second),
+                            )
+                            else -> next
+                        }
+                        staleBody.settle(field.text, shown.text)
+                        bodyText = shown
                     },
                     bodyEditing = bodyEditing,
                     onEditBody = { bodyEditing = true },
