@@ -3422,7 +3422,8 @@ async function refreshLinks() {
     for (const link of lists) {
       const row = document.createElement('div');
       row.className = 'history-row';
-      const note = link.path && [...files.values()].some((entry) => !entry.deleted && entry.file.path === link.path) ? '' : ' - note not found';
+      // A list made in Joplin belongs to a Joplin note, which is not in the cloud: Joplin keeps it in step, not this page.
+      const note = link.path?.startsWith('joplin:') ? ' - in Joplin' : link.path && [...files.values()].some((entry) => !entry.deleted && entry.file.path === link.path) ? '' : ' - note not found';
       row.append(paragraph(`${link.title || 'Untitled note'} - live list, ${linkEnds(link)}, updated ${changedAgo(link.updatedAt) || 'just now'}${note}`));
       if (link.address) row.append(button('Copy', async () => { await navigator.clipboard.writeText(link.address); $('link-message').textContent = 'Link copied.'; }));
       row.append(button('End link', async () => { await removeListLink(ownClient, link.id); $('link-message').textContent = 'The link no longer works.'; await refreshLinks(); render(); }));
