@@ -47,4 +47,5 @@ th { color: var(--muted); font-size: .8rem; font-weight: 650; }
 tbody tr:last-child td { border-bottom: 0; }
 td.email { white-space: normal; overflow-wrap: anywhere; min-width: 14rem; font-weight: 600; }
 td small { display: block; color: var(--muted); }
+td.label { white-space: normal; min-width: 12rem; font-weight: 600; }
 .pager { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: 1rem; }

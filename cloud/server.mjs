@@ -342,6 +342,10 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         CREATE TABLE IF NOT EXISTS family_invites(tokenHash TEXT PRIMARY KEY, ownerAccountId TEXT NOT NULL, expiresAt INTEGER NOT NULL);
         CREATE INDEX IF NOT EXISTS family_invites_by_owner ON family_invites(ownerAccountId);`);
       // "Delete forever": the revision of the content-free tombstone that replaced a note and all its history.
+      // Plan limits that free accounts ran into, per week: only how often and by how many accounts, never which.
+      db.exec('CREATE TABLE IF NOT EXISTS limit_hits(kind TEXT NOT NULL, weekStart INTEGER NOT NULL, times INTEGER NOT NULL, accounts INTEGER NOT NULL, PRIMARY KEY(kind,weekStart));');
+      // How a subscription is billed, from Stripe: 'month' or 'year', and the currency.
+      db.exec('CREATE TABLE IF NOT EXISTS subscription_details(subscriptionId TEXT PRIMARY KEY, interval TEXT, currency TEXT);');
       db.exec('CREATE TABLE IF NOT EXISTS purges(vaultId TEXT NOT NULL, id TEXT NOT NULL, revision INTEGER NOT NULL, purgedAt INTEGER NOT NULL, PRIMARY KEY(vaultId,id));');
       // Who uploaded a piece that no version uses yet; only set in a space, so one member cannot block the others.
       if (!all('PRAGMA table_info(chunks)').some((column) => column.name === 'deviceId')) db.exec('ALTER TABLE chunks ADD COLUMN deviceId TEXT;');
@@ -481,6 +485,23 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     if (!at || Math.abs(clock() / 1000 - at) > 300 || ![...header.matchAll(/(?:^|,)v1=([0-9a-f]{64})/g)].some((match) => equal(match[1], expected))) fail(400, 'Invalid Stripe signature');
     try { return JSON.parse(raw.toString('utf8')); } catch { fail(400, 'Invalid Stripe event'); }
   }
+  function saveBilling(id, subscription) {
+    const interval = subscription.items?.data?.[0]?.price?.recurring?.interval, currency = subscription.currency;
+    run('INSERT INTO subscription_details VALUES(?,?,?) ON CONFLICT(subscriptionId) DO UPDATE SET interval=excluded.interval,currency=excluded.currency', id,
+      ['month', 'year'].includes(interval) ? interval : null, typeof currency === 'string' && /^[a-z]{3}$/.test(currency) ? currency : null);
+  }
+  // Subscriptions from before the server kept billing details: ask Stripe once, a few per sweep.
+  async function fillBilling() {
+    if (!stripe) return;
+    const missing = all(`SELECT subscriptionId FROM subscriptions s WHERE status IN (${RUNNING.map(() => '?').join(',')}) AND NOT EXISTS (SELECT 1 FROM subscription_details d WHERE d.subscriptionId=s.subscriptionId) LIMIT 20`, ...RUNNING);
+    for (const { subscriptionId } of missing) {
+      try {
+        const response = await stripeCall(`/subscriptions/${subscriptionId}`, {}, 8000), subscription = response.ok ? await response.json() : undefined;
+        if (closing) return;
+        if (subscription?.id === subscriptionId && one('SELECT 1 FROM subscriptions WHERE subscriptionId=?', subscriptionId)) saveBilling(subscriptionId, subscription);
+      } catch { /* Stays missing; the next sweep or event tries again. */ }
+    }
+  }
   // Events only say which subscription changed; its current state comes from Stripe, so delivery order does not matter.
   async function applySubscription(event) {
     const id = event?.data?.object?.id;
@@ -507,6 +528,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       // Paid: until the period ends plus a day of grace for the renewal. Past due: no further. Ended: no later than the end.
       const paidUntil = PAID.includes(status) && Number.isSafeInteger(periodEnd) ? Math.max(previous, periodEnd + DAY) : status === 'past_due' ? previous : Math.min(previous, endedAt);
       run('INSERT INTO subscriptions VALUES(?,?,?,?) ON CONFLICT(subscriptionId) DO UPDATE SET status=excluded.status,paidUntil=excluded.paidUntil', id, vaultId, status, paidUntil);
+      saveBilling(id, subscription);
       // The price says which plan was bought.
       if (familyPrices.includes(subscription.items?.data?.[0]?.price?.id)) {
         run('INSERT INTO family_subscriptions VALUES(?) ON CONFLICT DO NOTHING', id);
@@ -522,7 +544,22 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     const active = isPlus(vaultId) ? [] : all('SELECT id,name,lastSeenAt FROM devices WHERE vaultId=? AND revoked=0 ORDER BY lastSeenAt', vaultId);
     return active.length >= freeDeviceLimit ? active : [];
   }
-  const deviceLimitReached = (devices) => fail(403, `The free plan includes ${freeDeviceLimit} devices. Sign out one of them, or try JotDrop Plus.`, { code: 'device-limit', deviceLimit: freeDeviceLimit, devices });
+  // A refusal that JotDrop Plus or the family plan lifts. The kind is counted for the dashboard and never sent.
+  const planLimit = (kind, vaultId, status, message, extra = { code: 'plus-required' }) => { throw Object.assign(new Error(message), { status, extra, limit: { kind, vaultId } }); };
+  const storageFull = (vaultId) => isPlus(vaultId) ? fail(507, 'Cloud storage is full. Your local files remain available.', { code: 'storage-full' }) : planLimit('storage', vaultId, 507, 'Cloud storage is full. Your local files remain available.', { code: 'storage-full' });
+  const deviceLimitReached = (vaultId, devices) => planLimit('devices', vaultId, 403, `The free plan includes ${freeDeviceLimit} devices. Sign out one of them, or try JotDrop Plus.`, { code: 'device-limit', deviceLimit: freeDeviceLimit, devices });
+  // Who already counted this week stays in memory only, so the database never links a limit to an account.
+  let limitWeek = { start: 0, seen: new Set() };
+  const weekStart = (time) => { const days = Math.floor(time / DAY); return (days - (days + 3) % 7) * DAY; };
+  function noteLimit({ kind, vaultId }) {
+    try {
+      const start = weekStart(clock());
+      if (limitWeek.start !== start) limitWeek = { start, seen: new Set() };
+      const key = `${kind}:${vaultId}`, first = !limitWeek.seen.has(key) && limitWeek.seen.size < 100000;
+      if (first) limitWeek.seen.add(key);
+      run('INSERT INTO limit_hits VALUES(?,?,1,?) ON CONFLICT(kind,weekStart) DO UPDATE SET times=times+1,accounts=accounts+excluded.accounts', kind, start, first ? 1 : 0);
+    } catch { /* A count must never turn a refusal into a server error. */ }
+  }
   const dropDevicePieces = (deviceId) => run('DELETE FROM chunks WHERE deviceId=? AND claimed=0', deviceId);
   // A free cloud at its device limit can only swap a device, so someone who lost their phone can still sign in.
   function addDevice(vaultId, name, tokenHash, replaceDeviceId) {
@@ -531,7 +568,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     const active = devicesAtLimit(vaultId);
     if (active.length) {
       const replaced = active.find((device) => device.id === replaceDeviceId);
-      if (!replaced) deviceLimitReached(active);
+      if (!replaced) deviceLimitReached(vaultId, active);
       run('UPDATE devices SET revoked=1 WHERE id=?', replaced.id);
       run('DELETE FROM uploads WHERE vaultId=? AND deviceId=?', vaultId, replaced.id);
       dropDevicePieces(replaced.id);
@@ -759,8 +796,8 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   function requireOpenVersion(vaultId, id, revision) {
     const cutoff = lockedBefore(vaultId);
     if (!cutoff) return;
-    if (one(`SELECT 1 ${trashedNotes} AND r.id=?`, vaultId, cutoff, id)) fail(402, 'This note was deleted more than 30 days ago. JotDrop Plus restores it.', { code: 'plus-required' });
-    if (one(`SELECT 1 ${lockedVersions} AND r.id=? AND r.revision=?`, vaultId, cutoff, id, revision)) fail(402, 'This version is older than 30 days. JotDrop Plus restores it.', { code: 'plus-required' });
+    if (one(`SELECT 1 ${trashedNotes} AND r.id=?`, vaultId, cutoff, id)) planLimit('old-trash', vaultId, 402, 'This note was deleted more than 30 days ago. JotDrop Plus restores it.');
+    if (one(`SELECT 1 ${lockedVersions} AND r.id=? AND r.revision=?`, vaultId, cutoff, id, revision)) planLimit('old-version', vaultId, 402, 'This version is older than 30 days. JotDrop Plus restores it.');
   }
   // A full free cloud makes room by deleting, oldest first, notes locked in the trash and then locked versions;
   // the current version of a file always stays. A cleared note is announced in the change feed and then reads as 404.
@@ -808,7 +845,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     const space = spaceRow(vaultId);
     if (!space) return;
     if (space.frozenAt) fail(403, 'This shared space is read-only.', { code: 'space-frozen' });
-    if (!fits(vaultId, 0, deviceId, id)) fail(507, 'Cloud storage is full. Your local files remain available.', { code: 'storage-full' });
+    if (!fits(vaultId, 0, deviceId, id)) storageFull(vaultId);
   }
   /** `pieces`: for a v2 save, the names of its encrypted pieces, already uploaded (none for a small file); a stored envelope keeps its own. */
   function append(vaultId, deviceId, id, baseRevision, envelope, deleted, pieces = null) {
@@ -836,8 +873,12 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           if (!piece) fail(409, 'An encrypted piece is missing. Upload it again.');
           total += piece.size;
         }
-        if (pieces && total - 28 * pieces.length > maxFileFor(vaultId)) fail(413, `Files can be at most ${Math.round(maxFileFor(vaultId) / 1048576)} MB on your plan.`, { code: isPlus(vaultId) ? 'file-too-large' : 'plus-required' });
-        if (!fits(vaultId, size, deviceId, id)) fail(507, 'Cloud storage is full. Your local files remain available.', { code: 'storage-full' });
+        if (pieces && total - 28 * pieces.length > maxFileFor(vaultId)) {
+          const message = `Files can be at most ${Math.round(maxFileFor(vaultId) / 1048576)} MB on your plan.`;
+          if (isPlus(vaultId)) fail(413, message, { code: 'file-too-large' });
+          planLimit('file-size', vaultId, 413, message);
+        }
+        if (!fits(vaultId, size, deviceId, id)) storageFull(vaultId);
         run('INSERT INTO envelopes(vaultId,id,envelopeHash,envelope,size,pieces) VALUES(?,?,?,?,?,?)', vaultId, id, envelopeHash, envelope, size, pieces ? 1 : 0);
         for (const name of new Set(pieces ?? [])) {
           run('INSERT INTO envelope_chunks VALUES(?,?,?,?)', vaultId, id, envelopeHash, name);
@@ -919,6 +960,8 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   const plusUntilSql = '(MAX(COALESCE((SELECT plusUntil FROM plans WHERE vaultId=a.vaultId),0),(SELECT COALESCE(MAX(paidUntil),0) FROM subscriptions WHERE vaultId=a.vaultId),' +
     '(SELECT COALESCE(MAX(s.paidUntil),0) FROM family_members m JOIN accounts o ON o.id=m.ownerAccountId JOIN subscriptions s ON s.vaultId=o.vaultId JOIN family_subscriptions f ON f.subscriptionId=s.subscriptionId WHERE m.accountId=a.id)))';
   const runningSql = `(SELECT 1 FROM subscriptions WHERE vaultId=a.vaultId AND status IN (${RUNNING.map(() => '?').join(',')}))`;
+  // An account's own cloud and the spaces it owns.
+  const usedBytesSql = '((SELECT COALESCE(SUM(size),0) FROM envelopes WHERE vaultId IN (SELECT a.vaultId UNION ALL SELECT id FROM spaces WHERE ownerAccountId=a.id AND ownerGoneAt IS NULL))+(SELECT COALESCE(SUM(size),0) FROM chunks WHERE vaultId IN (SELECT a.vaultId UNION ALL SELECT id FROM spaces WHERE ownerAccountId=a.id AND ownerGoneAt IS NULL)))';
   // Counts and sizes only: never note content, envelopes, keys, hashes, tokens or authenticator secrets.
   function adminSummary() {
     const now = clock(), since = (days) => new Date(now - days * DAY).toISOString();
@@ -927,10 +970,25 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     // The sign-up trial: how many run now, and how many clouds that had one pay now or paid before.
     const trials = one('SELECT COUNT(*) AS total,COALESCE(SUM(trialUntil>?),0) AS running,COALESCE(SUM(EXISTS(SELECT 1 FROM subscriptions s WHERE s.vaultId=t.vaultId AND s.paidUntil>0)),0) AS paidAfter FROM trials t', now);
     const votes = new Map(all('SELECT itemId,COUNT(*) AS votes FROM roadmap_votes GROUP BY itemId').map((row) => [row.itemId, row.votes]));
-    return { generatedAt: new Date(now).toISOString(), accounts: { ...accounts, free: accounts.total - accounts.plus }, trials,
+    // Trials that end within a week, with what the cloud holds and does, to see who is likely to pay.
+    const trialsEnding = all(`SELECT a.email,t.trialUntil,${usedBytesSql} AS usedBytes,(SELECT COUNT(*) FROM devices WHERE vaultId=a.vaultId AND revoked=0) AS activeDevices,
+      (SELECT MAX(lastSeenAt) FROM devices WHERE vaultId=a.vaultId) AS lastActiveAt,EXISTS${runningSql} AS subscribed
+      FROM trials t JOIN accounts a ON a.vaultId=t.vaultId WHERE t.trialUntil>? AND t.trialUntil<=? ORDER BY t.trialUntil,a.email LIMIT ?`, ...RUNNING, now, now + 7 * DAY, ADMIN_PAGE)
+      .map((row) => ({ email: row.email, trialUntil: new Date(row.trialUntil).toISOString(), usedBytes: row.usedBytes, activeDevices: row.activeDevices, lastActiveAt: row.lastActiveAt ?? null, subscribed: Boolean(row.subscribed) }));
+    // The plan limits free accounts ran into, this week and the three before, newest first.
+    const weeks = [0, 1, 2, 3].map((back) => weekStart(now) - back * 7 * DAY), hits = all('SELECT kind,weekStart,times,accounts FROM limit_hits WHERE weekStart>=?', weeks[3]);
+    const limits = { weeks: weeks.map((start) => new Date(start).toISOString()), kinds: [...new Set(hits.map((hit) => hit.kind))].sort().map((kind) => ({ kind,
+      perWeek: weeks.map((start) => { const hit = hits.find((row) => row.kind === kind && row.weekStart === start); return { times: hit?.times ?? 0, accounts: hit?.accounts ?? 0 }; }) })) };
+    // Running subscriptions by plan, billing interval and currency; null where Stripe has not told the server yet.
+    const running = RUNNING.map(() => '?').join(',');
+    const subscriptions = all(`SELECT EXISTS(SELECT 1 FROM family_subscriptions f WHERE f.subscriptionId=s.subscriptionId) AS family,d.interval,d.currency,COUNT(*) AS count,COALESCE(SUM(s.status='past_due'),0) AS pastDue
+      FROM subscriptions s LEFT JOIN subscription_details d ON d.subscriptionId=s.subscriptionId WHERE s.status IN (${running}) GROUP BY 1,2,3 ORDER BY 1,2,3`, ...RUNNING)
+      .map((row) => ({ plan: row.family ? 'family' : 'plus', interval: row.interval ?? null, currency: row.currency ?? null, count: row.count, pastDue: row.pastDue }));
+    const family = one(`SELECT COUNT(DISTINCT s.vaultId) AS plans,(SELECT COUNT(*) FROM family_members m JOIN accounts o ON o.id=m.ownerAccountId WHERE o.vaultId IN
+      (SELECT s2.vaultId FROM subscriptions s2 JOIN family_subscriptions f2 ON f2.subscriptionId=s2.subscriptionId WHERE s2.status IN (${running}))) AS members
+      FROM subscriptions s JOIN family_subscriptions f ON f.subscriptionId=s.subscriptionId WHERE s.status IN (${running})`, ...RUNNING, ...RUNNING);
+    return { generatedAt: new Date(now).toISOString(), accounts: { ...accounts, free: accounts.total - accounts.plus }, trials, trialsEnding, limits, subscriptions, family,
       roadmap: roadmap.map((item) => ({ title: item.title, votes: votes.get(item.id) ?? 0 })),
-      // The count founderPrice uses; no limit when there is no founder price.
-      founder: { taken: one('SELECT COUNT(DISTINCT vaultId) AS count FROM subscriptions WHERE paidUntil>0').count, limit: stripe?.founderYearPrice ? stripe.founderLimit ?? 500 : null },
       storage: { storedBytes: one('SELECT (SELECT COALESCE(SUM(size),0) FROM envelopes) + (SELECT COALESCE(SUM(size),0) FROM chunks) AS size').size, databaseBytes: file('cloud.db') + file('cloud.db-wal'), diskFreeBytes: disk.bavail * disk.bsize, diskTotalBytes: disk.blocks * disk.bsize } };
   }
   const ADMIN_SORT = { created: 'a.createdAt', email: 'a.email', storage: 'usedBytes', active: 'lastActiveAt' };
@@ -941,7 +999,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     const now = clock();
     // ponytail: sums the storage of every matching account per page; keep per-vault counters if the account list grows large.
     const rows = all(`SELECT a.email,a.createdAt,a.authHash<>'' AS hasPassword,a.totpSecret IS NOT NULL AS hasAuthenticator,(SELECT group_concat(provider,',') FROM (SELECT provider FROM identities WHERE accountId=a.id ORDER BY provider)) AS providers,
-      ${plusUntilSql} AS plusUntil,EXISTS${runningSql} AS subscribed,(SELECT COALESCE(SUM(size),0) FROM envelopes WHERE vaultId IN (SELECT a.vaultId UNION ALL SELECT id FROM spaces WHERE ownerAccountId=a.id AND ownerGoneAt IS NULL))+(SELECT COALESCE(SUM(size),0) FROM chunks WHERE vaultId IN (SELECT a.vaultId UNION ALL SELECT id FROM spaces WHERE ownerAccountId=a.id AND ownerGoneAt IS NULL)) AS usedBytes,(SELECT COUNT(*) FROM spaces WHERE ownerAccountId=a.id AND ownerGoneAt IS NULL) AS spaces,(SELECT COUNT(*) FROM devices WHERE vaultId=a.vaultId AND revoked=0) AS activeDevices,
+      ${plusUntilSql} AS plusUntil,EXISTS${runningSql} AS subscribed,${usedBytesSql} AS usedBytes,(SELECT COUNT(*) FROM spaces WHERE ownerAccountId=a.id AND ownerGoneAt IS NULL) AS spaces,(SELECT COUNT(*) FROM devices WHERE vaultId=a.vaultId AND revoked=0) AS activeDevices,
       (SELECT MAX(lastSeenAt) FROM devices WHERE vaultId=a.vaultId) AS lastActiveAt,EXISTS(SELECT 1 FROM newsletter WHERE accountId=a.id) AS newsletter
       FROM accounts a WHERE instr(a.email,?)>0 ORDER BY ${ADMIN_SORT[sort]} ${order} NULLS LAST,a.email LIMIT ? OFFSET ?`, ...RUNNING, search, pageSize, (page - 1) * pageSize);
     return { accounts: rows.map((row) => {
@@ -1135,6 +1193,8 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       run('DELETE FROM family_invites WHERE expiresAt<=? OR ownerAccountId NOT IN (SELECT id FROM accounts)', now);
       run('DELETE FROM family_members WHERE accountId NOT IN (SELECT id FROM accounts) OR ownerAccountId NOT IN (SELECT id FROM accounts)');
       run('DELETE FROM family_subscriptions WHERE subscriptionId NOT IN (SELECT subscriptionId FROM subscriptions)');
+      run('DELETE FROM subscription_details WHERE subscriptionId NOT IN (SELECT subscriptionId FROM subscriptions)');
+      run('DELETE FROM limit_hits WHERE weekStart<?', now - 26 * 7 * DAY);
       run('DELETE FROM space_reports WHERE createdAt<=? OR accountId NOT IN (SELECT id FROM accounts)', now - 24 * 60 * 60 * 1000);
       run('UPDATE spaces SET ownerGoneAt=?,frozenAt=COALESCE(frozenAt,?) WHERE ownerGoneAt IS NULL AND ownerAccountId NOT IN (SELECT id FROM accounts)', now, now);
       const finished = all(`SELECT s.id FROM spaces s WHERE s.frozenAt<=? OR (s.createdAt<=? AND ${unfinishedSql}) OR NOT EXISTS (SELECT 1 FROM space_members m WHERE m.spaceId=s.id)`, now - FROZEN_SPACE_LIFETIME, now - UNFINISHED_SPACE_LIFETIME);
@@ -1175,8 +1235,8 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   const allLinks = (account) => ['note_links', 'list_links'].flatMap((table) => all(`SELECT createdAt,expiresAt FROM ${table} WHERE accountId=?`, account.id));
   function linkRoom(account, vaultId, days) {
     const now = clock(), plus = isPlus(vaultId), live = allLinks(account).filter((link) => { const end = linkEnd(link, vaultId); return end === null || end > now; }).length;
-    if (!plus && days !== LINK_FREE_DAYS) fail(402, 'On the free plan a link lasts 7 days. JotDrop Plus chooses how long.', { code: 'plus-required' });
-    if (!plus && live >= 1) fail(402, 'The free plan has one link at a time. JotDrop Plus has more.', { code: 'plus-required' });
+    if (!plus && days !== LINK_FREE_DAYS) planLimit('link-days', vaultId, 402, 'On the free plan a link lasts 7 days. JotDrop Plus chooses how long.');
+    if (!plus && live >= 1) planLimit('links', vaultId, 402, 'The free plan has one link at a time. JotDrop Plus has more.');
     if (live >= MAX_LINKS) fail(409, `You can have ${MAX_LINKS} links at most.`, { code: 'too-many-links' });
   }
   async function linkRequest(req, reply, method, route, account, vaultId, deviceId) {
@@ -1295,7 +1355,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       limit(`family:${vaultId}`, 20);
       const token = randomBytes(32).toString('base64url');
       const expiresAt = change(() => {
-        if (!ownsFamily(account)) fail(402, 'Inviting people needs the JotDrop family plan.', { code: 'family-required' });
+        if (!ownsFamily(account)) planLimit('family-invite', vaultId, 402, 'Inviting people needs the JotDrop family plan.', { code: 'family-required' });
         run('DELETE FROM family_invites WHERE ownerAccountId=? AND expiresAt<=?', account.id, clock());
         // Open invitations hold a seat, so six links cannot bring in seven people.
         const taken = one('SELECT (SELECT COUNT(*) FROM family_members WHERE ownerAccountId=?)+(SELECT COUNT(*) FROM family_invites WHERE ownerAccountId=?) AS count', account.id, account.id).count;
@@ -1450,7 +1510,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           if (unfinished(old)) fail(409, 'This shared space is still being replaced.', { code: 'space-unfinished' });
         } else {
           const live = liveSpaces(account.id);
-          if (!isPlus(vaultId) && live >= 1) fail(402, 'The free plan shares one note. JotDrop Plus shares more.', { code: 'plus-required' });
+          if (!isPlus(vaultId) && live >= 1) planLimit('shared-spaces', vaultId, 402, 'The free plan shares one note. JotDrop Plus shares more.');
           if (live >= MAX_OWN_SPACES) fail(409, `You can own ${MAX_OWN_SPACES} shared spaces at most.`, { code: 'too-many-spaces' });
           if (memberships(account.id) >= MAX_MEMBERSHIPS) fail(409, `You can be in ${MAX_MEMBERSHIPS} shared spaces at most.`, { code: 'too-many-spaces' });
         }
@@ -1570,7 +1630,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         if (!space.ownerGoneAt || space.replacedBy) fail(409, 'This shared space cannot be taken over.', { code: 'not-available' });
         if (!mayTakeOver(space, account.id)) fail(403, 'Another member can take over first. You can after a week.', { code: 'not-yet' });
         const live = liveSpaces(account.id);
-        if (!isPlus(vaultId) && live >= 1) fail(402, 'The free plan shares one note. JotDrop Plus shares more.', { code: 'plus-required' });
+        if (!isPlus(vaultId) && live >= 1) planLimit('shared-spaces', vaultId, 402, 'The free plan shares one note. JotDrop Plus shares more.');
         if (live >= MAX_OWN_SPACES) fail(409, `You can own ${MAX_OWN_SPACES} shared spaces at most.`, { code: 'too-many-spaces' });
         if (storageUsage(space.id) > roomForSpaces(account)) fail(507, 'This shared space does not fit in your storage.', { code: 'storage-full' });
         run('UPDATE spaces SET ownerAccountId=?,ownerGoneAt=NULL,frozenAt=NULL WHERE id=?', account.id, space.id);
@@ -2180,7 +2240,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         transaction(() => {
           requireAccess(vaultId, deviceId);
           if (!value.vote) { run('DELETE FROM roadmap_votes WHERE accountId=? AND itemId=?', account.id, value.itemId); return; }
-          if (!isPlus(vaultId)) fail(402, 'Voting is part of JotDrop Plus.', { code: 'plus-required' });
+          if (!isPlus(vaultId)) planLimit('voting', vaultId, 402, 'Voting is part of JotDrop Plus.');
           const mine = myVotes(account.id);
           if (mine.includes(value.itemId)) return;
           if (mine.length >= MAX_VOTES) fail(409, `You can vote for ${MAX_VOTES} ideas at a time. Take back a vote first.`, { code: 'too-many-votes' });
@@ -2209,7 +2269,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         if (!mailDomain) fail(503, 'Mail to JotDrop is not available on this server.');
         transaction(() => {
           requireAccess(vaultId, deviceId);
-          if (!isPlus(vaultId)) fail(402, 'Mail to JotDrop is part of JotDrop Plus.', { code: 'plus-required' });
+          if (!isPlus(vaultId)) planLimit('mail', vaultId, 402, 'Mail to JotDrop is part of JotDrop Plus.');
           try {
             run('INSERT INTO mail_accounts(vaultId,addressHash,publicKey,addressEnvelope,mode,createdAt) VALUES(?,?,?,?,?,?) ON CONFLICT(vaultId) DO UPDATE SET addressHash=excluded.addressHash,publicKey=excluded.publicKey,addressEnvelope=excluded.addressEnvelope,mode=excluded.mode,rotatedAt=excluded.createdAt', vaultId, value.addressHash, value.publicKey, value.addressEnvelope, mode, clock());
           } catch (error) {
@@ -2371,7 +2431,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           requireAccess(vaultId, deviceId);
           // Say so before the code is scanned, not after.
           const active = devicesAtLimit(vaultId);
-          if (active.length) deviceLimitReached(active);
+          if (active.length) deviceLimitReached(vaultId, active);
           const now = clock(), pairingId = randomUUID(), expiresAt = now + 600000;
           run('DELETE FROM pairings WHERE vaultId=? AND expiresAt<=?', vaultId, now);
           if (one('SELECT COUNT(*) AS count FROM pairings WHERE vaultId=?', vaultId).count >= maxPairingEntries) fail(507, 'Cloud pairing metadata safety limit reached. Wait for existing codes to expire.');
@@ -2411,7 +2471,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           // In a space the limit is per device, so one member's unfinished uploads cannot block the others.
           const pending = inSpace ? one('SELECT COUNT(*) AS count FROM chunks WHERE vaultId=? AND claimed=0 AND deviceId=?', vaultId, deviceId).count : one('SELECT COUNT(*) AS count FROM chunks WHERE vaultId=? AND claimed=0', vaultId).count;
           if (pending >= (inSpace ? MAX_PIECES : 2 * MAX_PIECES)) fail(507, 'Cloud pending upload limit reached');
-          if (!fits(vaultId, bytes.length, deviceId, '')) fail(507, 'Cloud storage is full. Your local files remain available.', { code: 'storage-full' });
+          if (!fits(vaultId, bytes.length, deviceId, '')) storageFull(vaultId);
           run('INSERT INTO chunks(vaultId,name,size,data,createdAt,deviceId) VALUES(?,?,?,?,?,?)', vaultId, piece[1], bytes.length, bytes, clock(), inSpace ? deviceId : null);
         });
         reply(200, { ok: true }); return;
@@ -2461,7 +2521,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
             const revision = latest(vaultId, id)?.revision || 0;
             if (revision !== baseRevision) fail(409, 'Another version was saved. Review both versions.', { currentRevision: revision });
             if (one('SELECT COUNT(*) AS count FROM uploads WHERE vaultId=?', vaultId).count >= 4) fail(507, 'Cloud pending upload limit reached');
-            if (!fits(vaultId, reservedBytes, deviceId, id)) fail(507, 'Cloud storage is full. Your local files remain available.', { code: 'storage-full' });
+            if (!fits(vaultId, reservedBytes, deviceId, id)) storageFull(vaultId);
             run('INSERT INTO uploads VALUES(?,?,?,?,?,?,?,?,?)', ...key, value.size, reservedBytes, clock() + TRANSFER_LIFETIME, Buffer.alloc(0));
             return { offset: 0, size: value.size };
           });
@@ -2600,6 +2660,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       }
       fail(405, 'Method not allowed');
     } catch (error) {
+      if (error.limit) noteLimit(error.limit);
       if (sqliteCode(error) === 13) { error.status = 507; error.message = 'Cloud storage is full. Your local files remain available.'; }
       if (!res.headersSent && !res.destroyed) reply(error.status || 500, { error: error.status ? error.message : 'Internal server error', ...(error.extra || {}) });
       else if (!res.destroyed) res.end();
@@ -2618,6 +2679,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     run('DELETE FROM signups WHERE expiresAt<=?', clock());
     sweepSpaces();
     sweepTrials();
+    void fillBilling();
   }, sweepEvery);
   sweep.unref();
   let closing;

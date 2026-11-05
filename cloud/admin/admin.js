@@ -49,8 +49,50 @@ function tile(label, value, note) {
   return box;
 }
 
+// What each counted refusal means; a kind this page does not know yet shows its own name.
+const LIMITS = {
+  storage: 'Storage full', devices: 'One device too many', 'file-size': 'File too large', links: 'A second link', 'link-days': 'A link longer than 7 days',
+  'shared-spaces': 'A second shared note', 'old-trash': 'Restore a note deleted over 30 days ago', 'old-version': 'Open a version older than 30 days',
+  voting: 'Vote on the roadmap', mail: 'Turn on Mail to JotDrop', 'family-invite': 'Invite people without a family plan',
+};
+const plural = (count, one, many) => `${count} ${count === 1 ? one : many}`;
+
+function table(id, rows, empty) {
+  $(id).replaceChildren(...rows);
+  $(`${id}-empty`).hidden = rows.length > 0;
+  $(`${id}-empty`).textContent = empty;
+  $(`${id}-wrap`).hidden = rows.length === 0;
+}
+
+function tableRow(cells) {
+  const tr = element('tr');
+  for (const [text, note, className] of cells) { const td = element('td', text, className); if (note) td.append(element('small', note)); tr.append(td); }
+  return tr;
+}
+
+// Most accounts over the four weeks first; every cell says accounts and times in words.
+function showLimits({ weeks, kinds }) {
+  $('limits-head').replaceChildren(Object.assign(element('th', 'Limit'), { scope: 'col' }), ...weeks.map((start, index) => Object.assign(element('th', index === 0 ? `This week (from ${day(start)})` : `Week of ${day(start)}`), { scope: 'col' })));
+  const total = (kind) => kind.perWeek.reduce((sum, week) => sum + week.accounts, 0);
+  table('limits', [...kinds].sort((a, b) => total(b) - total(a) || a.kind.localeCompare(b.kind)).map((kind) => tableRow([[LIMITS[kind.kind] ?? kind.kind, undefined, 'label'],
+    ...kind.perWeek.map((week) => week.times ? [plural(week.accounts, 'account', 'accounts'), plural(week.times, 'time', 'times')] : ['None'])])),
+  'No free account ran into a limit in the last four weeks.');
+}
+
+function showTrials(trialsEnding) {
+  table('trials', trialsEnding.map((trial) => tableRow([[trial.email, undefined, 'email'], [when(trial.trialUntil)], [bytes(trial.usedBytes)], [`${trial.activeDevices} active`], [when(trial.lastActiveAt)], [trial.subscribed ? 'Yes, paying' : 'No']])),
+    'No trial ends in the next 7 days.');
+}
+
+function showSubscriptions(subscriptions) {
+  const interval = { month: 'Monthly', year: 'Yearly' };
+  table('subscriptions', subscriptions.map((group) => tableRow([[group.plan === 'family' ? 'Family' : 'Plus'], [interval[group.interval] ?? 'Not known yet', group.interval ? undefined : 'Filled in at the next Stripe check'],
+    [group.currency ? group.currency.toUpperCase() : 'Not known yet'], [String(group.count), group.pastDue ? `${group.pastDue} past due` : undefined]])),
+  'Nobody pays yet.');
+}
+
 async function loadSummary() {
-  const { generatedAt, accounts, trials, roadmap, founder, storage } = await api('/api/admin/summary');
+  const { generatedAt, accounts, trials, trialsEnding, limits, subscriptions, family, roadmap, storage } = await api('/api/admin/summary');
   $('generated').textContent = `Updated ${when(generatedAt)}`;
   $('tiles').replaceChildren(
     tile('Accounts', String(accounts.total)),
@@ -59,10 +101,14 @@ async function loadSummary() {
     tile('Plus', String(accounts.plus), `${accounts.paying} paying, rest trial or granted`),
     tile('Free', String(accounts.free)),
     tile('Trials running', String(trials.running), `${trials.total} started, ${trials.paidAfter} of those pay or paid (${percent(trials.paidAfter, trials.total)})`),
-    tile('Founder places', founder.limit === null ? `${founder.taken} taken` : `${founder.taken} of ${founder.limit}`, founder.limit === null ? 'No founder price set' : `${founder.limit - founder.taken} left`),
+    tile('Trials ending, next 7 days', String(trialsEnding.length), `${trialsEnding.filter((trial) => trial.subscribed).length} of those already pay`),
+    tile('Family plans', String(family.plans), `${plural(family.members, 'member', 'members')} besides those who pay`),
     tile('Stored notes (encrypted)', bytes(storage.storedBytes), `Database file ${bytes(storage.databaseBytes)}`),
     tile('Disk free', bytes(storage.diskFreeBytes), `of ${bytes(storage.diskTotalBytes)} (${percent(storage.diskFreeBytes, storage.diskTotalBytes)} free)`),
   );
+  showLimits(limits);
+  showTrials(trialsEnding);
+  showSubscriptions(subscriptions);
   // Most votes first; the count is written out, so the order never depends on a colour or a bar.
   $('roadmap').replaceChildren(...[...roadmap].sort((a, b) => b.votes - a.votes).map((item) => {
     const li = element('li', `${item.title}: `);
@@ -120,7 +166,7 @@ $('login-form').addEventListener('submit', async (event) => {
 
 $('log-out').addEventListener('click', async () => {
   try { await api('/api/admin/logout', {}); } catch { /* The session is gone from this page either way. */ }
-  $('accounts').replaceChildren(); $('tiles').replaceChildren();
+  for (const id of ['accounts', 'tiles', 'limits', 'trials', 'subscriptions']) $(id).replaceChildren();
   show(false);
 });
 

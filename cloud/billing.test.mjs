@@ -41,7 +41,7 @@ async function fixture(t, { stripe = STRIPE } = {}) {
     subscriptions.set(id, { id, object: 'subscription', status, ended_at: endedAt, metadata: { vaultId, ...metadata }, items: { data: [{ current_period_end: periodEnd }] } });
     return webhook({ id: `evt_${randomUUID()}`, type: 'customer.subscription.updated', created: seconds(), data: { object: { id, object: 'subscription' } } });
   };
-  return { create: async () => (await CloudClient.create({ url, enrollmentToken, deviceName: 'Phone' })).client, webhook, stripeHas, sessions, cancelled, url, dbPath: app.dbPath, seconds,
+  return { create: async () => (await CloudClient.create({ url, enrollmentToken, deviceName: 'Phone' })).client, webhook, stripeHas, subscriptions, sessions, cancelled, url, dbPath: app.dbPath, seconds,
     advance: (ms) => { now += ms; }, now: () => now, stripeDown: (down) => { stripeDown = down; } };
 }
 
@@ -213,4 +213,21 @@ test('deleting a cloud cancels its running subscription first, and stops when St
   await assert.rejects(client.status(), (error) => error.status === 401);
   const db = new DatabaseSync(cloud.dbPath, { readOnly: true });
   try { assert.equal(db.prepare('SELECT COUNT(*) AS count FROM subscriptions').get().count, 0); } finally { db.close(); }
+});
+
+test('each event keeps how the subscription is billed, for the dashboard', async (t) => {
+  const cloud = await fixture(t);
+  const client = await cloud.create();
+  const vaultId = client.credentials.vaultId, periodEnd = cloud.seconds() + 30 * 24 * 60 * 60;
+  const details = () => { const db = new DatabaseSync(cloud.dbPath); try { return db.prepare('SELECT interval,currency FROM subscription_details WHERE subscriptionId=?').get('sub_billing'); } finally { db.close(); } };
+  assert.equal(await cloud.stripeHas('sub_billing', vaultId, { periodEnd }), 200);
+  assert.deepEqual({ ...details() }, { interval: null, currency: null });
+  const event = { id: 'evt_billing', type: 'customer.subscription.updated', created: cloud.seconds(), data: { object: { id: 'sub_billing', object: 'subscription' } } };
+  cloud.subscriptions.set('sub_billing', { id: 'sub_billing', object: 'subscription', status: 'active', currency: 'usd', metadata: { vaultId }, items: { data: [{ current_period_end: periodEnd, price: { id: 'price_year', recurring: { interval: 'year' } } }] } });
+  assert.equal(await cloud.webhook(event), 200);
+  assert.deepEqual({ ...details() }, { interval: 'year', currency: 'usd' });
+  // Anything else Stripe might send is kept as not known.
+  cloud.subscriptions.set('sub_billing', { ...cloud.subscriptions.get('sub_billing'), currency: 'US Dollar', items: { data: [{ current_period_end: periodEnd, price: { recurring: { interval: 'week' } } }] } });
+  assert.equal(await cloud.webhook({ ...event, id: 'evt_billing_2' }), 200);
+  assert.deepEqual({ ...details() }, { interval: null, currency: null });
 });

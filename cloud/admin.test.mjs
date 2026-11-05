@@ -9,6 +9,8 @@ import { request } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { base32, createCloudServer, hashAdminPassword } from './server.mjs';
+import { CloudClient } from './shared/client.mjs';
+import { randomToken } from './shared/crypto.mjs';
 
 const DAY = 24 * 60 * 60 * 1000, MINUTE = 60 * 1000;
 const PASSWORD = 'owner password for tests';
@@ -170,7 +172,7 @@ test('a session ends after 30 idle minutes, after 8 hours, and on log out', asyn
 });
 
 test('totals and the account list match the database and never include secrets', async (t) => {
-  const stripe = { secretKey: 'sk_test_admin', webhookSecret: 'whsec_admin', monthPrice: 'price_month', yearPrice: 'price_year', founderYearPrice: 'price_founder', founderLimit: 3 };
+  const stripe = { secretKey: 'sk_test_admin', webhookSecret: 'whsec_admin', monthPrice: 'price_month', yearPrice: 'price_year' };
   const admin = await fixture(t, { stripe, quotaBytes: 1000000, plusQuotaBytes: 5000000 });
   const now = admin.time(), iso = (time) => new Date(time).toISOString();
   const db = new DatabaseSync(join(admin.dataDir, 'cloud.db'), { timeout: 5000 });
@@ -200,7 +202,7 @@ test('totals and the account list match the database and never include secrets',
   envelopes(bob.vaultId, [7000]);
   // A large file is stored in encrypted pieces; they count as storage too.
   db.prepare('INSERT INTO chunks(vaultId,name,size,data,createdAt,claimed) VALUES(?,?,?,?,?,1)').run(bob.vaultId, 'piece-1', 4000, Buffer.from('SECRET-PIECE-CONTENT'), now);
-  // Carol: older, Plus ended (a cancelled subscription still holds a founder place), no devices.
+  // Carol: older, Plus ended with a cancelled subscription, no devices.
   const carol = account('carol@example.test', '2026-08-01T09:00:00.000Z');
   db.prepare('INSERT INTO plans VALUES(?,?,1)').run(carol.vaultId, now - 6 * DAY);
   db.prepare("INSERT INTO subscriptions VALUES('sub_carol',?,'canceled',?)").run(carol.vaultId, now - 5 * DAY);
@@ -213,7 +215,9 @@ test('totals and the account list match the database and never include secrets',
   const summary = await get('/api/admin/summary');
   const { storage, ...rest } = summary.body;
   const { roadmap, ...others } = rest;
-  assert.deepEqual(others, { generatedAt: iso(now), accounts: { total: 3, newLast7Days: 1, newLast30Days: 2, plus: 2, paying: 1, free: 1 }, trials: { total: 0, running: 0, paidAfter: 0 }, founder: { taken: 2, limit: 3 } });
+  assert.deepEqual(others, { generatedAt: iso(now), accounts: { total: 3, newLast7Days: 1, newLast30Days: 2, plus: 2, paying: 1, free: 1 }, trials: { total: 0, running: 0, paidAfter: 0 }, trialsEnding: [],
+    limits: { weeks: ['2026-10-26T00:00:00.000Z', '2026-10-19T00:00:00.000Z', '2026-10-12T00:00:00.000Z', '2026-10-05T00:00:00.000Z'], kinds: [] },
+    subscriptions: [{ plan: 'plus', interval: null, currency: null, count: 1, pastDue: 0 }], family: { plans: 0, members: 0 } });
   assert.ok(roadmap.length > 0 && roadmap.every((item) => item.votes === 0 && item.title), 'every idea on the list, no votes yet');
   assert.equal(storage.storedBytes, 16500);
   assert.ok(storage.databaseBytes > 0 && storage.diskTotalBytes >= storage.diskFreeBytes && storage.diskFreeBytes > 0);
@@ -242,6 +246,102 @@ test('totals and the account list match the database and never include secrets',
     for (const key of keys(response.body)) assert.ok(!forbidden.includes(key), key);
     for (const value of ['KDF-SALT', 'AUTH-HASH', 'WRAPPED-VAULT-KEY', 'SEALED-TOTP-SECRET', 'DEVICE-TOKEN-HASH', 'RECOVERY-HASH', 'ENVELOPE-HASH', 'SECRET-ENVELOPE-CONTENT', 'SECRET-PIECE-CONTENT', alice.vaultId, alice.id, SECRET, PASSWORD_HASH]) assert.ok(!response.text.includes(value), value);
   }
+});
+
+test('the dashboard counts plan limits per week without storing who, lists trials that end soon, and shows billing', async (t) => {
+  const enrollmentToken = randomToken(), stripeHas = new Map([
+    ['sub_ben', { id: 'sub_ben', status: 'active', currency: 'usd', items: { data: [{ price: { id: 'price_year', recurring: { interval: 'year' } } }] } }],
+    ['sub_dirk', { id: 'sub_dirk', status: 'past_due', currency: 'eur', items: { data: [{ price: { id: 'price_family_month', recurring: { interval: 'month' } } }] } }],
+  ]), asked = [];
+  // Stripe knows two of the three running subscriptions; the third stays "not known yet".
+  const fetcher = async (url) => {
+    const id = /\/v1\/subscriptions\/(sub_\w+)$/.exec(url)?.[1];
+    asked.push(id);
+    return new Response(JSON.stringify(stripeHas.get(id) ?? { error: {} }), { status: stripeHas.has(id) ? 200 : 404 });
+  };
+  const stripe = { secretKey: 'sk_test_admin', webhookSecret: 'whsec_admin', monthPrice: 'price_month', yearPrice: 'price_year', familyMonthPrice: 'price_family_month', familyYearPrice: 'price_family_year' };
+  const admin = await fixture(t, { enrollmentToken, enrollmentLimit: 2, quotaBytes: 2000, plusQuotaBytes: 3000, stripe, fetcher, sweepEvery: 50 });
+  const url = `http://127.0.0.1:${admin.app().port}`;
+  const make = async () => { const { client } = await CloudClient.create({ url, enrollmentToken, deviceName: 'Phone' }); await CloudClient.claim({ pairingCode: (await client.makePairing('Laptop')).pairingCode }); return client; };
+  const refused = (promise, status) => assert.rejects(promise, (error) => error.status === status);
+  const big = new TextEncoder().encode('x'.repeat(5000));
+  const anna = await make(), ben = await make();
+  // Week of 26 October: Anna asks for a third device twice and is counted once; Ben once. Anna's cloud is full.
+  await refused(anna.makePairing('Tablet'), 403);
+  await refused(anna.makePairing('Tablet'), 403);
+  await refused(ben.makePairing('Tablet'), 403);
+  await refused(anna.write('notes/big.md', big, 0), 507);
+  // A full Plus cloud is not a limit Plus lifts, so it does not count.
+  const db = new DatabaseSync(join(admin.dataDir, 'cloud.db'), { timeout: 5000 });
+  db.prepare('INSERT INTO plans VALUES(?,?,0)').run(ben.credentials.vaultId, admin.time() + 365 * DAY);
+  db.close();
+  await refused(ben.write('notes/big.md', big, 0), 507);
+  // The next week: Anna again, now counted again.
+  admin.advance(7 * DAY);
+  await refused(anna.makePairing('Tablet'), 403);
+
+  const now = admin.time(), iso = (time) => new Date(time).toISOString();
+  const data = new DatabaseSync(join(admin.dataDir, 'cloud.db'), { timeout: 5000 });
+  // Only counts are stored: no column and no value points to a cloud.
+  assert.deepEqual(data.prepare('SELECT * FROM limit_hits ORDER BY weekStart,kind').all().map((row) => ({ ...row })), [
+    { kind: 'devices', weekStart: Date.parse('2026-10-26T00:00:00Z'), times: 3, accounts: 2 },
+    { kind: 'storage', weekStart: Date.parse('2026-10-26T00:00:00Z'), times: 1, accounts: 1 },
+    { kind: 'devices', weekStart: Date.parse('2026-11-02T00:00:00Z'), times: 1, accounts: 1 },
+  ]);
+  const account = (email, vaultId = randomUUID()) => {
+    if (!data.prepare('SELECT 1 FROM vaults WHERE id=?').get(vaultId)) data.prepare("INSERT INTO vaults VALUES(?,'x','account')").run(vaultId);
+    const id = randomUUID();
+    data.prepare("INSERT INTO accounts(id,email,vaultId,kdf,authHash,wrappedVaultKey,createdAt,passwordChangedAt) VALUES(?,?,?,'','','',?,?)").run(id, email, vaultId, iso(now), iso(now));
+    return { id, vaultId };
+  };
+  const trial = (vaultId, until) => data.prepare('INSERT INTO trials VALUES(?,?,0)').run(vaultId, until);
+  const subscription = (id, vaultId, status) => data.prepare('INSERT INTO subscriptions VALUES(?,?,?,?)').run(id, vaultId, status, now + 30 * DAY);
+  // Anna's trial ends in 3 days, Ben's in 6 and he already pays; Cara's in 10 days and Dora's ended: not on the list.
+  trial(account('anna@example.test', anna.credentials.vaultId).vaultId, now + 3 * DAY);
+  trial(account('ben@example.test', ben.credentials.vaultId).vaultId, now + 6 * DAY);
+  trial(account('cara@example.test').vaultId, now + 10 * DAY);
+  trial(account('dora@example.test').vaultId, now - DAY);
+  subscription('sub_ben', ben.credentials.vaultId, 'active');
+  // Dirk pays for a family with Eva in it, past due; Finn cancelled; Gus pays, but Stripe does not know him.
+  const dirk = account('dirk@example.test'), eva = account('eva@example.test');
+  subscription('sub_dirk', dirk.vaultId, 'past_due');
+  data.prepare("INSERT INTO family_subscriptions VALUES('sub_dirk')").run();
+  data.prepare('INSERT INTO family_members VALUES(?,?,?)').run(eva.id, dirk.id, now);
+  subscription('sub_finn', account('finn@example.test').vaultId, 'canceled');
+  subscription('sub_gus', account('gus@example.test').vaultId, 'active');
+  data.close();
+  // The sweep asks Stripe once for each running subscription without details; Finn's has ended and is not asked about.
+  for (let wait = 0; wait < 100 && !['sub_ben', 'sub_dirk', 'sub_gus'].every((id) => asked.includes(id)); wait++) await new Promise((done) => setTimeout(done, 20));
+  await new Promise((done) => setTimeout(done, 50));
+  assert.ok(!asked.includes('sub_finn'));
+
+  const cookie = admin.cookieOf(await admin.login());
+  const summary = (await admin.call('GET', '/api/admin/summary', { cookie })).body;
+  assert.deepEqual(summary.limits, { weeks: ['2026-11-02T00:00:00.000Z', '2026-10-26T00:00:00.000Z', '2026-10-19T00:00:00.000Z', '2026-10-12T00:00:00.000Z'], kinds: [
+    { kind: 'devices', perWeek: [{ times: 1, accounts: 1 }, { times: 3, accounts: 2 }, { times: 0, accounts: 0 }, { times: 0, accounts: 0 }] },
+    { kind: 'storage', perWeek: [{ times: 0, accounts: 0 }, { times: 1, accounts: 1 }, { times: 0, accounts: 0 }, { times: 0, accounts: 0 }] },
+  ] });
+  assert.deepEqual(summary.trialsEnding.map(({ email, trialUntil, usedBytes, activeDevices, subscribed }) => ({ email, trialUntil, usedBytes, activeDevices, subscribed })), [
+    { email: 'anna@example.test', trialUntil: iso(now + 3 * DAY), usedBytes: 0, activeDevices: 2, subscribed: false },
+    { email: 'ben@example.test', trialUntil: iso(now + 6 * DAY), usedBytes: 0, activeDevices: 2, subscribed: true },
+  ]);
+  assert.ok(summary.trialsEnding.every((entry) => typeof entry.lastActiveAt === 'string'));
+  assert.deepEqual(summary.subscriptions, [
+    { plan: 'plus', interval: null, currency: null, count: 1, pastDue: 0 },
+    { plan: 'plus', interval: 'year', currency: 'usd', count: 1, pastDue: 0 },
+    { plan: 'family', interval: 'month', currency: 'eur', count: 1, pastDue: 1 },
+  ]);
+  assert.deepEqual(summary.family, { plans: 1, members: 1 });
+  assert.equal(summary.accounts.paying, 3);
+  assert.ok(!JSON.stringify(summary).includes(anna.credentials.vaultId));
+  // Gone with its subscription.
+  const after = new DatabaseSync(join(admin.dataDir, 'cloud.db'), { timeout: 5000 });
+  after.prepare("DELETE FROM subscriptions WHERE subscriptionId='sub_ben'").run();
+  after.close();
+  await new Promise((done) => setTimeout(done, 120));
+  const left = new DatabaseSync(join(admin.dataDir, 'cloud.db'), { timeout: 5000 });
+  assert.deepEqual(left.prepare('SELECT subscriptionId FROM subscription_details ORDER BY 1').all().map((row) => row.subscriptionId), ['sub_dirk']);
+  left.close();
 });
 
 test('after a report the owner can delete a group or close an account, and only signed in', async (t) => {

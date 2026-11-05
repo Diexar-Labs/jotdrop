@@ -35,6 +35,29 @@
       <p id="generated" class="muted"></p>
     </div>
     <dl id="tiles" class="tiles"></dl>
+    <h2>Where free accounts hit a limit</h2>
+    <p class="muted">Each time the server says "JotDrop Plus" to a free account (or "family plan" to someone without one). Accounts are counted once per week and limit; the server never stores which account it was.</p>
+    <p id="limits-empty" class="muted" hidden></p>
+    <div id="limits-wrap" class="table-wrap">
+      <table><thead><tr id="limits-head"></tr></thead><tbody id="limits"></tbody></table>
+    </div>
+    <h2>Trials ending in the next 7 days</h2>
+    <p id="trials-empty" class="muted" hidden></p>
+    <div id="trials-wrap" class="table-wrap">
+      <table>
+        <thead><tr><th scope="col">Email</th><th scope="col">Trial ends</th><th scope="col">Storage</th><th scope="col">Devices</th><th scope="col">Last active</th><th scope="col">Pays already</th></tr></thead>
+        <tbody id="trials"></tbody>
+      </table>
+    </div>
+    <h2>Subscriptions</h2>
+    <p class="muted">Running subscriptions in Stripe, past due included.</p>
+    <p id="subscriptions-empty" class="muted" hidden></p>
+    <div id="subscriptions-wrap" class="table-wrap">
+      <table>
+        <thead><tr><th scope="col">Plan</th><th scope="col">Billing</th><th scope="col">Currency</th><th scope="col">Subscriptions</th></tr></thead>
+        <tbody id="subscriptions"></tbody>
+      </table>
+    </div>
     <h2>What Plus votes for</h2>
     <p class="muted">Votes from accounts with Plus, including the trial. Each account has 3 votes. The list is in cloud/roadmap.mjs.</p>
     <ol id="roadmap" class="roadmap"></ol>
