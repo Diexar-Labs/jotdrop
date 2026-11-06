@@ -24,8 +24,14 @@ function token(value) {
   return value;
 }
 
+// Which JotDrop app and version sends the requests, as `X-JotDrop-Client: obsidian/0.27.1`. The server keeps it per device,
+// so the owner sees which versions are in use. Each app says so once at start; nothing else about the device travels.
+let clientName;
+export function identifyClient(app, version) { clientName = app ? (version ? `${app}/${version}` : app) : undefined; }
+
 /** `raw` returns a successful body as bytes (an encrypted piece) instead of JSON. */
 export async function request(url, path, { method = 'GET', body, headers = {}, fetcher = globalThis.fetch, signal, binary = false, raw = false, limit = 30000 } = {}) {
+  if (clientName) headers = { 'X-JotDrop-Client': clientName, ...headers };
   // A large note on a slow line can take minutes: the body only fails after 30s without any bytes, or at `limit`.
   const stalled = new AbortController();
   let idle;

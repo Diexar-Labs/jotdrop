@@ -138,7 +138,12 @@
     if (base64ToBytes(value).length !== 32) throw new Error("Invalid device credentials.");
     return value;
   }
+  var clientName;
+  function identifyClient(app, version) {
+    clientName = app ? version ? `${app}/${version}` : app : void 0;
+  }
   async function request(url, path, { method = "GET", body, headers = {}, fetcher = globalThis.fetch, signal, binary = false, raw = false, limit = 3e4 } = {}) {
+    if (clientName) headers = { "X-JotDrop-Client": clientName, ...headers };
     const stalled = new AbortController();
     let idle;
     const wait = () => {
@@ -683,6 +688,7 @@ ${neutralizeInlineHashtags(body)}`;
     };
   }
   if (typeof chrome !== "undefined" && chrome.storage?.local) {
+    identifyClient("clipper", chrome.runtime?.getManifest?.().version);
     globalThis.JotDropCloud = createClipperCloud(chrome.storage.local, globalThis.fetch.bind(globalThis), chrome.storage.session);
   }
 })();

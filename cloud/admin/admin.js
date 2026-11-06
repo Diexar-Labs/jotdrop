@@ -56,6 +56,9 @@ const LIMITS = {
   voting: 'Vote on the roadmap', mail: 'Turn on Mail to JotDrop', 'family-invite': 'Invite people without a family plan',
 };
 const plural = (count, one, many) => `${count} ${count === 1 ? one : many}`;
+// What each app calls itself in its X-JotDrop-Client header; an app this page does not know yet shows its own name.
+const APPS = { obsidian: 'Obsidian plugin', android: 'Android app', web: 'Web app', joplin: 'Joplin plugin', clipper: 'Web Clipper for Chrome', ios: 'iOS app' };
+const appName = (app) => app ? APPS[app] ?? app : 'Not reported';
 
 function table(id, rows, empty) {
   $(id).replaceChildren(...rows);
@@ -91,6 +94,13 @@ function showSubscriptions(subscriptions) {
   'Nobody pays yet.');
 }
 
+// Newest version of each app first; an older version says so in words, next to the newest one seen.
+function showApps(apps) {
+  table('apps', apps.map((row) => tableRow([[appName(row.app), undefined, 'label'], [row.version ?? (row.app ? 'None' : 'Not reported'), row.behind ? `Older than ${row.newest}` : row.app === 'web' ? 'A reload always brings the current page' : undefined],
+    [`${row.devices} signed in`, `${row.usedLast30Days} used in the last 30 days`], [String(row.accounts)], [when(row.lastSeenAt)]])),
+  'No device is signed in.');
+}
+
 // The nightly backup: the result in words, and LATE when its log has not changed for 26 hours (a night was skipped).
 function backupTile({ state, at, detail, logChangedAt }, generatedAt) {
   if (state === 'not-set-up') return tile('Last backup', 'Not set up', 'Set JOTDROP_CLOUD_BACKUP_LOG on the server');
@@ -102,7 +112,7 @@ function backupTile({ state, at, detail, logChangedAt }, generatedAt) {
 }
 
 async function loadSummary() {
-  const { generatedAt, accounts, trials, trialsEnding, limits, subscriptions, family, links, backup, roadmap, storage } = await api('/api/admin/summary');
+  const { generatedAt, accounts, trials, trialsEnding, limits, subscriptions, family, links, backup, apps, roadmap, storage } = await api('/api/admin/summary');
   $('generated').textContent = `Updated ${when(generatedAt)}`;
   $('tiles').replaceChildren(
     tile('Accounts', String(accounts.total)),
@@ -122,6 +132,7 @@ async function loadSummary() {
   showLimits(limits);
   showTrials(trialsEnding);
   showSubscriptions(subscriptions);
+  showApps(apps);
   // Most votes first; the count is written out, so the order never depends on a colour or a bar.
   $('roadmap').replaceChildren(...[...roadmap].sort((a, b) => b.votes - a.votes).map((item) => {
     const li = element('li', `${item.title}: `);
@@ -139,7 +150,7 @@ function row(account) {
   cell(methods.join(', '), account.hasAuthenticator ? 'Authenticator app on' : undefined);
   cell(account.plan === 'plus' ? 'Plus' : 'Free', account.plan === 'plus' ? `until ${day(account.plusUntil)}${account.subscribed ? ', paying' : ''}` : account.plusUntil ? `Plus ended ${day(account.plusUntil)}` : undefined);
   cell(`${bytes(account.usedBytes)} of ${bytes(account.quotaBytes)}`, `${percent(account.usedBytes, account.quotaBytes)} used${account.spaces ? `, ${account.spaces} shared` : ''}`);
-  cell(`${account.activeDevices} active`);
+  cell(`${account.activeDevices} active`, account.apps.map((entry) => `${appName(entry.app)}${entry.version ? ` ${entry.version}` : ''}`).join(', ') || undefined);
   cell(when(account.lastActiveAt));
   cell(account.newsletter ? 'Yes' : 'No');
   return tr;
@@ -179,7 +190,7 @@ $('login-form').addEventListener('submit', async (event) => {
 
 $('log-out').addEventListener('click', async () => {
   try { await api('/api/admin/logout', {}); } catch { /* The session is gone from this page either way. */ }
-  for (const id of ['accounts', 'tiles', 'limits', 'trials', 'subscriptions']) $(id).replaceChildren();
+  for (const id of ['accounts', 'tiles', 'limits', 'trials', 'subscriptions', 'apps']) $(id).replaceChildren();
   show(false);
 });
 

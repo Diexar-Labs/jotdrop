@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { get, request } from 'node:http';
 import { DatabaseSync } from 'node:sqlite';
 import { createCloudServer } from './server.mjs';
-import { CloudClient } from './shared/client.mjs';
+import { CloudClient, identifyClient } from './shared/client.mjs';
 import { base64ToBytes, bytesToBase64, decodeRecovery, encryptEnvelope, objectId, randomToken } from './shared/crypto.mjs';
 import { backupCloudDatabase } from './backup.mjs';
 
@@ -94,6 +94,37 @@ test('authorization, tenant isolation, origin and host checks fail closed', asyn
   assert.equal(preflight.headers.get('access-control-allow-origin'), extension);
   assert.equal((await fetch(`${app.url}/shared/client.test.mjs`)).status, 404);
   assert.equal((await fetch(`${app.url}/cloud.db`)).status, 404);
+});
+
+test('a device says which app and version it runs; the server keeps a valid one per device and allows the header', async (t) => {
+  const extension = 'chrome-extension://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+  const app = await fixture(t, { corsOrigins: [extension] });
+  t.after(() => identifyClient());
+  const { client } = await app.create('Desktop');
+  const db = new DatabaseSync(app.dbPath, { timeout: 5000 });
+  const stored = () => ({ ...db.prepare('SELECT app,appVersion FROM devices WHERE id=?').get(client.credentials.deviceId) });
+  await client.status();
+  assert.deepEqual(stored(), { app: null, appVersion: null }, 'an app from before the header leaves nothing');
+  identifyClient('obsidian', '0.27.1');
+  await client.status();
+  assert.deepEqual(stored(), { app: 'obsidian', appVersion: '0.27.1' });
+  identifyClient('obsidian', '0.27.2');
+  await client.status();
+  assert.deepEqual(stored(), { app: 'obsidian', appVersion: '0.27.2' }, 'an update is seen');
+  for (const [name, version] of [['Obsidian', '0.27.2'], ['obsidian', '0.27.2 beta'], ['obsidian', 'x'.repeat(33)], ['', ''], ['obsidian', '<b>']]) {
+    identifyClient(name, version);
+    await client.status();
+    assert.deepEqual(stored(), { app: 'obsidian', appVersion: '0.27.2' }, `${name}/${version} is ignored`);
+  }
+  identifyClient('web');
+  await client.status();
+  assert.deepEqual(stored(), { app: 'web', appVersion: null }, 'an app without a version');
+  identifyClient();
+  await client.status();
+  assert.deepEqual(stored(), { app: 'web', appVersion: null }, 'a request without the header keeps what was known');
+  db.close();
+  const preflight = await fetch(`${app.url}/api/v1/status`, { method: 'OPTIONS', headers: { Origin: extension } });
+  assert.ok(preflight.headers.get('access-control-allow-headers').split(',').includes('X-JotDrop-Client'), preflight.headers.get('access-control-allow-headers'));
 });
 
 test('the Joplin plugin origin may call the API, and still needs a device token', async (t) => {

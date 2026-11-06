@@ -185,21 +185,22 @@ test('totals and the account list match the database and never include secrets',
     db.prepare('INSERT INTO accounts(id,email,vaultId,kdf,authHash,wrappedVaultKey,createdAt,passwordChangedAt,totpSecret) VALUES(?,?,?,?,?,?,?,?,?)').run(id, email, vaultId, password ? '{"salt":"KDF-SALT"}' : '', password ? 'AUTH-HASH$0' : '', password ? 'WRAPPED-VAULT-KEY' : '', createdAt, createdAt, totp ? 'SEALED-TOTP-SECRET' : null);
     return { id, vaultId };
   };
-  const device = (vaultId, lastSeenAt, revoked = 0) => db.prepare('INSERT INTO devices VALUES(?,?,?,?,?,?,?)').run(randomUUID(), vaultId, 'Phone', 'DEVICE-TOKEN-HASH', lastSeenAt, lastSeenAt, revoked);
+  const device = (vaultId, lastSeenAt, revoked = 0, app = null, version = null) => db.prepare('INSERT INTO devices(id,vaultId,name,tokenHash,createdAt,lastSeenAt,revoked,app,appVersion) VALUES(?,?,?,?,?,?,?,?,?)').run(randomUUID(), vaultId, 'Phone', 'DEVICE-TOKEN-HASH', lastSeenAt, lastSeenAt, revoked, app, version);
   const identity = (provider, accountId) => db.prepare('INSERT INTO identities VALUES(?,?,?,?)').run(provider, randomUUID(), accountId, iso(now));
   // Alice: new this week, trial Plus, authenticator, Google, newsletter, two active devices and one signed out.
   const alice = account('alice@example.test', '2026-10-24T09:00:00.000Z', { totp: true });
   identity('google', alice.id);
   db.prepare('INSERT INTO newsletter VALUES(?,?,NULL)').run(alice.id, iso(now));
   db.prepare('INSERT INTO plans VALUES(?,?,1)').run(alice.vaultId, now + 10 * DAY);
-  device(alice.vaultId, '2026-10-25T10:00:00.000Z'); device(alice.vaultId, '2026-10-26T08:00:00.000Z'); device(alice.vaultId, '2026-10-26T11:00:00.000Z', 1);
+  // Her phone runs the newest Android app, her desktop an Obsidian plugin from before apps reported themselves; the signed-out one does not count.
+  device(alice.vaultId, '2026-10-25T10:00:00.000Z', 0, 'android', '0.28.43'); device(alice.vaultId, '2026-10-26T08:00:00.000Z'); device(alice.vaultId, '2026-10-26T11:00:00.000Z', 1, 'android', '0.28.9');
   envelopes(alice.vaultId, [3000, 2000]);
   // Bob: new this month, no password (GitHub and Google), paying for Plus.
   const bob = account('bob@example.test', '2026-10-01T09:00:00.000Z', { password: false });
   identity('google', bob.id); identity('github', bob.id);
   db.prepare('INSERT INTO newsletter VALUES(?,?,?)').run(bob.id, iso(now), iso(now));
   db.prepare("INSERT INTO subscriptions VALUES('sub_bob',?,'active',?)").run(bob.vaultId, now + 30 * DAY);
-  device(bob.vaultId, '2026-10-20T07:30:00.000Z');
+  device(bob.vaultId, '2026-10-20T07:30:00.000Z', 0, 'android', '0.28.9');
   envelopes(bob.vaultId, [7000]);
   // A large file is stored in encrypted pieces; they count as storage too.
   db.prepare('INSERT INTO chunks(vaultId,name,size,data,createdAt,claimed) VALUES(?,?,?,?,?,1)').run(bob.vaultId, 'piece-1', 4000, Buffer.from('SECRET-PIECE-CONTENT'), now);
@@ -219,16 +220,20 @@ test('totals and the account list match the database and never include secrets',
   assert.deepEqual(others, { generatedAt: iso(now), accounts: { total: 3, newLast7Days: 1, newLast30Days: 2, plus: 2, paying: 1, free: 1 }, trials: { total: 0, running: 0, paidAfter: 0 }, trialsEnding: [],
     limits: { weeks: ['2026-10-26T00:00:00.000Z', '2026-10-19T00:00:00.000Z', '2026-10-12T00:00:00.000Z', '2026-10-05T00:00:00.000Z'], kinds: [] },
     subscriptions: [{ plan: 'plus', interval: null, currency: null, count: 1, pastDue: 0 }], family: { plans: 0, members: 0 },
-    links: { copies: { active: 0, accounts: 0, newLast7Days: 0 }, lists: { active: 0, accounts: 0, newLast7Days: 0 } }, backup: { state: 'not-set-up' } });
+    links: { copies: { active: 0, accounts: 0, newLast7Days: 0 }, lists: { active: 0, accounts: 0, newLast7Days: 0 } }, backup: { state: 'not-set-up' },
+    // Newest version first, 0.28.9 after 0.28.43 by its parts, and the device that never said which app it is.
+    apps: [{ app: null, version: null, devices: 1, usedLast30Days: 1, accounts: 1, lastSeenAt: '2026-10-26T08:00:00.000Z', newest: null, behind: false },
+      { app: 'android', version: '0.28.43', devices: 1, usedLast30Days: 1, accounts: 1, lastSeenAt: '2026-10-25T10:00:00.000Z', newest: '0.28.43', behind: false },
+      { app: 'android', version: '0.28.9', devices: 1, usedLast30Days: 1, accounts: 1, lastSeenAt: '2026-10-20T07:30:00.000Z', newest: '0.28.43', behind: true }] });
   assert.ok(roadmap.length > 0 && roadmap.every((item) => item.votes === 0 && item.title), 'every idea on the list, no votes yet');
   assert.equal(storage.storedBytes, 16500);
   assert.ok(storage.databaseBytes > 0 && storage.diskTotalBytes >= storage.diskFreeBytes && storage.diskFreeBytes > 0);
 
   const list = await get('/api/admin/accounts');
   assert.deepEqual(list.body, { total: 3, page: 1, pageSize: 500, accounts: [
-    { email: 'alice@example.test', createdAt: '2026-10-24T09:00:00.000Z', hasPassword: true, hasAuthenticator: true, providers: ['google'], plan: 'plus', plusUntil: iso(now + 10 * DAY), subscribed: false, usedBytes: 5000, quotaBytes: 5000000, spaces: 0, activeDevices: 2, lastActiveAt: '2026-10-26T11:00:00.000Z', newsletter: true },
-    { email: 'bob@example.test', createdAt: '2026-10-01T09:00:00.000Z', hasPassword: false, hasAuthenticator: false, providers: ['github', 'google'], plan: 'plus', plusUntil: iso(now + 30 * DAY), subscribed: true, usedBytes: 11000, quotaBytes: 5000000, spaces: 0, activeDevices: 1, lastActiveAt: '2026-10-20T07:30:00.000Z', newsletter: true },
-    { email: 'carol@example.test', createdAt: '2026-08-01T09:00:00.000Z', hasPassword: true, hasAuthenticator: false, providers: [], plan: 'free', plusUntil: iso(now - 5 * DAY), subscribed: false, usedBytes: 0, quotaBytes: 1000000, spaces: 0, activeDevices: 0, lastActiveAt: null, newsletter: false },
+    { email: 'alice@example.test', createdAt: '2026-10-24T09:00:00.000Z', hasPassword: true, hasAuthenticator: true, providers: ['google'], plan: 'plus', plusUntil: iso(now + 10 * DAY), subscribed: false, usedBytes: 5000, quotaBytes: 5000000, spaces: 0, activeDevices: 2, lastActiveAt: '2026-10-26T11:00:00.000Z', newsletter: true, apps: [{ app: null, version: null }, { app: 'android', version: '0.28.43' }] },
+    { email: 'bob@example.test', createdAt: '2026-10-01T09:00:00.000Z', hasPassword: false, hasAuthenticator: false, providers: ['github', 'google'], plan: 'plus', plusUntil: iso(now + 30 * DAY), subscribed: true, usedBytes: 11000, quotaBytes: 5000000, spaces: 0, activeDevices: 1, lastActiveAt: '2026-10-20T07:30:00.000Z', newsletter: true, apps: [{ app: 'android', version: '0.28.9' }] },
+    { email: 'carol@example.test', createdAt: '2026-08-01T09:00:00.000Z', hasPassword: true, hasAuthenticator: false, providers: [], plan: 'free', plusUntil: iso(now - 5 * DAY), subscribed: false, usedBytes: 0, quotaBytes: 1000000, spaces: 0, activeDevices: 0, lastActiveAt: null, newsletter: false, apps: [] },
   ] });
   const emails = async (query) => (await get(`/api/admin/accounts?${query}`)).body.accounts.map((entry) => entry.email.split('@')[0]);
   assert.deepEqual(await emails('q=BO'), ['bob']);

@@ -1,6 +1,6 @@
 # JotDrop Android Privacy Policy
 
-Last updated: November 4, 2026
+Last updated: November 6, 2026
 
 JotDrop (`com.diexar.keepcapture`) is a local-first Android notes app from Diexar Labs. Contact us at [eric@diexar.com](mailto:eric@diexar.com) about privacy questions.
 
@@ -16,7 +16,7 @@ If you choose to sync your vault with another app or service, such as Syncthing 
 
 ## JotDrop Cloud (optional)
 
-You can create a free JotDrop Cloud account to sync your notes between devices, with Google, GitHub, or an email address and password. Your notes and attachments are encrypted on your device before they are uploaded; the server stores them encrypted and cannot read them. The server does keep your account email address, your device names, and the size and save time of each encrypted file. The full details, retention periods, processors and your rights are in the [JotDrop Cloud privacy policy](https://app.jotdrop.net/privacy).
+You can create a free JotDrop Cloud account to sync your notes between devices, with Google, GitHub, or an email address and password. Your notes and attachments are encrypted on your device before they are uploaded; the server stores them encrypted and cannot read them. The server does keep your account email address, your device names, which JotDrop app and version each device uses, and the size and save time of each encrypted file. The full details, retention periods, processors and your rights are in the [JotDrop Cloud privacy policy](https://app.jotdrop.net/privacy).
 
 - **Continue with Google** uses Android's own Google account picker, provided by Google Play services. Google learns that you signed in to JotDrop; JotDrop receives only your Google account ID and your verified email address. If that picker is unavailable, the sign-in opens in your browser instead.
 - **New email accounts** may open a Cloudflare Turnstile check in your browser to confirm that you are a person.

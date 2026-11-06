@@ -7,6 +7,7 @@ import { PreviewRescue } from "./previewRescue";
 import { ReminderScheduler } from "./reminderScheduler";
 import { ClipServer } from "./clipServer";
 import { CloudController } from "./cloud";
+import { identifyClient } from "../cloud/shared/client.mjs";
 import { fetchOg, safeMarkdownLink } from "./ogfetch";
 import { legacyAssetsPath } from "./attachments";
 import { ConfirmModal } from "./confirmModal";
@@ -44,6 +45,7 @@ export default class JotDropPlugin extends Plugin {
 
   async onload(): Promise<void> {
     await this.loadSettings();
+    identifyClient("obsidian", this.manifest.version);
     this.cloud = new CloudController(this);
     this.cloud.register();
 

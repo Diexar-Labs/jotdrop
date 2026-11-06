@@ -85,6 +85,19 @@ const ADMIN_SESSION_TIME = 8 * 60 * 60 * 1000;
 const ADMIN_IDLE_TIME = 30 * 60 * 1000;
 const ADMIN_COOKIE = '__Host-jotdrop_admin';
 const ADMIN_PAGE = 500;
+// `X-JotDrop-Client: obsidian/0.27.1`: which app and version a device runs, for the owner's overview. Anything else is ignored.
+const clientHeader = (value) => { const match = /^([a-z]{1,16})(?:\/([0-9A-Za-z.+-]{1,32}))?$/.exec(value ?? ''); return match ? { app: match[1], version: match[2] ?? null } : null; };
+/** Version strings by their dotted parts: 0.28.9 comes before 0.28.43; a part that is not a number compares as text. */
+function compareVersions(a, b) {
+  const parts = (value) => String(value).split('.').map((part) => (/^\d+$/.test(part) ? Number(part) : part));
+  const x = parts(a), y = parts(b);
+  for (let index = 0; index < Math.max(x.length, y.length); index++) {
+    const p = x[index] ?? 0, q = y[index] ?? 0;
+    if (p === q) continue;
+    return typeof p === 'number' && typeof q === 'number' ? p - q : String(p) < String(q) ? -1 : 1;
+  }
+  return 0;
+}
 // "argon2id:m=<KiB>,t=<passes>,p=<lanes>:<salt>:<hash>", base64url; no "$", so env files and shells keep it as is.
 const adminHashPattern = /^argon2id:m=(\d{1,7}),t=(\d{1,2}),p=(\d{1,2}):([A-Za-z0-9_-]{22,86}):([A-Za-z0-9_-]{43})$/;
 const BASE32 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
@@ -309,6 +322,8 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       if (!all('PRAGMA table_info(envelopes)').some((column) => column.name === 'pieces')) db.exec('ALTER TABLE envelopes ADD COLUMN pieces INTEGER NOT NULL DEFAULT 0; UPDATE envelopes SET pieces=1 WHERE EXISTS (SELECT 1 FROM envelope_chunks ec WHERE ec.vaultId=envelopes.vaultId AND ec.id=envelopes.id AND ec.envelopeHash=envelopes.envelopeHash);');
       // The newsletter tick waits with the signup until the email address is confirmed.
       if (!all('PRAGMA table_info(signups)').some((column) => column.name === 'newsletter')) db.exec('ALTER TABLE signups ADD COLUMN newsletter INTEGER NOT NULL DEFAULT 0;');
+      // Which JotDrop app and version a device runs, from its X-JotDrop-Client header; NULL for an app from before that header.
+      if (!all('PRAGMA table_info(devices)').some((column) => column.name === 'app')) db.exec('ALTER TABLE devices ADD COLUMN app TEXT; ALTER TABLE devices ADD COLUMN appVersion TEXT;');
       // A trial that runs: when its 14 days end, and `mail` 1 = "ends in 3 days" sent, 2 = "ended" sent or not needed.
       // Its own table, so `plans` keeps three columns for an older server after a rollback.
       db.exec('CREATE TABLE IF NOT EXISTS trials(vaultId TEXT PRIMARY KEY, trialUntil INTEGER NOT NULL, mail INTEGER NOT NULL DEFAULT 0);');
@@ -1000,7 +1015,12 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     // Links that work now, by the same end as linkEnd: on Free at most 7 days. Where a link was made (Joplin or not) sits in its encrypted envelope, so it is not counted.
     const links = Object.fromEntries([['copies', 'note_links'], ['lists', 'list_links']].map(([name, table]) => [name, one(`SELECT COUNT(*) AS active,COUNT(DISTINCT l.accountId) AS accounts,COALESCE(SUM(l.createdAt>=?),0) AS newLast7Days
       FROM ${table} l LEFT JOIN accounts a ON a.id=l.accountId WHERE (l.expiresAt IS NULL OR l.expiresAt>?) AND (${plusUntilSql}>? OR l.createdAt>?)`, now - 7 * DAY, now, now, now - LINK_FREE_DAYS * DAY)]));
+    // Which app and version the signed-in devices run, newest version of each app first; a device from before the apps said so has no app.
+    const apps = all('SELECT app,appVersion AS version,COUNT(*) AS devices,COALESCE(SUM(lastSeenAt>=?),0) AS usedLast30Days,COUNT(DISTINCT vaultId) AS accounts,MAX(lastSeenAt) AS lastSeenAt FROM devices WHERE revoked=0 GROUP BY 1,2', since(30))
+      .sort((a, b) => (a.app ?? '').localeCompare(b.app ?? '') || compareVersions(b.version ?? '', a.version ?? ''));
+    const newest = new Map(apps.filter((row) => row.app && row.version).map((row) => [row.app, row.version]).reverse());
     return { generatedAt: new Date(now).toISOString(), accounts: { ...accounts, free: accounts.total - accounts.plus }, trials, trialsEnding, limits, subscriptions, family, links, backup: lastBackup(),
+      apps: apps.map((row) => ({ ...row, newest: newest.get(row.app) ?? null, behind: Boolean(row.version && compareVersions(row.version, newest.get(row.app)) < 0) })),
       roadmap: roadmap.map((item) => ({ title: item.title, votes: votes.get(item.id) ?? 0 })),
       storage: { storedBytes: one('SELECT (SELECT COALESCE(SUM(size),0) FROM envelopes) + (SELECT COALESCE(SUM(size),0) FROM chunks) AS size').size, databaseBytes: file('cloud.db') + file('cloud.db-wal'), diskFreeBytes: disk.bavail * disk.bsize, diskTotalBytes: disk.blocks * disk.bsize } };
   }
@@ -1013,12 +1033,14 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     // ponytail: sums the storage of every matching account per page; keep per-vault counters if the account list grows large.
     const rows = all(`SELECT a.email,a.createdAt,a.authHash<>'' AS hasPassword,a.totpSecret IS NOT NULL AS hasAuthenticator,(SELECT group_concat(provider,',') FROM (SELECT provider FROM identities WHERE accountId=a.id ORDER BY provider)) AS providers,
       ${plusUntilSql} AS plusUntil,EXISTS${runningSql} AS subscribed,${usedBytesSql} AS usedBytes,(SELECT COUNT(*) FROM spaces WHERE ownerAccountId=a.id AND ownerGoneAt IS NULL) AS spaces,(SELECT COUNT(*) FROM devices WHERE vaultId=a.vaultId AND revoked=0) AS activeDevices,
-      (SELECT MAX(lastSeenAt) FROM devices WHERE vaultId=a.vaultId) AS lastActiveAt,EXISTS(SELECT 1 FROM newsletter WHERE accountId=a.id) AS newsletter
+      (SELECT MAX(lastSeenAt) FROM devices WHERE vaultId=a.vaultId) AS lastActiveAt,EXISTS(SELECT 1 FROM newsletter WHERE accountId=a.id) AS newsletter,
+      (SELECT group_concat(entry,'|') FROM (SELECT DISTINCT COALESCE(app,'')||'/'||COALESCE(appVersion,'') AS entry FROM devices WHERE vaultId=a.vaultId AND revoked=0 ORDER BY entry)) AS apps
       FROM accounts a WHERE instr(a.email,?)>0 ORDER BY ${ADMIN_SORT[sort]} ${order} NULLS LAST,a.email LIMIT ? OFFSET ?`, ...RUNNING, search, pageSize, (page - 1) * pageSize);
     return { accounts: rows.map((row) => {
       const plus = row.plusUntil > now;
       return { email: row.email, createdAt: row.createdAt, hasPassword: Boolean(row.hasPassword), hasAuthenticator: Boolean(row.hasAuthenticator), providers: row.providers ? row.providers.split(',') : [], plan: plus ? 'plus' : 'free',
-        plusUntil: row.plusUntil ? new Date(row.plusUntil).toISOString() : null, subscribed: Boolean(row.subscribed), usedBytes: row.usedBytes, quotaBytes: plus ? plusQuotaBytes : quotaBytes, spaces: row.spaces, activeDevices: row.activeDevices, lastActiveAt: row.lastActiveAt ?? null, newsletter: Boolean(row.newsletter) };
+        plusUntil: row.plusUntil ? new Date(row.plusUntil).toISOString() : null, subscribed: Boolean(row.subscribed), usedBytes: row.usedBytes, quotaBytes: plus ? plusQuotaBytes : quotaBytes, spaces: row.spaces, activeDevices: row.activeDevices, lastActiveAt: row.lastActiveAt ?? null, newsletter: Boolean(row.newsletter),
+        apps: row.apps ? row.apps.split('|').map((entry) => { const [app, version] = entry.split('/'); return { app: app || null, version: version || null }; }) : [] };
     }), total: one('SELECT COUNT(*) AS count FROM accounts WHERE instr(email,?)>0', search).count, page, pageSize };
   }
   const adminAssets = new Map([['/', [join(adminRoot, 'index.html'), 'text/html']], ['/admin.js', [join(adminRoot, 'admin.js'), 'text/javascript']], ['/admin.css', [join(adminRoot, 'admin.css'), 'text/css']]]);
@@ -1725,7 +1747,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       if (method === 'OPTIONS') {
         if (!origin || !corsOrigins.includes(origin)) fail(403, 'Origin not allowed');
         res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
-        res.setHeader('Access-Control-Allow-Headers', 'Authorization,Content-Type,X-JotDrop-Vault,X-JotDrop-Device');
+        res.setHeader('Access-Control-Allow-Headers', 'Authorization,Content-Type,X-JotDrop-Vault,X-JotDrop-Device,X-JotDrop-Client');
         res.writeHead(204); res.end(); return;
       }
       // HEAD too: link checkers such as Google Play's test a page with HEAD before they open it.
@@ -2124,8 +2146,12 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       // A device belongs to its own cloud, and reaches a space when its account is a member.
       const inSpace = device.vaultId !== vaultId;
       if (inSpace && !memberOf(vaultId, device.vaultId)) fail(401, 'Device access denied');
-      try { run('UPDATE devices SET lastSeenAt=? WHERE id=?', new Date(clock()).toISOString(), deviceId); }
-      catch (error) {
+      // `X-JotDrop-Client: obsidian/0.27.1` says which app and version the device runs, for the owner's overview; it is kept only when it changes.
+      const client = clientHeader(req.headers['x-jotdrop-client']);
+      try {
+        if (client && (client.app !== device.app || client.version !== device.appVersion)) run('UPDATE devices SET lastSeenAt=?,app=?,appVersion=? WHERE id=?', new Date(clock()).toISOString(), client.app, client.version, deviceId);
+        else run('UPDATE devices SET lastSeenAt=? WHERE id=?', new Date(clock()).toISOString(), deviceId);
+      } catch (error) {
         // Optional activity metadata must not deny access when storage cannot be written.
         if (![5, 6, 8, 10, 13].includes(sqliteCode(error))) throw error; // BUSY, LOCKED, READONLY, IOERR, FULL.
       }

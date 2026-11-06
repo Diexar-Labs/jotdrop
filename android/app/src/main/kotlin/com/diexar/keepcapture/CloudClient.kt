@@ -378,6 +378,8 @@ class CloudClient(val credentials: CloudCredentials) {
                 connection.readTimeout = 30000
                 connection.requestMethod = method
                 connection.useCaches = false
+                // Which app and version this is, for the owner's overview of versions in use.
+                connection.setRequestProperty("X-JotDrop-Client", "android/${BuildConfig.VERSION_NAME}")
                 if (auth != null) {
                     connection.setRequestProperty("Authorization", "Bearer ${auth.token}")
                     connection.setRequestProperty("X-JotDrop-Vault", auth.vaultId)

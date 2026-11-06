@@ -1,4 +1,4 @@
-import { CloudClient } from '/shared/client.mjs';
+import { CloudClient, identifyClient } from '/shared/client.mjs';
 import { mergeNote } from '/shared/merge.mjs';
 import { diffLines, foldUnchanged } from '/shared/diff.mjs';
 import { createLink, listLinks, removeLink } from '/shared/links.mjs';
@@ -12,6 +12,9 @@ import { drawingFileName, isDrawingName, read as readDrawing } from '/shared/dra
 import { addressHash, mailAddress, mailKeyPair, mailToNote, openMailBody, openMailKey, openMailPart, senderHash } from '/shared/mail.mjs';
 import { createDrawingEditor } from '/shared/drawing-editor.mjs';
 import { DEFAULT_WARN, INTRO, PAPER_DRAWER, SUGGESTED_DRAWERS, WARN_OPTIONS, drawerLabel, drawerName, expiresBadge, inDrawer, isPaperDrawer, validExpires, warnReminder, withPaperDrawer } from '/shared/paper.mjs';
+
+// The server sees this page as the web app; it has no version of its own, because a reload always brings the current one.
+identifyClient('web');
 
 const $ = (id) => document.getElementById(id);
 try {

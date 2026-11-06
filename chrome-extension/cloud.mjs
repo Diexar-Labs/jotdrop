@@ -6,7 +6,7 @@
 // key never leave this browser in readable form: they are sealed with a passphrase of the user's choice and
 // kept in chrome.storage.local. "Stay unlocked" keeps an unsealed copy in chrome.storage.session, which lives
 // in memory only and is gone when the browser closes. Clips are encrypted here before they are uploaded.
-import { CloudClient, validateUrl } from '../cloud/shared/client.mjs';
+import { CloudClient, identifyClient, validateUrl } from '../cloud/shared/client.mjs';
 import { base64ToBytes, bytesToBase64, sealLocal, unsealLocal } from '../cloud/shared/crypto.mjs';
 
 const encoder = new TextEncoder();
@@ -197,5 +197,6 @@ export function createClipperCloud(storage, fetcher = globalThis.fetch, session 
 }
 
 if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+  identifyClient('clipper', chrome.runtime?.getManifest?.().version);
   globalThis.JotDropCloud = createClipperCloud(chrome.storage.local, globalThis.fetch.bind(globalThis), chrome.storage.session);
 }

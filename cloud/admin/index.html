@@ -58,6 +58,15 @@
         <tbody id="subscriptions"></tbody>
       </table>
     </div>
+    <h2>Apps in use</h2>
+    <p class="muted">Which JotDrop app and version each signed-in device runs, as the apps report it since 6 November 2026. "Not reported" is an app from before that, or a device that has not connected since: it needs an update.</p>
+    <p id="apps-empty" class="muted" hidden></p>
+    <div id="apps-wrap" class="table-wrap">
+      <table>
+        <thead><tr><th scope="col">App</th><th scope="col">Version</th><th scope="col">Devices</th><th scope="col">Accounts</th><th scope="col">Last used</th></tr></thead>
+        <tbody id="apps"></tbody>
+      </table>
+    </div>
     <h2>What Plus votes for</h2>
     <p class="muted">Votes from accounts with Plus, including the trial. Each account has 3 votes. The list is in cloud/roadmap.mjs.</p>
     <ol id="roadmap" class="roadmap"></ol>
