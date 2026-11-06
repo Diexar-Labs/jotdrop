@@ -12,6 +12,8 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import kotlinx.coroutines.sync.withLock
+import java.io.File
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 /**
@@ -34,12 +36,15 @@ class PreviewWorker(
         val url = inputData.getString(KEY_URL)
             ?: return ListenableWorker.Result.failure()
         val fallbackSubject = inputData.getString(KEY_FALLBACK_SUBJECT)
+        // Shared text sits in a file: WorkManager input data may not exceed 10 KB.
+        val extraFile = inputData.getString(KEY_EXTRA_TEXT_FILE)?.let { File(it) }
         val extraText = inputData.getString(KEY_EXTRA_TEXT)
+            ?: extraFile?.takeIf { it.isFile }?.readText()
         val noteUri = Uri.parse(noteUriString)
 
         val current = Storage.readNote(applicationContext, noteUri).getOrNull()
-            ?: return ListenableWorker.Result.success()
-        if (!current.contains(PENDING_MARKER)) {
+        if (current == null || !current.contains(PENDING_MARKER)) {
+            extraFile?.delete()
             return ListenableWorker.Result.success()
         }
 
@@ -60,7 +65,7 @@ class PreviewWorker(
         // 3-15s; als de gebruiker in die tijd de notitie bewerkte (marker weg)
         // of tags/kleur/pin zette (frontmatter erbij), mag de herschrijf die
         // wijzigingen niet weggooien.
-        return Storage.noteWriteMutex.withLock {
+        val result = Storage.noteWriteMutex.withLock {
             val latest = Storage.readNote(applicationContext, noteUri).getOrNull()
                 ?: return@withLock ListenableWorker.Result.success()
             if (!latest.contains(PENDING_MARKER)) {
@@ -72,21 +77,30 @@ class PreviewWorker(
                 onFailure = { ListenableWorker.Result.retry() },
             )
         }
+        if (result != ListenableWorker.Result.retry()) extraFile?.delete()
+        return result
     }
 
     companion object {
         const val KEY_NOTE_URI = "note_uri"
         const val KEY_URL = "url"
         const val KEY_FALLBACK_SUBJECT = "subject"
+        // Read for work queued by 0.28.43 and older; new work uses KEY_EXTRA_TEXT_FILE.
         const val KEY_EXTRA_TEXT = "extra_text"
+        const val KEY_EXTRA_TEXT_FILE = "extra_text_file"
         const val PENDING_MARKER = "<!-- jotdrop-preview: pending -->"
 
         fun enqueue(context: Context, noteUri: Uri, url: String, subject: String?, extraText: String? = null) {
+            // A long shared text in the input data crashed the share (limit 10 KB), so it goes in a file.
+            val extraFile = extraText?.let { text ->
+                File(File(context.noBackupFilesDir, "share-text").apply { mkdirs() }, "${UUID.randomUUID()}.txt")
+                    .apply { writeText(text) }
+            }
             val data = workDataOf(
                 KEY_NOTE_URI to noteUri.toString(),
                 KEY_URL to url,
                 KEY_FALLBACK_SUBJECT to subject,
-                KEY_EXTRA_TEXT to extraText,
+                KEY_EXTRA_TEXT_FILE to extraFile?.path,
             )
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.CONNECTED)
