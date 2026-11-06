@@ -1117,21 +1117,8 @@ object Storage {
         val bodyStart = frontmatter?.range?.last?.plus(1) ?: 0
         val head = current.substring(0, bodyStart)
         val body = current.substring(bodyStart)
-        val itemRegex = Regex("(?m)^(\\s*-\\s+\\[)([ xX])(\\](?:\\s|$))")
-        var currentIndex = 0
-        var toggled = false
-        val updatedBody = itemRegex.replace(body) { match ->
-            if (currentIndex++ != targetIndex) {
-                match.value
-            } else {
-                toggled = true
-                val state = match.groupValues[2]
-                match.groupValues[1] + (if (state == " ") "x" else " ") + match.groupValues[3]
-            }
-        }
-        if (!toggled) {
-            return Result.failure(IllegalStateException("Checklist-item bestaat niet meer."))
-        }
+        val updatedBody = toggleChecklistText(body, targetIndex)
+            ?: return Result.failure(IllegalStateException("Checklist-item bestaat niet meer."))
         return updateNote(context, uri, head + updatedBody)
     }
 

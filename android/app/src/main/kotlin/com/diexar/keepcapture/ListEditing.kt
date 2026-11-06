@@ -1,7 +1,24 @@
 package com.diexar.keepcapture
 
 private val listMarker = Regex("^([ \\t]*)([-*+])[ \\t]+(?:\\[([ xX])\\](?:[ \\t]+|$))?")
+private val checklistItem = Regex("(?m)^(\\s*-\\s+\\[)([ xX])(\\](?:\\s|$))")
 private val codeFence = Regex("^[ \\t]*(`{3,}|~{3,})(.*)$")
+
+/** Toggle exactly the Nth Markdown checklist item, or null when it does not exist. */
+internal fun toggleChecklistText(text: String, targetIndex: Int): String? {
+    if (targetIndex < 0) return null
+    var currentIndex = 0
+    var toggled = false
+    val updated = checklistItem.replace(text) { match ->
+        if (currentIndex++ != targetIndex) match.value
+        else {
+            toggled = true
+            val state = match.groupValues[2]
+            match.groupValues[1] + (if (state == " ") "x" else " ") + match.groupValues[3]
+        }
+    }
+    return updated.takeIf { toggled }
+}
 
 private fun nextFence(line: String, fence: String?): String? {
     val match = codeFence.matchEntire(line) ?: return fence

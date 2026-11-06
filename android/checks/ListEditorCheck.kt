@@ -91,5 +91,9 @@ fun main() {
     val rendered = renderListBullets(source)
     check(rendered == "\u2022 alpha\n  \u2022 beta\n- [x] task\n```\n- code\n```\n\u2022 gamma")
     check(source.length == rendered.length) { "Visual transformation must preserve every source offset" }
+    check(toggleChecklistText("- [ ] milk\n- [x] eggs", 0) == "- [x] milk\n- [x] eggs")
+    check(toggleChecklistText("- [ ] milk\n- [x] eggs", 1) == "- [ ] milk\n- [ ] eggs")
+    check(toggleChecklistText("- [ ] milk", 1) == null)
+    check(toggleChecklistText("- [ ] milk", -1) == null)
     println("Android list editor checks passed")
 }

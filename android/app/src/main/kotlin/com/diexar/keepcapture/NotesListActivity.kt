@@ -223,6 +223,7 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -258,6 +259,7 @@ class NotesListActivity : ThemedComponentActivity() {
     private val labelsState = MutableStateFlow<List<String>>(emptyList())
     private var loadJob: Job? = null
     private var stateEpoch = 0L
+    private val checklistEpochs = mutableMapOf<Uri, Long>()
     private var pendingCameraUri: Uri? = null
     private var pendingCameraFile: File? = null
     // OCR-modus blijft staan tot de capture-flow afgerond is. Met deze flag weet
@@ -840,9 +842,17 @@ class NotesListActivity : ThemedComponentActivity() {
     }
 
     private fun toggleChecklist(note: NoteSummary, index: Int) {
+        val epoch = (checklistEpochs[note.uri] ?: 0L) + 1L
+        checklistEpochs[note.uri] = epoch
         stateEpoch++
+        // The card responds on this frame; durable SAF IO and cloud sync follow in the background.
+        updateLoadedNotes { notes -> notes.map {
+            if (it.uri == note.uri) it.copy(snippet = toggleChecklistText(it.snippet, index) ?: it.snippet)
+            else it
+        } }
         lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) {
+            // Not cancellable: the card already shows the tick, so closing or turning the screen must not drop the write.
+            val result = withContext(NonCancellable + Dispatchers.IO) {
                 Storage.noteWriteMutex.withLock {
                     Storage.toggleChecklistItem(this@NotesListActivity, note.uri, index).map {
                         Storage.refreshNoteSummary(this@NotesListActivity, note)
@@ -850,14 +860,18 @@ class NotesListActivity : ThemedComponentActivity() {
                 }
             }
             result.onSuccess { updated ->
-                if (updated == null) reload()
-                else updateLoadedNotes { notes -> notes.map { if (it.uri == note.uri) updated else it } }
+                // A later tap owns the card now; never put its optimistic change back with this older result.
+                if (checklistEpochs[note.uri] == epoch) {
+                    if (updated == null) reload()
+                    else updateLoadedNotes { notes -> notes.map { if (it.uri == note.uri) updated else it } }
+                }
             }.onFailure { err ->
                 Toast.makeText(
                     this@NotesListActivity,
                     err.message ?: getString(R.string.error_generic),
                     Toast.LENGTH_SHORT,
                 ).show()
+                if (checklistEpochs[note.uri] == epoch) reload()
             }
         }
     }
