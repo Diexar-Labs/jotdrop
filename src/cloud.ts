@@ -49,6 +49,8 @@ type SpaceState = { tracked: Record<string, Base>; index: RemoteIndex; seen: Rec
 type SyncState = {
   vaultId: string; enabled: boolean; binding: string; tracked: Record<string, Base>; index: RemoteIndex;
   seen?: Record<string, { size: number; modified: number; hash: string }>; upload?: Prepared; lastSynced?: string; message: string; conflicts: number;
+  /** The server no longer knows this device (signed out elsewhere); logging in again clears it. */
+  accessLost?: boolean;
 };
 type Session = { credentials: CloudClient["credentials"]; email: string };
 type ProviderSignIn = Awaited<ReturnType<typeof providerTicket>> & { provider: string; email: string; account: boolean };
@@ -375,6 +377,7 @@ export class CloudController {
   /** The signed-in device, for the account screens. */
   get connection(): CloudClient | undefined { return this.client; }
   get enabled(): boolean { return !!this.state?.enabled; }
+  get accessLost(): boolean { return !!this.state?.accessLost; }
   get lastSynced(): string | undefined { return this.state?.lastSynced; }
   onChange(listener: () => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   // A copy: a listener may re-register itself, and a live Set would then call it forever.
@@ -458,7 +461,7 @@ export class CloudController {
     await this.store.put("session", await seal({ credentials: this.client.credentials, email }));
     const old = await this.store.get<SyncState>("state");
     // Same cloud as before: keep its baselines. Another cloud starts fresh.
-    this.state = old && old.vaultId === client.credentials.vaultId ? { ...old, enabled: false, message: "Signed in. Cloud sync is off." } : undefined;
+    this.state = old && old.vaultId === client.credentials.vaultId ? { ...old, enabled: false, accessLost: false, message: "Signed in. Cloud sync is off." } : undefined;
     if (this.state) await this.store.put("state", this.state);
     this.status = "Signed in. Turn on cloud sync to sync this vault.";
     this.changed();
@@ -638,10 +641,10 @@ export class CloudController {
     } catch (error) {
       if (this.generation !== generation) return;
       const status = (error as { status?: number }).status;
-      state.message = status === 401 ? "This device no longer has access. Your notes were kept. Log out and log in again."
+      state.message = status === 401 ? "This device no longer has access. Your notes were kept. Log in again to sync."
         : error instanceof TypeError ? "The cloud is unreachable. Your changes stay on this device and sync later."
         : error instanceof Error ? error.message : "Cloud sync failed. Your notes were kept.";
-      if (status === 401) state.enabled = false;
+      if (status === 401) { state.enabled = false; state.accessLost = true; }
       await save().catch(() => {});
       this.status = state.message;
       throw error;

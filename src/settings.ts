@@ -329,13 +329,13 @@ export class JotDropSettingTab extends PluginSettingTab {
     this.cloudAccountStop?.();
     this.cloudAccountStop = undefined;
     // Sign-in and on/off redraw everything; a sync only updates the status line.
-    const shown = { signedIn: cloud.signedIn, enabled: cloud.enabled };
+    const shown = { signedIn: cloud.signedIn, enabled: cloud.enabled, accessLost: cloud.accessLost };
     let statusRow: Setting | undefined;
     let showConflicts = () => {};
     const statusText = () => `${cloud.status}${cloud.lastSynced ? ` Last sync: ${new Date(cloud.lastSynced).toLocaleString()}.` : ""}`;
     this.cloudListener = cloud.onChange(() => {
       if (!el.isConnected) return;
-      if (cloud.signedIn !== shown.signedIn || cloud.enabled !== shown.enabled || !statusRow) refresh();
+      if (cloud.signedIn !== shown.signedIn || cloud.enabled !== shown.enabled || cloud.accessLost !== shown.accessLost || !statusRow) refresh();
       else { statusRow.setDesc(statusText()); showConflicts(); }
     });
     new Setting(el).setName("Cloud sync").setHeading();
@@ -360,7 +360,10 @@ export class JotDropSettingTab extends PluginSettingTab {
           confirmLabel: "Log out",
         }, () => { void cloud.logOut().then(refresh, (error) => new Notice(error instanceof Error ? error.message : String(error), 10000)); }).open();
       }));
-    new Setting(el).setName("Sync this vault").setDesc(cloud.enabled ? "On: notes and attachments sync automatically." : "Off: nothing in this vault is sent to the cloud.")
+    // Signed out from elsewhere: turning sync on would only spring back off, so offer the way back in.
+    if (cloud.accessLost) new Setting(el).setName("Sync this vault").setDesc("Off: this device was signed out of JotDrop Cloud, for example from another device. Your notes were kept. Log in again to sync.")
+      .addButton((button) => button.setButtonText("Log in again").setCta().onClick(() => cloud.showSignIn(false)));
+    else new Setting(el).setName("Sync this vault").setDesc(cloud.enabled ? "On: notes and attachments sync automatically." : "Off: nothing in this vault is sent to the cloud.")
       .addToggle((toggle) => toggle.setValue(cloud.enabled).onChange((on) => {
         if (on) cloud.confirmEnable(refresh);
         else void cloud.setEnabled(false).then(refresh);

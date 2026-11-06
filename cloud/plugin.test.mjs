@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { createCloudServer } from './server.mjs';
 import { CloudClient } from './shared/client.mjs';
-import { accountInfo, confirmSignup, providerSignUp, signUp } from './shared/account.mjs';
+import { accountInfo, confirmLogin, confirmSignup, logIn, providerSignUp, signUp } from './shared/account.mjs';
 import { bytesToBase64, encryptEnvelope, objectId, randomToken } from './shared/crypto.mjs';
 import { acceptInvite, createSpace, makeInvite, readInvite, removeMember, replaceSpace, spaceClient, spaceDetails } from './shared/spaces.mjs';
 
@@ -219,6 +219,39 @@ test('the plugin signs in with an account, syncs the real JotDrop folders both w
   await assert.rejects(new CloudController(v.plugin, v.store).syncNow(), /Log in/, 'A restart after logging out stays logged out');
   assert.ok(v.files.has('Mini Notes/Shopping.md'), 'Logging out keeps the notes');
   assert.ok(v.files.has('Other/Private.md') && !(await pathsInCloud())['notes/Private.md'], 'Only the JotDrop folders sync');
+});
+
+test('a device signed out from elsewhere asks to log in again, and logging in again keeps the sync baselines', async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'jotdrop-plugin-test-'));
+  const mails = [];
+  const app = await createCloudServer({ dataDir, signupTrial: 0, enrollmentToken: randomToken(), mailer: async (mail) => { mails.push(mail); }, serverKey: randomToken(), freeDeviceLimit: 100 });
+  t.after(async () => { await app.close(); await rm(dataDir, { recursive: true, force: true }); });
+  const url = `http://127.0.0.1:${app.port}`;
+  const v = vault();
+  v.put('Mini Notes/Shopping.md', 'Milk');
+  const cloud = new CloudController(v.plugin, v.store);
+  const pending = await signUp({ url, email: 'eric@example.com', password: 'correct horse battery', deviceName: 'Obsidian on Windows' });
+  const { client } = await confirmSignup(pending, mails.find((mail) => mail.kind === 'verify').code);
+  await cloud.finishSignIn(client, 'eric@example.com');
+  await cloud.setEnabled(true);
+  await cloud.syncNow();
+  assert.equal(cloud.accessLost, false);
+
+  // The website signs this device out.
+  const web = await CloudClient.claim({ pairingCode: (await client.makePairing('Website')).pairingCode });
+  await web.revokeDevice(client.credentials.deviceId);
+  await assert.rejects(cloud.syncNow(), (error) => error.status === 401);
+  assert.equal(cloud.enabled, false);
+  assert.equal(cloud.accessLost, true);
+  assert.match(cloud.status, /no longer has access/);
+
+  // Logging in again, without logging out first, clears it and keeps what was synced.
+  const again = await logIn({ url, email: 'eric@example.com', password: 'correct horse battery', deviceName: 'Obsidian on Windows' });
+  await cloud.finishSignIn(await confirmLogin(again, mails.filter((mail) => mail.kind === 'login').at(-1).code), 'eric@example.com');
+  assert.equal(cloud.accessLost, false);
+  await cloud.setEnabled(true);
+  await cloud.syncNow();
+  assert.match(cloud.status, /Synced\. 0 up, 0 down/);
 });
 
 test('sync now during a sync waits for it and syncs again, so it sees what changed meanwhile', async (t) => {
