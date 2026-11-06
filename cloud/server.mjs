@@ -215,7 +215,7 @@ async function body(req, maximum = MAX_BODY) {
 }
 
 /** Loopback-only server behind a trusted HTTPS proxy. Accounts need a mailer; no billing or provider credentials. `quotaBytes` and `freeDeviceLimit` are the free plan's limits. */
-export async function createCloudServer({ dataDir, enrollmentToken, mailer, newsletter, serverKey, stripe, reviewLogin, oauth = {}, fetcher = globalThis.fetch, quotaBytes = 250 * 1024 * 1024, plusQuotaBytes = 10 * 1024 * 1024 * 1024, maxFileBytes = 25 * 1024 * 1024, plusMaxFileBytes = 200 * 1024 * 1024, freeDeviceLimit = 2, maxHistoryEntries = 100000, maxDeviceEntries = 1000, maxPairingEntries = 128, maxConcurrentRequests = 16, signupsPerAddress = 5, signupTrial = TRIAL_TIME, roadmap = ROADMAP, earlyFeatures = EARLY_FEATURES, turnstile, webRoot = join(directory, 'web'), corsOrigins = [], publicOrigin, adminOrigin, adminPasswordHash, adminTotpSecret, adminRoot = join(directory, 'admin'), port = 0, enrollmentLimit = 1, sweepEvery = 60 * 60 * 1000, clock = Date.now, mailDomain, mailinToken }) {
+export async function createCloudServer({ dataDir, enrollmentToken, mailer, newsletter, serverKey, stripe, reviewLogin, oauth = {}, fetcher = globalThis.fetch, quotaBytes = 250 * 1024 * 1024, plusQuotaBytes = 10 * 1024 * 1024 * 1024, maxFileBytes = 25 * 1024 * 1024, plusMaxFileBytes = 200 * 1024 * 1024, freeDeviceLimit = 2, maxHistoryEntries = 100000, maxDeviceEntries = 1000, maxPairingEntries = 128, maxConcurrentRequests = 16, signupsPerAddress = 5, signupTrial = TRIAL_TIME, roadmap = ROADMAP, earlyFeatures = EARLY_FEATURES, turnstile, webRoot = join(directory, 'web'), corsOrigins = [], publicOrigin, adminOrigin, adminPasswordHash, adminTotpSecret, adminRoot = join(directory, 'admin'), port = 0, enrollmentLimit = 1, sweepEvery = 60 * 60 * 1000, clock = Date.now, mailDomain, mailinToken, backupLog }) {
   if (!dataDir || (enrollmentToken !== undefined && !validToken(enrollmentToken)) || [quotaBytes, plusQuotaBytes, freeDeviceLimit].some((value) => !Number.isSafeInteger(value) || value < 1)) throw new Error('Provide a data directory, random 32-byte enrollment token and positive quota.');
   if (mailer !== undefined && typeof mailer !== 'function') throw new Error('Provide the mailer as a function.');
   // Google Play reviewers cannot receive email codes: this one address confirms with a fixed code and gets no mail. The password stays required.
@@ -962,6 +962,16 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   const runningSql = `(SELECT 1 FROM subscriptions WHERE vaultId=a.vaultId AND status IN (${RUNNING.map(() => '?').join(',')}))`;
   // An account's own cloud and the spaces it owns.
   const usedBytesSql = '((SELECT COALESCE(SUM(size),0) FROM envelopes WHERE vaultId IN (SELECT a.vaultId UNION ALL SELECT id FROM spaces WHERE ownerAccountId=a.id AND ownerGoneAt IS NULL))+(SELECT COALESCE(SUM(size),0) FROM chunks WHERE vaultId IN (SELECT a.vaultId UNION ALL SELECT id FROM spaces WHERE ownerAccountId=a.id AND ownerGoneAt IS NULL)))';
+  // The nightly backup ends by writing "<time> KLAAR backup ..." or "<time> FOUT backup ... (step)" to its log on this server; the newest such line is the last result.
+  function lastBackup() {
+    if (!backupLog) return { state: 'not-set-up' };
+    let text, changed;
+    try { text = readFileSync(backupLog, 'utf8'); changed = statSync(backupLog).mtimeMs; } catch { return { state: 'no-log' }; }
+    const logChangedAt = new Date(changed).toISOString(), line = text.split('\n').reverse().map((entry) => /^(.+?) (KLAAR|FOUT) backup (.*)$/.exec(entry.trim())).find(Boolean);
+    if (!line) return { state: 'no-result', logChangedAt };
+    const [, at, word, rest] = line;
+    return { state: word === 'KLAAR' ? 'ok' : 'failed', at, detail: word === 'FOUT' ? /\(([^)]*)\)$/.exec(rest)?.[1] ?? rest : null, logChangedAt };
+  }
   // Counts and sizes only: never note content, envelopes, keys, hashes, tokens or authenticator secrets.
   function adminSummary() {
     const now = clock(), since = (days) => new Date(now - days * DAY).toISOString();
@@ -987,7 +997,10 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     const family = one(`SELECT COUNT(DISTINCT s.vaultId) AS plans,(SELECT COUNT(*) FROM family_members m JOIN accounts o ON o.id=m.ownerAccountId WHERE o.vaultId IN
       (SELECT s2.vaultId FROM subscriptions s2 JOIN family_subscriptions f2 ON f2.subscriptionId=s2.subscriptionId WHERE s2.status IN (${running}))) AS members
       FROM subscriptions s JOIN family_subscriptions f ON f.subscriptionId=s.subscriptionId WHERE s.status IN (${running})`, ...RUNNING, ...RUNNING);
-    return { generatedAt: new Date(now).toISOString(), accounts: { ...accounts, free: accounts.total - accounts.plus }, trials, trialsEnding, limits, subscriptions, family,
+    // Links that work now, by the same end as linkEnd: on Free at most 7 days. Where a link was made (Joplin or not) sits in its encrypted envelope, so it is not counted.
+    const links = Object.fromEntries([['copies', 'note_links'], ['lists', 'list_links']].map(([name, table]) => [name, one(`SELECT COUNT(*) AS active,COUNT(DISTINCT l.accountId) AS accounts,COALESCE(SUM(l.createdAt>=?),0) AS newLast7Days
+      FROM ${table} l LEFT JOIN accounts a ON a.id=l.accountId WHERE (l.expiresAt IS NULL OR l.expiresAt>?) AND (${plusUntilSql}>? OR l.createdAt>?)`, now - 7 * DAY, now, now, now - LINK_FREE_DAYS * DAY)]));
+    return { generatedAt: new Date(now).toISOString(), accounts: { ...accounts, free: accounts.total - accounts.plus }, trials, trialsEnding, limits, subscriptions, family, links, backup: lastBackup(),
       roadmap: roadmap.map((item) => ({ title: item.title, votes: votes.get(item.id) ?? 0 })),
       storage: { storedBytes: one('SELECT (SELECT COALESCE(SUM(size),0) FROM envelopes) + (SELECT COALESCE(SUM(size),0) FROM chunks) AS size').size, databaseBytes: file('cloud.db') + file('cloud.db-wal'), diskFreeBytes: disk.bavail * disk.bsize, diskTotalBytes: disk.blocks * disk.bsize } };
   }
@@ -2713,7 +2726,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   if ((adminOrigin || adminPasswordHash || adminTotpSecret) && !(adminOrigin && adminPasswordHash && adminTotpSecret)) console.warn('Admin dashboard off: set JOTDROP_CLOUD_ADMIN_ORIGIN, JOTDROP_CLOUD_ADMIN_PASSWORD_HASH and JOTDROP_CLOUD_ADMIN_TOTP_SECRET together.');
   const reviewLogin = process.env.JOTDROP_CLOUD_REVIEW_EMAIL || process.env.JOTDROP_CLOUD_REVIEW_CODE ? { email: process.env.JOTDROP_CLOUD_REVIEW_EMAIL, code: process.env.JOTDROP_CLOUD_REVIEW_CODE } : undefined;
   const app = await createCloudServer({ dataDir: process.env.JOTDROP_CLOUD_DATA_DIR, reviewLogin, adminOrigin, adminPasswordHash, adminTotpSecret, enrollmentToken, mailer, newsletter, serverKey, stripe, oauth: { google: provider('GOOGLE'), github: provider('GITHUB') }, maxHistoryEntries: Number(process.env.JOTDROP_CLOUD_MAX_HISTORY_ENTRIES ?? 100000), maxDeviceEntries: Number(process.env.JOTDROP_CLOUD_MAX_DEVICE_ENTRIES ?? 1000), maxPairingEntries: Number(process.env.JOTDROP_CLOUD_MAX_PAIRING_ENTRIES ?? 128), maxConcurrentRequests: Number(process.env.JOTDROP_CLOUD_MAX_CONCURRENT_REQUESTS ?? 16), signupsPerAddress: Number(process.env.JOTDROP_CLOUD_SIGNUPS_PER_ADDRESS ?? 5), signupTrial: Number(process.env.JOTDROP_CLOUD_SIGNUP_TRIAL_DAYS ?? 14) * DAY, turnstile, publicOrigin: process.env.JOTDROP_CLOUD_PUBLIC_ORIGIN, port: Number(process.env.JOTDROP_CLOUD_PORT || 8787), corsOrigins: (process.env.JOTDROP_CLOUD_CORS_ORIGINS || '').split(',').map((entry) => entry.trim()).filter(Boolean),
-    mailDomain: process.env.JOTDROP_CLOUD_MAIL_DOMAIN || undefined, mailinToken: process.env.JOTDROP_CLOUD_MAILIN_TOKEN || undefined });
+    mailDomain: process.env.JOTDROP_CLOUD_MAIL_DOMAIN || undefined, mailinToken: process.env.JOTDROP_CLOUD_MAILIN_TOKEN || undefined, backupLog: process.env.JOTDROP_CLOUD_BACKUP_LOG || undefined });
   console.log(`JotDrop Cloud listening on http://127.0.0.1:${app.port}.`);
   if (!process.env.JOTDROP_CLOUD_ENROLLMENT_TOKEN) console.log(`Single-use local enrollment token: ${enrollmentToken}`);
   for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { void app.close().then(() => process.exit(0)); });

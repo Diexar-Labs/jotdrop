@@ -91,8 +91,18 @@ function showSubscriptions(subscriptions) {
   'Nobody pays yet.');
 }
 
+// The nightly backup: the result in words, and LATE when its log has not changed for 26 hours (a night was skipped).
+function backupTile({ state, at, detail, logChangedAt }, generatedAt) {
+  if (state === 'not-set-up') return tile('Last backup', 'Not set up', 'Set JOTDROP_CLOUD_BACKUP_LOG on the server');
+  if (state === 'no-log') return tile('Last backup', 'Unknown', 'The backup log cannot be read');
+  const hours = Math.floor((Date.parse(generatedAt) - Date.parse(logChangedAt)) / 3600000), late = hours >= 26;
+  const value = state === 'failed' ? 'FAILED' : late ? 'LATE' : state === 'ok' ? 'OK' : 'Unknown';
+  const notes = [at ? `Result of ${at} (time of the backup machine)` : 'No result in the log yet', detail ? `Failed step: ${detail}` : '', late ? `Log unchanged for ${hours} hours` : ''];
+  return tile('Last backup', value, notes.filter(Boolean).join('. '));
+}
+
 async function loadSummary() {
-  const { generatedAt, accounts, trials, trialsEnding, limits, subscriptions, family, roadmap, storage } = await api('/api/admin/summary');
+  const { generatedAt, accounts, trials, trialsEnding, limits, subscriptions, family, links, backup, roadmap, storage } = await api('/api/admin/summary');
   $('generated').textContent = `Updated ${when(generatedAt)}`;
   $('tiles').replaceChildren(
     tile('Accounts', String(accounts.total)),
@@ -103,6 +113,9 @@ async function loadSummary() {
     tile('Trials running', String(trials.running), `${trials.total} started, ${trials.paidAfter} of those pay or paid (${percent(trials.paidAfter, trials.total)})`),
     tile('Trials ending, next 7 days', String(trialsEnding.length), `${trialsEnding.filter((trial) => trial.subscribed).length} of those already pay`),
     tile('Family plans', String(family.plans), `${plural(family.members, 'member', 'members')} besides those who pay`),
+    tile('Copy links working', String(links.copies.active), `${plural(links.copies.accounts, 'account', 'accounts')}, ${links.copies.newLast7Days} made in the last 7 days`),
+    tile('Live lists working', String(links.lists.active), `${plural(links.lists.accounts, 'account', 'accounts')}, ${links.lists.newLast7Days} made in the last 7 days`),
+    backupTile(backup, generatedAt),
     tile('Stored notes (encrypted)', bytes(storage.storedBytes), `Database file ${bytes(storage.databaseBytes)}`),
     tile('Disk free', bytes(storage.diskFreeBytes), `of ${bytes(storage.diskTotalBytes)} (${percent(storage.diskFreeBytes, storage.diskTotalBytes)} free)`),
   );

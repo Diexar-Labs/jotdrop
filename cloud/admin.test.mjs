@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { appendFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -217,7 +218,8 @@ test('totals and the account list match the database and never include secrets',
   const { roadmap, ...others } = rest;
   assert.deepEqual(others, { generatedAt: iso(now), accounts: { total: 3, newLast7Days: 1, newLast30Days: 2, plus: 2, paying: 1, free: 1 }, trials: { total: 0, running: 0, paidAfter: 0 }, trialsEnding: [],
     limits: { weeks: ['2026-10-26T00:00:00.000Z', '2026-10-19T00:00:00.000Z', '2026-10-12T00:00:00.000Z', '2026-10-05T00:00:00.000Z'], kinds: [] },
-    subscriptions: [{ plan: 'plus', interval: null, currency: null, count: 1, pastDue: 0 }], family: { plans: 0, members: 0 } });
+    subscriptions: [{ plan: 'plus', interval: null, currency: null, count: 1, pastDue: 0 }], family: { plans: 0, members: 0 },
+    links: { copies: { active: 0, accounts: 0, newLast7Days: 0 }, lists: { active: 0, accounts: 0, newLast7Days: 0 } }, backup: { state: 'not-set-up' } });
   assert.ok(roadmap.length > 0 && roadmap.every((item) => item.votes === 0 && item.title), 'every idea on the list, no votes yet');
   assert.equal(storage.storedBytes, 16500);
   assert.ok(storage.databaseBytes > 0 && storage.diskTotalBytes >= storage.diskFreeBytes && storage.diskFreeBytes > 0);
@@ -342,6 +344,47 @@ test('the dashboard counts plan limits per week without storing who, lists trial
   const left = new DatabaseSync(join(admin.dataDir, 'cloud.db'), { timeout: 5000 });
   assert.deepEqual(left.prepare('SELECT subscriptionId FROM subscription_details ORDER BY 1').all().map((row) => row.subscriptionId), ['sub_dirk']);
   left.close();
+});
+
+test('the dashboard counts the links that work now and shows the last backup result from its log', async (t) => {
+  const logDir = await mkdtemp(join(tmpdir(), 'jotdrop-backup-log-'));
+  t.after(() => rm(logDir, { recursive: true, force: true }));
+  const backupLog = join(logDir, 'jotdrop-prod-backup.log');
+  const admin = await fixture(t, { backupLog });
+  const now = admin.time();
+  const db = new DatabaseSync(join(admin.dataDir, 'cloud.db'), { timeout: 5000 });
+  const account = (email, plusUntil) => {
+    const id = randomUUID(), vaultId = randomUUID();
+    db.prepare("INSERT INTO vaults VALUES(?,?,'account')").run(vaultId, 'RECOVERY-HASH'.padEnd(64, '0'));
+    db.prepare('INSERT INTO accounts(id,email,vaultId,kdf,authHash,wrappedVaultKey,createdAt,passwordChangedAt) VALUES(?,?,?,?,?,?,?,?)').run(id, email, vaultId, '{}', 'AUTH-HASH$0', 'WRAPPED', new Date(now).toISOString(), new Date(now).toISOString());
+    if (plusUntil) db.prepare('INSERT INTO plans VALUES(?,?,1)').run(vaultId, plusUntil);
+    return id;
+  };
+  const plus = account('plus@example.test', now + 30 * DAY), free = account('free@example.test');
+  const copy = (accountId, createdAt, expiresAt = null) => db.prepare("INSERT INTO note_links VALUES(?,?,'SECRET-LINK','SECRET-OWNER',?,?)").run(randomUUID(), accountId, createdAt, expiresAt);
+  const list = (accountId, createdAt, expiresAt = null) => db.prepare("INSERT INTO list_links VALUES(?,?,1,'SECRET-LIST','SECRET-OWNER','PROOF-HASH',?,?,?)").run(randomUUID(), accountId, createdAt, createdAt, expiresAt);
+  // Plus: a link without an end works on; one past its end does not.
+  copy(plus, now - 20 * DAY); copy(plus, now - 2 * DAY, now + 5 * DAY); copy(plus, now - 9 * DAY, now - 1);
+  // Free: a link lasts 7 days whatever it asked for.
+  copy(free, now - DAY); copy(free, now - 8 * DAY);
+  list(plus, now - 10 * DAY); list(free, now - 3 * DAY, now + 4 * DAY); list(free, now - 8 * DAY, now + 30 * DAY);
+  db.close();
+  const cookie = admin.cookieOf(await admin.login());
+  const summary = async () => { const response = await admin.call('GET', '/api/admin/summary', { cookie }); assert.equal(response.status, 200, response.text); return response; };
+  const first = await summary();
+  assert.deepEqual(first.body.links, { copies: { active: 3, accounts: 2, newLast7Days: 2 }, lists: { active: 2, accounts: 2, newLast7Days: 1 } });
+  for (const value of ['SECRET-LINK', 'SECRET-OWNER', 'SECRET-LIST', 'PROOF-HASH']) assert.ok(!first.text.includes(value), value);
+
+  // The log does not exist until the first night.
+  assert.deepEqual(first.body.backup, { state: 'no-log' });
+  const write = (text, time) => { appendFileSync(backupLog, text); utimesSync(backupLog, time / 1000, time / 1000); };
+  write('2026-10-25 03:12:40 KLAAR backup jotdrop-prod; encrypted offsite roundtrip and database integrity verified\n', now - 33 * 60 * MINUTE);
+  assert.deepEqual((await summary()).body.backup, { state: 'ok', at: '2026-10-25 03:12:40', detail: null, logChangedAt: new Date(now - 33 * 60 * MINUTE).toISOString() });
+  // A failed night is the newest result, even with other lines after it.
+  write('2026-10-26 03:11:02 FOUT backup jotdrop-prod (source-export)\nexport started\n', now - 9 * 60 * MINUTE);
+  assert.deepEqual((await summary()).body.backup, { state: 'failed', at: '2026-10-26 03:11:02', detail: 'source-export', logChangedAt: new Date(now - 9 * 60 * MINUTE).toISOString() });
+  writeFileSync(backupLog, 'export started\n');
+  assert.equal((await summary()).body.backup.state, 'no-result');
 });
 
 test('after a report the owner can delete a group or close an account, and only signed in', async (t) => {
