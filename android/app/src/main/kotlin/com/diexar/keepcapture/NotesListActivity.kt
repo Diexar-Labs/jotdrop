@@ -167,6 +167,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -2817,13 +2818,16 @@ private fun NoteCard(
                         var textLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
                         // ClickableText is duurder dan Text. maxLines van 8 naar 5
                         // verlaagt de text-layout-cost merkbaar voor lange snippets.
+                        // A card with tasks gets taller lines across the card's width, so a finger can hit a task;
+                        // the whole line ticks the box.
+                        val hasTasks = remember(annotated) { annotated.getStringAnnotations("CHECKLIST", 0, annotated.length).isNotEmpty() }
                         ClickableText(
                             text = annotated,
-                            style = snippetStyle,
+                            style = if (hasTasks) snippetStyle.copy(lineHeight = 2.2.em) else snippetStyle,
                             maxLines = 5,
                             overflow = TextOverflow.Ellipsis,
                             onTextLayout = { textLayout = it },
-                            modifier = Modifier.drawWithContent {
+                            modifier = Modifier.then(if (hasTasks) Modifier.fillMaxWidth() else Modifier).drawWithContent {
                                 drawContent()
                                 val layout = textLayout ?: return@drawWithContent
                                 if (ticked.isNotEmpty()) drawPenLines(layout, ticked, fg) { index -> if (pen?.first == index) pen.second.value else 1f }
@@ -3569,7 +3573,8 @@ internal fun renderPreviewAnnotated(
             if (m.start > i) append(source.substring(i, m.start))
             if (m.checklistIndex != null) {
                 pushStringAnnotation(tag = "CHECKLIST", annotation = m.checklistIndex.toString())
-                withStyle(SpanStyle(color = accent, fontWeight = FontWeight.Bold)) {
+                // A box one and a half times the text, so it is easy to see and to hit.
+                withStyle(SpanStyle(color = accent, fontWeight = FontWeight.Bold, fontSize = 1.5.em)) {
                     append(m.display)
                 }
                 pop()
