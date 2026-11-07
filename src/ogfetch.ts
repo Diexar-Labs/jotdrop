@@ -118,6 +118,9 @@ export async function fetchOg(
       const canonical = /vm\.tiktok\.com|vt\.tiktok\.com/i.test(url)
         ? await resolveCanonicalUrl(url)
         : url;
+      // oEmbed gives no title or thumbnail for videos any more; the page itself does.
+      const video = await fetchTikTokVideo(app, attachmentsFolder, canonical, url, downloadImages);
+      if (video) return video;
       oembed = await fetchTikTokOEmbed(app, attachmentsFolder, canonical, downloadImages);
       if (oembed?.imageBasename) return oembed;
       fetchUrl = canonical;
@@ -147,10 +150,10 @@ export async function fetchOg(
       return oembed;
     }
 
+    // TikTok's generic page title ("TikTok - Make Your Day") is never the title.
     const title =
-      extractMeta(html, "og:title") ||
-      extractMeta(html, "twitter:title") ||
-      extractTitleTag(html) ||
+      [extractMeta(html, "og:title"), extractMeta(html, "twitter:title"), extractTitleTag(html)]
+        .find((t) => t && !isGenericTikTokTitle(t)) ||
       oembed?.title || null;
     const description =
       extractMeta(html, "og:description") ||
@@ -237,6 +240,82 @@ async function fetchTikTokOEmbed(
 
 type DownloadResult = { html: string } | { error: string };
 
+export interface TikTokVideo {
+  caption: string | null;
+  authorId: string | null;
+  nickname: string | null;
+  covers: string[];
+}
+
+/** TikTok's page title on every page, whatever the video. */
+export function isGenericTikTokTitle(title: string | null | undefined): boolean {
+  return (title ?? "").trim().toLowerCase() === "tiktok - make your day";
+}
+
+/** The id in a `/@user/video/<id>` or `/photo/<id>` URL; short links have none. */
+function tikTokVideoId(url: string): string | null {
+  return url.match(/\/(?:video|photo)\/(\d+)/)?.[1] ?? null;
+}
+
+/**
+ * TikTok gives no title, author or thumbnail through oEmbed for videos any more and its page has
+ * no og: tags, only the generic title above. The video's own data sits in the page's rehydration
+ * JSON. Null when the page holds no video (music page, deleted video, captcha) or another video
+ * than expected: better no preview than another video's. Mirror of Android's `TikTokPage.parse`.
+ */
+export function parseTikTokVideo(html: string, expectedId: string | null = null): TikTokVideo | null {
+  const script = html.match(/<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([\s\S]*?)<\/script>/);
+  if (!script) return null;
+  try {
+    const item = JSON.parse(script[1])?.__DEFAULT_SCOPE__?.["webapp.video-detail"]?.itemInfo?.itemStruct;
+    if (!item || typeof item.id !== "string" || (expectedId && item.id !== expectedId)) return null;
+    const text = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v : null);
+    const covers = [item.video?.cover, item.video?.originCover, item.video?.dynamicCover]
+      .map(text)
+      .filter((c, i, all): c is string => !!c && all.indexOf(c) === i);
+    return {
+      caption: text(item.desc),
+      authorId: text(item.author?.uniqueId),
+      nickname: text(item.author?.nickname),
+      covers,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Title, author and thumbnail of a TikTok video from the page itself. Null: let oEmbed try (music pages). */
+async function fetchTikTokVideo(
+  app: App,
+  attachmentsFolder: string,
+  pageUrl: string,
+  sourceUrl: string,
+  downloadImages: boolean,
+): Promise<OgPreview | null> {
+  // The data is JSON.parsed whole, so the page is not cut at the usual cap.
+  const page = await downloadHtml(pageUrl, CHROME_UA, MAX_HTML_BYTES * 4);
+  if ("error" in page) return null;
+  const video = parseTikTokVideo(page.html, tikTokVideoId(pageUrl));
+  if (!video) return null;
+  // A caption of only hashtags leaves nothing: then the maker's name, as Android does.
+  const caption = (video.caption ?? "")
+    .replace(/https?:\/\/\S+/g, "")
+    .replace(/(^|[^\\\p{L}\p{N}_/])#[\p{L}_/][\p{L}\p{N}_/-]*/gu, "$1")
+    .replace(/\s+/g, " ")
+    .replace(/^[\s,;·|–—-]+|[\s,;·|–—-]+$/g, "");
+  const maker = video.nickname ?? video.authorId;
+  const title = caption || (maker ? `TikTok · ${maker}` : null);
+  if (!title) return null;
+  let imageBasename: string | null = null;
+  if (downloadImages) {
+    for (const cover of video.covers) {
+      imageBasename = await downloadImage(app, attachmentsFolder, cover);
+      if (imageBasename) break;
+    }
+  }
+  return { sourceUrl, title, description: video.authorId ? `via @${video.authorId}` : null, imageBasename };
+}
+
 /**
  * Chrome-fingerprint headers — Cloudflare/WAF stacks reject bare requests
  * (UA + Accept only) and return 403 before bytes are even served.
@@ -273,7 +352,7 @@ function browserHeaders(
   return headers;
 }
 
-async function downloadHtml(url: string, userAgent: string): Promise<DownloadResult> {
+async function downloadHtml(url: string, userAgent: string, maxChars = MAX_HTML_BYTES): Promise<DownloadResult> {
   const headers = browserHeaders(userAgent, {
     accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     secFetchDest: "document",
@@ -286,7 +365,7 @@ async function downloadHtml(url: string, userAgent: string): Promise<DownloadRes
     }
     // OG/meta tags live in <head>; truncating keeps a hostile multi-MB page
     // from being regex-scanned whole (same cap as the Android fetcher).
-    return { html: res.text.slice(0, MAX_HTML_BYTES) };
+    return { html: res.text.slice(0, maxChars) };
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) };
   }

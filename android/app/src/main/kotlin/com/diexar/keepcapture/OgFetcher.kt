@@ -84,6 +84,8 @@ object OgFetcher {
                     url.contains("vt.tiktok.com", ignoreCase = true)) {
                     resolveRedirects(url)
                 } else url
+                // oEmbed geeft voor video's geen titel of thumbnail meer: de pagina zelf wel.
+                fetchTikTokVideo(context, canonical, url, downloadImages)?.let { return Result.success(it) }
                 oembed = fetchViaOEmbed(context, canonical, "https://www.tiktok.com/oembed?url=", downloadImages).getOrNull()
                 if (oembed?.imageBasename != null) return Result.success(oembed)
                 fetchUrl = canonical
@@ -98,9 +100,9 @@ object OgFetcher {
             }
             val rawImageCandidates = findOgImageCandidates(html, fetchUrl)
 
-            val title = extractMeta(html, "og:title")
-                ?: extractMeta(html, "twitter:title")
-                ?: extractTitleTag(html)
+            // TikTok's algemene paginatitel ("TikTok - Make Your Day") hoort nooit de titel te zijn.
+            val title = listOf(extractMeta(html, "og:title"), extractMeta(html, "twitter:title"), extractTitleTag(html))
+                .firstOrNull { it != null && !TikTokPage.isGenericTitle(it) }
                 ?: oembed?.title
             val description = extractMeta(html, "og:description")
                 ?: extractMeta(html, "twitter:description")
@@ -608,6 +610,22 @@ object OgFetcher {
         }
 
     /**
+     * Titel, auteur en thumbnail van een TikTok-video uit de pagina zelf (zie [TikTokPage]).
+     * Null als de pagina geen video bevat; dan neemt oEmbed het over (muziekpagina's).
+     */
+    private fun fetchTikTokVideo(context: Context, pageUrl: String, sourceUrl: String, downloadImages: Boolean): OgPreview? {
+        val html = downloadHtml(pageUrl).getOrNull() ?: return null
+        val video = TikTokPage.parse(html, TikTokPage.videoId(pageUrl)) ?: return null
+        val author = video.authorId?.let { "via @$it" }
+        // Alleen hashtags als bijschrift: dan de naam van de maker, anders valt de titel weg.
+        val title = Storage.sanitizeTitleFromShare(video.caption.orEmpty()).ifEmpty {
+            (video.nickname ?: video.authorId)?.let { "TikTok · $it" } ?: return null
+        }
+        val image = if (downloadImages) video.covers.firstNotNullOfOrNull { downloadImage(context, it).getOrNull() } else null
+        return OgPreview(sourceUrl = sourceUrl, title = title, description = author, imageBasename = image)
+    }
+
+    /**
      * Sommige sites (TikTok, YouTube, Vimeo) renderen hun OG-meta pas met JavaScript
      * maar bieden wel een open oEmbed-endpoint dat JSON met `title`, `author_name`
      * en `thumbnail_url` teruggeeft. Dat parsen is robuuster dan HTML scrapen.
@@ -636,81 +654,6 @@ object OgFetcher {
         } catch (e: Exception) {
             Result.failure(e)
         }
-    }
-
-    /**
-     * Hand-geschreven JSON-string-extractor: vindt `"key"` op het topniveau,
-     * leest de erop volgende waarde tot de eerste niet-ge-escapete `"`.
-     * Vermijdt regex-backtracking op pathologische inputs.
-     */
-    private fun extractJsonString(json: String, key: String): String? {
-        val needle = "\"" + key + "\""
-        var idx = 0
-        while (true) {
-            val found = json.indexOf(needle, idx)
-            if (found < 0) return null
-            // Sla witruimte en `:` over.
-            var p = found + needle.length
-            while (p < json.length && (json[p] == ' ' || json[p] == '\t' || json[p] == '\n' || json[p] == '\r' || json[p] == ':')) p++
-            if (p >= json.length || json[p] != '"') {
-                idx = found + 1
-                continue
-            }
-            p++ // sla openingsquote over
-            val sb = StringBuilder()
-            while (p < json.length) {
-                val c = json[p]
-                if (c == '\\' && p + 1 < json.length) {
-                    sb.append(c)
-                    sb.append(json[p + 1])
-                    p += 2
-                } else if (c == '"') {
-                    return decodeJsonString(sb.toString()).takeIf { it.isNotBlank() }
-                } else {
-                    sb.append(c)
-                    p++
-                }
-            }
-            return null
-        }
-    }
-
-    private fun decodeJsonString(s: String): String {
-        val sb = StringBuilder()
-        var i = 0
-        while (i < s.length) {
-            val c = s[i]
-            if (c == '\\' && i + 1 < s.length) {
-                when (val next = s[i + 1]) {
-                    '"' -> sb.append('"')
-                    '\\' -> sb.append('\\')
-                    '/' -> sb.append('/')
-                    'n' -> sb.append('\n')
-                    't' -> sb.append('\t')
-                    'r' -> sb.append('\r')
-                    'u' -> {
-                        if (i + 5 < s.length) {
-                            val hex = s.substring(i + 2, i + 6)
-                            val code = hex.toIntOrNull(16)
-                            if (code != null) {
-                                sb.append(code.toChar())
-                                i += 4
-                            } else {
-                                sb.append(next)
-                            }
-                        } else {
-                            sb.append(next)
-                        }
-                    }
-                    else -> sb.append(next)
-                }
-                i += 2
-            } else {
-                sb.append(c)
-                i++
-            }
-        }
-        return sb.toString()
     }
 
     /**

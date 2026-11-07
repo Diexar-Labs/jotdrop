@@ -95,6 +95,30 @@ tasks.register<JavaExec>("checkListEditor") {
     mainClass.set("com.diexar.keepcapture.ListEditorCheckKt")
 }
 
+// TikTok link previews: the video's own data is read from the page, not from oEmbed or the generic title.
+val tikTokPageClasses = layout.buildDirectory.dir("tiktok-page-check")
+val tikTokPageSources = files("app/src/main/kotlin/com/diexar/keepcapture/JsonText.kt",
+    "app/src/main/kotlin/com/diexar/keepcapture/TikTokPage.kt", "checks/TikTokPageCheck.kt")
+val tikTokPageCompile = tasks.register<JavaExec>("tikTokPageCompile") {
+    inputs.files(tikTokPageSources)
+    outputs.dir(tikTokPageClasses)
+    classpath(buildscript.configurations.getByName("classpath"))
+    mainClass.set("org.jetbrains.kotlin.cli.jvm.K2JVMCompiler")
+    doFirst {
+        args("-Xdisable-default-scripting-plugin", "-no-stdlib", "-no-reflect", "-jvm-target", "17", "-classpath",
+            project(":app").configurations.getByName("debugCompileClasspath").asPath,
+            "-d", tikTokPageClasses.get().asFile.absolutePath)
+        args(tikTokPageSources.files.map { it.absolutePath })
+    }
+}
+
+tasks.register<JavaExec>("checkTikTokPage") {
+    dependsOn(tikTokPageCompile)
+    classpath(tikTokPageClasses)
+    classpath(provider { project(":app").configurations.getByName("debugCompileClasspath") })
+    mainClass.set("com.diexar.keepcapture.TikTokPageCheckKt")
+}
+
 val versionDiffClasses = layout.buildDirectory.dir("version-diff-check")
 val versionDiffSources = files("app/src/main/kotlin/com/diexar/keepcapture/CloudVersionDiff.kt", "checks/VersionDiffCheck.kt")
 val versionDiffCompile = tasks.register<JavaExec>("versionDiffCompile") {

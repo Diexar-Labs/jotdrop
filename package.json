@@ -29,6 +29,7 @@
     "check:toolbar": "node scripts/check-toolbar-containment.cjs",
     "check:plugin-ocr": "python scripts/check-plugin-ocr-browser.py",
     "check:preview-fallback": "node scripts/check-preview-fallback.cjs",
+    "check:tiktok-preview": "node scripts/check-tiktok-preview.cjs",
     "check:preview-rescue": "node scripts/check-preview-rescue.cjs",
     "check:recurrence": "node scripts/check-recurrence.cjs",
     "check:reminder-sound": "node scripts/check-reminder-sound.cjs",
