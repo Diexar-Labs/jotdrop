@@ -2838,8 +2838,8 @@ private fun NoteCard(
                         ClickableText(
                             text = annotated,
                             style = if (hasTasks) snippetStyle.copy(lineHeight = 2.2.em) else snippetStyle,
-                            // A list must not lose tasks behind "…" once link text sits above them (7 nov: 5 tasks showed as 2).
-                            maxLines = if (hasTasks) 12 else 5,
+                            // A card with tasks shows every task, so all of them tick from the overview (Eric, 7 nov: 5 tasks showed as 2).
+                            maxLines = if (hasTasks) Int.MAX_VALUE else 5,
                             overflow = TextOverflow.Ellipsis,
                             onTextLayout = { textLayout = it },
                             modifier = Modifier.then(if (hasTasks) Modifier.fillMaxWidth() else Modifier).drawWithContent {

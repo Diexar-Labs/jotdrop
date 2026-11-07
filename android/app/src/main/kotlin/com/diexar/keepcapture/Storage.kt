@@ -1813,7 +1813,8 @@ object Storage {
             .map { it.trimEnd() }
             .joinToString("\n")
             .trimEnd()
-        return stripped.take(280)
+        // Every task stays on the card, however many: they tick from the overview (Eric, 7 nov).
+        return if (Regex("""(?m)^\s*-\s+\[[ xX]]""").containsMatchIn(stripped)) stripped else stripped.take(280)
     }
 
     /** A heading further down keeps its words on the card, without the `#` signs; code in a fence stays as it is. */
