@@ -27,6 +27,13 @@ function hasPendingMarker(content: string): boolean {
 // Marker must be at least 5 min old (by file mtime) before we intervene.
 // Gives Android plenty of room to finish its own PreviewWorker, even with
 // slow OG endpoints + Syncthing propagation delay.
+/** The rewritten note plus anything typed below the pending marker while it waited (7 nov: tasks were lost otherwise). */
+export function keepTextAfterPending(latest: string, rewritten: string): string {
+  const marker = PENDING_MARKER_REGEX.exec(latest);
+  const added = marker ? latest.slice(marker.index + marker[0].length).trim() : "";
+  return added ? `${rewritten}\n\n${added}` : rewritten;
+}
+
 const MIN_RESCUE_AGE_MS = 5 * 60 * 1000;
 
 export class PreviewRescue {
@@ -166,10 +173,7 @@ export class PreviewRescue {
     // added to the fresh card would otherwise be wiped by the rewrite).
     const fmMatch = latest.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
     const fm = fmMatch ? fmMatch[0] : "";
-    // Text added below the marker while the preview was pending (tasks typed on the card) stays (7 nov).
-    const markerMatch = PENDING_MARKER_REGEX.exec(latest);
-    const added = markerMatch ? latest.slice(markerMatch.index + markerMatch[0].length).replace(/^\s+|\s+$/g, "") : "";
-    const newContent = fm + buildLinkNote(url, preview, url) + (added ? "\n\n" + added : "");
+    const newContent = fm + keepTextAfterPending(latest, buildLinkNote(url, preview, url));
     try {
       await this.plugin.app.vault.modify(file, newContent);
     } catch (e) {

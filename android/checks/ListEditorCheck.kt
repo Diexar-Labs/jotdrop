@@ -95,5 +95,9 @@ fun main() {
     check(toggleChecklistText("- [ ] milk\n- [x] eggs", 1) == "- [ ] milk\n- [ ] eggs")
     check(toggleChecklistText("- [ ] milk", 1) == null)
     check(toggleChecklistText("- [ ] milk", -1) == null)
+    val pending = "<!-- jotdrop-preview: pending -->"
+    check(keepTextAfterMarker("# u\n\n$pending\n\n- [x] a\n- [ ] b\n", pending, "# T\n\n[T](u)") == "# T\n\n[T](u)\n\n- [x] a\n- [ ] b")
+    check(keepTextAfterMarker("# u\n\n$pending", pending, "# T") == "# T")
+    check(keepTextAfterMarker("# u", pending, "# T") == "# T")
     println("Android list editor checks passed")
 }

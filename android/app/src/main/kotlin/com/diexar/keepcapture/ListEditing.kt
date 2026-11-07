@@ -20,6 +20,12 @@ internal fun toggleChecklistText(text: String, targetIndex: Int): String? {
     return updated.takeIf { toggled }
 }
 
+/** The rewritten note plus anything typed below [marker] while it waited (7 nov: tasks were lost otherwise). */
+internal fun keepTextAfterMarker(latest: String, marker: String, rewritten: String): String {
+    val added = latest.substringAfter(marker, "").trim()
+    return if (added.isEmpty()) rewritten else "$rewritten\n\n$added"
+}
+
 private fun nextFence(line: String, fence: String?): String? {
     val match = codeFence.matchEntire(line) ?: return fence
     val marker = match.groupValues[1]
