@@ -2933,6 +2933,8 @@ function extractPreview(content: string): string {
     .filter((l) => l.trim().length > 0);
   const rest = checklistToGlyphs(lines.join("\n"));
   if (!rest) return "";
+  // Every task stays on the card, however many, so all of them tick from the overview (Eric, 7 nov).
+  if (/^[ \t]*[☐☑]/m.test(rest)) return rest;
   return truncateWords(rest, PREVIEW_MAX_WORDS, PREVIEW_MAX_CHARS);
 }
 
