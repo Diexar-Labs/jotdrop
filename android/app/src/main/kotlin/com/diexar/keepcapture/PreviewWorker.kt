@@ -72,7 +72,9 @@ class PreviewWorker(
                 return@withLock ListenableWorker.Result.success()
             }
             val fm = FrontmatterParser.parse(latest).frontmatter
-            Storage.updateNote(applicationContext, noteUri, fm + content).fold(
+            // Text added below the marker while the preview was pending (tasks typed on the card) stays (7 nov).
+            val added = latest.substringAfter(PENDING_MARKER).trimEnd()
+            Storage.updateNote(applicationContext, noteUri, fm + content + (if (added.isBlank()) "" else "\n\n" + added.trimStart('\n'))).fold(
                 onSuccess = { ListenableWorker.Result.success() },
                 onFailure = { ListenableWorker.Result.retry() },
             )

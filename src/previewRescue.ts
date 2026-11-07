@@ -166,7 +166,10 @@ export class PreviewRescue {
     // added to the fresh card would otherwise be wiped by the rewrite).
     const fmMatch = latest.match(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/);
     const fm = fmMatch ? fmMatch[0] : "";
-    const newContent = fm + buildLinkNote(url, preview, url);
+    // Text added below the marker while the preview was pending (tasks typed on the card) stays (7 nov).
+    const markerMatch = PENDING_MARKER_REGEX.exec(latest);
+    const added = markerMatch ? latest.slice(markerMatch.index + markerMatch[0].length).replace(/^\s+|\s+$/g, "") : "";
+    const newContent = fm + buildLinkNote(url, preview, url) + (added ? "\n\n" + added : "");
     try {
       await this.plugin.app.vault.modify(file, newContent);
     } catch (e) {
