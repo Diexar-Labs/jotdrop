@@ -4,6 +4,22 @@ private val listMarker = Regex("^([ \\t]*)([-*+])[ \\t]+(?:\\[([ xX])\\](?:[ \\t
 private val checklistItem = Regex("(?m)^(\\s*-\\s+\\[)([ xX])(\\](?:\\s|$))")
 private val codeFence = Regex("^[ \\t]*(`{3,}|~{3,})(.*)$")
 
+internal data class PreviewTaskRow(val text: String, val checklistIndex: Int?)
+
+internal fun sameChecklistPreview(left: String, right: String): Boolean {
+    fun identity(text: String) = checklistItem.replace(text) { it.groupValues[1] + " " + it.groupValues[3] }
+    return identity(left) == identity(right)
+}
+
+/** Keep the writer's source indices; only the displayed prefix is ever limited. */
+internal fun previewTaskRows(text: String): List<PreviewTaskRow> {
+    val indices = checklistItem.findAll(text).mapIndexed { index, match ->
+        val marker = match.range.first + match.groupValues[1].indexOf('-')
+        text.take(marker).count { it == '\n' } to index
+    }.toMap()
+    return text.lines().mapIndexed { line, value -> PreviewTaskRow(value, indices[line]) }
+}
+
 /** Toggle exactly the Nth Markdown checklist item, or null when it does not exist. */
 internal fun toggleChecklistText(text: String, targetIndex: Int): String? {
     if (targetIndex < 0) return null

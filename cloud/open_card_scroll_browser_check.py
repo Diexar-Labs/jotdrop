@@ -35,11 +35,15 @@ def check_open_card_scroll(browser, url, token):
 
         page.mouse.wheel(0, 400)
         page.wait_for_timeout(300)
+        # Changed card heights can leave this heading partly above the viewport.
+        # Position it before recording: Playwright's click must not be the scroll being tested.
+        target = page.locator(".note-card").filter(has_text="Card 00").locator("h3")
+        target.scroll_into_view_if_needed()
         before = page.evaluate("window.scrollY")
         assert before > 0, "the page should scroll for this check"
         left = page.locator(".note-card").first.bounding_box()["x"]
 
-        page.locator(".note-card").filter(has_text="Card 00").locator("h3").click()
+        target.click()
         page.locator("#editor[open]").wait_for()
         # Nothing behind the open card moves sideways when the page's scrollbar is held still.
         assert page.locator(".note-card").first.bounding_box()["x"] == left
@@ -61,6 +65,8 @@ def check_open_card_scroll(browser, url, token):
         page.keyboard.press("Escape")
         page.wait_for_timeout(200)
         # Closed again, the page scrolls as before.
+        # Move off the independently scrolling sidebar before testing the document.
+        page.mouse.move(800, 350)
         page.mouse.wheel(0, 300)
         page.wait_for_timeout(300)
         assert page.evaluate("window.scrollY") > before

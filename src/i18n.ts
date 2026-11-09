@@ -19,6 +19,9 @@ export type Lang = "en" | "nl" | "es" | "de" | "fr" | "it";
 const SUPPORTED: ReadonlyArray<Lang> = ["en", "nl", "es", "de", "fr", "it"];
 
 const EN: Record<string, string> = {
+  preview_more: "More", preview_less: "Less", preview_open: "Open note",
+  preview_open_one: "Open note - {0} more task", preview_open_many: "Open note - {0} more tasks",
+  preview_changed: "This checklist changed. The card will refresh; try again.",
   // App / commands
   open_jotdrop: "Open JotDrop",
   cmd_open_view: "Open Keep view",
@@ -475,6 +478,9 @@ const NL: Record<string, string> = {
   action_insert_link: "🔗 Link invoegen",
   action_checklist: "☑ Checklist-item",
   checklist_mark_checked: "Checklist-item als voltooid markeren",
+  preview_more: "Meer", preview_less: "Minder", preview_open: "Open notitie",
+  preview_open_one: "Open notitie - nog {0} taak", preview_open_many: "Open notitie - nog {0} taken",
+  preview_changed: "Deze checklist is veranderd. De kaart wordt vernieuwd; probeer het opnieuw.",
   checklist_mark_unchecked: "Checklist-item als niet voltooid markeren",
   action_new_note: "Nieuwe notitie",
   action_start_recording: "Voicememo opnemen",

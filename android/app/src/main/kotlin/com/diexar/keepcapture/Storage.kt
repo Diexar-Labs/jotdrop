@@ -1108,7 +1108,7 @@ object Storage {
     }
 
     /** Schakelt exact het N-de Markdown-checklist-item in de body om. */
-    fun toggleChecklistItem(context: Context, uri: Uri, targetIndex: Int): Result<Unit> {
+    fun toggleChecklistItem(context: Context, uri: Uri, targetIndex: Int, expectedSnippet: String? = null): Result<Unit> {
         if (targetIndex < 0) {
             return Result.failure(IllegalArgumentException("Ongeldig checklist-item."))
         }
@@ -1117,6 +1117,9 @@ object Storage {
         val bodyStart = frontmatter?.range?.last?.plus(1) ?: 0
         val head = current.substring(0, bodyStart)
         val body = current.substring(bodyStart)
+        if (expectedSnippet != null && !sameChecklistPreview(extractSnippet(body), expectedSnippet)) {
+            return Result.failure(IllegalStateException(context.getString(R.string.save_conflict_title)))
+        }
         val updatedBody = toggleChecklistText(body, targetIndex)
             ?: return Result.failure(IllegalStateException("Checklist-item bestaat niet meer."))
         return updateNote(context, uri, head + updatedBody)

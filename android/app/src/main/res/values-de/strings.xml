@@ -1,5 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="card_preview_more">Mehr</string>
+    <string name="card_preview_less">Weniger</string>
+    <string name="card_preview_open">Notiz öffnen</string>
+    <plurals name="card_preview_hidden">
+        <item quantity="one">Notiz öffnen - noch %d Aufgabe</item>
+        <item quantity="other">Notiz öffnen - noch %d Aufgaben</item>
+    </plurals>
     <string name="nav_open_menu">Navigationsmenü öffnen</string>
     <string name="nav_notes">Notizen</string>
     <string name="nav_reminders">Erinnerungen</string>

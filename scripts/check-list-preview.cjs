@@ -3,7 +3,7 @@ const esbuild = require("esbuild");
 (async () => {
   const result = await esbuild.build({
     stdin: {
-      contents: 'export { checklistToGlyphs, plainPreviewText, renderInlinePreview, toggleChecklistItem, formatChangedAgo } from "./src/metadata.ts";',
+      contents: 'export { checklistPreviewRows, checklistToGlyphs, plainPreviewText, renderInlinePreview, toggleChecklistItem, formatChangedAgo } from "./src/metadata.ts";',
       resolveDir: process.cwd(),
     },
     bundle: true,
@@ -24,6 +24,11 @@ const esbuild = require("esbuild");
   const loaded = { exports: {} };
   new Function("module", "exports", "require", result.outputFiles[0].text)(loaded, loaded.exports, require);
   const { checklistToGlyphs, plainPreviewText, renderInlinePreview, toggleChecklistItem, formatChangedAgo } = loaded.exports;
+  const source = '---\nvalue: test\n---\n# Title\n```\n- [ ] code\n```\n> - [ ] quote\n- [ ] first\nParagraph\n- [x] second';
+  const rows = loaded.exports.checklistPreviewRows(source);
+  const tasks = rows.filter((row) => row.index !== undefined);
+  if (tasks.length !== 2 || tasks[0].index !== 1 || tasks[1].index !== 2) throw new Error('preview source identity lost at code/quote/frontmatter');
+  if (!toggleChecklistItem(source, tasks[1].index).endsWith('- [ ] second')) throw new Error('preview toggles wrong source task');
 
   const input = [
     "- alpha",

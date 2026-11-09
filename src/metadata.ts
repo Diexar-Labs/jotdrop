@@ -481,7 +481,27 @@ function stripInlineMarks(text: string): string {
  * anchors, and checklist glyphs as buttons. Clicks are caught by the view via
  * delegation on data attributes.
  */
-export function renderInlinePreview(parent: HTMLElement, text: string): void {
+export function wrapTaskText(preview: HTMLElement): void {
+  for (const toggle of Array.from(preview.querySelectorAll(".jotdrop-checklist-toggle"))) {
+    const text = createSpan({ cls: "jotdrop-task-text" });
+    toggle.after(text);
+    let node = text.nextSibling;
+    while (node && !(node instanceof HTMLElement && node.hasClass("jotdrop-checklist-toggle"))) {
+      if (node instanceof Text && node.data.includes("\n")) {
+        node.splitText(node.data.indexOf("\n"));
+        text.appendChild(node);
+        break;
+      }
+      const next = node.nextSibling;
+      text.appendChild(node);
+      node = next;
+    }
+    const strike = text.createSvg("svg", { cls: "jotdrop-strike", attr: { viewBox: "0 0 100 10", preserveAspectRatio: "none", "aria-hidden": "true" } });
+    strike.createSvg("path", { attr: { pathLength: "1", d: "M1 6 C 18 2, 30 8, 50 5 S 82 3, 99 6" } });
+  }
+}
+
+export function renderInlinePreview(parent: HTMLElement, text: string, firstChecklistIndex = 0): void {
   const src = checklistToGlyphs(text);
 
   // Single ordered scan: indented checklist glyph | wikilink | markdown-link | bare-url.
@@ -491,7 +511,7 @@ export function renderInlinePreview(parent: HTMLElement, text: string): void {
     /^([ \t]*)([☐☑])(?=[ \t]|$)|\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\]|\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)|(https?:\/\/\S+)/gm;
 
   let lastIndex = 0;
-  let checklistIndex = 0;
+  let checklistIndex = firstChecklistIndex;
   let m: RegExpExecArray | null;
   while ((m = tokenRe.exec(src)) !== null) {
     if (m.index > lastIndex) parent.appendText(src.slice(lastIndex, m.index));
@@ -506,6 +526,7 @@ export function renderInlinePreview(parent: HTMLElement, text: string): void {
           type: "button",
           "aria-label": t(checked ? "checklist_mark_unchecked" : "checklist_mark_checked"),
           "aria-checked": String(checked),
+          role: "checkbox",
         },
       });
       button.dataset.checklistIndex = String(checklistIndex++);
@@ -547,6 +568,52 @@ export function renderInlinePreview(parent: HTMLElement, text: string): void {
   if (lastIndex < src.length) parent.appendText(src.slice(lastIndex));
 }
 
+/** A display row retains the index used by the existing writer, including its code-fence counting. */
+export function checklistPreviewRows(content: string): { text: string; index?: number; checked?: boolean }[] {
+  const body = stripFrontmatter(content);
+  const lines = body.split("\n");
+  const first = lines.findIndex((line) => line.trim() && !/^\s*(?:!\[\[|!\[|<!--)/.test(line));
+  // Count exactly the writer's matches before any display normalization removes rows.
+  const indices = new Map<number, number>();
+  let index = 0;
+  for (const match of body.matchAll(/^(\s*-\s+\[)([ xX])(\](?:\s|$))/gm)) {
+    const marker = match.index! + match[1].indexOf("-");
+    indices.set(body.slice(0, marker).split("\n").length - 1, index++);
+  }
+  const rows: { text: string; index?: number; checked?: boolean }[] = [];
+  let fence = "";
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const marker = /^\s{0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+    if (marker) { if (!fence) fence = marker; else if (marker[0] === fence[0] && marker.length >= fence.length) fence = ""; continue; }
+    if (i === first && !/^\s*(?:[-*+][ \t]|\d{1,9}[.)][ \t])/.test(line)) continue;
+    const task = !fence && /^[ \t]*-[ \t]+\[([ xX])\](?:[ \t]+|$)(.*)$/.exec(line);
+    const cleaned = line.replace(/!\[\[[^\]]+\]\]|!\[[^\]]*\]\([^)]+\)/g, "")
+      .replace(/<!--\s*(?:jotdrop|diexar)-preview:.*?-->/g, "")
+      .replace(/^\s{0,3}#{1,6}[ \t]+/, "")
+      .replace(/\[([^\]\n]+)\]\(([^)\n]+)\)/g, "$1")
+      .replace(/\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\]/g, (_link, name: string, alias?: string) => alias || name.replace(/#.*$/, ""))
+      .replace(/https?:\/\/\S+/g, "");
+    const text = fence ? cleaned : plainPreviewText(cleaned);
+    if (!text.trim()) continue;
+    rows.push(task && indices.has(i) ? { text: checklistToGlyphs(text), index: indices.get(i), checked: task[1] !== " " } : { text: checklistToGlyphs(text) });
+  }
+  return rows;
+}
+
+function checklistBodyStart(content: string): number {
+  return content.match(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/)?.[0].length ?? 0;
+}
+
+/**
+ * The part of a note whose checklist items `toggleChecklistItem` counts. A
+ * metadata-only change (such as a card color) leaves it equal, so task indices
+ * taken from it still point at the same source lines.
+ */
+export function checklistBody(content: string): string {
+  return content.slice(checklistBodyStart(content));
+}
+
 /**
  * Toggles the Nth Markdown checklist item in the note body. Frontmatter is
  * deliberately skipped so YAML list values that resemble checkboxes are never
@@ -556,8 +623,7 @@ export function renderInlinePreview(parent: HTMLElement, text: string): void {
 export function toggleChecklistItem(content: string, targetIndex: number): string {
   if (!Number.isInteger(targetIndex) || targetIndex < 0) return content;
 
-  const frontmatter = content.match(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/);
-  const bodyStart = frontmatter?.[0].length ?? 0;
+  const bodyStart = checklistBodyStart(content);
   const head = content.slice(0, bodyStart);
   const body = content.slice(bodyStart);
   let currentIndex = 0;

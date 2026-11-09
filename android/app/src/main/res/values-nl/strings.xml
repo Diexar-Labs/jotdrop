@@ -1,5 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="card_preview_more">Meer</string>
+    <string name="card_preview_less">Minder</string>
+    <string name="card_preview_open">Open notitie</string>
+    <plurals name="card_preview_hidden">
+        <item quantity="one">Open notitie - nog %d taak</item>
+        <item quantity="other">Open notitie - nog %d taken</item>
+    </plurals>
     <string name="settings_title">JotDrop · instellingen</string>
 
     <string name="intro">Deel tekst vanuit elke app naar JotDrop — het wordt direct als kaartje opgeslagen in je Obsidian-vault.</string>

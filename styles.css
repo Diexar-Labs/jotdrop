@@ -691,9 +691,15 @@
   white-space: pre-wrap;
   word-break: break-word;
   line-height: 1.4;
-  max-height: 180px;
   overflow: hidden;
 }
+.jotdrop-card-preview { display: flex; flex-direction: column; gap: 4px; }
+.jotdrop-preview-line, .jotdrop-preview-task { flex: none; }
+.jotdrop-preview-task { display: flex; align-items: flex-start; }
+.jotdrop-preview-task .jotdrop-task-text { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.jotdrop-card .compact-preview-controls { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 8px; margin-top: 6px; }
+.jotdrop-card .compact-preview-controls[hidden] { display: none; }
+.jotdrop-card .compact-preview-controls button { min-height: 32px; font-size: .85em; padding: 4px 8px; }
 
 .jotdrop-wikilink {
   color: var(--text-accent);

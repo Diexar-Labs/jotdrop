@@ -1,5 +1,6 @@
 import { CloudClient, identifyClient } from '/shared/client.mjs';
 import { mergeNote } from '/shared/merge.mjs';
+import { cardPreview } from '/shared/card-preview.mjs';
 import { diffLines, foldUnchanged } from '/shared/diff.mjs';
 import { createLink, listLinks, removeLink } from '/shared/links.mjs';
 import { createListLink, hasChecklist, listListLinks, openList, removeListLink, syncList } from '/shared/list-links.mjs';
@@ -29,6 +30,8 @@ $('theme').addEventListener('change', () => {
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const files = new Map();
+const expandedPreviews = new Set();
+const cardPreviews = [];
 // One photo or recording element per card and file, kept across renders: a photo never reloads, so its card never shrinks.
 const media = new Map();
 const shownMedia = new Set();
@@ -39,6 +42,7 @@ const QUIET_PENDING_MS = 3000;
 // Cards are rebuilt on every render, so these remember what just happened until the rebuilt card shows it.
 const FRESH_MS = 60_000;
 const STAMP_MS = 1800;
+const STRIKE_MS = 350; // the pen's `draw` animation in style.css
 const freshNotes = new Map();
 const stamps = new Map();
 let justPinned;
@@ -610,6 +614,9 @@ function render() {
   const spans = new Map(shownCards.map((card) => [card.dataset.path, card.style.gridRowEnd]));
   let refocus;
   gridSpans.disconnect();
+  for (const preview of cardPreviews) preview.destroy();
+  cardPreviews.length = 0;
+  for (const id of expandedPreviews) if (!files.has(id) || files.get(id).deleted) expandedPreviews.delete(id);
   $('items').replaceChildren();
   $('items').hidden = view === 'devices';
   $('devices-panel').hidden = view !== 'devices';
@@ -734,7 +741,11 @@ function render() {
       // Show the body in its own order: text as text, checklist lines only as checkboxes.
       const titleLine = /^\s*#\s+/.test(parts.body) ? bodyLines.findIndex((line) => line.trim())
         : !headed && firstLine >= 0 && !/^\s*[-*+][ \t]/.test(bodyLines[firstLine]) ? firstLine : -1;
-      let text = [], budget = 600, fence;
+      let text = [], fence;
+      const previewRows = [];
+      const preview = document.createElement('div');
+      preview.className = 'compact-card-preview';
+      card.append(preview);
       const available = [...source.values()].filter((item) => !item.deleted && !isMarkdown(item.file.path));
       const shownAsMedia = (target) => {
         const path = attachmentPath(target, entry.file.path, available.map((item) => item.file.path));
@@ -748,8 +759,8 @@ function render() {
           .replace(/\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\]/g, (_link, name, alias) => alias || name.replace(/#.*$/, ''))
           // A bare web address shows as a link chip below the text, like the plugin and Android.
           .replace(/https?:\/\/[^\s)<>"']+/g, '').replace(/[ \t]{2,}/g, ' ').replace(/[ \t]+([.,;:!?])/g, '$1'))
-          .replace(/\n{3,}/g, '\n\n').trim().slice(0, budget);
-        if (value) { card.append(paragraph(value, 'note-preview')); budget -= value.length; }
+          .replace(/\n{3,}/g, '\n\n').trim();
+        if (value) previewRows.push({ text: value });
         text = [];
       };
       parts.body.split('\n').forEach((line, bodyIndex) => {
@@ -757,27 +768,57 @@ function render() {
         const marker = /^\s{0,3}(`{3,}|~{3,})/.exec(line)?.[1];
         if (marker) { if (!fence) fence = marker; else if (marker[0] === fence[0] && marker.length >= fence.length) fence = undefined; }
         const task = !marker && !fence && !entry.deleted && /^\s*[-*+] \[([ xX])\] (.*)\r?$/.exec(line);
-        if (!task) { if (budget > 0) text.push(line.replace(/\r$/, '')); return; }
+        if (!task) { text.push(line.replace(/\r$/, '')); return; }
         flush();
+        previewRows.push({ task, bodyIndex });
+      });
+      flush();
+      const renderRow = (rowData) => {
+        if (!rowData.task) return paragraph(rowData.text, 'note-preview');
+        const { task, bodyIndex } = rowData;
         const row = document.createElement('label'); row.className = 'task-row';
         const input = document.createElement('input'); input.type = 'checkbox'; input.checked = task[1] !== ' ';
+        input.setAttribute('aria-label', plainPreviewText(task[2]));
         input.disabled = entry.conflict || $('editor').open || Boolean(moment) || Boolean(activeSpace?.frozen);
         // Busy instead of disabled while saving: a disabled box loses keyboard focus.
         let saving = false;
         input.addEventListener('click', (event) => { if (saving) event.preventDefault(); });
         input.addEventListener('change', async () => {
           saving = true;
-          justStruck = input.checked ? `${entry.file.path}:${bodyIndex}` : undefined;
+          justStruck = input.checked ? { key: `${entry.file.path}:${bodyIndex}`, at: performance.now() } : undefined;
+          row.classList.toggle('just-struck', input.checked);
           try { const latest = files.get(entry.id); if (latest !== entry) throw new Error('This checklist changed. Sync and try again.'); await queueFile(entry.file.path, encoder.encode(toggleTask(noteText(entry.file), bodyOffset + bodyIndex, input.checked)), entry.revision); }
           catch (error) { input.checked = !input.checked; message(errorText(error)); }
           finally { saving = false; }
         });
         const label = document.createElement('span'); label.className = 'task-text';
+        label.dataset.previewTaskText = '';
         label.append(plainPreviewText(task[2])); label.insertAdjacentHTML('beforeend', strikeLine);
-        if (input.checked && justStruck === `${entry.file.path}:${bodyIndex}`) { row.classList.add('just-struck'); justStruck = undefined; }
-        row.append(input, label); card.append(row);
+        // Rendering never consumes the stroke: card measurements and re-renders continue it from the tick.
+        const struckAgo = input.checked && justStruck?.key === `${entry.file.path}:${bodyIndex}` ? performance.now() - justStruck.at : Infinity;
+        if (struckAgo < STRIKE_MS) { row.classList.add('just-struck'); row.style.setProperty('--strike-delay', `${-struckAgo}ms`); }
+        row.append(input, label);
+        return row;
+      };
+      const previewControl = cardPreview(preview, previewRows, {
+        isTask: (row) => Boolean(row.task), render: renderRow,
+        expanded: () => expandedPreviews.has(entry.id),
+        toggle: () => expandedPreviews.has(entry.id) ? expandedPreviews.delete(entry.id) : expandedPreviews.add(entry.id),
+        height: () => window.innerHeight - (document.querySelector('.selection-bar')?.offsetHeight || 0),
+        more: 'More', less: 'Less',
+        openLabel: (n) => n ? `Open note - ${n} more ${n === 1 ? 'task' : 'tasks'}` : 'Open note',
+        open: !entry.deleted && !moment ? () => {
+          if (selectedIds.size && selectableIds.has(entry.id)) toggleSelected(entry.id);
+          else openEditor(entry);
+        } : undefined,
+        changed: () => {
+          const openAction = card.querySelector('.card-actions [aria-label="Open note"]');
+          if (openAction) openAction.hidden = card.querySelector('[data-preview-action="open"]')?.textContent === 'Open note';
+          if (card.isConnected) card.style.gridRowEnd = `span ${Math.ceil((card.offsetHeight + 16) / 8)}`;
+        },
       });
-      flush();
+      cardPreviews.push(previewControl);
+      card._fitPreview = previewControl.fit;
       if (!entry.deleted && !moment) card.classList.add('opens');
       // Like the plugin and Android: pressing a card for half a second selects it.
       let press, pressed = false;
@@ -936,6 +977,7 @@ function render() {
     // Until the pointer moves, the card it rests on shows its buttons as before; then real hover takes over.
     if (card.dataset.path === hovered) card.classList.add('is-hovered');
     $('items').append(card);
+    card._fitPreview?.();
     if (card.dataset.path === focused?.path) refocus = [...card.querySelectorAll('button, input, audio')][focused.index];
   }
   // Only once every card is back: focusing lays out the page, and a half-built list is shorter, so the browser would scroll up.
@@ -2116,11 +2158,13 @@ async function openWorkspace(connected) {
   spacePlan = undefined;
   spaces.clear();
   goneSpaces.clear();
+  expandedPreviews.clear();
   syncPaused = false;
   $('sync').textContent = 'Sync now';
   generation++;
   cursor = 0;
   files.clear();
+  expandedPreviews.clear();
   moments.clear();
   closeMoment();
   $('opening').hidden = true;
@@ -3225,6 +3269,7 @@ function switchCloud(nextClient, space) {
     labelFilter = '';
     spacePlan = undefined;
     files.clear();
+    expandedPreviews.clear();
     moments.clear();
     selectedIds.clear();
     selectedTags.clear();

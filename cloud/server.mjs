@@ -1692,6 +1692,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   }
   const assets = new Map([['/',[join(webRoot, 'index.html'), 'text/html']], ['/app.js', [join(webRoot, 'app.js'), 'text/javascript']], ['/style.css', [join(webRoot, 'style.css'), 'text/css']], ['/export.mjs', [join(webRoot, 'export.mjs'), 'text/javascript']], ['/note.mjs', [join(webRoot, 'note.mjs'), 'text/javascript']], ['/shared/crypto.mjs', [join(directory, 'shared/crypto.mjs'), 'text/javascript']], ['/shared/client.mjs', [join(directory, 'shared/client.mjs'), 'text/javascript']]]);
   assets.set('/ocr-worker.js', [join(webRoot, 'ocr-worker.js'), 'text/javascript']);
+  assets.set('/shared/card-preview.mjs', [join(directory, 'shared/card-preview.mjs'), 'text/javascript']);
   assets.set('/privacy', [join(webRoot, 'privacy.html'), 'text/html']);
   assets.set('/terms', [join(webRoot, 'terms.html'), 'text/html']);
   assets.set('/.well-known/assetlinks.json', [join(webRoot, 'assetlinks.json'), 'application/json']);

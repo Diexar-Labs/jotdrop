@@ -12,6 +12,7 @@
     "verify:release": "node scripts/verify-release-source.mjs release",
     "verify:tag": "node scripts/verify-release-tag.mjs",
     "check:list-preview": "node scripts/check-list-preview.cjs",
+    "check:card-toggle": "node scripts/check-card-toggle-guard.cjs",
     "check:list-editor": "node scripts/check-list-editor.cjs",
     "check:list-editor-browser": "python scripts/check-list-editor-browser.py",
     "check:manual-order": "node scripts/check-manual-order.cjs",

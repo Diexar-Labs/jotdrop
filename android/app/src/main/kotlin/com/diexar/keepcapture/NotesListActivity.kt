@@ -32,6 +32,8 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
@@ -157,6 +159,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
@@ -167,6 +171,9 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
@@ -854,7 +861,7 @@ class NotesListActivity : ThemedComponentActivity() {
             // Not cancellable: the card already shows the tick, so closing or turning the screen must not drop the write.
             val result = withContext(NonCancellable + Dispatchers.IO) {
                 Storage.noteWriteMutex.withLock {
-                    Storage.toggleChecklistItem(this@NotesListActivity, note.uri, index).map {
+                    Storage.toggleChecklistItem(this@NotesListActivity, note.uri, index, note.snippet).map {
                         Storage.refreshNoteSummary(this@NotesListActivity, note)
                     }
                 }
@@ -1000,6 +1007,9 @@ private fun NotesListScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val isPlayInstall = remember(context) { UpdateChecker.isPlayInstall(context) }
+    val previewVault = Storage.getVaultUri(context)?.toString()
+    var expandedPreviews by rememberSaveable(previewVault) { mutableStateOf(arrayListOf<String>()) }
+    val knownPreviewNotes = remember(previewVault) { mutableMapOf<NoteFolder, Set<String>>() }
     val openTesterLink: (String) -> Unit = { url ->
         try {
             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
@@ -1047,6 +1057,14 @@ private fun NotesListScreen(
     // top-bar (op Scaffold-niveau) toegang heeft tot het gefilterde aantal voor
     // "Alles selecteren".
     val loadedNotes = (state as? NotesUiState.Loaded)?.notes.orEmpty()
+    LaunchedEffect(state, folder) {
+        if (state is NotesUiState.Loaded) {
+            val current = loadedNotes.map { it.uri.toString() }.toSet()
+            val removed = knownPreviewNotes[folder].orEmpty() - current
+            expandedPreviews = ArrayList(expandedPreviews.filterNot { it in removed })
+            knownPreviewNotes[folder] = current
+        }
+    }
     val tagsByFrequency = remember(loadedNotes) {
         loadedNotes.flatMap { it.meta.allTags }
             .groupingBy { it }.eachCount()
@@ -1590,6 +1608,11 @@ private fun NotesListScreen(
                                 } else {
                                     NotesGrid(
                                         notes = filtered,
+                                        expandedPreviews = expandedPreviews.toSet(),
+                                        onPreviewToggle = { note ->
+                                            val key = note.uri.toString()
+                                            expandedPreviews = ArrayList(if (key in expandedPreviews) expandedPreviews - key else expandedPreviews + key)
+                                        },
                                         firstPinModifier = Modifier.onGloballyPositioned { tutorialAnchors[TutorialTarget.PIN] = it.boundsInRoot() },
                                         selectionMode = selectionMode,
                                         selectedUris = selectedNoteUris,
@@ -1911,6 +1934,8 @@ private suspend fun bulkPerform(
 @Composable
 private fun NotesGrid(
     notes: List<NoteSummary>,
+    expandedPreviews: Set<String>,
+    onPreviewToggle: (NoteSummary) -> Unit,
     firstPinModifier: Modifier,
     selectionMode: Boolean,
     selectedUris: Set<Uri>,
@@ -2078,7 +2103,19 @@ private fun NotesGrid(
         onDragCancel = handleDragCancel,
     ) else Modifier
 
-    Box(Modifier.fillMaxSize().then(gridGesture)) {
+    BoxWithConstraints(Modifier.fillMaxSize().then(gridGesture)) {
+    val previewBoardHeight = maxHeight
+    val togglePreview: (NoteSummary) -> Unit = { note ->
+        val key = noteKey(note)
+        val before = gridState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == key }?.offset?.y
+        onPreviewToggle(note)
+        if (before != null) scope.launch {
+            androidx.compose.runtime.withFrameNanos { }
+            androidx.compose.runtime.withFrameNanos { }
+            val after = gridState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == key }?.offset?.y
+            if (after != null) gridState.scroll { scrollBy((after - before).toFloat()) }
+        }
+    }
     LazyVerticalStaggeredGrid(
         columns = StaggeredGridCells.Fixed(columnCount),
         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
@@ -2097,6 +2134,9 @@ private fun NotesGrid(
             items(pinned, key = { noteKey(it) }, contentType = { noteContentType(it) }) { note ->
                 NoteCard(
                     note = note,
+                    previewExpanded = note.uri.toString() in expandedPreviews,
+                    onPreviewToggle = { togglePreview(note) },
+                    previewBoardHeight = previewBoardHeight,
                     darkTheme = dark,
                     selectionMode = selectionMode,
                     isSelected = note.uri in selectedUris,
@@ -2129,6 +2169,9 @@ private fun NotesGrid(
         items(rest, key = { noteKey(it) }, contentType = { noteContentType(it) }) { note ->
             NoteCard(
                 note = note,
+                previewExpanded = note.uri.toString() in expandedPreviews,
+                onPreviewToggle = { togglePreview(note) },
+                previewBoardHeight = previewBoardHeight,
                 darkTheme = dark,
                 selectionMode = selectionMode,
                 isSelected = note.uri in selectedUris,
@@ -2638,6 +2681,103 @@ private fun repeatIndicatorLabel(repeat: String?): String? {
     }
 }
 
+private data class PreviewLayoutRow(val source: PreviewTaskRow, val text: AnnotatedString, val lines: Int, val height: Int)
+private data class PreviewLayout(val rows: List<PreviewLayoutRow>, val tasks: Int, val hidden: Boolean)
+
+@Composable
+private fun CompactNotePreview(
+    snippet: String, accent: Color, foreground: Color, style: TextStyle, expanded: Boolean, boardHeight: Dp,
+    onExpand: () -> Unit, onOpen: () -> Unit, onTask: (Int) -> Unit, onUrl: (String) -> Unit,
+) {
+    val rows = remember(snippet) { previewTaskRows(snippet) }
+    val total = rows.count { it.checklistIndex != null }
+    val density = LocalDensity.current
+    val measurer = rememberTextMeasurer()
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val width = with(density) { maxWidth.roundToPx() }
+        val touchHeight = with(density) { 32.dp.roundToPx() }
+        val taskStyle = style.copy(lineHeight = 2.2.em)
+        fun measure(open: Boolean): PreviewLayout {
+            val budget = with(density) { minOf(if (open) 320.dp else 200.dp, boardHeight * if (open) .6f else .4f).roundToPx() }
+            val visible = mutableListOf<PreviewLayoutRow>()
+            var used = 0
+            var tasks = 0
+            var hidden = false
+            for (row in rows) {
+                val task = row.checklistIndex != null
+                if (task && tasks >= if (open) 10 else 5) { hidden = true; break }
+                val annotated = renderPreviewAnnotated(row.text, accent, firstChecklistIndex = row.checklistIndex ?: 0, checklists = task)
+                val textStyle = if (task) taskStyle else style
+                val oneLine = measurer.measure(AnnotatedString("Ag"), textStyle, constraints = Constraints(maxWidth = width)).size.height.coerceAtLeast(1)
+                val maxLines = if (task) 2 else ((budget - used) / oneLine).coerceAtMost(1000)
+                if (maxLines <= 0) { hidden = true; break }
+                val layout = measurer.measure(annotated, textStyle, overflow = TextOverflow.Ellipsis, maxLines = maxLines,
+                    constraints = Constraints(maxWidth = width))
+                val height = if (task) maxOf(touchHeight, layout.size.height) else layout.size.height
+                if (used + height > budget) { hidden = true; break }
+                visible += PreviewLayoutRow(row, annotated, maxLines, height)
+                used += height
+                if (task) tasks++
+                if (layout.hasVisualOverflow) {
+                    hidden = true
+                    if (!task) break
+                }
+            }
+            return PreviewLayout(visible, tasks, hidden || visible.size < rows.size)
+        }
+        val compact = measure(false)
+        val more = measure(true)
+        val chosen = if (expanded) more else compact
+        Column(Modifier.fillMaxWidth()) {
+            chosen.rows.forEachIndexed { rowIndex, row ->
+                androidx.compose.runtime.key(row.source.checklistIndex ?: "text-$rowIndex") {
+                    val index = row.source.checklistIndex
+                    val checked = Regex("^[ \\t]*-[ \\t]+\\[[xX]\\]").containsMatchIn(row.source.text)
+                    val ticked = remember(row.text) { tickedTasks(row.text) }
+                    var previouslyChecked by remember { mutableStateOf(checked) }
+                    val pen = remember { Animatable(1f) }
+                    LaunchedEffect(checked) {
+                        if (checked && !previouslyChecked) { pen.snapTo(0f); pen.animateTo(1f, tween(350)) }
+                        previouslyChecked = checked
+                    }
+                    var textLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
+                    val taskModifier = if (index == null) Modifier else Modifier
+                        .heightIn(min = 32.dp)
+                        .toggleable(value = checked, role = Role.Checkbox, onValueChange = { onTask(index) })
+                        .semantics { contentDescription = row.source.text.replace(Regex("^[ \\t]*-[ \\t]+\\[[ xX]\\][ \\t]*"), "") }
+                    Box(Modifier.fillMaxWidth().then(taskModifier)) {
+                        ClickableText(text = row.text, style = if (index == null) style else taskStyle,
+                            maxLines = row.lines, overflow = TextOverflow.Ellipsis, onTextLayout = { textLayout = it },
+                            modifier = Modifier.fillMaxWidth().drawWithContent {
+                                drawContent()
+                                val layout = textLayout ?: return@drawWithContent
+                                if (ticked.isNotEmpty()) drawPenLines(layout, ticked, foreground) { pen.value }
+                            },
+                            onClick = { offset ->
+                                val link = row.text.getStringAnnotations("URL", offset, offset).firstOrNull()
+                                if (link != null) onUrl(link.item) else if (index != null) onTask(index) else onOpen()
+                            })
+                    }
+                }
+            }
+            // Right-half cards sit under the quick-capture buttons, so their More/Less goes to the left edge.
+            val screenPx = with(density) { LocalConfiguration.current.screenWidthDp.dp.toPx() }
+            var rightHalf by remember { mutableStateOf(false) }
+            Row(Modifier.fillMaxWidth().onGloballyPositioned { rightHalf = it.boundsInRoot().center.x > screenPx / 2 },
+                horizontalArrangement = if (rightHalf) Arrangement.Start else Arrangement.End) {
+                if (expanded || more.tasks > compact.tasks) TextButton(onClick = onExpand) {
+                    Text(stringResource(if (expanded) R.string.card_preview_less else R.string.card_preview_more), color = foreground)
+                }
+            }
+            if (chosen.hidden) TextButton(onClick = onOpen) {
+                val hidden = total - chosen.tasks
+                Text(if (hidden > 0) pluralStringResource(R.plurals.card_preview_hidden, hidden, hidden)
+                    else stringResource(R.string.card_preview_open), color = foreground)
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 private fun NoteCard(
@@ -2648,6 +2788,9 @@ private fun NoteCard(
     onClick: () -> Unit,
     onLongClick: () -> Unit,
     onPinClick: () -> Unit,
+    previewExpanded: Boolean = false,
+    onPreviewToggle: () -> Unit = {},
+    previewBoardHeight: Dp = 800.dp,
     pinModifier: Modifier = Modifier,
     onChecklistClick: (Int) -> Unit,
     onUrlClick: (String) -> Unit,
@@ -2817,61 +2960,9 @@ private fun NoteCard(
                     }
                     if (note.snippet.isNotBlank()) {
                         Spacer(Modifier.height(6.dp))
-                        val annotated = remember(note.snippet, accent) {
-                            renderPreviewAnnotated(note.snippet, accent)
-                        }
-                        // Ticked tasks get a pen line; the one just ticked here is drawn by the pen.
-                        val ticked = remember(annotated) { tickedTasks(annotated) }
-                        val tickHolder = remember { arrayOfNulls<Set<Int>>(1) }
-                        val pen = remember(ticked.keys) {
-                            val before = tickHolder[0]
-                            tickHolder[0] = ticked.keys
-                            before?.let { (ticked.keys - it).firstOrNull() }?.let { it to Animatable(0f) }
-                        }
-                        LaunchedEffect(pen) { pen?.second?.animateTo(1f, tween(350)) }
-                        var textLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
-                        // ClickableText is duurder dan Text. maxLines van 8 naar 5
-                        // verlaagt de text-layout-cost merkbaar voor lange snippets.
-                        // A card with tasks gets taller lines across the card's width, so a finger can hit a task;
-                        // the whole line ticks the box.
-                        val hasTasks = remember(annotated) { annotated.getStringAnnotations("CHECKLIST", 0, annotated.length).isNotEmpty() }
-                        ClickableText(
-                            text = annotated,
-                            style = if (hasTasks) snippetStyle.copy(lineHeight = 2.2.em) else snippetStyle,
-                            // A card with tasks shows every task, so all of them tick from the overview (Eric, 7 nov: 5 tasks showed as 2).
-                            maxLines = if (hasTasks) Int.MAX_VALUE else 5,
-                            overflow = TextOverflow.Ellipsis,
-                            onTextLayout = { textLayout = it },
-                            modifier = Modifier.then(if (hasTasks) Modifier.fillMaxWidth() else Modifier).drawWithContent {
-                                drawContent()
-                                val layout = textLayout ?: return@drawWithContent
-                                if (ticked.isNotEmpty()) drawPenLines(layout, ticked, fg) { index -> if (pen?.first == index) pen.second.value else 1f }
-                            },
-                            onClick = { offset ->
-                                if (selectionMode) { onClick(); return@ClickableText }
-                                val urlAnn = annotated
-                                    .getStringAnnotations(tag = "URL", start = offset, end = offset)
-                                    .firstOrNull()
-                                if (urlAnn != null) {
-                                    onUrlClick(urlAnn.item)
-                                    return@ClickableText
-                                }
-                                // Het glyph zelf is visueel groter dan zijn ene tekst-offset.
-                                // Maak daarom de hele checklistregel klikbaar; URL's op dezelfde
-                                // regel houden hierboven voorrang.
-                                val lineStart = annotated.text.lastIndexOf('\n', offset - 1) + 1
-                                val nextNewline = annotated.text.indexOf('\n', offset)
-                                val lineEnd = if (nextNewline < 0) annotated.length else nextNewline
-                                val checklistAnn = annotated
-                                    .getStringAnnotations(tag = "CHECKLIST", start = lineStart, end = lineEnd)
-                                    .firstOrNull()
-                                if (checklistAnn != null) {
-                                    checklistAnn.item.toIntOrNull()?.let(onChecklistClick)
-                                    return@ClickableText
-                                }
-                                onClick()
-                            },
-                        )
+                        CompactNotePreview(note.snippet, accent, fg, snippetStyle, previewExpanded, previewBoardHeight,
+                            onPreviewToggle, onClick, if (selectionMode || note.space?.frozen == true || note.space?.gone == true || note.filename.contains(CLOUD_CONFLICT_MARK)) ({ _: Int -> onClick() }) else onChecklistClick,
+                            if (selectionMode) ({ _: String -> onClick() }) else onUrlClick)
                     }
                     if (note.urls.isNotEmpty()) {
                         Spacer(Modifier.height(8.dp))
@@ -3524,6 +3615,8 @@ internal fun renderPreviewAnnotated(
     text: String,
     accent: Color,
     underlineLinks: Boolean = true,
+    firstChecklistIndex: Int = 0,
+    checklists: Boolean = true,
 ): androidx.compose.ui.text.AnnotatedString {
     data class Match(
         val start: Int,
@@ -3557,7 +3650,7 @@ internal fun renderPreviewAnnotated(
     val matches = mutableListOf<Match>()
     checklistRegex.findAll(source).forEachIndexed { index, match ->
         val glyph = match.groups[1] ?: return@forEachIndexed
-        matches.add(Match(glyph.range.first, glyph.range.last + 1, glyph.value, checklistIndex = index))
+        if (checklists) matches.add(Match(glyph.range.first, glyph.range.last + 1, glyph.value, checklistIndex = index + firstChecklistIndex))
     }
     for (m in wikiRegex.findAll(source)) {
         val target = m.groupValues[1].trim()

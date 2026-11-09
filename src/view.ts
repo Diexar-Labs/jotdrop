@@ -1,5 +1,7 @@
 import { App, ItemView, Menu, Modal, Notice, TFile, WorkspaceLeaf, normalizePath, setIcon } from "obsidian";
 import { PAPER_DRAWER, drawerLabel, drawerName, inDrawer, isPaperDrawer } from "../cloud/shared/paper.mjs";
+import { cardPreview } from "../cloud/shared/card-preview.mjs";
+import { checklistPreviewRows, wrapTaskText } from "./metadata";
 import type JotDropPlugin from "./main";
 import { QuickCaptureModal, createNoteInFolder } from "./capture";
 import { AttachmentPreviewHint, EditNoteModal } from "./edit";
@@ -22,6 +24,7 @@ import {
   parseReminderMs,
   readMeta,
   readLabels,
+  checklistBody,
   checklistToGlyphs,
   plainPreviewText,
   renderInlinePreview,
@@ -70,28 +73,6 @@ function tiltFor(path: string): string {
   let hash = 0;
   for (const char of path) hash = (hash * 31 + (char.codePointAt(0) ?? 0)) | 0;
   return `${TILT_ANGLES[Math.abs(hash) % TILT_ANGLES.length]}deg`;
-}
-
-/** Puts the text after each checkbox in a span with a pen line, shown once the task is done. */
-function wrapTaskText(preview: HTMLElement): void {
-  for (const toggle of Array.from(preview.querySelectorAll(".jotdrop-checklist-toggle"))) {
-    const text = createSpan({ cls: "jotdrop-task-text" });
-    toggle.after(text);
-    let node = text.nextSibling;
-    while (node && !(node instanceof HTMLElement && node.hasClass("jotdrop-checklist-toggle"))) {
-      if (node instanceof Text && node.data.includes("\n")) {
-        // The task ends at its line end; the rest stays outside.
-        node.splitText(node.data.indexOf("\n"));
-        text.appendChild(node);
-        break;
-      }
-      const next = node.nextSibling;
-      text.appendChild(node);
-      node = next;
-    }
-    const strike = text.createSvg("svg", { cls: "jotdrop-strike", attr: { viewBox: "0 0 100 10", preserveAspectRatio: "none", "aria-hidden": "true" } });
-    strike.createSvg("path", { attr: { pathLength: "1", d: "M1 6 C 18 2, 30 8, 50 5 S 82 3, 99 6" } });
-  }
 }
 
 // Mirrors Storage.findEmbeddedImageBasenames / findEmbeddedAudioBasenames in
@@ -449,6 +430,8 @@ export class JotDropView extends ItemView {
   private seenPaths = new Set<string>();
   private hasRendered = false;
   private freshAt = new Map<string, number>();
+  private expandedPreviews = new Set<string>();
+  private cardPreviews: { fit(): void; destroy(): void }[] = [];
   private sealedAt = new Map<string, number>();
   private pinnedAt: { path: string; at: number } | null = null;
 
@@ -1319,6 +1302,9 @@ export class JotDropView extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    for (const preview of this.cardPreviews) preview.destroy();
+    this.cardPreviews = [];
+    this.expandedPreviews.clear();
     // Release the mic stream if the view closes mid-recording.
     this.recorder?.discard();
     this.recorder = null;
@@ -1382,6 +1368,9 @@ export class JotDropView extends ItemView {
     if (generation !== this.renderGeneration) return;
     // Measuring the emptied grid (column count) also resets the scroll; it is put back below, before anything is drawn.
     const scrollTop = this.contentEl.scrollTop;
+    for (const preview of this.cardPreviews) preview.destroy();
+    this.cardPreviews = [];
+    for (const path of this.expandedPreviews) if (!this.app.vault.getAbstractFileByPath(path)) this.expandedPreviews.delete(path);
     this.applyCardWidth();
     this.sentinelObserver?.disconnect();
     this.sentinelObserver = null;
@@ -2159,6 +2148,10 @@ export class JotDropView extends ItemView {
 
     const titleText = extractTitle(content, file.basename);
     const previewText = extractPreview(content);
+    const previewRows = checklistPreviewRows(content);
+    const fullPreview = previewRows.map((row) => row.text).join("\n");
+    const plainTruncated = !previewRows.some((row) => row.index !== undefined) && previewText !== fullPreview;
+    if (!previewRows.some((row) => row.index !== undefined) && previewText) previewRows.splice(0, previewRows.length, { text: previewText });
     const urls = extractUrls(content);
 
     const body = cardEl.createDiv({ cls: "jotdrop-card-body" });
@@ -2266,10 +2259,33 @@ export class JotDropView extends ItemView {
       }
     }
 
-    if (previewText) {
+    if (previewRows.length) {
       const preview = body.createDiv({ cls: "jotdrop-card-preview" });
-      renderInlinePreview(preview, previewText);
-      wrapTaskText(preview);
+      let expectedContent = content;
+      const controller = cardPreview(preview, previewRows, {
+        isTask: (row: { index?: number }) => row.index !== undefined,
+        render: (row: { text: string; index?: number; checked?: boolean }) => {
+          const el = createDiv({ cls: row.index === undefined ? "jotdrop-preview-line" : "jotdrop-preview-task" });
+          if (row.index === undefined) el.setText(row.text);
+          else {
+            renderInlinePreview(el, row.text, row.index);
+            wrapTaskText(el);
+            el.querySelector(".jotdrop-task-text")?.setAttribute("data-preview-task-text", "");
+            el.querySelector("button")?.setAttribute("aria-label", row.text.replace(/^[ \t]*[☐☑][ \t]*/, ""));
+          }
+          return el;
+        },
+        expanded: () => this.expandedPreviews.has(file.path),
+        toggle: () => this.expandedPreviews.has(file.path) ? this.expandedPreviews.delete(file.path) : this.expandedPreviews.add(file.path),
+        height: () => this.contentEl.clientHeight - (this.contentEl.querySelector<HTMLElement>(".jotdrop-toolbar")?.offsetHeight || 0),
+        resizeTarget: this.contentEl,
+        scroller: () => this.contentEl,
+        more: t("preview_more"), less: t("preview_less"),
+        truncated: plainTruncated,
+        openLabel: (n: number) => n ? t(n === 1 ? "preview_open_one" : "preview_open_many", String(n)) : t("preview_open"),
+        open: () => { if (this.selectionMode) this.toggleSelect(file.path); else this.openEditModal(file, openedAttachment); },
+      });
+      this.cardPreviews.push(controller);
       preview.addEventListener("click", (e) => {
         if (this.selectionMode) {
           e.stopPropagation();
@@ -2280,8 +2296,14 @@ export class JotDropView extends ItemView {
         if (toggle) {
           e.preventDefault();
           e.stopPropagation();
+          if (this.showTrash || space?.gone || space?.frozen || file.name.includes(".cloud-conflict-")) { this.openEditModal(file, openedAttachment); return; }
           const index = Number(toggle.dataset.checklistIndex);
-          void this.toggleChecklist(file, index, toggle);
+          void this.toggleChecklist(file, index, toggle, expectedContent).then((updated) => {
+            if (updated === undefined) return;
+            expectedContent = updated;
+            const row = previewRows.find((item) => item.index === index);
+            if (row) { row.checked = !row.checked; row.text = row.text.replace(/[☐☑]/, row.checked ? "☑" : "☐"); }
+          });
           return;
         }
         this.handlePreviewClick(e);
@@ -2561,22 +2583,26 @@ export class JotDropView extends ItemView {
     }
   }
 
-  private async toggleChecklist(file: TFile, index: number, toggle: HTMLElement): Promise<void> {
+  private async toggleChecklist(file: TFile, index: number, toggle: HTMLElement, expected?: string): Promise<string | undefined> {
     if (!Number.isInteger(index) || index < 0) return;
     try {
       const wasChecked = toggle.textContent === "☑";
       this.plugin.suppressModifyOnce(file.path);
-      await this.app.vault.process(file, (content) => toggleChecklistItem(content, index));
+      let updated = "";
+      await this.app.vault.process(file, (content) => {
+        // Only the body decides which task an index means; an own color change rewrites just the frontmatter.
+        if (expected !== undefined && checklistBody(content) !== checklistBody(expected)) throw new Error(t("preview_changed"));
+        updated = toggleChecklistItem(content, index);
+        return updated;
+      });
       toggle.setText(wasChecked ? "☐" : "☑");
       toggle.setAttribute("aria-checked", String(!wasChecked));
       // The pen draws its line through a task just ticked.
       toggle.nextElementSibling?.toggleClass("just-struck", !wasChecked);
-      toggle.setAttribute(
-        "aria-label",
-        t(wasChecked ? "checklist_mark_checked" : "checklist_mark_unchecked"),
-      );
+      return updated;
     } catch (err) {
       new Notice(t("notice_error", err instanceof Error ? err.message : String(err)));
+      void this.render();
     }
   }
 

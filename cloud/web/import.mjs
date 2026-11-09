@@ -140,6 +140,12 @@ var INTRO = {
 
 // src/i18n.ts
 var EN = {
+  preview_more: "More",
+  preview_less: "Less",
+  preview_open: "Open note",
+  preview_open_one: "Open note - {0} more task",
+  preview_open_many: "Open note - {0} more tasks",
+  preview_changed: "This checklist changed. The card will refresh; try again.",
   // App / commands
   open_jotdrop: "Open JotDrop",
   cmd_open_view: "Open Keep view",

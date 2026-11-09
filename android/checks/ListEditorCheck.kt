@@ -1,6 +1,16 @@
 package com.diexar.keepcapture
 
 fun main() {
+    check(sameChecklistPreview("- [ ] first\n- [x] second", "- [x] first\n- [ ] second"))
+    check(!sameChecklistPreview("- [ ] first\n- [ ] second", "- [ ] inserted\n- [ ] first\n- [ ] second"))
+    for (count in listOf(0, 1, 5, 6, 10, 11, 100)) {
+        val text = (1..count).joinToString("\n") { "- [ ] task $it" }
+        val rows = previewTaskRows(text)
+        check(rows.count { it.checklistIndex != null } == count)
+        check(rows.filter { it.checklistIndex != null }.take(5).map { it.checklistIndex } == (0 until minOf(5, count)).toList())
+        if (count >= 10) check(toggleChecklistText(text, rows[9].checklistIndex!!)!!.lines()[9] == "- [x] task 10")
+    }
+    check(previewTaskRows("Intro\n> - [ ] quote\n* [ ] bullet\n- [x] real").last().checklistIndex == 0)
     fun enter(text: String, expected: String, start: Int = text.length, end: Int = start) {
         val edit = checkNotNull(listEnterEdit(text, start, end)) { "Expected a list edit: $text" }
         check(text.replaceRange(edit.from, edit.to, edit.insert) == expected) { "Wrong list edit: $text" }
