@@ -1,11 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="card_preview_more">More</string>
-    <string name="card_preview_less">Less</string>
     <string name="card_preview_open">Open note</string>
     <plurals name="card_preview_hidden">
         <item quantity="one">Open note - %d more task</item>
         <item quantity="other">Open note - %d more tasks</item>
+    </plurals>
+    <plurals name="card_preview_checked">
+        <item quantity="one">+ %d checked item</item>
+        <item quantity="other">+ %d checked items</item>
     </plurals>
     <string name="app_name">JotDrop</string>
     <string name="share_target_label">JotDrop</string>

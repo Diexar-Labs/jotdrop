@@ -1,7 +1,8 @@
 ﻿"""Synthetic UI check for an isolated jd_api35 emulator. Never targets a phone.
 
-Run --seed once, choose Use without cloud and Documents/CompactPreviewTest in the
-fresh test app, then run without --seed. Requires the verified R8 test APK.
+Run --seed once (it only adds fixtures that are missing, never overwrites), choose Use
+without cloud and Documents/CompactPreviewTest in the fresh test app, then run without
+--seed. Requires the verified R8 test APK.
 """
 import argparse
 import os
@@ -27,20 +28,28 @@ def run(*command):
 assert run('emu', 'avd', 'name').decode().splitlines()[0].strip() == 'jd_api35', 'Wrong AVD'
 vault = '/sdcard/Documents/CompactPreviewTest'
 folder = vault + '/Mini Notes'
-if options.seed:
-    exists = subprocess.run([str(adb), '-s', options.serial, 'shell', 'test', '-e', vault]).returncode == 0
-    assert not exists, 'Refusing to overwrite existing fixture folder'
-    run('shell', f"mkdir -p '{folder}'")
+FIXTURES = {
+    **{f'compact-{count}.md': '\n'.join(f'- [ ] task {i + 1}' for i in range(count)) or 'Plain text' for count in [0, 1, 5, 6, 10, 11, 100]},
+    'compact-article.md': 'Article sentence. ' * 300 + '\n- [ ] A\n- [x] B\n- [ ] C',
+    'compact-checked.md': '\n'.join(f"- [{'x' if i % 2 else ' '}] chk {i + 1}" for i in range(15)),
+    'compact-mixed.md': 'Intro line\n- [ ] MA\n- [x] MB\nOutro',
+    'compact-tagged.md': '- [ ] milk\n- [ ] bread\n\n#groceries',
+}
+
+
+def push(name):
     with tempfile.TemporaryDirectory(prefix='compact-android-') as temp:
-        for count in [0, 1, 5, 6, 10, 11, 100]:
-            body = '\n'.join(f'- [ ] task {i + 1}' for i in range(count)) or 'Plain text'
-            path = Path(temp) / f'compact-{count}.md'
-            path.write_text(f'# compact-{count}\n\n{body}\n', encoding='utf-8')
-            run('push', str(path), folder + '/' + path.name)
-        path = Path(temp) / 'compact-article.md'
-        path.write_text('# compact-article\n\n' + 'Article sentence. ' * 300 + '\n- [ ] A\n- [x] B\n- [ ] C\n', encoding='utf-8')
-        run('push', str(path), folder + '/' + path.name)
-    print('Seeded synthetic fixtures only in', folder)
+        path = Path(temp) / name
+        path.write_text(f'# {name[:-3]}\n\n{FIXTURES[name]}\n', encoding='utf-8')
+        run('push', str(path), folder + '/' + name)
+
+
+if options.seed:
+    run('shell', f"mkdir -p '{folder}'")
+    for name in FIXTURES:
+        if subprocess.run([str(adb), '-s', options.serial, 'shell', 'test', '-e', f"'{folder}/{name}'"]).returncode != 0:
+            push(name)
+    print('Seeded missing synthetic fixtures only in', folder)
     raise SystemExit()
 
 
@@ -67,7 +76,7 @@ def search(text):
     for _ in range(32):
         run('shell', 'input', 'keyevent', 'KEYCODE_DEL')
     run('shell', 'input', 'text', text)
-    run('shell', 'input', 'keyevent', 'KEYCODE_BACK')
+    run('shell', 'input', 'keyevent', 'KEYCODE_ENTER')
     time.sleep(1)  # a cold R8 app filters later than .3 s
     return snapshot()
 
@@ -86,31 +95,50 @@ def wait_saved(line_index, expected):
     raise AssertionError((expected, lines[line_index:line_index + 1]))
 
 
+def tasks_in(ui, pattern=r'task \d+'):
+    return [node for node in ui.iter('node') if re.fullmatch(pattern, node.get('content-desc') or '')]
+
+
+def texts(ui):
+    return [node.get('text') or '' for node in ui.iter('node')]
+
+
+# Like Keep: up to 10 open tasks right away, no More/Less, the rest behind "Open note - N more tasks".
 ui = search('compact-100')
-tasks = [node for node in ui.iter('node') if re.fullmatch(r'task \d+', node.get('content-desc') or '')]
-assert 0 < len(tasks) <= 5, len(tasks)
-tap(text_node(ui, 'More'))
-time.sleep(1)  # let the expanded card settle before reading tap targets
-ui = snapshot()
-tasks = [node for node in ui.iter('node') if re.fullmatch(r'task \d+', node.get('content-desc') or '')]
-assert 5 < len(tasks) <= 10, len(tasks)
+tasks = tasks_in(ui)
+assert len(tasks) == 10, len(tasks)
+assert 'More' not in texts(ui) and 'Less' not in texts(ui)
+assert 'Open note - 90 more tasks' in texts(ui), texts(ui)
 last = tasks[-1]
 index = int(last.get('content-desc').split()[1])
 tap(last)
 saved = wait_saved(index + 1, f'- [x] task {index}')
 assert len([line for line in saved.splitlines() if line.startswith('- [')]) == 100
 assert sum('[x]' in line for line in saved.splitlines()) == 1
-tap(last)  # untick again so the fixture stays reusable
-wait_saved(index + 1, f'- [ ] task {index}')
+time.sleep(1.2)  # the pen strikes it through, then it joins the checked ones
 ui = snapshot()
-tap(text_node(ui, 'Less'))
+names = [node.get('content-desc') for node in tasks_in(ui)]
+assert f'task {index}' not in names and len(names) == 10, names
+assert '+ 1 checked item' in texts(ui) and 'Open note - 89 more tasks' in texts(ui), texts(ui)
+push('compact-100.md')  # restore the fixture
+
+ui = search('compact-checked')
+assert [node.get('content-desc') for node in tasks_in(ui, r'chk \d+')] == [f'chk {i}' for i in range(1, 16, 2)], tasks_in(ui, r'chk \d+')
+assert '+ 7 checked items' in texts(ui), texts(ui)
+
+ui = search('compact-mixed')
+# Any other text makes it a text card: tasks read as ☐/☑ text, without tap targets.
+assert not tasks_in(ui, r'M[AB]'), tasks_in(ui, r'M[AB]')
+assert any('☐ MA' in t for t in texts(ui)) and any('☑ MB' in t for t in texts(ui)), texts(ui)
+
+ui = search('compact-tagged')
+assert [node.get('content-desc') for node in tasks_in(ui, r'milk|bread')] == ['milk', 'bread'], texts(ui)
+
 ui = search('compact-article')
-# A long introduction is clipped to half the preview so the tasks after it stay visible.
-assert {'A', 'B', 'C'} <= {node.get('content-desc') or '' for node in ui.iter('node')}
-assert not any(node.get('text') == 'More' for node in ui.iter('node'))
-assert not any('more tasks' in (node.get('text') or '') for node in ui.iter('node'))
-assert any(node.get('text') == 'Open note' for node in ui.iter('node'))
+assert not tasks_in(ui, r'[ABC]'), tasks_in(ui, r'[ABC]')
+assert 'Open note' in texts(ui), texts(ui)
+assert not any('more task' in t or 'checked item' in t for t in texts(ui)), texts(ui)
 shots = Path(tempfile.gettempdir()) / 'kilo/compact-card-checks'
 shots.mkdir(parents=True, exist_ok=True)
 (shots / 'android-article.png').write_bytes(run('exec-out', 'screencap', '-p'))
-print('Android isolated R8 UI: compact/expanded limits, real source tick, intact 100 tasks, article prefix PASS')
+print('Android isolated R8 UI (Keep model): 10 open tasks, real source tick then folded, checked folded, mixed = text, tag line, article PASS')

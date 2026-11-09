@@ -6,7 +6,7 @@ from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
 BUILD = """
-require('esbuild').build({stdin:{contents:'export {checklistPreviewRows,renderInlinePreview,wrapTaskText} from "./src/metadata.ts"; export {cardPreview} from "./cloud/shared/card-preview.mjs";',resolveDir:process.cwd()},bundle:true,write:false,format:'iife',globalName:'Preview',plugins:[{name:'obsidian-stub',setup(build){build.onResolve({filter:/^obsidian$/},()=>({path:'obsidian',namespace:'stub'}));build.onLoad({filter:/.*/,namespace:'stub'},()=>({contents:'export const getLanguage=()=>"en";'}));}}]}).then(r=>process.stdout.write(r.outputFiles[0].text));
+require('esbuild').build({stdin:{contents:'export {checklistPreviewRows,renderInlinePreview,wrapTaskText} from "./src/metadata.ts"; export {cardPreview,tagOnly} from "./cloud/shared/card-preview.mjs";',resolveDir:process.cwd()},bundle:true,write:false,format:'iife',globalName:'Preview',plugins:[{name:'obsidian-stub',setup(build){build.onResolve({filter:/^obsidian$/},()=>({path:'obsidian',namespace:'stub'}));build.onLoad({filter:/.*/,namespace:'stub'},()=>({contents:'export const getLanguage=()=>"en";'}));}}]}).then(r=>process.stdout.write(r.outputFiles[0].text));
 """
 bundle = subprocess.check_output(["node", "-e", BUILD], cwd=ROOT, text=True, encoding="utf-8")
 css = (ROOT / "styles.css").read_text(encoding="utf-8")
@@ -29,50 +29,58 @@ with sync_playwright() as p:
             card.append(make('span',{cls:'jotdrop-card-paper'}));
             card.append(make('h3',{cls:'jotdrop-card-title',text:`Synthetic ${name}`}));
             const host=make('div',{cls:'jotdrop-card-preview'});card.append(host);document.querySelector('main').append(card);
-            let expanded=false;
             const rows=Preview.checklistPreviewRows(body);
-            Preview.cardPreview(host,rows,{isTask:r=>r.index!==undefined,render:r=>{
-              const el=make('div',{cls:r.index===undefined?'jotdrop-preview-line':'jotdrop-preview-task'});
-              if(r.index===undefined)el.textContent=r.text;else{Preview.renderInlinePreview(el,r.text,r.index);Preview.wrapTaskText(el);el.querySelector('.jotdrop-task-text').dataset.previewTaskText='';el.querySelector('button').setAttribute('aria-label',r.text.slice(2));}
+            Preview.cardPreview(host,rows,{isTask:r=>r.index!==undefined,isChecked:r=>Boolean(r.checked),isMeta:r=>Preview.tagOnly(r.text),render:(r,asText)=>{
+              const el=make('div',{cls:r.index===undefined||asText?'jotdrop-preview-line':'jotdrop-preview-task'});
+              if(r.index===undefined||asText)el.textContent=r.text;else{Preview.renderInlinePreview(el,r.text,r.index);Preview.wrapTaskText(el);el.querySelector('.jotdrop-task-text').dataset.previewTaskText='';el.querySelector('button').setAttribute('aria-label',r.text.slice(2));}
               return el;
-            },expanded:()=>expanded,toggle:()=>expanded=!expanded,height:()=>innerHeight,more:'More',less:'Less',openLabel:n=>n?`Open note - ${n} more tasks`:'Open note',open:()=>{window.opened=name;}});
+            },height:()=>innerHeight,openLabel:n=>n?`Open note - ${n} more tasks`:'Open note',checkedLabel:n=>`+ ${n} checked items`,open:()=>{window.opened=name;}});
           };
         }""")
-        for count in [0, 1, 5, 6, 10, 11, 100]:
-            body = "# Title\n" + ("\n".join(f"- [{'x' if i % 2 else ' '}] task {i + 1}" for i in range(count)) or "Plain text")
+        def state(card):
+            host = card.locator(".jotdrop-card-preview")
+            return {k: host.get_attribute(f"data-{k}") for k in ["mode", "visible-tasks", "hidden-tasks", "checked-tasks"]}
+
+        # Like Keep: up to 10 open tasks at once, no More/Less; checked ones fold into "+ N checked items".
+        for count in [1, 5, 10, 11, 12, 100]:
+            body = "# Title\n" + "\n".join(f"- [ ] task {i + 1}" for i in range(count))
             page.evaluate("([name,body])=>showPreview(name,body)", [str(count), body])
             card = page.locator(f'[data-name="{count}"]')
-            host = card.locator(".jotdrop-card-preview")
-            assert int(host.get_attribute("data-visible-tasks")) == min(count, 5)
-            if count > 5:
-                card.locator('[data-preview-action="toggle"]').click()
-                assert int(host.get_attribute("data-visible-tasks")) == min(count, 10)
-                if count >= 10:
-                    assert card.locator('button[data-checklist-index="9"]').count() == 1
-                card.locator('[data-preview-action="toggle"]').click()
-                assert int(host.get_attribute("data-hidden-tasks")) == count - 5
+            assert state(card) == {"mode": "checklist", "visible-tasks": str(min(count, 10)), "hidden-tasks": str(max(0, count - 10)), "checked-tasks": "0"}, (count, state(card))
+            assert card.locator('[data-preview-action="toggle"]').count() == 0
+            assert card.locator('[data-preview-action="open"]').count() == (1 if count > 10 else 0)
+        page.evaluate("body=>showPreview('checked',body)", "# Title\n" + "\n".join(f"- [{'x' if i % 2 else ' '}] task {i + 1}" for i in range(15)))
+        card = page.locator('[data-name="checked"]')
+        assert state(card) == {"mode": "checklist", "visible-tasks": "8", "hidden-tasks": "0", "checked-tasks": "7"}, state(card)
+        # Original writer indices survive the reordering: open task 15 is checklist item 14.
+        assert card.locator('button[data-checklist-index="14"]').count() == 1
+        assert card.locator('button[data-checklist-index="1"]').count() == 0
+        assert card.locator('[data-preview-action="checked"]').text_content() == "+ 7 checked items", card.locator('[data-preview-action="checked"]').evaluate("el=>[el.innerText, getComputedStyle(el).textTransform]")
+        page.evaluate("body=>showPreview('plain',body)", "# Title\nPlain text")
+        assert state(page.locator('[data-name="plain"]'))["mode"] == "text"
+        # Any other text makes it a text card: tasks as ☐/☑ text, no checkboxes.
+        page.evaluate("body=>showPreview('mixed',body)", "# Title\nIntro\n- [ ] A\n- [x] B")
+        mixed = page.locator('[data-name="mixed"]')
+        assert state(mixed)["mode"] == "text" and mixed.locator("button[data-checklist-index]").count() == 0
+        mixed_text = mixed.locator(".jotdrop-card-preview").text_content()
+        assert "☐ A" in mixed_text and "☑ B" in mixed_text, repr(mixed_text)
+        # A line of only hashtags and a link-preview marker are no text: still a checklist.
+        page.evaluate("body=>showPreview('tagged',body)", "# Title\n- [ ] milk\n- [ ] bread\n\n#groceries #shop\n<!-- jotdrop-preview: pending -->")
+        assert state(page.locator('[data-name="tagged"]'))["mode"] == "checklist"
         page.evaluate("body=>showPreview('article',body)", "# Title\n" + "Article sentence. " * 300 + "\n- [ ] A\n- [ ] B\n- [x] C")
         card = page.locator('[data-name="article"]')
-        # A long introduction is clipped to half the preview so the tasks after it stay visible.
-        assert card.locator("button[data-checklist-index]").count() == 3
-        assert card.locator('[data-preview-action="toggle"]').count() == 0
+        assert state(card)["mode"] == "text" and card.locator("button[data-checklist-index]").count() == 0
         assert card.locator('[data-preview-action="open"]').inner_text() == "Open note"
-        intro = card.locator(".jotdrop-card-preview").evaluate("el=>({text:el.querySelector('.jotdrop-preview-line')?.textContent||'',bottom:el.querySelector('.jotdrop-preview-line').getBoundingClientRect().bottom-el.getBoundingClientRect().top,cap:parseFloat(el.style.maxHeight)})")
-        assert intro["text"].startswith("Article sentence.") and intro["text"].endswith("…"), intro
-        assert intro["bottom"] <= intro["cap"] / 2 + 1, intro
-        page.evaluate("body=>showPreview('article-many',body)", "# Title\n" + "Article sentence. " * 300 + "\n" + "\n".join(f"- [ ] M{i}" for i in range(12)))
-        many = page.locator('[data-name="article-many"]')
-        assert 2 <= many.locator("button[data-checklist-index]").count() <= 5
-        assert many.locator('[data-preview-action="open"]').inner_text().endswith("more tasks")
-        page.evaluate("body=>showPreview('tail',body)", "# Title\n- [ ] T1\n" + "Tail sentence. " * 300)
-        tail = page.locator('[data-name="tail"]').locator(".jotdrop-card-preview")
-        assert tail.evaluate("el=>el.querySelector('.jotdrop-preview-line').getBoundingClientRect().bottom-el.getBoundingClientRect().top > parseFloat(el.style.maxHeight)/2+1")
+        intro = card.locator(".jotdrop-card-preview").inner_text()
+        assert intro.startswith("Article sentence.") and intro.endswith("…"), intro[-60:]
+        page.evaluate("body=>showPreview('long',body)", "# Title\n" + "\n".join("- [ ] " + ("Unicode café 漢字 🙂 " * 30) for _ in range(11)))
         shots = Path(tempfile.gettempdir()) / "kilo" / "compact-card-checks"
         shots.mkdir(parents=True, exist_ok=True)
         page.screenshot(path=str(shots / "obsidian-desktop.png"), full_page=True)
         for width, height, size in [(390, 844, "16px"), (1200, 900, "32px"), (844, 390, "16px")]:
             page.set_viewport_size({"width": width, "height": height})
-            page.locator("body").evaluate("(el,size)=>el.style.fontSize=size", size)
+            # A zoom or font change resizes the window in the apps; headless Edge after a screenshot only delivers that event.
+            page.locator("body").evaluate("(el,size)=>{el.style.fontSize=size;dispatchEvent(new Event('resize'))}", size)
             page.wait_for_timeout(200)
             for host in page.locator(".jotdrop-card-preview").all():
                 sizes = host.evaluate("el=>({h:el.offsetHeight,cap:parseFloat(el.style.maxHeight),rows:[...el.querySelectorAll('.jotdrop-preview-task')].map(r=>r.getBoundingClientRect().bottom-el.getBoundingClientRect().bottom)})")
@@ -80,6 +88,6 @@ with sync_playwright() as p:
                 assert all(bottom <= 1 for bottom in sizes["rows"]), sizes
             if width == 390:
                 page.screenshot(path=str(shots / "obsidian-mobile.png"), full_page=True)
-        print("Obsidian synthetic DOM: 0/1/5/6/10/11/100, original indices, article, small viewport and 200% text PASS")
+        print("Obsidian synthetic DOM (Keep model): 1/5/10/11/12/100, checked folded, original indices, mixed = text, tag line, article, small viewport and 200% text PASS")
     finally:
         browser.close()

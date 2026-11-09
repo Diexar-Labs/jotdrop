@@ -1,11 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="card_preview_more">Plus</string>
-    <string name="card_preview_less">Moins</string>
     <string name="card_preview_open">Ouvrir la note</string>
     <plurals name="card_preview_hidden">
         <item quantity="one">Ouvrir la note - encore %d tâche</item>
         <item quantity="other">Ouvrir la note - encore %d tâches</item>
+    </plurals>
+    <plurals name="card_preview_checked">
+        <item quantity="one">+ %d élément coché</item>
+        <item quantity="other">+ %d éléments cochés</item>
     </plurals>
     <string name="nav_open_menu">Ouvrir le menu de navigation</string>
     <string name="nav_notes">Notes</string>

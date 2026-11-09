@@ -140,9 +140,9 @@ var INTRO = {
 
 // src/i18n.ts
 var EN = {
-  preview_more: "More",
-  preview_less: "Less",
   preview_open: "Open note",
+  preview_checked_one: "+ {0} checked item",
+  preview_checked_many: "+ {0} checked items",
   preview_open_one: "Open note - {0} more task",
   preview_open_many: "Open note - {0} more tasks",
   preview_changed: "This checklist changed. The card will refresh; try again.",

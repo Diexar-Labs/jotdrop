@@ -1,11 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="card_preview_more">Meer</string>
-    <string name="card_preview_less">Minder</string>
     <string name="card_preview_open">Open notitie</string>
     <plurals name="card_preview_hidden">
         <item quantity="one">Open notitie - nog %d taak</item>
         <item quantity="other">Open notitie - nog %d taken</item>
+    </plurals>
+    <plurals name="card_preview_checked">
+        <item quantity="one">+ %d afgevinkt item</item>
+        <item quantity="other">+ %d afgevinkte items</item>
     </plurals>
     <string name="settings_title">JotDrop · instellingen</string>
 

@@ -1,6 +1,6 @@
 import { CloudClient, identifyClient } from '/shared/client.mjs';
 import { mergeNote } from '/shared/merge.mjs';
-import { cardPreview } from '/shared/card-preview.mjs';
+import { cardPreview, checklistOnly, tagOnly } from '/shared/card-preview.mjs';
 import { diffLines, foldUnchanged } from '/shared/diff.mjs';
 import { createLink, listLinks, removeLink } from '/shared/links.mjs';
 import { createListLink, hasChecklist, listListLinks, openList, removeListLink, syncList } from '/shared/list-links.mjs';
@@ -30,7 +30,6 @@ $('theme').addEventListener('change', () => {
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const files = new Map();
-const expandedPreviews = new Set();
 const cardPreviews = [];
 // One photo or recording element per card and file, kept across renders: a photo never reloads, so its card never shrinks.
 const media = new Map();
@@ -616,7 +615,6 @@ function render() {
   gridSpans.disconnect();
   for (const preview of cardPreviews) preview.destroy();
   cardPreviews.length = 0;
-  for (const id of expandedPreviews) if (!files.has(id) || files.get(id).deleted) expandedPreviews.delete(id);
   $('items').replaceChildren();
   $('items').hidden = view === 'devices';
   $('devices-panel').hidden = view !== 'devices';
@@ -763,16 +761,24 @@ function render() {
         if (value) previewRows.push({ text: value });
         text = [];
       };
-      parts.body.split('\n').forEach((line, bodyIndex) => {
-        if (bodyIndex === titleLine) return;
-        const marker = /^\s{0,3}(`{3,}|~{3,})/.exec(line)?.[1];
-        if (marker) { if (!fence) fence = marker; else if (marker[0] === fence[0] && marker.length >= fence.length) fence = undefined; }
-        const task = !marker && !fence && !entry.deleted && /^\s*[-*+] \[([ xX])\] (.*)\r?$/.exec(line);
-        if (!task) { text.push(line.replace(/\r$/, '')); return; }
+      // Like Keep: only a note of nothing but tasks is a checklist card; in any other note a task reads as ☐/☑ text.
+      const build = (asText) => {
+        previewRows.length = 0; text = []; fence = undefined;
+        parts.body.split('\n').forEach((line, bodyIndex) => {
+          if (bodyIndex === titleLine) return;
+          const marker = /^\s{0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+          if (marker) { if (!fence) fence = marker; else if (marker[0] === fence[0] && marker.length >= fence.length) fence = undefined; }
+          const task = !marker && !fence && !entry.deleted && /^\s*[-*+] \[([ xX])\] (.*)\r?$/.exec(line);
+          if (!task) { text.push(line.replace(/\r$/, '')); return; }
+          if (asText) { text.push(`${/^\s*/.exec(line)[0]}${task[1] === ' ' ? '☐' : '☑'} ${task[2]}`); return; }
+          flush();
+          previewRows.push({ task, bodyIndex });
+        });
         flush();
-        previewRows.push({ task, bodyIndex });
-      });
-      flush();
+      };
+      const isTask = (row) => Boolean(row.task), isMeta = (row) => tagOnly(row.text);
+      build(false);
+      if (previewRows.some(isTask) && !checklistOnly(previewRows, isTask, isMeta)) build(true);
       const renderRow = (rowData) => {
         if (!rowData.task) return paragraph(rowData.text, 'note-preview');
         const { task, bodyIndex } = rowData;
@@ -801,12 +807,13 @@ function render() {
         return row;
       };
       const previewControl = cardPreview(preview, previewRows, {
-        isTask: (row) => Boolean(row.task), render: renderRow,
-        expanded: () => expandedPreviews.has(entry.id),
-        toggle: () => expandedPreviews.has(entry.id) ? expandedPreviews.delete(entry.id) : expandedPreviews.add(entry.id),
+        isTask, isMeta, render: renderRow,
+        isChecked: (row) => row.task[1] !== ' ',
+        // A task ticked here keeps its place until the pen has struck it through.
+        lingering: (row) => justStruck?.key === `${entry.file.path}:${row.bodyIndex}` ? Math.max(0, STRIKE_MS - (performance.now() - justStruck.at)) : 0,
         height: () => window.innerHeight - (document.querySelector('.selection-bar')?.offsetHeight || 0),
-        more: 'More', less: 'Less',
         openLabel: (n) => n ? `Open note - ${n} more ${n === 1 ? 'task' : 'tasks'}` : 'Open note',
+        checkedLabel: (n) => `+ ${n} checked ${n === 1 ? 'item' : 'items'}`,
         open: !entry.deleted && !moment ? () => {
           if (selectedIds.size && selectableIds.has(entry.id)) toggleSelected(entry.id);
           else openEditor(entry);
@@ -2158,13 +2165,11 @@ async function openWorkspace(connected) {
   spacePlan = undefined;
   spaces.clear();
   goneSpaces.clear();
-  expandedPreviews.clear();
   syncPaused = false;
   $('sync').textContent = 'Sync now';
   generation++;
   cursor = 0;
   files.clear();
-  expandedPreviews.clear();
   moments.clear();
   closeMoment();
   $('opening').hidden = true;
@@ -3269,7 +3274,6 @@ function switchCloud(nextClient, space) {
     labelFilter = '';
     spacePlan = undefined;
     files.clear();
-    expandedPreviews.clear();
     moments.clear();
     selectedIds.clear();
     selectedTags.clear();

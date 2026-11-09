@@ -1,6 +1,6 @@
 import { App, ItemView, Menu, Modal, Notice, TFile, WorkspaceLeaf, normalizePath, setIcon } from "obsidian";
 import { PAPER_DRAWER, drawerLabel, drawerName, inDrawer, isPaperDrawer } from "../cloud/shared/paper.mjs";
-import { cardPreview } from "../cloud/shared/card-preview.mjs";
+import { cardPreview, tagOnly } from "../cloud/shared/card-preview.mjs";
 import { checklistPreviewRows, wrapTaskText } from "./metadata";
 import type JotDropPlugin from "./main";
 import { QuickCaptureModal, createNoteInFolder } from "./capture";
@@ -48,6 +48,8 @@ const TITLE_MAX_CHARS = 80;
 const PREVIEW_MAX_CHARS = 240;
 const LINK_CHIPS_VISIBLE = 3;
 const CARD_CHIPS_VISIBLE = 4;
+// The pen's jotdrop-draw animation in styles.css.
+const STRIKE_MS = 350;
 // A paper tray for the Paper drawer label; "archive" already means the Archive here.
 const PAPER_DRAWER_ICON = "inbox";
 const TAG_CHIPS_TOP_N = 8;
@@ -430,7 +432,6 @@ export class JotDropView extends ItemView {
   private seenPaths = new Set<string>();
   private hasRendered = false;
   private freshAt = new Map<string, number>();
-  private expandedPreviews = new Set<string>();
   private cardPreviews: { fit(): void; destroy(): void }[] = [];
   private sealedAt = new Map<string, number>();
   private pinnedAt: { path: string; at: number } | null = null;
@@ -1304,7 +1305,6 @@ export class JotDropView extends ItemView {
   async onClose(): Promise<void> {
     for (const preview of this.cardPreviews) preview.destroy();
     this.cardPreviews = [];
-    this.expandedPreviews.clear();
     // Release the mic stream if the view closes mid-recording.
     this.recorder?.discard();
     this.recorder = null;
@@ -1370,7 +1370,6 @@ export class JotDropView extends ItemView {
     const scrollTop = this.contentEl.scrollTop;
     for (const preview of this.cardPreviews) preview.destroy();
     this.cardPreviews = [];
-    for (const path of this.expandedPreviews) if (!this.app.vault.getAbstractFileByPath(path)) this.expandedPreviews.delete(path);
     this.applyCardWidth();
     this.sentinelObserver?.disconnect();
     this.sentinelObserver = null;
@@ -2264,9 +2263,12 @@ export class JotDropView extends ItemView {
       let expectedContent = content;
       const controller = cardPreview(preview, previewRows, {
         isTask: (row: { index?: number }) => row.index !== undefined,
-        render: (row: { text: string; index?: number; checked?: boolean }) => {
-          const el = createDiv({ cls: row.index === undefined ? "jotdrop-preview-line" : "jotdrop-preview-task" });
-          if (row.index === undefined) el.setText(row.text);
+        // Like Keep: only a note of nothing but tasks is a checklist card; elsewhere a task reads as ☐/☑ text.
+        isChecked: (row: { checked?: boolean }) => Boolean(row.checked),
+        isMeta: (row: { text: string }) => tagOnly(row.text),
+        render: (row: { text: string; index?: number; checked?: boolean }, asText: boolean) => {
+          const el = createDiv({ cls: row.index === undefined || asText ? "jotdrop-preview-line" : "jotdrop-preview-task" });
+          if (row.index === undefined || asText) el.setText(row.text);
           else {
             renderInlinePreview(el, row.text, row.index);
             wrapTaskText(el);
@@ -2275,14 +2277,11 @@ export class JotDropView extends ItemView {
           }
           return el;
         },
-        expanded: () => this.expandedPreviews.has(file.path),
-        toggle: () => this.expandedPreviews.has(file.path) ? this.expandedPreviews.delete(file.path) : this.expandedPreviews.add(file.path),
         height: () => this.contentEl.clientHeight - (this.contentEl.querySelector<HTMLElement>(".jotdrop-toolbar")?.offsetHeight || 0),
         resizeTarget: this.contentEl,
-        scroller: () => this.contentEl,
-        more: t("preview_more"), less: t("preview_less"),
         truncated: plainTruncated,
         openLabel: (n: number) => n ? t(n === 1 ? "preview_open_one" : "preview_open_many", String(n)) : t("preview_open"),
+        checkedLabel: (n: number) => t(n === 1 ? "preview_checked_one" : "preview_checked_many", String(n)),
         open: () => { if (this.selectionMode) this.toggleSelect(file.path); else this.openEditModal(file, openedAttachment); },
       });
       this.cardPreviews.push(controller);
@@ -2303,6 +2302,8 @@ export class JotDropView extends ItemView {
             expectedContent = updated;
             const row = previewRows.find((item) => item.index === index);
             if (row) { row.checked = !row.checked; row.text = row.text.replace(/[☐☑]/, row.checked ? "☑" : "☐"); }
+            // Once the pen has struck it through, the ticked task joins "+ N checked items" (like Keep).
+            window.setTimeout(() => controller.fit(), STRIKE_MS + 50);
           });
           return;
         }
