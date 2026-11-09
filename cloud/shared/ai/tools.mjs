@@ -79,7 +79,8 @@ function check(schema, value, path) {
     if (value === null || typeof value !== 'object' || Array.isArray(value)) return `${path} must be an object`;
     for (const key of schema.required ?? []) if (value[key] === undefined) return `${path}.${key} is missing`;
     for (const key of Object.keys(value)) {
-      if (!schema.properties[key]) return `${path}.${key} is not allowed`;
+      // Own keys only: `constructor` or `__proto__` must not pass as a property of Object.prototype.
+      if (!Object.hasOwn(schema.properties, key)) return `${path}.${key} is not allowed`;
       const problem = check(schema.properties[key], value[key], `${path}.${key}`);
       if (problem) return problem;
     }

@@ -61,3 +61,10 @@ test('the system prompt: places filled, the rules about notes as data are in it'
   assert.doesNotMatch(bare, /\{\{|undefined/);
   assert.match(bare, /no labels yet/);
 });
+
+test('a key that Object.prototype has is not a property of a tool', () => {
+  const create = toolByName('create_note');
+  assert.equal(validateInput(create, JSON.parse('{"title":"x","constructor":"y"}')), 'input.constructor is not allowed');
+  assert.equal(validateInput(create, JSON.parse('{"title":"x","__proto__":"y"}')), 'input.__proto__ is not allowed');
+  assert.equal(validateInput(create, JSON.parse('{"title":"x","toString":"y"}')), 'input.toString is not allowed');
+});
