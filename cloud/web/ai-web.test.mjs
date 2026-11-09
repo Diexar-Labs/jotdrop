@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { aiNotes, appendedText, aiSettings, describeChange, editorRequest, expiryChanges, labelChanges, newNoteText, reminderChanges, replacedText, WEB_PROVIDERS } from './ai-web.mjs';
+import { aiNotes, appendedText, modelGroups, aiSettings, describeChange, editorRequest, expiryChanges, labelChanges, newNoteText, reminderChanges, replacedText, WEB_PROVIDERS } from './ai-web.mjs';
 import { noteSummary, updateMetadata } from './note.mjs';
 
 const note = (path, text, extra = {}) => ({ id: `id-${path}`, path, text, modifiedAt: '2026-11-09T10:00:00Z', ...extra });
@@ -112,4 +112,28 @@ test('the editor buttons ask for the new text only, so it can replace or follow 
   }
   assert.match(editorRequest('checklist', 'x'), /- \[ \]/);
   assert.throws(() => editorRequest('delete', 'x'));
+});
+
+test('a long model list comes in groups: suggested first, then per company, models without tools last', () => {
+  const models = [
+    { id: 'qwen/qwen-x', name: 'Qwen X', tools: true },
+    { id: 'mistralai/mistral-nemo', name: 'Mistral Nemo', tools: true },
+    { id: 'anthropic/claude-haiku-5.5', name: 'Claude Haiku 5.5', tools: true },
+    { id: 'openai/gpt-6-luna', name: 'GPT-6 Luna', tools: true },
+    { id: 'anthropic/claude-sonnet-5.5', name: 'Claude Sonnet 5.5', tools: true },
+    { id: 'old/model', name: 'Old', tools: false },
+  ];
+  const groups = modelGroups('openrouter', models, 'mistralai/mistral-nemo');
+  assert.deepEqual(groups.map((group) => [group.label, group.models.map((model) => model.id)]), [
+    ['Suggested', ['anthropic/claude-haiku-5.5', 'openai/gpt-6-luna', 'mistralai/mistral-nemo']],
+    ['anthropic', ['anthropic/claude-haiku-5.5', 'anthropic/claude-sonnet-5.5']],
+    ['mistralai', ['mistralai/mistral-nemo']],
+    ['openai', ['openai/gpt-6-luna']],
+    ['qwen', ['qwen/qwen-x']],
+    ['Cannot use tools', ['old/model']],
+  ]);
+  // A service with its own models only: one group, the default suggested.
+  const own = modelGroups('anthropic', [{ id: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5', tools: true }, { id: 'claude-haiku-5-5', name: 'Claude Haiku 5.5', tools: true }], 'claude-haiku-5-5');
+  assert.deepEqual(own.map((group) => [group.label, group.models.map((model) => model.id)]), [['Suggested', ['claude-haiku-5-5']], ['All models', ['claude-haiku-5-5', 'claude-sonnet-5-5']]]);
+  assert.deepEqual(modelGroups('ollama', []), []);
 });

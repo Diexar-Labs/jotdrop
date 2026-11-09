@@ -134,3 +134,31 @@ export function editorRequest(kind, title) {
   if (!Object.hasOwn(EDITOR_REQUESTS, kind)) throw new Error('Unknown request.');
   return EDITOR_REQUESTS[kind](oneLine(title) || 'Untitled');
 }
+
+// On OpenRouter the cheap, tool-capable models of the big three, checked against its list on 9 Nov 2026.
+const SUGGESTED = { openrouter: ['anthropic/claude-haiku-5.5', 'openai/gpt-6-luna', 'google/gemini-3.5-flash-lite'] };
+
+/**
+ * A model list for a plain select, in groups: Suggested (fixed picks and the default, when the service has them),
+ * then one group per company (the part before "/"), or "All models" when ids carry no company, and at the end the
+ * models that cannot use tools. 400 models in one flat list cannot be read (Eric, 9 Nov 2026).
+ */
+export function modelGroups(provider, models, preferred) {
+  const byName = (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id);
+  const usable = models.filter((model) => model.tools !== false).sort(byName);
+  const other = models.filter((model) => model.tools === false).sort(byName);
+  const groups = [];
+  const suggested = [...new Set([...(SUGGESTED[provider] ?? []), preferred].filter(Boolean))].map((id) => usable.find((model) => model.id === id)).filter(Boolean);
+  if (suggested.length) groups.push({ label: 'Suggested', models: suggested });
+  if (usable.some((model) => model.id.includes('/'))) {
+    const companies = new Map();
+    for (const model of usable) {
+      const company = model.id.includes('/') ? model.id.split('/')[0] : 'Other';
+      if (!companies.has(company)) companies.set(company, []);
+      companies.get(company).push(model);
+    }
+    for (const company of [...companies.keys()].sort((a, b) => a.localeCompare(b))) groups.push({ label: company, models: companies.get(company) });
+  } else if (usable.length) groups.push({ label: 'All models', models: usable });
+  if (other.length) groups.push({ label: 'Cannot use tools', models: other });
+  return groups;
+}

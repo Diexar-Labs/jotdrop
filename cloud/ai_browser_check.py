@@ -87,6 +87,22 @@ def check_ai(browser, url, token):
     page.on("dialog", lambda dialog: dialog.accept())
     fake = FakeAnthropic()
     context.route("https://api.anthropic.com/**", fake.handle)
+    openrouter_calls = []
+
+    def openrouter(route):
+        cors = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "*"}
+        if route.request.method == "OPTIONS":
+            route.fulfill(status=204, headers=cors)
+            return
+        openrouter_calls.append(route.request.headers)
+        models = [
+            {"id": "mistralai/mistral-nemo", "name": "Mistral Nemo", "supported_parameters": ["tools"], "pricing": {"prompt": "0.00000002", "completion": "0.00000004"}},
+            {"id": "anthropic/claude-haiku-5.5", "name": "Claude Haiku 5.5", "supported_parameters": ["tools", "temperature"], "pricing": {"prompt": "0.0000001", "completion": "0.0000005"}},
+            {"id": "old/model", "name": "Old Model", "supported_parameters": ["temperature"], "pricing": {"prompt": "0.00000001", "completion": "0.00000001"}},
+        ]
+        route.fulfill(status=200, headers={**cors, "Content-Type": "application/json"}, body=json.dumps({"data": models}))
+
+    context.route("https://openrouter.ai/**", openrouter)
     to_jotdrop = []
     page.on("request", lambda request: to_jotdrop.append({"url": request.url, "headers": request.headers, "body": request.post_data_buffer or b""}) if request.url.startswith(url) else None)
 
@@ -152,6 +168,28 @@ def check_ai(browser, url, token):
         page.locator("#ai-message").filter(has_text="did not accept the key").wait_for()
         assert BAD_KEY not in page.locator("body").inner_text()
         assert "[hidden]" in page.locator("#ai-message").inner_text()
+        # A problem says so in words, and only a problem is red.
+        assert page.locator("#ai-message").inner_text().startswith("Problem: ")
+        assert "message" in page.locator("#ai-message").get_attribute("class")
+        # OpenRouter: every model shows in the list, not only the family of the one filled in (Eric, 9 Nov).
+        page.locator("#ai-provider").select_option("openrouter")
+        page.locator("#ai-key").fill("sk-or-test-0123456789abcdef")
+        page.locator("#ai-test").click()
+        page.locator("#ai-message").filter(has_text="Connected: 3 models").wait_for()
+        assert page.locator("#ai-model").input_value() == "mistralai/mistral-nemo"
+        assert "cheapest one here that can use tools" in page.locator("#ai-message").inner_text()
+        # Success reads as plain text, not in the red of a problem.
+        assert "message" not in (page.locator("#ai-message").get_attribute("class") or "")
+        groups = [group.get_attribute("label") for group in page.locator("#ai-model-list optgroup").all()]
+        assert groups == ["Suggested", "anthropic", "mistralai", "Cannot use tools: answers only, no changes"], groups
+        suggested = page.locator('#ai-model-list optgroup[label="Suggested"] option').all_inner_texts()
+        assert suggested == ["Claude Haiku 5.5 (anthropic/claude-haiku-5.5)", "Mistral Nemo (mistralai/mistral-nemo)"], suggested
+        assert page.locator("#ai-model-list option").first.inner_text() == "Choose one of 3 models"
+        page.locator("#ai-model-list").select_option("anthropic/claude-haiku-5.5")
+        assert page.locator("#ai-model").input_value() == "anthropic/claude-haiku-5.5"
+        assert openrouter_calls and openrouter_calls[-1].get("x-title") == "JotDrop"
+        page.locator("#ai-provider").select_option("anthropic")
+        assert page.locator("#ai-model-pick").is_hidden() and page.locator("#ai-model").input_value() == ""
         # The right key loads the models; the default model is chosen.
         page.locator("#ai-key").fill(KEY)
         page.locator("#ai-test").click()
@@ -323,7 +361,7 @@ def check_ai(browser, url, token):
         assert not page.evaluate("document.documentElement.scrollWidth > innerWidth")
         page.locator("#ai-close").click()
         assert not errors, errors
-        return {"off_until_chosen": True, "wrong_key_hidden": True, "key_sealed": True, "list_before_sending": True, "cleared_note_stays_home": True,
+        return {"off_until_chosen": True, "wrong_key_hidden": True, "key_sealed": True, "openrouter_full_list": True, "list_before_sending": True, "cleared_note_stays_home": True,
                 "answer_with_source": True, "change_waits_for_yes": True, "new_note_at_once": True, "injection_refused": True,
                 "editor_sends_draft_only": True, "report_without_notes": True, "summary_from_card": True, "csp_blocks_other_hosts": True,
                 "no_note_text_to_jotdrop": True, "requests_to_jotdrop": len(to_jotdrop), "requests_to_fake": len(fake.calls), "mobile_overflow": False}

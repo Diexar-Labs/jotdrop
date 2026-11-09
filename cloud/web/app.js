@@ -15,7 +15,7 @@ import { createDrawingEditor } from '/shared/drawing-editor.mjs';
 import { AiError, createProvider, pickDefaultModel } from '/shared/ai/providers.mjs';
 import { runAssistant } from '/shared/ai/assistant.mjs';
 import { selectNotes } from '/shared/ai/context.mjs';
-import { AI_STORE_PATH, WEB_PROVIDERS, aiNotes, aiSettings, appendedText, describeChange, editorRequest, expiryChanges, labelChanges, newNoteText, reminderChanges, replacedText } from '/ai-web.mjs';
+import { AI_STORE_PATH, WEB_PROVIDERS, aiNotes, modelGroups, aiSettings, appendedText, describeChange, editorRequest, expiryChanges, labelChanges, newNoteText, reminderChanges, replacedText } from '/ai-web.mjs';
 import { DEFAULT_WARN, INTRO, PAPER_DRAWER, SUGGESTED_DRAWERS, WARN_OPTIONS, drawerLabel, drawerName, expiresBadge, inDrawer, isPaperDrawer, validExpires, warnReminder, withPaperDrawer } from '/shared/paper.mjs';
 
 // The server sees this page as the web app; it has no version of its own, because a reload always brings the current one.
@@ -4256,8 +4256,29 @@ function renderAiSettings() {
   $('ai-key').value = '';
   showAiProvider();
 }
+// The service's models as a plain list in groups. A suggestion list (datalist) showed only the models matching what
+// was already in the field, so after the default was filled in it showed one family only (Eric, 9 Nov 2026).
+function showAiModels(models, preferred) {
+  const label = (model) => model.name === model.id ? model.id : `${model.name} (${model.id})`;
+  const groups = modelGroups($('ai-provider').value, models, preferred).map((group) => {
+    const element = document.createElement('optgroup');
+    element.label = group.label === 'Suggested' ? 'Suggested' : group.label === 'Cannot use tools' ? 'Cannot use tools: answers only, no changes' : group.label;
+    element.append(...group.models.map((model) => new Option(label(model), model.id)));
+    return element;
+  });
+  $('ai-model-list').replaceChildren(new Option(`Choose one of ${models.length} models`, ''), ...groups);
+  $('ai-model-list').value = models.some((model) => model.id === $('ai-model').value) ? $('ai-model').value : '';
+  $('ai-model-pick').hidden = !models.length;
+}
+function aiSay(text, problem = false) {
+  $('ai-message').textContent = problem && text ? `Problem: ${text}` : text;
+  $('ai-message').classList.toggle('message', problem);
+  $('ai-message').classList.toggle('ai-said', !problem);
+}
+$('ai-model-list').addEventListener('change', () => { if ($('ai-model-list').value) $('ai-model').value = $('ai-model-list').value; });
+$('ai-model').addEventListener('input', () => { $('ai-model-list').value = [...$('ai-model-list').options].some((option) => option.value === $('ai-model').value) ? $('ai-model').value : ''; });
 $('ai-provider').addEventListener('change', () => {
-  $('ai-models').replaceChildren();
+  showAiModels([]);
   if ($('ai-provider').value !== aiConfig.provider) $('ai-model').value = '';
   showAiProvider();
 });
@@ -4268,28 +4289,29 @@ function aiFormSettings() {
 }
 $('ai-form').addEventListener('submit', async (event) => {
   event.preventDefault();
-  $('ai-message').textContent = '';
+  aiSay('');
   try {
     const next = aiFormSettings();
     if (next.provider && WEB_PROVIDERS[next.provider].needsKey && !next.key) throw new Error('Paste your API key first.');
     await saveAiSettings(next);
     renderAiSettings();
-    $('ai-message').textContent = next.provider ? 'Saved. Ask JotDrop is on in this browser.' : 'Saved. Ask JotDrop is off.';
-  } catch (error) { $('ai-message').textContent = aiErrorText(error); }
+    aiSay(next.provider ? 'Saved. Ask JotDrop is on in this browser.' : 'Saved. Ask JotDrop is off.');
+  } catch (error) { aiSay(aiErrorText(error), true); }
 });
 // Asking for the model list checks key and connection; no note goes along.
 $('ai-test').addEventListener('click', async () => {
-  $('ai-message').textContent = 'Asking the AI service for its models...';
+  aiSay('Asking the AI service for its models...');
   $('ai-test').disabled = true;
   try {
     const config = aiFormSettings();
     const models = await createProvider({ ...config, model: config.model || 'any' }).listModels({ signal: AbortSignal.timeout(20000) });
-    $('ai-models').replaceChildren(...models.map((model) => new Option(model.tools === false ? `${model.name} (cannot use tools)` : model.name, model.id)));
-    if (!$('ai-model').value) $('ai-model').value = pickDefaultModel(config.provider, models) ?? '';
+    const picked = !$('ai-model').value, preferred = pickDefaultModel(config.provider, models);
+    if (picked) $('ai-model').value = preferred ?? '';
+    showAiModels(models, preferred);
     const chosen = $('ai-model').value, found = models.find((model) => model.id === chosen);
-    const about = !chosen ? 'Choose a model.' : !found ? `"${chosen}" is not in the list of this service.` : found.tools === false ? `"${chosen}" cannot use tools: it can answer, but not make or change notes.` : `Model: ${chosen}.`;
-    $('ai-message').textContent = `Connected: ${models.length} ${models.length === 1 ? 'model' : 'models'}. ${about} Select Save to keep this.`;
-  } catch (error) { $('ai-message').textContent = aiErrorText(error, $('ai-provider').value); }
+    const about = !chosen ? 'Choose a model.' : !found ? `"${chosen}" is not in the list of this service.` : found.tools === false ? `"${chosen}" cannot use tools: it can answer, but not make or change notes.` : picked && config.provider === 'openrouter' ? `Model: ${chosen}, the cheapest one here that can use tools. Choose another one from the list if you like.` : `Model: ${chosen}.`;
+    aiSay(`Connected: ${models.length} ${models.length === 1 ? 'model' : 'models'}. ${about} Select Save to keep this.`);
+  } catch (error) { aiSay(aiErrorText(error, $('ai-provider').value), true); }
   finally { $('ai-test').disabled = !WEB_PROVIDERS[$('ai-provider').value]; }
 });
 $('ai-remove').addEventListener('click', async () => {
@@ -4297,9 +4319,9 @@ $('ai-remove').addEventListener('click', async () => {
     await store('delete', aiStoreKey());
     aiConfig = aiSettings();
     renderAiSettings();
-    $('ai-models').replaceChildren();
-    $('ai-message').textContent = 'Ask JotDrop is off, and the key is removed from this browser.';
-  } catch (error) { $('ai-message').textContent = aiErrorText(error); }
+    showAiModels([]);
+    aiSay('Ask JotDrop is off, and the key is removed from this browser.');
+  } catch (error) { aiSay(aiErrorText(error), true); }
 });
 
 // The notes on screen in the form the assistant reads. In a group every note is shared; at home, a note with a live list link is.

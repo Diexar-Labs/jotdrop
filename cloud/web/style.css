@@ -464,6 +464,7 @@ html { scrollbar-color: color-mix(in srgb, var(--ink) 35%, transparent) transpar
 
 
 /* Ask JotDrop: settings, the dialog, the confirmation and the answer. Meaning is in words and signs, never only in color. */
+.ai-said { min-height: 1.5em; margin: 0 0 1rem; }
 .ai-note { color: var(--muted); font-size: .9rem; margin: .4rem 0 .8rem; }
 .ai-model-row, .ai-ask-row, .ai-form-actions { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: .5rem 0; }
 .ai-model-row input { flex: 1; min-width: 12rem; font-family: ui-monospace, monospace; }
