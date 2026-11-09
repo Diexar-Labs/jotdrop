@@ -8,10 +8,13 @@ import { readFile, rm } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { decryptEnvelope, encryptEnvelope, isSpacePath, MAX_FILE_BYTES } from '../../shared/crypto.mjs';
 import { noteSummary, splitNote } from '../../web/note.mjs';
+import { isOffline } from './network.mjs';
 import { writePrivate } from './store.mjs';
 
 const decoder = new TextDecoder('utf-8', { fatal: true });
 const aad = (vaultId) => `jotdrop:mcp-cache:v1:${vaultId}`;
+// A file that does not open (it does not decrypt): no cloud status, not the network, not a programming error.
+const unreadable = (error) => error?.status === undefined && !isOffline(error) && !(error instanceof TypeError);
 
 /** True for a path that is one of the user's own notes the agent may see. */
 export const isMirrored = (path) => /^notes\/.+\.md$/i.test(path) && !/^notes\/Trash\//i.test(path) && !isSpacePath(path);
@@ -89,16 +92,18 @@ export class Mirror {
       // Cleared from the cloud (a free plan's trash after 30 days): gone here too.
       if (error.status === 404) { delete index.objects[id]; this.byId.delete(id); delete index.pending[id]; return; }
       // A file that does not open (no cloud status, not the network) is left out; one bad file stops nothing.
-      if (error.status === undefined && !(error instanceof TypeError) && !['AbortError', 'TimeoutError'].includes(error.name)) { delete index.pending[id]; return; }
+      if (unreadable(error)) { delete index.pending[id]; return; }
       throw error;
     }
     const { manifest } = entry, path = manifest.path;
     index.objects[id] = { path, revision: entry.revision, deleted: Boolean(entry.deleted) };
     delete index.pending[id];
     if (entry.deleted || !isMirrored(path) || manifest.size > MAX_FILE_BYTES) { this.byId.delete(id); return; }
-    let text;
-    try { text = decoder.decode(await this.client.readPieces(id, manifest)); }
-    catch (error) { if (error.status !== undefined || error instanceof TypeError) throw error; this.byId.delete(id); return; }
+    let bytes, text;
+    try { bytes = await this.client.readPieces(id, manifest); }
+    catch (error) { if (!unreadable(error)) throw error; this.byId.delete(id); return; }
+    // Not UTF-8 (say a Windows-1252 file renamed to .md): left out like a file that does not open.
+    try { text = decoder.decode(bytes); } catch { this.byId.delete(id); return; }
     this.byId.set(id, noteView(path, text, { revision: entry.revision, updatedAt: manifest.modifiedAt }));
   }
 

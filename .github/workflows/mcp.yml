@@ -1,0 +1,47 @@
+name: jotdrop-mcp
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "cloud/mcp/**"
+      - "cloud/shared/**"
+      - "cloud/web/note.mjs"
+      - "cloud/server.mjs"
+      - ".github/workflows/mcp.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "cloud/mcp/**"
+      - "cloud/shared/**"
+      - "cloud/web/note.mjs"
+      - "cloud/server.mjs"
+      - ".github/workflows/mcp.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # The lowest Node in "engines", and the current LTS.
+        node: ["22", "26"]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: cloud/mcp/package-lock.json
+
+      - name: Core tests (no SDK, against an in-process cloud)
+        run: node --test "cloud/mcp/src/*.test.mjs" "cloud/shared/**/*.test.mjs"
+
+      - name: MCP layer, bundle and audit (check:mcp)
+        run: npm run check:mcp

@@ -6,12 +6,13 @@ import { CloudClient, identifyClient } from '../../shared/client.mjs';
 import { base64ToBytes } from '../../shared/crypto.mjs';
 import { redact } from '../../shared/ai/redact.mjs';
 import { Mirror } from './mirror.mjs';
+import { isOffline } from './network.mjs';
 import { createNotes } from './notes.mjs';
 import { loadProfile, mcpHome, profileName, profilePaths, removeProfile, saveProfile } from './store.mjs';
 import { VERSION } from './version.mjs';
 
 const flag = (profile) => (profile === 'default' ? '' : ` --profile ${profile}`);
-const offline = (error) => error instanceof TypeError || ['AbortError', 'TimeoutError'].includes(error?.name);
+const offline = isOffline;
 
 function claimError(error, code) {
   const say = (message) => Object.assign(new Error(message), error?.code ? { code: error.code } : {});
@@ -55,8 +56,11 @@ export async function connect({ pairingCode, home = mcpHome(), profile = 'defaul
   // Saved before anything else can fail, so the new device is never left without its key on this computer.
   await saveProfile(home, name, { ...client.credentials, deviceName, connectedAt: new Date().toISOString() });
   const mirror = new Mirror({ client, cachePath: profilePaths(home, name).cache });
-  await mirror.refresh();
-  return { profile: name, deviceName, url: client.credentials.url, notes: mirror.notes().length };
+  // The device exists and its key is saved: a failed first sync must not look like a failed connection, because a
+  // second connect would only say "already connected". The first tool call or `status` syncs again.
+  try { await mirror.refresh(); }
+  catch { return { profile: name, deviceName, url: client.credentials.url, notes: null, synced: false }; }
+  return { profile: name, deviceName, url: client.credentials.url, notes: mirror.notes().length, synced: true };
 }
 
 /** The connected device, its notes and plan, and whether the cloud answers. Never the key or token. */

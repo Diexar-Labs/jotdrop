@@ -12,7 +12,7 @@ test('a pairing code from the app connects jotdrop-mcp as its own device, with t
   await cloud.write('notes/2026-11-09 101500 Boodschappen.md', '# Boodschappen\n\n- [ ] melk');
   const code = await cloud.pairingCode('Claude op mijn pc');
   const result = await connect({ pairingCode: `  ${code.slice(0, 20)}\n${code.slice(20)} `, home: cloud.home });
-  assert.deepEqual({ ...result, url: undefined }, { profile: 'default', deviceName: 'Claude op mijn pc', url: undefined, notes: 1 });
+  assert.deepEqual({ ...result, url: undefined }, { profile: 'default', deviceName: 'Claude op mijn pc', url: undefined, notes: 1, synced: true });
   assert.equal(result.url, cloud.url);
   const saved = await loadProfile(cloud.home, 'default');
   assert.equal(saved.deviceName, 'Claude op mijn pc');
@@ -118,4 +118,18 @@ test('no console logging anywhere in cloud/mcp: stdout belongs to the protocol',
   const files = (await walk(root)).filter((file) => /\.(mjs|js|cjs)$/.test(file.pathname));
   assert.ok(files.length >= 6);
   for (const file of files) assert.ok(!pattern.test(await readFile(file, 'utf8')), file.pathname);
+});
+
+test('when the first sync after pairing fails, connect still reports the connection, so the user is not stuck', async (t) => {
+  const cloud = await cloudFixture(t);
+  await cloud.write('notes/Lijst.md', '# Boodschappen');
+  // The claim goes through; the network drops right after, when the notes are read.
+  const fetcher = (url, ...rest) => (String(url).includes('/changes') ? Promise.reject(new TypeError('fetch failed')) : fetch(url, ...rest));
+  const result = await connect({ pairingCode: await cloud.pairingCode('Claude op mijn pc'), home: cloud.home, fetcher });
+  assert.deepEqual({ ...result, url: undefined }, { profile: 'default', deviceName: 'Claude op mijn pc', url: undefined, notes: null, synced: false });
+  assert.ok(await loadProfile(cloud.home, 'default'), 'the key is saved with the new device');
+  // Later, with the network back, status and a session simply work.
+  assert.equal((await status({ home: cloud.home })).reachable, true);
+  const session = await openSession({ home: cloud.home });
+  assert.equal((await session.notes.call('search_notes', { query: '' })).data.length, 1);
 });

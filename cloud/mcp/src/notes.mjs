@@ -12,6 +12,7 @@ import { neutralizeInlineHashtags } from '../../shared/hashtags.mjs';
 import { DEFAULT_WARN, drawerLabel, validExpires, warnReminder, withPaperDrawer } from '../../shared/paper.mjs';
 import { joinNote, noteFilename, noteSummary, splitNote, updateMetadata } from '../../web/note.mjs';
 import { createLimiter } from './limits.mjs';
+import { isOffline } from './network.mjs';
 
 const encoder = new TextEncoder();
 export const READ_NOTE_CHARS = 20000;
@@ -45,7 +46,7 @@ export const MCP_TOOLS = [
 ];
 
 class ToolError extends Error {}
-const offline = (error) => error instanceof TypeError || ['AbortError', 'TimeoutError'].includes(error?.name) || [502, 503, 504].includes(error?.status);
+const offline = isOffline;
 const escapeAttribute = (value) => String(value).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 // A note's text cannot open or close a note element of its own.
 const escapeBody = (value) => String(value ?? '').replace(/<(\/?)(note)/gi, '&lt;$1$2');

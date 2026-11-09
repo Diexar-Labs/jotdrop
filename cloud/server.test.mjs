@@ -1022,3 +1022,42 @@ test('encrypted files, authorization and history survive verified backup and ser
   assert.equal((await reopened.read(saved.id)).file.path, 'notes/persist.md');
   assert.equal((await reopened.history(saved.id)).versions.length, 1);
 });
+
+test('the sleeping Plus switch for jotdrop-mcp: off lets an mcp client on a free cloud in, on refuses it with plus-required', async (t) => {
+  t.after(() => identifyClient());
+  for (const mcpPlusOnly of [false, true]) {
+    const app = await fixture(t, { mcpPlusOnly });
+    identifyClient('android', '0.28.50');
+    const { client } = await app.create('Phone');
+    const db = new DatabaseSync(app.dbPath, { timeout: 5000 });
+    const hits = () => db.prepare("SELECT COALESCE(SUM(times),0) AS times FROM limit_hits WHERE kind='mcp'").get().times;
+    // Pairing a free cloud with jotdrop-mcp.
+    const code = (await client.makePairing('Claude')).pairingCode;
+    identifyClient('mcp', '0.1.0');
+    if (!mcpPlusOnly) {
+      const agent = await CloudClient.claim({ pairingCode: code });
+      assert.equal((await agent.status()).plan.name, 'free');
+      assert.equal(hits(), 0);
+    } else {
+      await assert.rejects(CloudClient.claim({ pairingCode: code }), (error) => error.status === 403 && error.code === 'plus-required' && /Plus/.test(error.message));
+      assert.equal(db.prepare('SELECT COUNT(*) AS count FROM devices WHERE vaultId=? AND revoked=0').get(client.credentials.vaultId).count, 1, 'no device was added');
+      assert.equal(hits(), 1, 'counted as a limit that Plus sells');
+      // A device that was paired before the switch went on, and still says it is jotdrop-mcp.
+      identifyClient('android', '0.28.50');
+      const earlier = await CloudClient.claim({ pairingCode: (await client.makePairing('Claude')).pairingCode });
+      identifyClient('mcp', '0.1.0');
+      await assert.rejects(earlier.status(), (error) => error.status === 403 && error.code === 'plus-required');
+      // The phone itself is not an mcp client and keeps working.
+      identifyClient('android', '0.28.50');
+      assert.equal((await client.status()).plan.name, 'free');
+      // With Plus the agent pairs and works.
+      db.prepare('INSERT INTO plans VALUES(?,?,0) ON CONFLICT(vaultId) DO UPDATE SET plusUntil=excluded.plusUntil').run(client.credentials.vaultId, Date.now() + 86_400_000);
+      const plusCode = (await client.makePairing('Claude')).pairingCode;
+      identifyClient('mcp', '0.1.0');
+      const agent = await CloudClient.claim({ pairingCode: plusCode });
+      assert.equal((await agent.status()).plan.name, 'plus');
+      assert.equal((await earlier.status()).plan.name, 'plus');
+    }
+    db.close();
+  }
+});

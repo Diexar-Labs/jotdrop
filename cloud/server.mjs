@@ -228,7 +228,7 @@ async function body(req, maximum = MAX_BODY) {
 }
 
 /** Loopback-only server behind a trusted HTTPS proxy. Accounts need a mailer; no billing or provider credentials. `quotaBytes` and `freeDeviceLimit` are the free plan's limits. */
-export async function createCloudServer({ dataDir, enrollmentToken, mailer, newsletter, serverKey, stripe, reviewLogin, oauth = {}, fetcher = globalThis.fetch, quotaBytes = 250 * 1024 * 1024, plusQuotaBytes = 10 * 1024 * 1024 * 1024, maxFileBytes = 25 * 1024 * 1024, plusMaxFileBytes = 200 * 1024 * 1024, freeDeviceLimit = 2, maxHistoryEntries = 100000, maxDeviceEntries = 1000, maxPairingEntries = 128, maxConcurrentRequests = 16, signupsPerAddress = 5, signupTrial = TRIAL_TIME, roadmap = ROADMAP, earlyFeatures = EARLY_FEATURES, turnstile, webRoot = join(directory, 'web'), corsOrigins = [], publicOrigin, adminOrigin, adminPasswordHash, adminTotpSecret, adminRoot = join(directory, 'admin'), port = 0, enrollmentLimit = 1, sweepEvery = 60 * 60 * 1000, clock = Date.now, mailDomain, mailinToken, backupLog }) {
+export async function createCloudServer({ dataDir, enrollmentToken, mailer, newsletter, serverKey, stripe, reviewLogin, oauth = {}, fetcher = globalThis.fetch, quotaBytes = 250 * 1024 * 1024, plusQuotaBytes = 10 * 1024 * 1024 * 1024, maxFileBytes = 25 * 1024 * 1024, plusMaxFileBytes = 200 * 1024 * 1024, freeDeviceLimit = 2, maxHistoryEntries = 100000, maxDeviceEntries = 1000, maxPairingEntries = 128, maxConcurrentRequests = 16, signupsPerAddress = 5, signupTrial = TRIAL_TIME, roadmap = ROADMAP, earlyFeatures = EARLY_FEATURES, turnstile, webRoot = join(directory, 'web'), corsOrigins = [], publicOrigin, adminOrigin, adminPasswordHash, adminTotpSecret, adminRoot = join(directory, 'admin'), port = 0, enrollmentLimit = 1, sweepEvery = 60 * 60 * 1000, clock = Date.now, mailDomain, mailinToken, backupLog, mcpPlusOnly = false }) {
   if (!dataDir || (enrollmentToken !== undefined && !validToken(enrollmentToken)) || [quotaBytes, plusQuotaBytes, freeDeviceLimit].some((value) => !Number.isSafeInteger(value) || value < 1)) throw new Error('Provide a data directory, random 32-byte enrollment token and positive quota.');
   if (mailer !== undefined && typeof mailer !== 'function') throw new Error('Provide the mailer as a function.');
   // Google Play reviewers cannot receive email codes: this one address confirms with a fixed code and gets no mail. The password stays required.
@@ -562,6 +562,8 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   // A refusal that JotDrop Plus or the family plan lifts. The kind is counted for the dashboard and never sent.
   const planLimit = (kind, vaultId, status, message, extra = { code: 'plus-required' }) => { throw Object.assign(new Error(message), { status, extra, limit: { kind, vaultId } }); };
   const storageFull = (vaultId) => isPlus(vaultId) ? fail(507, 'Cloud storage is full. Your local files remain available.', { code: 'storage-full' }) : planLimit('storage', vaultId, 507, 'Cloud storage is full. Your local files remain available.', { code: 'storage-full' });
+  // The sleeping switch JOTDROP_CLOUD_MCP_PLUS_ONLY: when on, jotdrop-mcp (an AI agent's device) needs Plus. Off by default.
+  const requireMcpPlus = (client, vaultId) => { if (mcpPlusOnly && client?.app === 'mcp' && !isPlus(vaultId)) planLimit('mcp', vaultId, 403, 'JotDrop MCP needs JotDrop Plus.'); };
   const deviceLimitReached = (vaultId, devices) => planLimit('devices', vaultId, 403, `The free plan includes ${freeDeviceLimit} devices. Sign out one of them, or try JotDrop Plus.`, { code: 'device-limit', deviceLimit: freeDeviceLimit, devices });
   // Who already counted this week stays in memory only, so the database never links a limit to an account.
   let limitWeek = { start: 0, seen: new Set() };
@@ -1809,6 +1811,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           if (pairing.claimed) fail(409, 'Pairing code already used');
           if (pairing.expiresAt <= clock()) fail(410, 'Pairing code expired');
           if (one('SELECT revoked FROM devices WHERE id=?', pairing.creatorId)?.revoked !== 0) fail(401, 'Pairing device no longer has access');
+          requireMcpPlus(clientHeader(req.headers['x-jotdrop-client']), pairing.vaultId);
           const created = addDevice(pairing.vaultId, pairing.deviceName, pairing.deviceTokenHash);
           run('UPDATE pairings SET claimed=1 WHERE id=?', pairing.id);
           return { ...created, envelope: pairing.envelope };
@@ -2156,6 +2159,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         // Optional activity metadata must not deny access when storage cannot be written.
         if (![5, 6, 8, 10, 13].includes(sqliteCode(error))) throw error; // BUSY, LOCKED, READONLY, IOERR, FULL.
       }
+      requireMcpPlus(client, device.vaultId);
       // Without this list a member could delete the space with /account/delete, add a device with /pairings or set /recovery.
       if (inSpace && !SPACE_ROUTES.some(([verb, pattern]) => verb === method && pattern.test(route))) fail(403, 'This is not available in a shared space.');
       // Members do not see each other's devices.
@@ -2753,7 +2757,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   if ((adminOrigin || adminPasswordHash || adminTotpSecret) && !(adminOrigin && adminPasswordHash && adminTotpSecret)) console.warn('Admin dashboard off: set JOTDROP_CLOUD_ADMIN_ORIGIN, JOTDROP_CLOUD_ADMIN_PASSWORD_HASH and JOTDROP_CLOUD_ADMIN_TOTP_SECRET together.');
   const reviewLogin = process.env.JOTDROP_CLOUD_REVIEW_EMAIL || process.env.JOTDROP_CLOUD_REVIEW_CODE ? { email: process.env.JOTDROP_CLOUD_REVIEW_EMAIL, code: process.env.JOTDROP_CLOUD_REVIEW_CODE } : undefined;
   const app = await createCloudServer({ dataDir: process.env.JOTDROP_CLOUD_DATA_DIR, reviewLogin, adminOrigin, adminPasswordHash, adminTotpSecret, enrollmentToken, mailer, newsletter, serverKey, stripe, oauth: { google: provider('GOOGLE'), github: provider('GITHUB') }, maxHistoryEntries: Number(process.env.JOTDROP_CLOUD_MAX_HISTORY_ENTRIES ?? 100000), maxDeviceEntries: Number(process.env.JOTDROP_CLOUD_MAX_DEVICE_ENTRIES ?? 1000), maxPairingEntries: Number(process.env.JOTDROP_CLOUD_MAX_PAIRING_ENTRIES ?? 128), maxConcurrentRequests: Number(process.env.JOTDROP_CLOUD_MAX_CONCURRENT_REQUESTS ?? 16), signupsPerAddress: Number(process.env.JOTDROP_CLOUD_SIGNUPS_PER_ADDRESS ?? 5), signupTrial: Number(process.env.JOTDROP_CLOUD_SIGNUP_TRIAL_DAYS ?? 14) * DAY, turnstile, publicOrigin: process.env.JOTDROP_CLOUD_PUBLIC_ORIGIN, port: Number(process.env.JOTDROP_CLOUD_PORT || 8787), corsOrigins: (process.env.JOTDROP_CLOUD_CORS_ORIGINS || '').split(',').map((entry) => entry.trim()).filter(Boolean),
-    mailDomain: process.env.JOTDROP_CLOUD_MAIL_DOMAIN || undefined, mailinToken: process.env.JOTDROP_CLOUD_MAILIN_TOKEN || undefined, backupLog: process.env.JOTDROP_CLOUD_BACKUP_LOG || undefined });
+    mailDomain: process.env.JOTDROP_CLOUD_MAIL_DOMAIN || undefined, mailinToken: process.env.JOTDROP_CLOUD_MAILIN_TOKEN || undefined, backupLog: process.env.JOTDROP_CLOUD_BACKUP_LOG || undefined, mcpPlusOnly: process.env.JOTDROP_CLOUD_MCP_PLUS_ONLY === '1' });
   console.log(`JotDrop Cloud listening on http://127.0.0.1:${app.port}.`);
   if (!process.env.JOTDROP_CLOUD_ENROLLMENT_TOKEN) console.log(`Single-use local enrollment token: ${enrollmentToken}`);
   for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { void app.close().then(() => process.exit(0)); });

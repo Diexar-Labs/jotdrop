@@ -1,0 +1,45 @@
+{
+  "name": "jotdrop-mcp",
+  "version": "0.1.0",
+  "description": "Let an AI agent (Claude, Cursor, Hermes, OpenClaw) search, read and write your JotDrop notes over MCP. Runs on your own computer; your notes stay end-to-end encrypted in JotDrop Cloud.",
+  "type": "module",
+  "bin": {
+    "jotdrop-mcp": "dist/jotdrop-mcp.mjs"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node build.mjs && node --test \"test/*.spec.mjs\"",
+    "prepack": "node build.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.4.0"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "2.4.0",
+    "esbuild": "0.28.2"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "jotdrop",
+    "notes",
+    "ai-agent",
+    "claude",
+    "end-to-end-encryption"
+  ],
+  "homepage": "https://jotdrop.net",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Diexar-Labs/jotdrop.git",
+    "directory": "cloud/mcp"
+  },
+  "license": "MIT"
+}

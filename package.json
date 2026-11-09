@@ -39,6 +39,7 @@
     "check:web-clipper-extension": "python cloud/clipper_extension_check.py",
     "check:transport-safety": "node scripts/check-transport-safety.cjs",
     "check:cloud": "node --test \"cloud/**/*.test.mjs\"",
+    "check:mcp": "npm --prefix cloud/mcp ci --no-fund && npm --prefix cloud/mcp test && npm --prefix cloud/mcp audit --omit=dev",
     "check:cloud-browser": "python cloud/browser_check.py",
     "check:cloud-photo": "python cloud/photo_browser_check.py",
     "check:cloud-drawing": "python cloud/drawing_browser_check.py",

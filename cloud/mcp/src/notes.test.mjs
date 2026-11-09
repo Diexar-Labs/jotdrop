@@ -232,3 +232,25 @@ test('tool calls that arrive at the same time run one after the other, and none 
   for (const result of results) ok(result);
   assert.equal(await cloud.read('notes/Lijst.md'), `# Boodschappen\n\n- [ ] melk\n${items.map((item) => `- [ ] ${item}`).join('\n')}`);
 });
+
+test('a .md that is not UTF-8 (a renamed Windows-1252 file) is left out, and never reads as "cloud unreachable"', async (t) => {
+  const { cloud, notes, mirror } = await setup(t);
+  await cloud.write('notes/Lijst.md', '# Boodschappen\n\n- [ ] melk');
+  // "Café" in Windows-1252: 0xE9 alone is not valid UTF-8.
+  await cloud.phone.write('notes/Oud.md', new Uint8Array([0x23, 0x20, 0x43, 0x61, 0x66, 0xe9, 0x0a]), 0);
+  const first = ok(await notes.call('search_notes', { query: '' }));
+  assert.deepEqual(first.data.map((hit) => hit.id), ['notes/Lijst.md']);
+  assert.doesNotMatch(first.text, /cannot reach|unreachable/i);
+  assert.equal(mirror.get('notes/Oud.md'), undefined);
+  ok(await notes.call('append_to_note', { id: 'notes/Lijst.md', items: ['brood'] }));
+  failed(await notes.call('read_note', { id: 'notes/Oud.md' }), /no note with this id/i);
+});
+
+test('a programming error inside a refresh is reported as an error, not as "cloud unreachable"', async (t) => {
+  const { cloud, notes, mirror } = await setup(t);
+  await cloud.write('notes/Lijst.md', '# Boodschappen');
+  ok(await notes.call('search_notes', { query: '' }));
+  mirror.refresh = async () => { throw new TypeError("Cannot read properties of undefined (reading 'path')"); };
+  const result = failed(await notes.call('search_notes', { query: '' }), /something went wrong/i);
+  assert.doesNotMatch(result.text, /unreachable|cannot reach/i);
+});
