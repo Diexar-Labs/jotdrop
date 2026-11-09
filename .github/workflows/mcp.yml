@@ -47,7 +47,7 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Core tests (no SDK, against an in-process cloud)
-        run: node --test "cloud/mcp/src/*.test.mjs" "cloud/shared/**/*.test.mjs"
+        run: node --test "cloud/mcp/src/*.test.mjs" "cloud/shared/ai/*.test.mjs" cloud/shared/hashtags.test.mjs
 
       - name: MCP layer, bundle and audit (check:mcp)
         run: npm run check:mcp
