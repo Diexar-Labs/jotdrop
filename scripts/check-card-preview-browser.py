@@ -53,9 +53,20 @@ with sync_playwright() as p:
                 assert int(host.get_attribute("data-hidden-tasks")) == count - 5
         page.evaluate("body=>showPreview('article',body)", "# Title\n" + "Article sentence. " * 300 + "\n- [ ] A\n- [ ] B\n- [x] C")
         card = page.locator('[data-name="article"]')
-        assert card.get_by_role("checkbox").count() == 0
+        # A long introduction is clipped to half the preview so the tasks after it stay visible.
+        assert card.locator("button[data-checklist-index]").count() == 3
         assert card.locator('[data-preview-action="toggle"]').count() == 0
-        assert card.locator('[data-preview-action="open"]').inner_text() == "Open note - 3 more tasks"
+        assert card.locator('[data-preview-action="open"]').inner_text() == "Open note"
+        intro = card.locator(".jotdrop-card-preview").evaluate("el=>({text:el.querySelector('.jotdrop-preview-line')?.textContent||'',bottom:el.querySelector('.jotdrop-preview-line').getBoundingClientRect().bottom-el.getBoundingClientRect().top,cap:parseFloat(el.style.maxHeight)})")
+        assert intro["text"].startswith("Article sentence.") and intro["text"].endswith("…"), intro
+        assert intro["bottom"] <= intro["cap"] / 2 + 1, intro
+        page.evaluate("body=>showPreview('article-many',body)", "# Title\n" + "Article sentence. " * 300 + "\n" + "\n".join(f"- [ ] M{i}" for i in range(12)))
+        many = page.locator('[data-name="article-many"]')
+        assert 2 <= many.locator("button[data-checklist-index]").count() <= 5
+        assert many.locator('[data-preview-action="open"]').inner_text().endswith("more tasks")
+        page.evaluate("body=>showPreview('tail',body)", "# Title\n- [ ] T1\n" + "Tail sentence. " * 300)
+        tail = page.locator('[data-name="tail"]').locator(".jotdrop-card-preview")
+        assert tail.evaluate("el=>el.querySelector('.jotdrop-preview-line').getBoundingClientRect().bottom-el.getBoundingClientRect().top > parseFloat(el.style.maxHeight)/2+1")
         shots = Path(tempfile.gettempdir()) / "kilo" / "compact-card-checks"
         shots.mkdir(parents=True, exist_ok=True)
         page.screenshot(path=str(shots / "obsidian-desktop.png"), full_page=True)

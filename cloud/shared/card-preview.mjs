@@ -11,15 +11,23 @@ export function cardPreview(host, rows, options) {
     host.replaceChildren();
     const height = Math.max(0, Math.min(expanded ? 320 : 200, options.height() * (expanded ? .6 : .4)));
     host.style.maxHeight = `${height}px`;
-    let tasks = 0, hidden = false, used = 0;
+    const max = expanded ? 10 : 5;
+    let lastTask = -1;
+    rows.forEach((row, i) => { if (options.isTask(row)) lastTask = i; });
+    let tasks = 0, hidden = false, used = 0, textUsed = 0, textFull = false;
     const nodes = [];
-    for (const row of rows) {
-      const task = options.isTask(row);
-      if (task && tasks >= (expanded ? 10 : 5)) { hidden = true; break; }
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i], task = options.isTask(row);
+      if (task && tasks >= max) { hidden = true; break; }
+      // Text with a visible task still to come may fill at most half the preview,
+      // so a long introduction cannot push every checkbox out of the card.
+      const capped = !task && i < lastTask && tasks < max;
+      if (capped && textFull) { hidden = true; continue; }
       const node = options.render(row);
       host.append(node);
       const top = node.getBoundingClientRect().top - host.getBoundingClientRect().top;
-      if (top + node.getBoundingClientRect().height > height + .5) {
+      const limit = capped ? Math.min(height, top + height / 2 - textUsed) : height;
+      if (top + node.getBoundingClientRect().height > limit + .5) {
         if (task) { node.remove(); hidden = true; break; }
         // A partial text block becomes plain text: clipped links must not remain focusable.
         const chars = Array.from(node.textContent || '');
@@ -27,17 +35,19 @@ export function cardPreview(host, rows, options) {
         while (low < high) {
           const mid = Math.ceil((low + high) / 2);
           node.textContent = chars.slice(0, mid).join('') + '…';
-          if (top + node.getBoundingClientRect().height <= height + .5) low = mid;
+          if (top + node.getBoundingClientRect().height <= limit + .5) low = mid;
           else high = mid - 1;
         }
         node.textContent = chars.slice(0, low).join('') + '…';
-        if (top + node.getBoundingClientRect().height > height + .5) node.remove();
+        if (top + node.getBoundingClientRect().height > limit + .5) node.remove();
         else nodes.push(node);
         hidden = true;
+        if (capped) { textFull = true; continue; }
         break;
       }
       nodes.push(node);
       used++;
+      if (capped) textUsed += node.getBoundingClientRect().height;
       if (task) {
         tasks++;
         const text = node.querySelector('[data-preview-task-text]');

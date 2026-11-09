@@ -105,9 +105,11 @@ wait_saved(index + 1, f'- [ ] task {index}')
 ui = snapshot()
 tap(text_node(ui, 'Less'))
 ui = search('compact-article')
-assert not any((node.get('content-desc') or '') in ['A', 'B', 'C'] for node in ui.iter('node'))
+# A long introduction is clipped to half the preview so the tasks after it stay visible.
+assert {'A', 'B', 'C'} <= {node.get('content-desc') or '' for node in ui.iter('node')}
 assert not any(node.get('text') == 'More' for node in ui.iter('node'))
-assert any('3 more tasks' in (node.get('text') or '') for node in ui.iter('node'))
+assert not any('more tasks' in (node.get('text') or '') for node in ui.iter('node'))
+assert any(node.get('text') == 'Open note' for node in ui.iter('node'))
 shots = Path(tempfile.gettempdir()) / 'kilo/compact-card-checks'
 shots.mkdir(parents=True, exist_ok=True)
 (shots / 'android-article.png').write_bytes(run('exec-out', 'screencap', '-p'))

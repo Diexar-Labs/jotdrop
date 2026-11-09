@@ -2699,28 +2699,44 @@ private fun CompactNotePreview(
         val taskStyle = style.copy(lineHeight = 2.2.em)
         fun measure(open: Boolean): PreviewLayout {
             val budget = with(density) { minOf(if (open) 320.dp else 200.dp, boardHeight * if (open) .6f else .4f).roundToPx() }
+            val max = if (open) 10 else 5
+            val lastTask = rows.indexOfLast { it.checklistIndex != null }
             val visible = mutableListOf<PreviewLayoutRow>()
             var used = 0
             var tasks = 0
             var hidden = false
-            for (row in rows) {
+            var textUsed = 0
+            var textFull = false
+            for ((i, row) in rows.withIndex()) {
                 val task = row.checklistIndex != null
-                if (task && tasks >= if (open) 10 else 5) { hidden = true; break }
+                if (task && tasks >= max) { hidden = true; break }
+                // Text with a visible task still to come may fill at most half the preview,
+                // so a long introduction cannot push every checkbox out of the card.
+                val capped = !task && i < lastTask && tasks < max
+                if (capped && textFull) { hidden = true; continue }
                 val annotated = renderPreviewAnnotated(row.text, accent, firstChecklistIndex = row.checklistIndex ?: 0, checklists = task)
                 val textStyle = if (task) taskStyle else style
                 val oneLine = measurer.measure(AnnotatedString("Ag"), textStyle, constraints = Constraints(maxWidth = width)).size.height.coerceAtLeast(1)
-                val maxLines = if (task) 2 else ((budget - used) / oneLine).coerceAtMost(1000)
-                if (maxLines <= 0) { hidden = true; break }
+                val room = if (capped) minOf(budget - used, budget / 2 - textUsed) else budget - used
+                val maxLines = if (task) 2 else (room / oneLine).coerceAtMost(1000)
+                if (maxLines <= 0) {
+                    hidden = true
+                    if (capped) { textFull = true; continue }
+                    break
+                }
                 val layout = measurer.measure(annotated, textStyle, overflow = TextOverflow.Ellipsis, maxLines = maxLines,
                     constraints = Constraints(maxWidth = width))
                 val height = if (task) maxOf(touchHeight, layout.size.height) else layout.size.height
                 if (used + height > budget) { hidden = true; break }
                 visible += PreviewLayoutRow(row, annotated, maxLines, height)
                 used += height
+                if (capped) textUsed += height
                 if (task) tasks++
                 if (layout.hasVisualOverflow) {
                     hidden = true
-                    if (!task) break
+                    if (!task) {
+                        if (capped) textFull = true else break
+                    }
                 }
             }
             return PreviewLayout(visible, tasks, hidden || visible.size < rows.size)

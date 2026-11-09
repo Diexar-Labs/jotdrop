@@ -105,9 +105,13 @@ def check_compact_cards(browser, url, token):
         assert page.evaluate("window.strikes.length") == 0, page.evaluate("window.strikes")
         assert int(strike_preview.get_attribute("data-visible-tasks")) == 10
         article = create("article", ("Long article sentence. " * 300) + "\n- [ ] A\n- [x] B\n- [ ] C")
-        assert article.locator('input[type="checkbox"]').count() == 0
+        # A long introduction is clipped to half the preview so the tasks after it stay visible.
+        assert article.locator('input[type="checkbox"]').count() == 3
         assert article.locator('[data-preview-action="toggle"]').count() == 0
-        assert article.locator('[data-preview-action="open"]').inner_text() == "Open note - 3 more tasks"
+        assert article.locator('[data-preview-action="open"]').inner_text() == "Open note"
+        intro = article.locator(".compact-card-preview").evaluate("el => ({text: el.querySelector('.note-preview')?.textContent || '', bottom: el.querySelector('.note-preview').getBoundingClientRect().bottom - el.getBoundingClientRect().top, cap: parseFloat(el.style.maxHeight)})")
+        assert intro["text"].startswith("Long article sentence.") and intro["text"].endswith("…"), intro
+        assert intro["bottom"] <= intro["cap"] / 2 + 1, intro
         long = create("long-tasks", "\n".join("- [ ] " + ("Unicode café 漢字 🙂 " * 30) for _ in range(11)))
         shots = Path(tempfile.gettempdir()) / "kilo" / "compact-card-checks"
         shots.mkdir(parents=True, exist_ok=True)
