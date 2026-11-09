@@ -2627,6 +2627,8 @@ workspaceForm('delete-account-form', async () => {
   for (const [key] of await store('entries', recordPrefix())) await forgetSpace(key.slice(recordPrefix().length));
   // The cloud is gone: forget this browser's connection and its encrypted copies of it.
   for (const prefix of [cachePrefix(), pendingPrefix()]) for (const [key] of await store('entries', prefix)) await store('delete', key);
+  // Also the sealed Ask JotDrop key and the labels made on this device: nothing of the deleted cloud stays here.
+  await store('delete', [aiStoreKey(), `labels:${ownClient.credentials.vaultId}`]);
   await store('delete', 'connection');
   field.value = $('delete-confirm').value = '';
   lock('Your account and cloud were deleted. The notes on your own devices were not touched.');

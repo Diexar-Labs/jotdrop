@@ -353,18 +353,26 @@ def check_ai(browser, url, token):
             return new Promise((resolve) => { const out = []; const c = db.transaction('values').objectStore('values').openCursor(); c.onsuccess = () => { const e = c.result; if (e) { out.push(String(e.key)); e.continue(); } else resolve(out); }; }); }""")
         assert not any(key.startswith("ai:") for key in keys), keys
 
+        # Deleting the account also deletes the sealed key in this browser.
+        page.locator("#ai-provider").select_option("anthropic")
+        page.locator("#ai-key").fill(KEY)
+        page.locator('#ai-form button[type="submit"]').click()
+        page.locator("#ai-message").filter(has_text="Ask JotDrop is on").wait_for()
+        page.locator("#delete-confirm").fill("DELETE")
+        page.locator('#delete-account-form button[type="submit"]').click()
+        page.locator("#access").wait_for()
+        keys = page.evaluate("""async () => { const db = await new Promise((resolve) => { const r = indexedDB.open('jotdrop-cloud-v1', 1); r.onsuccess = () => resolve(r.result); });
+            return new Promise((resolve) => { const out = []; const c = db.transaction('values').objectStore('values').openCursor(); c.onsuccess = () => { const e = c.result; if (e) { out.push(String(e.key)); e.continue(); } else resolve(out); }; }); }""")
+        assert not any(key.startswith(("ai:", "labels:", "cache:", "pending:")) for key in keys), keys
+        page.goto(url, wait_until="networkidle")
         page.set_viewport_size({"width": 390, "height": 844})
         page.wait_for_function("() => innerWidth === 390")
-        page.locator('[data-view="notes"]').click()
-        page.locator("#ask-jotdrop").click()
-        dialog.wait_for()
         assert not page.evaluate("document.documentElement.scrollWidth > innerWidth")
-        page.locator("#ai-close").click()
         assert not errors, errors
         return {"off_until_chosen": True, "wrong_key_hidden": True, "key_sealed": True, "openrouter_full_list": True, "list_before_sending": True, "cleared_note_stays_home": True,
                 "answer_with_source": True, "change_waits_for_yes": True, "new_note_at_once": True, "injection_refused": True,
                 "editor_sends_draft_only": True, "report_without_notes": True, "summary_from_card": True, "csp_blocks_other_hosts": True,
-                "no_note_text_to_jotdrop": True, "requests_to_jotdrop": len(to_jotdrop), "requests_to_fake": len(fake.calls), "mobile_overflow": False}
+                "no_note_text_to_jotdrop": True, "key_gone_with_account": True, "requests_to_jotdrop": len(to_jotdrop), "requests_to_fake": len(fake.calls), "mobile_overflow": False}
     finally:
         if sys.exc_info()[0]:
             print({"status": page.locator("#ai-status").text_content(), "ai": page.locator("#ai-message").text_content(), "message": page.locator("#workspace-message").text_content(), "errors": errors, "calls": [call["url"] for call in fake.calls]})
