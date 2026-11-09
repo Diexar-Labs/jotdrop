@@ -583,7 +583,7 @@ export function checklistPreviewRows(content: string): { text: string; index?: n
   const rows: { text: string; index?: number; checked?: boolean }[] = [];
   let fence = "";
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+    const line = lines[i].replace(/\r$/, "");
     const marker = /^\s{0,3}(`{3,}|~{3,})/.exec(line)?.[1];
     if (marker) { if (!fence) fence = marker; else if (marker[0] === fence[0] && marker.length >= fence.length) fence = ""; continue; }
     if (i === first && !/^\s*(?:[-*+][ \t]|\d{1,9}[.)][ \t])/.test(line)) continue;

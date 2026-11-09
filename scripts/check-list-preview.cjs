@@ -127,6 +127,11 @@ const esbuild = require("esbuild");
   const withQuote = "- [ ] a\n> - [ ] quoted\n- [ ] b\n";
   if (checklistToGlyphs(plainPreviewText(withQuote)).match(/[☐☑]/g).length !== 2) throw new Error("quoted checklist became a checkbox");
   if (toggleChecklistItem(withQuote, 1) !== "- [ ] a\n> - [ ] quoted\n- [x] b\n") throw new Error("second checkbox toggles the wrong item");
+  // Notes from other editors use CRLF; their checkboxes must still be recognised and toggle the right line.
+  const crlf = "# Title\r\nIntro\r\n- [ ] one\r\n- [x] two\r\n";
+  const crlfTasks = loaded.exports.checklistPreviewRows(crlf).filter((row) => row.index !== undefined);
+  if (crlfTasks.length !== 2 || crlfTasks[0].checked || !crlfTasks[1].checked) throw new Error("CRLF checklist not recognised");
+  if (toggleChecklistItem(crlf, 0) !== "# Title\r\nIntro\r\n- [x] one\r\n- [x] two\r\n") throw new Error("CRLF toggle mismatch");
   // Android's "changed x ago" card footer.
   const now = Date.parse("2026-10-29T10:00:00Z");
   const ago = ["2026-10-29T09:59:55Z", "2026-10-29T09:30:00Z", "2026-10-29T07:00:00Z", "2026-10-28T09:00:00Z", "2026-10-26T09:00:00Z"]

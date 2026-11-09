@@ -2785,10 +2785,14 @@ private fun CompactNotePreview(
                     Text(stringResource(if (expanded) R.string.card_preview_less else R.string.card_preview_more), color = foreground)
                 }
             }
-            if (chosen.hidden) TextButton(onClick = onOpen) {
-                val hidden = total - chosen.tasks
-                Text(if (hidden > 0) pluralStringResource(R.plurals.card_preview_hidden, hidden, hidden)
-                    else stringResource(R.string.card_preview_open), color = foreground)
+            // Same side as More/Less; on the right half it wraps before the quick-capture buttons.
+            if (chosen.hidden) Row(Modifier.fillMaxWidth(if (rightHalf) 0.72f else 1f),
+                horizontalArrangement = if (rightHalf) Arrangement.Start else Arrangement.End) {
+                TextButton(onClick = onOpen) {
+                    val hidden = total - chosen.tasks
+                    Text(if (hidden > 0) pluralStringResource(R.plurals.card_preview_hidden, hidden, hidden)
+                        else stringResource(R.string.card_preview_open), color = foreground)
+                }
             }
         }
     }
