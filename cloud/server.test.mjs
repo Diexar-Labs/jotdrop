@@ -75,6 +75,20 @@ test('the website links to a privacy policy that names every processor', async (
   assert.equal(await head.text(), '');
 });
 
+test('Ask JotDrop: the page may reach the four AI providers and a local Ollama, nothing else; its modules are served, tests and vectors are not', async (t) => {
+  const app = await fixture(t);
+  const page = await fetch(`${app.url}/`);
+  const connect = /connect-src ([^;]*);/.exec(page.headers.get('content-security-policy'))?.[1].split(' ');
+  assert.deepEqual(connect, ["'self'", 'https://api.anthropic.com', 'https://api.openai.com', 'https://generativelanguage.googleapis.com', 'https://openrouter.ai', 'http://127.0.0.1:11434', 'http://localhost:11434']);
+  assert.ok(!connect.includes('https:') && !connect.includes('*'));
+  for (const path of ['/ai-web.mjs', '/shared/ai/assistant.mjs', '/shared/ai/providers.mjs', '/shared/ai/tools.mjs', '/shared/ai/prompt.mjs', '/shared/ai/context.mjs', '/shared/ai/redact.mjs', '/shared/diff.mjs']) {
+    const response = await fetch(`${app.url}${path}`);
+    assert.equal(response.status, 200, path);
+    assert.match(response.headers.get('content-type'), /^text\/javascript/, path);
+  }
+  for (const path of ['/shared/ai/assistant.test.mjs', '/shared/ai/ai-vectors.json', '/shared/ai/tools.json', '/ai-web.test.mjs']) assert.equal((await fetch(`${app.url}${path}`)).status, 404, path);
+});
+
 test('authorization, tenant isolation, origin and host checks fail closed', async (t) => {
   const extension = 'chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
   const app = await fixture(t, { enrollmentLimit: 2, corsOrigins: [extension] });

@@ -48,8 +48,10 @@
       <li>Short-lived codes, only as keyed hashes. Email codes expire after 15 minutes and Google or GitHub sign-in links after 10 minutes. We count wrong codes per account or email address to stop guessing.</li>
     </ul>
 
+    <p id="ask-jotdrop">Ask JotDrop is the assistant in the web app. It works with an AI service you pick yourself, with your own key: Anthropic (Claude), OpenAI, Google (Gemini), OpenRouter, or Ollama on your own computer. When you send a request, your browser sends it straight to that service, together with the notes listed under "What goes along" and any note the AI reads while it answers, at most 20 notes or 30,000 characters at a time. You see that list before you send and can take notes off it. Notes in shared groups and notes with a live list link stay out unless you switch them on. None of this passes through our server, and we never see your key: it stays in this browser, sealed with your workspace key, it is not synced, and it is deleted when you log out or turn Ask JotDrop off. The AI service handles what you send under your own agreement with it; we are not part of that and do not process it for you. Some services may use what you send to improve their products, Google for example on the free tier of the Gemini API, so read the terms of the service you pick. With Ollama, your request and notes stay on your computer. If you dictate a request, your browser's own speech recognition turns your voice into text; in most browsers that is an online service of the browser maker. If you report an answer by email, the email holds the question and the answer, and we use it only to look into the report and reply.</p>
+
     <h2>What we do not collect</h2>
-    <p>Your IP address is used in memory to limit repeated attempts; apart from the one-day hash above, it is not written to our database or to logs. JotDrop Cloud has no ads, no analytics and no tracking cookies, and this website loads nothing from other sites, except Cloudflare's person check on the form for a new account. The website keeps you signed in only if you choose "Stay signed in on this browser", and then stores that in your browser.</p>
+    <p>Your IP address is used in memory to limit repeated attempts; apart from the one-day hash above, it is not written to our database or to logs. JotDrop Cloud has no ads, no analytics and no tracking cookies, and this website loads nothing from other sites, except Cloudflare's person check on the form for a new account. When you use Ask JotDrop, the page also connects to the AI service you chose, and only then. The website keeps you signed in only if you choose "Stay signed in on this browser", and then stores that in your browser.</p>
 
     <h2>Services that process data for us</h2>
     <ul>
@@ -102,6 +104,7 @@
       <li>Sealed mail: until one of your devices turns it into a note and deletes it, or until you delete your account. The mail log with sender IP addresses: at most 7 days.</li>
       <li>Your votes: until you take them back, the idea leaves the list, or you delete your account.</li>
       <li>Your place on the mailing list: until you unsubscribe.</li>
+      <li>Email you send to hello@jotdrop.net, a report about an Ask JotDrop answer included: 60 days after the last message in that conversation, unless we need it longer for a dispute or a legal duty.</li>
       <li>When you delete your account: see <a href="#delete-account">Delete your JotDrop account</a>.</li>
     </ul>
 

@@ -1720,6 +1720,11 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     assets.set(`/ocr/${name}`, [join(directory, '../node_modules/tesseract.js-core', name), 'text/javascript']);
   }
   for (const lang of ['eng', 'nld']) assets.set(`/ocr/${lang}.traineddata.gz`, [join(directory, `../node_modules/@tesseract.js-data/${lang}/4.0.0_best_int/${lang}.traineddata.gz`), 'application/gzip']);
+  // Ask JotDrop talks from the page straight to the AI service the user chose, with the user's own key: the four
+  // providers' fixed addresses and Ollama on the user's own computer. Never `https:` in general, and no free address.
+  const aiConnect = 'https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com https://openrouter.ai http://127.0.0.1:11434 http://localhost:11434';
+  assets.set('/ai-web.mjs', [join(webRoot, 'ai-web.mjs'), 'text/javascript']);
+  for (const name of ['assistant.mjs', 'providers.mjs', 'tools.mjs', 'prompt.mjs', 'context.mjs', 'redact.mjs']) assets.set(`/shared/ai/${name}`, [join(directory, 'shared', 'ai', name), 'text/javascript']);
   // Turnstile's widget is the one script and frame from elsewhere, and only when the person check is on.
   const challenges = turnstile ? ' https://challenges.cloudflare.com' : '';
   let server, activeRequests = 0;
@@ -1727,7 +1732,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
-    res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self' 'wasm-unsafe-eval'${importMapSource}${challenges}; worker-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self'; img-src 'self' blob:; media-src 'self' blob:;${challenges ? ` frame-src${challenges};` : ''} base-uri 'none'; frame-ancestors 'none'; form-action 'self'`);
+    res.setHeader('Content-Security-Policy', `default-src 'none'; script-src 'self' 'wasm-unsafe-eval'${importMapSource}${challenges}; worker-src 'self'; style-src 'self'; font-src 'self'; connect-src 'self' ${aiConnect}; img-src 'self' blob:; media-src 'self' blob:;${challenges ? ` frame-src${challenges};` : ''} base-uri 'none'; frame-ancestors 'none'; form-action 'self'`);
     const reply = (status, value) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(value)); };
     try {
       const actualPort = server.address().port;

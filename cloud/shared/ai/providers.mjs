@@ -185,7 +185,8 @@ export function parseResponse(provider, json) {
     return plainObject(input) ? { id, name, input } : { id, name, input: null, error: 'invalid_arguments' };
   });
   const stop = choice.finish_reason === 'content_filter' ? 'refusal' : choice.finish_reason === 'length' ? 'length' : toolCalls.length ? 'tool' : 'end';
-  const raw = { content: message.content ?? null, ...(message.tool_calls ? { tool_calls: message.tool_calls } : {}) };
+  // OpenRouter asks reasoning models to get their reasoning_details back unchanged; OpenAI does not take the field.
+  const raw = { content: message.content ?? null, ...(message.tool_calls ? { tool_calls: message.tool_calls } : {}), ...(provider === 'openrouter' && message.reasoning_details ? { reasoning_details: message.reasoning_details } : {}) };
   return { text: typeof message.content === 'string' ? message.content : '', toolCalls, stop, usage: { input: json?.usage?.prompt_tokens ?? 0, output: json?.usage?.completion_tokens ?? 0 }, raw };
 }
 

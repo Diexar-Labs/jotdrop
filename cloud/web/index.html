@@ -179,6 +179,7 @@
         <span class="sync-slot"><button id="sync" type="button">Sync now</button><button id="pause-sync" type="button" hidden>Pause sync</button></span>
         <button id="time-machine" type="button" aria-expanded="false" aria-controls="timeline">Time machine</button>
         <button id="new-note" class="primary" type="button">New note</button>
+        <button id="ask-jotdrop" type="button">Ask JotDrop</button>
         <button id="new-photo-text" type="button">Text from photo</button>
         <button id="new-voice" type="button">Voice memo</button>
         <button id="new-drawing" type="button">Drawing</button>
@@ -268,6 +269,25 @@
           </div>
           <p id="mail-message" class="message" role="status" aria-live="polite"></p>
         </section>
+        <section id="ai-section" aria-labelledby="ai-heading">
+          <h2 id="ai-heading">Ask JotDrop: AI with your own key</h2>
+          <p>Ask JotDrop does what you ask in your notes, with your own AI account. Your question and the notes it needs go straight from this browser to the AI service you choose, never through JotDrop. It is free on every plan; the AI service bills you for what you use.</p>
+          <form id="ai-form">
+            <label for="ai-provider">AI service</label>
+            <select id="ai-provider"><option value="">Off</option></select>
+            <p id="ai-provider-note" class="ai-note"></p>
+            <div id="ai-key-row" hidden>
+              <label for="ai-key">Your API key</label>
+              <input id="ai-key" type="password" autocomplete="off" spellcheck="false" maxlength="500">
+              <p class="ai-note">The key stays in this browser, sealed with your workspace key. It is not synced, and JotDrop never receives it.</p>
+            </div>
+            <label for="ai-model">Model</label>
+            <div class="ai-model-row"><input id="ai-model" list="ai-models" autocomplete="off" spellcheck="false" maxlength="200"><datalist id="ai-models"></datalist><button id="ai-test" type="button">Test and load models</button></div>
+            <label class="check-label"><input id="ai-shared" type="checkbox">Also use notes from shared groups and notes with a live list link</label>
+            <div class="ai-form-actions"><button type="submit" class="primary">Save</button><button id="ai-remove" type="button">Turn off and remove key</button></div>
+          </form>
+          <p id="ai-message" class="message" role="status" aria-live="polite"></p>
+        </section>
         <h2>Recovery</h2><p>Your recovery code contains the keys to this workspace. Keep it in a password manager. We cannot recover encrypted files without your keys.</p>
         <p>The recovery code is shown when you create a workspace. Lost it? Make a new one here. The old code stops working.</p>
         <form id="new-recovery-form">
@@ -327,6 +347,7 @@
           </tbody>
         </table>
       </section>
+      <div class="ai-editor-row" role="group" aria-labelledby="ai-editor-label"><span id="ai-editor-label">Ask JotDrop</span><button id="ai-rewrite" type="button">Rewrite</button><button id="ai-checklist" type="button">Make a checklist</button><button id="ai-summarize" type="button">Summarize</button></div>
       <div class="editor-colors"><span>Color</span><div id="note-colors" class="swatches" role="radiogroup" aria-label="Color"></div><span id="color-name" aria-hidden="true"></span></div>
       <div class="chip-field"><label for="label-input">Labels</label><div class="chips" id="label-chips"></div><input id="label-input" list="label-options" placeholder="Add label" autocomplete="off" maxlength="80"><datalist id="label-options"></datalist></div>
       <div class="chip-field"><label for="tag-input">Tags</label><div class="chips" id="tag-chips"></div><input id="tag-input" list="tag-options" placeholder="Add tag" autocomplete="off" maxlength="80"><datalist id="tag-options"></datalist></div>
@@ -351,6 +372,40 @@
       <div class="dialog-actions"><button id="note-history" type="button">Version history</button><button id="note-download" type="button">Download</button><button id="note-delete" class="danger" type="button">Move to trash</button><button class="primary" type="submit">Save note</button></div>
       <section id="history" hidden><h3>Saved cloud versions</h3><p>Restoring creates a new version. It does not erase history.</p><div id="history-list"></div></section>
     </form>
+  </dialog>
+  <dialog id="ai-dialog" class="ai-dialog" aria-labelledby="ai-title">
+    <div class="dialog-heading"><h2 id="ai-title">Ask JotDrop</h2><button id="ai-close" type="button">Close</button></div>
+    <div id="ai-off" hidden><p id="ai-off-text"></p><button id="ai-setup" class="primary" type="button">Set up Ask JotDrop</button></div>
+    <form id="ai-ask">
+      <label for="ai-request">What should JotDrop do?</label>
+      <textarea id="ai-request" rows="3" maxlength="4000" placeholder="Put milk and bread on my shopping list"></textarea>
+      <div class="ai-ask-row"><button id="ai-send" class="primary" type="submit">Send</button><button id="ai-dictate" type="button" aria-pressed="false" hidden>Dictate</button><button id="ai-stop" type="button" hidden>Stop</button></div>
+      <p id="ai-via" class="ai-note"></p>
+      <details id="ai-goes" class="ai-goes"><summary id="ai-goes-summary">What goes along</summary>
+        <p class="ai-note">These notes go along with your question. Clear a box to keep a note out of this conversation. While it answers, the AI can also search your other notes; what it reads is listed afterwards.</p>
+        <ul id="ai-goes-list" class="ai-goes-list"></ul>
+      </details>
+    </form>
+    <section id="ai-confirm" class="ai-confirm" hidden aria-labelledby="ai-confirm-title">
+      <h3 id="ai-confirm-title"></h3>
+      <p class="ai-note">The AI asks to change a note you already have. Nothing changes unless you say yes.</p>
+      <div id="ai-confirm-body"></div>
+      <div class="ai-form-actions"><button id="ai-apply" class="primary" type="button">Make this change</button><button id="ai-decline" type="button">Don't change</button></div>
+    </section>
+    <p id="ai-status" class="ai-status" role="status" aria-live="polite"></p>
+    <section id="ai-result" class="ai-result" hidden aria-label="Answer">
+      <p class="ai-badge" id="ai-badge"></p>
+      <div id="ai-answer" class="ai-answer"></div>
+      <div id="ai-sources" class="ai-sources"></div>
+      <ul id="ai-actions" class="ai-actions"></ul>
+      <p id="ai-also" class="ai-note"></p>
+      <p id="ai-usage" class="ai-note"></p>
+      <div class="ai-form-actions"><button id="ai-use-replace" type="button" hidden>Replace the note text</button><button id="ai-use-below" type="button" hidden>Add below the note</button><button id="ai-save-answer" type="button">Save as a new note</button><button id="ai-report" type="button">Report this answer</button></div>
+      <div id="ai-report-box" class="ai-report" hidden>
+        <p>AI answers come from the AI service you chose, not from JotDrop, and they can be wrong. If an answer is harmful or misleading, tell us at hello@jotdrop.net and tell the AI service too. Only the question and the answer go in the report; your notes stay out.</p>
+        <div class="ai-form-actions"><a id="ai-report-mail" href="mailto:hello@jotdrop.net">Write to hello@jotdrop.net</a><button id="ai-report-download" type="button">Download the question and answer</button></div>
+      </div>
+    </section>
   </dialog>
   <dialog id="photo-viewer" class="photo-viewer" aria-labelledby="photo-title">
     <div class="dialog-heading"><h2 id="photo-title">Photo</h2><button id="close-photo" type="button">Close</button></div>

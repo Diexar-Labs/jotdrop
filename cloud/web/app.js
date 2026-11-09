@@ -12,6 +12,10 @@ import { noteSummary, updateMetadata, toggleTask, attachmentPath, plainPreviewTe
 import { drawingFileName, isDrawingName, read as readDrawing } from '/shared/drawing.mjs';
 import { addressHash, mailAddress, mailKeyPair, mailToNote, openMailBody, openMailKey, openMailPart, senderHash } from '/shared/mail.mjs';
 import { createDrawingEditor } from '/shared/drawing-editor.mjs';
+import { AiError, createProvider, pickDefaultModel } from '/shared/ai/providers.mjs';
+import { runAssistant } from '/shared/ai/assistant.mjs';
+import { selectNotes } from '/shared/ai/context.mjs';
+import { AI_STORE_PATH, WEB_PROVIDERS, aiNotes, aiSettings, appendedText, describeChange, editorRequest, expiryChanges, labelChanges, newNoteText, reminderChanges, replacedText } from '/ai-web.mjs';
 import { DEFAULT_WARN, INTRO, PAPER_DRAWER, SUGGESTED_DRAWERS, WARN_OPTIONS, drawerLabel, drawerName, expiresBadge, inDrawer, isPaperDrawer, validExpires, warnReminder, withPaperDrawer } from '/shared/paper.mjs';
 
 // The server sees this page as the web app; it has no version of its own, because a reload always brings the current one.
@@ -956,6 +960,7 @@ function render() {
       const more = iconButton('more', 'More', () => showMenu(more, [
         { label: 'Download', action: save },
         ...(activeSpace ? [{ label: activeSpace.frozen ? 'Copy to my notes' : 'Move to my notes', action: () => moveToOwn(entry) }] : view === 'notes' ? [{ label: 'Share…', action: () => showShare(entry) }, ...(isMarkdown(entry.file.path) ? [{ label: 'Share by link…', action: () => showLink(entry) }, ...(hasChecklist(noteText(entry.file)) ? [{ label: 'Share list by link…', action: () => showLink(entry, 'list') }] : [])] : [])] : []),
+        ...(moment ? [] : [{ label: 'Ask JotDrop about this note…', action: () => openAi({ entry }) }, { label: 'Summarize with AI', action: () => openAi({ entry, summarize: true }) }]),
         ...(activeSpace?.frozen ? [] : [{ label: 'Move to trash', action: () => deleteEntry(entry) }]),
       ]));
       if (activeSpace) actions.append(iconButton('pencil', 'Open note', () => openEditor(entry)), color, more);
@@ -2184,6 +2189,7 @@ async function openWorkspace(connected) {
   $('unlock-password').value = '';
   await loadLocal();
   await loadLocalLabels();
+  await loadAiSettings();
   render();
   // Back from the Stripe payment page.
   if (new URLSearchParams(location.search).get('plus') === 'welcome') {
@@ -2228,6 +2234,10 @@ function lock(notice = '') {
   localLabels = [];
   labelFilter = '';
   $('labels-dialog').close();
+  // The AI key leaves memory with the workspace key; sealed in this browser it waits for the next unlock.
+  closeAi();
+  aiConfig = aiSettings();
+  renderAiSettings();
   editing = undefined;
   releaseMedia(true);
   $('items').replaceChildren();
@@ -2693,6 +2703,8 @@ $('log-out').addEventListener('click', async () => {
     if (!confirm('Log out of this browser? Your notes stay in the cloud. To come back, log in again.')) return;
     await store('delete', 'connection');
     await store('delete', 'session');
+    // Logging out also forgets the AI key in this browser: it is a password for another service.
+    await store('delete', aiStoreKey());
     forgetOnClose = true;
     lock();
   } catch (error) { message(errorText(error)); }
@@ -4181,6 +4193,457 @@ $('secure-form').addEventListener('submit', async (event) => {
   } catch (error) { $('secure-message').textContent = accountError(error); }
   finally { submit.disabled = false; }
 });
+// Ask JotDrop: AI with the user's own key (Hand-off/ontwerp-ai-eigen-sleutel.md, phase 2). The page talks straight
+// to the AI service the user chose; the CSP allows only those addresses, never our server in between. Settings and
+// key are sealed in this browser with the account's own workspace key (not a group's), never synced and never
+// written to a log, a message or the page. New notes are made at once; a change to a note waits for the user.
+let aiConfig = aiSettings();
+let aiScope = { pinned: [] };
+let aiExcluded = new Set();
+let aiRun;
+let aiConfirming;
+let aiLast;
+let aiOpen;
+let dictation;
+for (const [id, spec] of Object.entries(WEB_PROVIDERS)) $('ai-provider').append(new Option(spec.name, id));
+
+const aiStoreKey = () => `ai:${ownClient.credentials.vaultId}`;
+const ownAad = (id) => `jotdrop:object:v1:${ownClient.credentials.vaultId}:${id}`;
+async function loadAiSettings() {
+  try {
+    const prepared = await store('get', aiStoreKey());
+    const file = prepared && await decryptEnvelope(ownClient.credentials.vaultKey, JSON.parse(prepared.envelope), ownAad(prepared.id));
+    aiConfig = aiSettings(file ? JSON.parse(decoder.decode(base64ToBytes(file.content))) : undefined);
+  } catch { aiConfig = aiSettings(); }
+  renderAiSettings();
+}
+async function saveAiSettings(next) {
+  const { vaultKey } = ownClient.credentials;
+  const id = await objectId(vaultKey, AI_STORE_PATH);
+  const envelope = JSON.stringify(await encryptEnvelope(vaultKey, { path: AI_STORE_PATH, content: bytesToBase64(encoder.encode(JSON.stringify(next))), modifiedAt: new Date().toISOString() }, ownAad(id)));
+  await store('put', aiStoreKey(), { id, envelope });
+  aiConfig = next;
+}
+
+// The service's own words come along, with every key in them hidden by the shared core.
+// Ollama from a web page needs two things the page cannot do itself (measured 9 Nov 2026, Chrome 156 and Edge 157):
+// the browser's permission to reach this computer, and OLLAMA_ORIGINS with this page's address.
+const ollamaHelp = () => `Is Ollama running, started with OLLAMA_ORIGINS=${location.origin}? Your browser also has to allow this site to use apps and services on this device: look for the question next to the address bar, or in the site settings.`;
+const aiErrorText = (error, provider = aiConfig.provider) => (error instanceof AiError || (error?.code && typeof error?.message === 'string' && 'detail' in error)
+  ? `${error.message}${error.detail ? ` The service said: ${error.detail}` : ''}${provider === 'ollama' && error.code === 'network' ? ` ${ollamaHelp()}` : ''}` : errorText(error));
+
+function aiProviderNote(provider) {
+  return {
+    ollama: `Your request and notes stay on this computer. Start Ollama with OLLAMA_ORIGINS=${location.origin} so this page may talk to it, and choose a model that can use tools. When your browser asks whether this site may use apps and services on this device, allow it.`,
+    anthropic: 'Make an API key in your Anthropic account (Claude Console). The default model is Claude Haiku 5.5.',
+    openai: 'Make an API key in your OpenAI account (platform.openai.com).',
+    gemini: 'Make an API key in Google AI Studio. On the free tier, Google may use what you send to improve its products; on the paid tier it does not.',
+    openrouter: 'One key for many models. OpenRouter passes your request on to the company behind the model you choose. Load the models and pick one that can use tools.',
+  }[provider] ?? '';
+}
+function showAiProvider() {
+  const provider = $('ai-provider').value, spec = WEB_PROVIDERS[provider];
+  $('ai-key-row').hidden = !spec?.needsKey;
+  $('ai-key').placeholder = spec && provider === aiConfig.provider && aiConfig.key ? 'Saved. Type a new key to replace it.' : 'Paste your key here';
+  $('ai-model').placeholder = spec?.defaultModel ? `${spec.defaultModel} (default)` : spec ? 'Load the models and choose one' : '';
+  for (const id of ['ai-model', 'ai-test', 'ai-shared']) $(id).disabled = !spec;
+  $('ai-provider-note').textContent = spec ? aiProviderNote(provider) : 'Ask JotDrop is off. Choose an AI service to turn it on.';
+}
+function renderAiSettings() {
+  $('ai-provider').value = aiConfig.provider;
+  $('ai-model').value = aiConfig.model;
+  $('ai-shared').checked = aiConfig.includeShared;
+  $('ai-key').value = '';
+  showAiProvider();
+}
+$('ai-provider').addEventListener('change', () => {
+  $('ai-models').replaceChildren();
+  if ($('ai-provider').value !== aiConfig.provider) $('ai-model').value = '';
+  showAiProvider();
+});
+// What the form says now; an empty key field keeps the saved key of the same service.
+function aiFormSettings() {
+  const provider = $('ai-provider').value, typed = $('ai-key').value.trim();
+  return aiSettings({ provider, key: typed || (provider === aiConfig.provider ? aiConfig.key : ''), model: $('ai-model').value, includeShared: $('ai-shared').checked });
+}
+$('ai-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  $('ai-message').textContent = '';
+  try {
+    const next = aiFormSettings();
+    if (next.provider && WEB_PROVIDERS[next.provider].needsKey && !next.key) throw new Error('Paste your API key first.');
+    await saveAiSettings(next);
+    renderAiSettings();
+    $('ai-message').textContent = next.provider ? 'Saved. Ask JotDrop is on in this browser.' : 'Saved. Ask JotDrop is off.';
+  } catch (error) { $('ai-message').textContent = aiErrorText(error); }
+});
+// Asking for the model list checks key and connection; no note goes along.
+$('ai-test').addEventListener('click', async () => {
+  $('ai-message').textContent = 'Asking the AI service for its models...';
+  $('ai-test').disabled = true;
+  try {
+    const config = aiFormSettings();
+    const models = await createProvider({ ...config, model: config.model || 'any' }).listModels({ signal: AbortSignal.timeout(20000) });
+    $('ai-models').replaceChildren(...models.map((model) => new Option(model.tools === false ? `${model.name} (cannot use tools)` : model.name, model.id)));
+    if (!$('ai-model').value) $('ai-model').value = pickDefaultModel(config.provider, models) ?? '';
+    const chosen = $('ai-model').value, found = models.find((model) => model.id === chosen);
+    const about = !chosen ? 'Choose a model.' : !found ? `"${chosen}" is not in the list of this service.` : found.tools === false ? `"${chosen}" cannot use tools: it can answer, but not make or change notes.` : `Model: ${chosen}.`;
+    $('ai-message').textContent = `Connected: ${models.length} ${models.length === 1 ? 'model' : 'models'}. ${about} Select Save to keep this.`;
+  } catch (error) { $('ai-message').textContent = aiErrorText(error, $('ai-provider').value); }
+  finally { $('ai-test').disabled = !WEB_PROVIDERS[$('ai-provider').value]; }
+});
+$('ai-remove').addEventListener('click', async () => {
+  try {
+    await store('delete', aiStoreKey());
+    aiConfig = aiSettings();
+    renderAiSettings();
+    $('ai-models').replaceChildren();
+    $('ai-message').textContent = 'Ask JotDrop is off, and the key is removed from this browser.';
+  } catch (error) { $('ai-message').textContent = aiErrorText(error); }
+});
+
+// The notes on screen in the form the assistant reads. In a group every note is shared; at home, a note with a live list link is.
+function aiNotesNow() {
+  const entries = [...files.values()].filter((entry) => isMarkdown(entry.file.path)).map((entry) => ({ id: entry.id, path: entry.file.path, text: noteText(entry.file), modifiedAt: entry.file.modifiedAt, deleted: entry.deleted }));
+  return aiNotes(entries, { sharedPaths: activeSpace ? [] : liveLists.map((link) => link.path), inSpace: Boolean(activeSpace) });
+}
+const aiCandidates = () => (aiScope.editor ? [aiScope.editor] : aiScope.only ?? aiNotesNow());
+const aiPick = (notes, request) => selectNotes(notes, request, { includeShared: aiConfig.includeShared, pinned: aiScope.pinned });
+function aiOffReason() {
+  if (moment) return 'Go back to now first: Ask JotDrop works on your notes as they are.';
+  if (!aiConfig.provider) return 'Ask JotDrop is off. Choose an AI service, and add your own key, in Devices & recovery.';
+  if (activeSpace && !aiConfig.includeShared && !aiScope.editor) return 'This is a shared group. Ask JotDrop keeps shared notes out, unless you switch on "Also use notes from shared groups" in its settings.';
+  return '';
+}
+function renderAiVia() {
+  const spec = WEB_PROVIDERS[aiConfig.provider];
+  const model = aiConfig.model || spec?.defaultModel || 'no model chosen';
+  $('ai-via').textContent = !spec ? '' : aiConfig.provider === 'ollama' ? `Goes to Ollama on this computer, model ${model}. Your request and notes stay on this computer.` : `Goes straight to ${spec.name}, model ${model}. Nothing goes to JotDrop.`;
+}
+// The list is what really goes: the same choice the assistant makes, minus the notes the user cleared.
+function renderGoes() {
+  const notes = aiCandidates();
+  const picked = aiPick(notes.filter((note) => !aiExcluded.has(note.id)), $('ai-request').value).notes;
+  const kept = notes.filter((note) => aiExcluded.has(note.id));
+  const row = (note, on) => {
+    const item = document.createElement('li');
+    const label = document.createElement('label');
+    label.className = 'check-label';
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.checked = on;
+    box.addEventListener('change', () => { if (box.checked) aiExcluded.delete(note.id); else aiExcluded.add(note.id); renderGoes(); });
+    label.append(box, `${note.title || 'Untitled'}${on && note.truncated ? ' (shortened)' : ''}${on ? '' : ' (kept out)'}`);
+    item.append(label);
+    return item;
+  };
+  $('ai-goes-list').replaceChildren(...picked.map((note) => row(note, true)), ...kept.map((note) => row(note, false)));
+  $('ai-goes-summary').textContent = picked.length ? `What goes along: ${picked.length} ${picked.length === 1 ? 'note' : 'notes'}` : 'What goes along: your question, no notes yet';
+}
+let goesTimer;
+$('ai-request').addEventListener('input', () => { clearTimeout(goesTimer); goesTimer = setTimeout(renderGoes, 200); });
+$('ai-request').addEventListener('keydown', (event) => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) { event.preventDefault(); $('ai-ask').requestSubmit(); } });
+
+function resetAiResult() {
+  aiLast = undefined;
+  aiOpen = undefined;
+  $('ai-result').hidden = true;
+  $('ai-report-box').hidden = true;
+  $('ai-confirm').hidden = true;
+  $('ai-status').textContent = '';
+  for (const id of ['ai-answer', 'ai-sources', 'ai-actions']) $(id).replaceChildren();
+  for (const id of ['ai-also', 'ai-usage', 'ai-badge']) $(id).textContent = '';
+}
+
+/** Open Ask JotDrop: for all notes, about one card (entry), to summarize a card, or for the draft in the editor. */
+function openAi({ entry, editor, request = '', send = false, summarize = false, kind = 'ask' } = {}) {
+  if (!client || aiRun) return;
+  aiScope = { pinned: entry ? [entry.id] : editor ? [editor.id] : [], target: entry, editor, kind: summarize ? 'summarize' : kind };
+  if (summarize && entry) {
+    aiScope.only = aiNotesNow().filter((note) => note.id === entry.id);
+    request = editorRequest('summarize', aiScope.only[0]?.title);
+    send = true;
+  }
+  aiExcluded = new Set();
+  resetAiResult();
+  $('ai-request').value = request;
+  $('ai-request').readOnly = Boolean(editor) || summarize;
+  const off = aiOffReason();
+  $('ai-off').hidden = !off;
+  $('ai-ask').hidden = Boolean(off);
+  $('ai-off-text').textContent = off;
+  $('ai-setup').hidden = !off || Boolean(moment) || Boolean(aiConfig.provider && activeSpace);
+  $('ai-goes').hidden = Boolean(editor);
+  $('ai-goes').open = false;
+  if (!$('ai-dialog').open) $('ai-dialog').showModal();
+  renderAiVia();
+  renderGoes();
+  if (off) ($('ai-setup').hidden ? $('ai-close') : $('ai-setup')).focus();
+  else if (send) void sendAi();
+  else $('ai-request').focus();
+}
+$('ask-jotdrop').addEventListener('click', () => openAi());
+$('ai-setup').addEventListener('click', () => {
+  $('ai-dialog').close();
+  if ($('editor').open) closeEditor();
+  document.querySelector('[data-view="devices"]').click();
+  setTimeout(() => { $('ai-section').scrollIntoView({ block: 'start' }); $('ai-provider').focus(); }, 100);
+});
+
+function aiConfirm(change) {
+  const shown = describeChange(change);
+  $('ai-confirm-title').textContent = shown.heading;
+  const body = [];
+  if (shown.lines) {
+    body.push(paragraph('+ is added, - is removed.'));
+    for (const line of foldUnchanged(shown.lines)) {
+      const row = document.createElement('div');
+      row.className = `diff-line ${line.type}`;
+      row.textContent = line.type === 'gap' ? `${line.count} unchanged ${line.count === 1 ? 'line' : 'lines'}` : `${line.sign} ${line.text}`;
+      body.push(row);
+    }
+  } else {
+    const list = document.createElement('dl');
+    list.className = 'ai-facts';
+    for (const [name, value] of shown.facts) {
+      const term = document.createElement('dt'), detail = document.createElement('dd');
+      term.textContent = name;
+      detail.textContent = value;
+      list.append(term, detail);
+    }
+    body.push(list);
+  }
+  $('ai-confirm-body').replaceChildren(...body);
+  $('ai-confirm').hidden = false;
+  $('ai-status').textContent = 'Waiting for you: the AI asks to change a note.';
+  $('ai-apply').focus();
+  return new Promise((resolve) => {
+    aiConfirming = (yes) => {
+      aiConfirming = undefined;
+      $('ai-confirm').hidden = true;
+      $('ai-status').textContent = yes ? 'Changing the note, then asking on...' : 'Not changed. Asking on...';
+      resolve(yes);
+    };
+  });
+}
+$('ai-apply').addEventListener('click', () => aiConfirming?.(true));
+$('ai-decline').addEventListener('click', () => aiConfirming?.(false));
+
+// The tools that change notes, through the same queue as the editor: encrypted on this device, then synced.
+// `before` holds each note's text as the AI saw it; a note changed meanwhile elsewhere is left alone.
+function aiExecutor(before) {
+  const current = (id) => {
+    const entry = files.get(id);
+    if (!entry || entry.deleted) throw new Error('This note is gone.');
+    if (before.has(id) && before.get(id) !== noteText(entry.file)) throw new Error('This note changed while Ask JotDrop worked, so it was left as it is.');
+    return entry;
+  };
+  const save = async (id, make) => {
+    const entry = current(id);
+    const text = make(noteText(entry.file));
+    await queueFile(entry.file.path, encoder.encode(text), entry.revision);
+    before.set(id, text);
+    return 'Done.';
+  };
+  return {
+    async create_note(input) {
+      const text = newNoteText(input);
+      const name = noteFilename(text);
+      let path = `notes/${name}`;
+      for (let copy = 2; [...files.values()].some((entry) => entry.file.path === path); copy++) path = `notes/${name.slice(0, -3)} ${copy}.md`;
+      freshNotes.set(path, Date.now());
+      await queueFile(path, encoder.encode(text), undefined);
+      const id = await objectId(client.credentials.vaultKey, path);
+      before.set(id, text);
+      return { id, title: input.title };
+    },
+    append_to_note: (input) => save(input.id, (text) => appendedText(text, input)),
+    replace_note_text: (input) => save(input.id, (text) => replacedText(text, input.text)),
+    set_labels: (input) => save(input.id, (text) => updateMetadata(text, labelChanges(input.labels))),
+    set_reminder: (input) => save(input.id, (text) => updateMetadata(text, reminderChanges(input.at))),
+    set_expiry: (input) => save(input.id, (text) => updateMetadata(text, expiryChanges(text, input.date, input.drawer))),
+    async open_note(input) {
+      aiOpen = current(input.id);
+      return 'The note opens for the user after this answer.';
+    },
+  };
+}
+
+function aiToday() {
+  const now = new Date();
+  return `${now.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}, ${now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}`;
+}
+function setAiBusy(busy) {
+  $('ai-send').disabled = busy;
+  $('ai-stop').hidden = !busy;
+  $('ai-request').readOnly = busy || Boolean(aiScope.editor) || aiScope.kind === 'summarize';
+}
+async function sendAi() {
+  const request = $('ai-request').value.trim();
+  if (!request || aiRun || aiOffReason()) return;
+  const spec = WEB_PROVIDERS[aiConfig.provider];
+  const notes = aiCandidates().filter((note) => !aiExcluded.has(note.id));
+  const first = new Set(aiPick(notes, request).notes.map((note) => note.id));
+  const before = new Map(notes.filter((note) => files.has(note.id)).map((note) => [note.id, noteText(files.get(note.id).file)]));
+  const controller = new AbortController();
+  aiRun = { controller };
+  resetAiResult();
+  setAiBusy(true);
+  $('ai-status').textContent = `Asking ${spec.name}...`;
+  try {
+    const report = await runAssistant({
+      request, notes, labels: allLabels(), pinned: aiScope.pinned, includeShared: aiConfig.includeShared,
+      settings: { language: navigator.language || 'English', date: aiToday(), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+      config: { provider: aiConfig.provider, key: aiConfig.key, model: aiConfig.model },
+      executor: aiScope.editor ? {} : aiExecutor(before),
+      confirm: aiScope.editor ? async () => false : aiConfirm,
+      signal: controller.signal,
+    });
+    showAiReport(report, request, first);
+  } catch (error) {
+    $('ai-status').textContent = aiErrorText(error);
+  } finally {
+    aiRun = undefined;
+    aiConfirming?.(false);
+    setAiBusy(false);
+  }
+  if (aiOpen && $('ai-dialog').open && !aiScope.editor) {
+    const entry = aiOpen;
+    aiOpen = undefined;
+    $('ai-dialog').close();
+    openEditor(entry);
+  }
+}
+$('ai-ask').addEventListener('submit', (event) => { event.preventDefault(); void sendAi(); });
+$('ai-stop').addEventListener('click', () => { aiConfirming?.(false); aiRun?.controller.abort(new DOMException('Stopped.', 'AbortError')); });
+
+const AI_STOPS = {
+  refusal: 'The AI service declined to answer this.',
+  max_rounds: 'Ask JotDrop stopped after 6 rounds, so the AI cannot run up your bill. Try a shorter request.',
+};
+function aiActionLine(action) {
+  const title = action.tool === 'create_note' ? action.input?.title : (files.get(action.input?.id) && noteParts(noteText(files.get(action.input.id).file), files.get(action.input.id).file.path).title) || 'a note';
+  const words = {
+    create_note: `Made the note "${title}"`, append_to_note: `Added to "${title}"`, replace_note_text: `Replaced the text of "${title}"`,
+    set_labels: `Set the labels of "${title}"`, set_reminder: `Set a reminder on "${title}"`, set_expiry: `Set an expiry date on "${title}"`, open_note: `Opened "${title}"`,
+  }[action.tool] ?? `Asked for "${action.tool}"`;
+  if (action.status === 'done') return `Done: ${words}.`;
+  if (action.status === 'declined') return `Not changed: you said no (${words.charAt(0).toLowerCase()}${words.slice(1)}).`;
+  if (action.reason === 'unknown_tool') return `Refused: the AI asked for "${action.tool}", which Ask JotDrop cannot do. Deleting, archiving and sharing stay yours to do.`;
+  if (action.reason === 'not_allowed') return 'Left alone: that note is shared, and shared notes are kept out.';
+  return `Did not work: ${words.charAt(0).toLowerCase()}${words.slice(1)}.`;
+}
+function showAiReport(report, request, first) {
+  const spec = WEB_PROVIDERS[aiConfig.provider];
+  const model = aiConfig.model || spec.defaultModel;
+  aiLast = { report, request, model, provider: spec.name };
+  const problem = report.error ? aiErrorText(report.error) : AI_STOPS[report.stop] ?? '';
+  $('ai-status').textContent = problem;
+  $('ai-result').hidden = !report.answer && !report.actions.length && !report.sent.length;
+  $('ai-badge').textContent = `AI answer from ${spec.name}, model ${model}. Check it before you rely on it.`;
+  $('ai-answer').textContent = report.answer || (problem ? '' : 'The AI gave no answer in words.');
+  if (!aiScope.editor) {
+    $('ai-sources').replaceChildren(...report.sources.filter((note) => files.has(note.id)).map((note) => button(`Open "${note.title}"`, () => { const entry = files.get(note.id); $('ai-dialog').close(); if (entry) openEditor(entry); })));
+    $('ai-actions').replaceChildren(...report.actions.filter((action) => !['search_notes', 'read_note'].includes(action.tool)).map((action) => {
+      const item = document.createElement('li');
+      item.textContent = aiActionLine(action);
+      const made = action.tool === 'create_note' && action.status === 'done' && action.result?.id;
+      if (made) item.append(' ', button('Open', () => { const entry = files.get(made); $('ai-dialog').close(); if (entry) openEditor(entry); }));
+      return item;
+    }));
+  }
+  const also = report.sent.filter((note) => !first.has(note.id));
+  $('ai-also').textContent = report.stop === 'off' ? 'Nothing was sent.' : `${report.error ? 'Tried to send' : 'Sent'} to ${spec.name}: your question${first.size ? ` and ${first.size} ${first.size === 1 ? 'note' : 'notes'}` : ''}${also.length ? `. While answering it also read: ${also.map((note) => `"${note.title}"`).join(', ')}` : ''}.`;
+  $('ai-usage').textContent = aiConfig.provider === 'ollama'
+    ? `Tokens: ${report.usage.input} in, ${report.usage.output} out, on this computer.`
+    : `Tokens: ${report.usage.input} in, ${report.usage.output} out. ${spec.name} bills these to your account.`;
+  const answered = Boolean(report.answer.trim());
+  $('ai-use-replace').hidden = !answered || !aiScope.editor || aiScope.kind === 'summarize';
+  $('ai-use-below').hidden = !answered || !(aiScope.editor || aiScope.kind === 'summarize');
+  $('ai-save-answer').hidden = !answered;
+  $('ai-report').hidden = !answered;
+}
+
+// The answer for the editor's draft: it replaces the text or follows it; Save note keeps it, as with any edit.
+function useForDraft(replace) {
+  const answer = aiLast?.report.answer ?? '';
+  $('note-content').value = replace ? replacedText($('note-content').value, answer) : appendedText($('note-content').value, { text: answer });
+  syncSimple();
+  refreshProperties();
+  $('editor-message').textContent = 'Changes are saved only when you select Save note.';
+  $('ai-dialog').close();
+}
+$('ai-use-replace').addEventListener('click', () => useForDraft(true));
+$('ai-use-below').addEventListener('click', async () => {
+  if (aiScope.editor) { useForDraft(false); return; }
+  try {
+    const entry = files.get(aiScope.target?.id);
+    if (!entry || entry.deleted) throw new Error('This note is gone.');
+    await queueFile(entry.file.path, encoder.encode(appendedText(noteText(entry.file), { text: aiLast.report.answer })), entry.revision);
+    $('ai-status').textContent = 'Added below the note.';
+    $('ai-use-below').hidden = true;
+  } catch (error) { $('ai-status').textContent = errorText(error); }
+});
+$('ai-save-answer').addEventListener('click', async () => {
+  try {
+    const target = aiScope.editor?.title || aiScope.target && noteParts(noteText(aiScope.target.file), aiScope.target.file.path).title;
+    const title = aiScope.kind === 'summarize' && target ? `Summary of ${target}` : aiLast.request.split('\n')[0].slice(0, 80);
+    const text = newNoteText({ title, text: aiLast.report.answer });
+    const name = noteFilename(text);
+    let path = `notes/${name}`;
+    for (let copy = 2; [...files.values()].some((entry) => entry.file.path === path); copy++) path = `notes/${name.slice(0, -3)} ${copy}.md`;
+    freshNotes.set(path, Date.now());
+    await queueFile(path, encoder.encode(text), undefined);
+    $('ai-status').textContent = `Saved as the note "${title}".`;
+    $('ai-save-answer').hidden = true;
+  } catch (error) { $('ai-status').textContent = errorText(error); }
+});
+// A report holds the question and the answer, never the notes or the key.
+function aiReportText() {
+  return `Ask JotDrop report\nAI service: ${aiLast.provider}\nModel: ${aiLast.model}\nDate: ${new Date().toISOString()}\n\nQuestion:\n${aiLast.request}\n\nAnswer:\n${aiLast.report.answer}\n\nWhat is wrong with it:\n`;
+}
+$('ai-report').addEventListener('click', () => {
+  $('ai-report-box').hidden = !$('ai-report-box').hidden;
+  $('ai-report-mail').href = `mailto:hello@jotdrop.net?subject=${encodeURIComponent('Ask JotDrop report')}&body=${encodeURIComponent(aiReportText())}`;
+});
+$('ai-report-download').addEventListener('click', () => download(encoder.encode(aiReportText()), 'ask-jotdrop-report.txt', 'text/plain'));
+
+function closeAi() {
+  dictation?.abort();
+  aiConfirming?.(false);
+  aiRun?.controller.abort(new DOMException('Stopped.', 'AbortError'));
+  if ($('ai-dialog').open) $('ai-dialog').close();
+}
+$('ai-close').addEventListener('click', closeAi);
+$('ai-dialog').addEventListener('close', () => { dictation?.abort(); aiConfirming?.(false); aiRun?.controller.abort(new DOMException('Stopped.', 'AbortError')); });
+
+// Dictation with the browser's own speech recognition, where it has one. That service is the browser's, not ours.
+const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+$('ai-dictate').hidden = !Recognition;
+$('ai-dictate').addEventListener('click', () => {
+  if (dictation) { dictation.stop(); return; }
+  dictation = new Recognition();
+  dictation.lang = navigator.language || 'en-US';
+  dictation.interimResults = false;
+  dictation.onresult = (event) => {
+    const said = [...event.results].map((result) => result[0].transcript).join(' ').trim();
+    if (said) { $('ai-request').value = `${$('ai-request').value.trim()} ${said}`.trim(); renderGoes(); }
+  };
+  dictation.onerror = (event) => { $('ai-status').textContent = event.error === 'not-allowed' ? 'The browser did not allow the microphone.' : 'Dictation stopped.'; };
+  dictation.onend = () => { dictation = undefined; $('ai-dictate').setAttribute('aria-pressed', 'false'); $('ai-dictate').textContent = 'Dictate'; };
+  dictation.start();
+  $('ai-dictate').setAttribute('aria-pressed', 'true');
+  $('ai-dictate').textContent = 'Stop dictating';
+  $('ai-status').textContent = "Listening. Your browser's own speech service turns this into text; in most browsers that service is online.";
+});
+
+// The editor's buttons work on the draft only: nothing else goes along, and the answer waits for Replace or Add below.
+for (const [id, kind] of [['ai-rewrite', 'rewrite'], ['ai-checklist', 'checklist'], ['ai-summarize', 'summarize']]) $(id).addEventListener('click', () => {
+  const { title, body } = splitNote($('note-content').value);
+  if (!body.trim()) { $('editor-message').textContent = 'Write something first.'; return; }
+  openAi({ editor: { id: 'draft', title: title || 'Untitled', text: body, labels: [], shared: false }, request: editorRequest(kind, title || 'Untitled'), send: true, kind });
+});
+
 window.addEventListener('online', () => { if (client) void sync(); });
 window.addEventListener('pagehide', () => { syncController?.abort(); resetPhoto(); discardVoice(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) { stopCamera(); if (voiceJob?.recorder?.state === 'recording') voiceJob.recorder.stop(); } });

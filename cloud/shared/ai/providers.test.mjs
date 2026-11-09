@@ -105,3 +105,14 @@ test('network trouble and a cut-off wait become errors without the key', async (
   controller.abort(new DOMException('Too slow', 'TimeoutError'));
   assert.equal((await waiting).code, 'timeout');
 });
+
+test('OpenRouter reasoning models get their reasoning_details back in the next round; OpenAI itself does not', () => {
+  const details = [{ type: 'reasoning.encrypted', data: 'opaque', id: 'r1' }];
+  const json = { choices: [{ finish_reason: 'tool_calls', message: { content: null, reasoning_details: details, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'search_notes', arguments: '{"query":"milk"}' } }] } }] };
+  const routed = parseResponse('openrouter', json);
+  assert.deepEqual(routed.raw.reasoning_details, details);
+  const next = JSON.parse(buildRequest({ provider: 'openrouter', key: 'sk-or-test-1234567890', model: 'x/y' }, { system: 's', messages: [{ role: 'user', text: 'q' }, { role: 'assistant', text: '', toolCalls: routed.toolCalls, raw: routed.raw }] }).body);
+  assert.deepEqual(next.messages[2].reasoning_details, details);
+  // OpenAI's Chat Completions does not take the field, so it is not kept there.
+  assert.equal(parseResponse('openai', json).raw.reasoning_details, undefined);
+});

@@ -462,3 +462,28 @@ html { scrollbar-color: color-mix(in srgb, var(--ink) 35%, transparent) transpar
 .mail-address-row { display: flex; gap: 0.5rem; align-items: center; }
 .mail-address-row input { flex: 1; min-width: 0; font-family: ui-monospace, monospace; }
 
+
+/* Ask JotDrop: settings, the dialog, the confirmation and the answer. Meaning is in words and signs, never only in color. */
+.ai-note { color: var(--muted); font-size: .9rem; margin: .4rem 0 .8rem; }
+.ai-model-row, .ai-ask-row, .ai-form-actions { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: .5rem 0; }
+.ai-model-row input { flex: 1; min-width: 12rem; font-family: ui-monospace, monospace; }
+.ai-dialog textarea { width: 100%; box-sizing: border-box; }
+.ai-goes { margin: .5rem 0 1rem; }
+.ai-goes summary { cursor: pointer; font-weight: 600; }
+.ai-goes-list { list-style: none; padding: 0; margin: .3rem 0; max-height: 14rem; overflow: auto; }
+.ai-goes-list .check-label { margin: .4rem 0; }
+.ai-confirm { border: 1.5px solid var(--edge); border-radius: 10px; padding: .8rem 1rem; margin: 1rem 0; background: var(--field); }
+.ai-confirm h3 { margin: 0 0 .3rem; }
+.ai-facts { display: grid; grid-template-columns: max-content 1fr; gap: .3rem 1rem; margin: .5rem 0; }
+.ai-facts dt { font-weight: 600; }
+.ai-facts dd { margin: 0; overflow-wrap: anywhere; }
+.ai-status { min-height: 1.5em; margin: .5rem 0; }
+.ai-result { border-top: 1.5px dashed var(--line); padding-top: .8rem; }
+.ai-badge { display: inline-block; font-size: .8rem; font-weight: 600; letter-spacing: .02em; border: 1.5px solid var(--edge); border-radius: 999px; padding: .15rem .6rem; margin: 0 0 .6rem; }
+.ai-answer { white-space: pre-wrap; overflow-wrap: anywhere; margin: .4rem 0 .8rem; }
+.ai-sources { display: flex; flex-wrap: wrap; gap: .4rem; }
+.ai-actions { padding-left: 1.2rem; }
+.ai-actions li { margin: .3rem 0; }
+.ai-report { border: 1px solid var(--line); border-radius: 8px; padding: .6rem .8rem; margin-top: .6rem; }
+.ai-editor-row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: .8rem 0; }
+.ai-editor-row > span { font-weight: 600; margin-right: .3rem; }
