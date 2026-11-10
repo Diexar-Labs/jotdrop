@@ -113,6 +113,7 @@ Step-by-step instructions for each part are under [Install](#install).
 - **Checklists** that you tick right on the card.
 - **Photos and voice memos** inside a note, with a full-screen photo view and a player.
 - **Excalidraw drawings** show as a picture on the card in Obsidian. JotDrop uses the picture the Excalidraw plugin saves next to the drawing, or asks the plugin to draw it. It only reads your drawings and never changes them.
+- **Ask JotDrop**, an optional AI assistant with your own key: ask about your notes, add to a list, summarize a note or tidy up a draft. A change to a note waits until you apply it. See [Network use, accounts and payments](#network-use-accounts-and-payments).
 - **Markdown help** for headings, lists, links, quotes, code and tables, while the card itself shows clean text without Markdown signs.
 - **Saves as you go**, and a note changed elsewhere is never silently overwritten.
 
@@ -207,7 +208,7 @@ The apps are free and always will be. Pay only when you want more from the cloud
 
 Notes go to the `Mini Notes` folder of your vault; you can choose another folder in the settings.
 
-**Manual install** (offline or pre-release): download `manifest.json`, `main.js` and `styles.css` from the [latest plugin release](https://github.com/Diexar-Labs/jotdrop/releases/tag/0.27.7), put them in `<your-vault>/.obsidian/plugins/jotdrop/` and enable JotDrop under Community plugins.
+**Manual install** (offline or pre-release): download `manifest.json`, `main.js` and `styles.css` from the [latest plugin release](https://github.com/Diexar-Labs/jotdrop/releases/tag/0.27.8), put them in `<your-vault>/.obsidian/plugins/jotdrop/` and enable JotDrop under Community plugins.
 
 ### Android app
 
