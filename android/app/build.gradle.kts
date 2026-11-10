@@ -85,6 +85,20 @@ android {
     }
 }
 
+// Ask JotDrop reads the same tool list and prompt as the web app: one source in cloud/shared/ai.
+abstract class CopyAiAssets : DefaultTask() {
+    @get:InputFiles abstract val sources: ConfigurableFileCollection
+    @get:OutputDirectory abstract val outputDir: DirectoryProperty
+    @TaskAction fun copy() {
+        val folder = outputDir.get().asFile.resolve("ai").apply { deleteRecursively(); mkdirs() }
+        sources.forEach { it.copyTo(folder.resolve(it.name), overwrite = true) }
+    }
+}
+val aiAssets = tasks.register<CopyAiAssets>("copyAiAssets") {
+    sources.from(rootProject.file("../cloud/shared/ai/tools.json"), rootProject.file("../cloud/shared/ai/prompt.json"))
+}
+androidComponents { onVariants { variant -> variant.sources.assets?.addGeneratedSourceDirectory(aiAssets, CopyAiAssets::outputDir) } }
+
 val verifyReleaseSource = tasks.register<Exec>("verifyReleaseSource") {
     workingDir(rootProject.projectDir.parentFile)
     val verificationMode = if (System.getenv("JOTDROP_ANDROID_TEST_RELEASE") == "true") "base" else "release"

@@ -241,6 +241,33 @@ tasks.register<JavaExec>("checkListLinks") {
     }
 }
 
+// Ask JotDrop: the same requests, answers, tool rules and note edits as cloud/shared/ai and cloud/web/ai-web.mjs.
+val aiClasses = layout.buildDirectory.dir("ai-check")
+val aiSources = files(listOf("AiJson", "AiRedact", "AiTools", "AiContext", "AiProviders", "AiAssistant", "AiNoteEdits", "CloudVersionDiff")
+    .map { "app/src/main/kotlin/com/diexar/keepcapture/$it.kt" } + "checks/AiCheck.kt")
+val aiCompile = tasks.register<JavaExec>("aiCompile") {
+    inputs.files(aiSources)
+    outputs.dir(aiClasses)
+    classpath(buildscript.configurations.getByName("classpath"))
+    mainClass.set("org.jetbrains.kotlin.cli.jvm.K2JVMCompiler")
+    doFirst {
+        args("-Xdisable-default-scripting-plugin", "-no-stdlib", "-no-reflect", "-jvm-target", "17", "-classpath",
+            project(":app").configurations.getByName("debugCompileClasspath").asPath,
+            "-d", aiClasses.get().asFile.absolutePath)
+        args(aiSources.files.map { it.absolutePath })
+    }
+}
+
+tasks.register<JavaExec>("checkAi") {
+    dependsOn(aiCompile)
+    classpath(aiClasses)
+    classpath(provider { project(":app").configurations.getByName("debugCompileClasspath") })
+    mainClass.set("com.diexar.keepcapture.AiCheckKt")
+    doFirst {
+        args(listOf("JOTDROP_AI_VECTORS", "JOTDROP_AI_TOOLS", "JOTDROP_AI_PROMPT", "JOTDROP_AI_EDITS").map { requireNotNull(System.getenv(it)) { "Run through npm run check:ai-android" } })
+    }
+}
+
 val cloudAccountClasses = layout.buildDirectory.dir("cloud-account-check")
 val cloudAccountSources = files("app/src/main/kotlin/com/diexar/keepcapture/CloudCrypto.kt",
     "app/src/main/kotlin/com/diexar/keepcapture/CloudAccountCrypto.kt", "app/src/main/kotlin/com/diexar/keepcapture/CloudWords.kt",

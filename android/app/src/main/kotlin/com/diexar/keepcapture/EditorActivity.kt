@@ -68,6 +68,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AddAPhoto
 import androidx.compose.material.icons.filled.Draw
 import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckBox
@@ -533,6 +534,27 @@ private fun EditorScreen(
         if (recognized.isNotEmpty()) insertText(recognized)
     }
 
+    // Ask JotDrop on the draft: the answer replaces the text or follows it, and is saved like any edit.
+    val aiLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val answer = result.data?.getStringExtra(AskActivity.RESULT_TEXT)
+        if (result.resultCode != Activity.RESULT_OK || answer.isNullOrBlank()) return@rememberLauncherForActivityResult
+        val text = if (result.data?.getBooleanExtra(AskActivity.RESULT_REPLACE, false) == true) AiNoteEdits.draftBody(titleText, answer)
+            else AiNoteEdits.appendedText(bodyText.text, answer, null).trimEnd('\r', '\n')
+        bodyText = TextFieldValue(text = text, selection = TextRange(text.length))
+        bodyEditing = true
+    }
+
+    fun askAboutDraft(kind: String) {
+        when {
+            bodyText.text.isBlank() -> Toast.makeText(context, R.string.ai_write_first, Toast.LENGTH_SHORT).show()
+            // Keeps the hand-over below Android's limit for what one screen can pass to the next.
+            bodyText.text.length > 200_000 -> Toast.makeText(context, R.string.ai_too_long, Toast.LENGTH_LONG).show()
+            else -> aiLauncher.launch(AskActivity.draftIntent(context, kind, titleText, bodyText.text))
+        }
+    }
+
     fun launchSpeech() {
         val lang = Storage.getSpeechLanguage(context)
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
@@ -958,6 +980,14 @@ private fun EditorScreen(
                                         }
                                     },
                                 )
+                                for ((kind, label) in listOf("rewrite" to R.string.ai_editor_rewrite, "checklist" to R.string.ai_editor_checklist, "summarize" to R.string.ai_card_summarize)) {
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(label)) },
+                                        leadingIcon = { Icon(Icons.Filled.AutoAwesome, null) },
+                                        enabled = loaded && loadError == null && !saving,
+                                        onClick = { editorMenuOpen = false; askAboutDraft(kind) },
+                                    )
+                                }
                                 DropdownMenuItem(
                                     text = { Text(stringResource(R.string.md_help_button)) },
                                     leadingIcon = { Icon(Icons.Filled.Info, null) },

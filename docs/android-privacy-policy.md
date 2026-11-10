@@ -1,6 +1,6 @@
 # JotDrop Android Privacy Policy
 
-Last updated: November 6, 2026
+Last updated: November 9, 2026
 
 JotDrop (`com.diexar.keepcapture`) is a local-first Android notes app from Diexar Labs. Contact us at [eric@diexar.com](mailto:eric@diexar.com) about privacy questions.
 
@@ -24,8 +24,19 @@ You can create a free JotDrop Cloud account to sync your notes between devices, 
 - **Sync** runs in the background over HTTPS when you have turned it on, and only for the notes and attachment folders in your chosen vault. You can pause it, disconnect this phone, or delete your cloud account in the app.
 - **Shared groups:** the people you invite can read and change the notes you share with them. The notes, the group's name and the names people choose are encrypted on your device. Our server stores which accounts are in which group, when something changed, how large the files are and which device saved a version. The owner of a group can see the email addresses of everyone in it. What you wrote stays with the others after you leave. A report you send from a group reaches us with your email address, the email address of the person you report, the group's ID and what you wrote. If you block someone, our server stores which account blocked which until either account is deleted.
 
+## Ask JotDrop: AI with your own key (optional)
+
+Ask JotDrop is an assistant you can give tasks to in your own words, typed or dictated. It is off until you choose an AI service in Settings and enter your own key: Anthropic (Claude), OpenAI, Google (Gemini), OpenRouter, or an https address of your own that speaks the OpenAI API, such as a server that runs Ollama. When you send a request, the app sends it straight from your phone to that service, together with the notes listed under "What goes along" and any note the AI reads while it answers, at most 20 notes or 30,000 characters at a time. You see that list before you send and can take notes off it. Notes in shared groups and notes with a live list link stay out unless you switch them on. Nothing of this passes through our servers, and we never see your key.
+
+- **Your key** is stored in JotDrop's private storage on this phone, encrypted with a key from the Android Keystore, and excluded from Android backups. It is not synced to your other devices. "Turn off and remove key" deletes it.
+- **The AI service** handles what you send under your own agreement with it; we are not part of that and do not process it for you. Some services may use what you send to improve their products, Google for example on the free tier of the Gemini API, so read the terms of the service you pick.
+- **Changes to your notes** happen only on your phone. A new note is made at once; a change to a note you already have, a label, a reminder or an expiry date waits until you say yes.
+- **Dictating** a request uses the speech recognition app on your phone, as described under Speech recognition below.
+- **Reporting an answer** opens your mail app with an email to hello@jotdrop.net that holds the question and the answer. We use it only to look into the report and reply.
+
 ## When JotDrop connects to the internet
 
+- If you use Ask JotDrop, the app connects over HTTPS to the AI service you chose, only when you send a request or load the list of models in Settings.
 - When you save a web link, JotDrop may request the page and its Open Graph preview image from the website you chose. Some links use a public preview endpoint, including TikTok oEmbed or fxtwitter.com for X links. Those sites receive the requested URL, your IP address, and a browser-style user-agent. The downloaded preview is stored in your vault. You can turn off preview-image downloads in the app settings.
 - If you use JotDrop Cloud, JotDrop connects to `app.jotdrop.net` to sign in and to sync encrypted files, as described above.
 - JotDrop checks the public GitHub releases API for updates, at most once per day unless you request another check. GitHub receives the connection's IP address and the `JotDrop-Android` user-agent. No note contents are included.
@@ -39,7 +50,7 @@ Recording a voice memo stores audio in your vault without uploading it through J
 
 ## Device access and backups
 
-JotDrop asks for microphone access when recording audio, notification access for reminders, internet access for link previews, update checks and JotDrop Cloud, and boot events to restore reminders. The Android system picker grants access only to the vault or media you select. App preferences, including the selected vault-folder reference, can be included in your device's Android backup if backup is enabled. Your vault files are outside JotDrop's app-private backup; their backup and deletion depend on the folder and sync services you choose.
+JotDrop asks for microphone access when recording audio, notification access for reminders, internet access for link previews, update checks, JotDrop Cloud and Ask JotDrop, and boot events to restore reminders. The Android system picker grants access only to the vault or media you select. App preferences, including the selected vault-folder reference, can be included in your device's Android backup if backup is enabled. Your vault files are outside JotDrop's app-private backup; their backup and deletion depend on the folder and sync services you choose.
 
 You can revoke app permissions in Android settings, remove app preferences by clearing app data or uninstalling, and delete notes and attachments from your own vault. Google or other external services may retain data under their own policies. JotDrop is not designed for children under 13.
 

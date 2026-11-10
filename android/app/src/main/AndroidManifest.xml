@@ -67,6 +67,10 @@
             android:exported="false"
             android:label="@string/settings_title" />
 
+        <!-- Ask JotDrop: AI with the user's own key, straight from this phone to the service they chose. -->
+        <activity android:name=".AskActivity" android:exported="false" android:label="@string/ai_title" android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".AiSettingsActivity" android:exported="false" android:label="@string/ai_settings_title" android:windowSoftInputMode="adjustResize" />
+
         <!-- singleTask: the way back from Google or GitHub returns to the open sign-in, not a second copy in the browser's task. -->
         <activity android:name=".DrawingActivity" android:exported="false" android:label="@string/drawing_title" />
         <activity android:name=".CloudActivity" android:exported="true" android:label="JotDrop Cloud" android:launchMode="singleTask">

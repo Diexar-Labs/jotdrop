@@ -57,6 +57,19 @@ check(!/€|\$\d|\bEUR\b|\bUSD\b|per month|per year/i.test(mailUi), "CloudMailUi
 check(!/https?:\/\/|Uri\.parse|ACTION_VIEW|uriHandler|LocalUriHandler/.test(mailUi), "CloudMailUi must not open or show a link");
 check(mailUi.includes("Upgrade on our website."), "CloudMailUi names the website in words only");
 
+// Ask JotDrop (generative AI with the user's own key): no price, currency or checkout link in its screens and texts,
+// a way to report an answer, every answer marked as AI, and a change to a note only after a yes.
+const aiFiles = ["android/app/src/main/kotlin/com/diexar/keepcapture/AiActivity.kt", ...["", "-nl", "-de", "-es", "-fr", "-it"].map((locale) => `android/app/src/main/res/values${locale}/strings_ai.xml`)];
+for (const file of aiFiles) {
+  const text = read(file);
+  check(!/€|\$\d|\bEUR\b|\bUSD\b|per month|per year|JotDrop Plus|checkout|stripe/i.test(text), `${file} must not name a price, Plus or a checkout`);
+  check(!/https?:\/\/[a-z0-9]/i.test(text), `${file} must not show a web link`);
+}
+const aiUi = read(aiFiles[0]);
+check(aiUi.includes("R.string.ai_report") && aiUi.includes("mailto:hello@jotdrop.net"), "Ask JotDrop needs a report button for answers");
+check(aiUi.includes("R.string.ai_answer_label"), "Ask JotDrop must mark an answer as coming from AI");
+check(aiUi.includes("AiConfirmDialog(") && read("android/app/src/main/kotlin/com/diexar/keepcapture/AiAssistant.kt").includes('tool.mode == "confirm"'), "Ask JotDrop must ask before it changes a note");
+
 if (errors.length) {
   for (const error of errors) console.error(`FAIL: ${error}`);
   process.exit(1);

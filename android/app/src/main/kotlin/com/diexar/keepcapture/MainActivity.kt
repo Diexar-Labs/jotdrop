@@ -38,6 +38,7 @@ class MainActivity : ThemedAppCompatActivity() {
             pickVaultLauncher.launch(null)
         }
         binding.cloudButton.setOnClickListener { startActivity(Intent(this, CloudActivity::class.java)) }
+        binding.aiButton.setOnClickListener { startActivity(Intent(this, AiSettingsActivity::class.java)) }
         binding.reminderSoundButton.setOnClickListener {
             val channelId = ReminderReceiver.ensureChannel(this)
             try {

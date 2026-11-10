@@ -93,6 +93,8 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Summarize
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.DriveFileMove
@@ -1213,6 +1215,8 @@ private fun NotesListScreen(
             CardAction.SHARE -> context.startActivity(Intent(context, CloudActivity::class.java).putExtra(CloudActivity.EXTRA_SHARE, note.uri.toString()))
             CardAction.LINK -> context.startActivity(Intent(context, CloudActivity::class.java).putExtra(CloudActivity.EXTRA_LINK, note.uri.toString()))
             CardAction.GROUP -> context.startActivity(Intent(context, CloudActivity::class.java))
+            CardAction.ASK -> context.startActivity(AskActivity.intent(context, note.uri))
+            CardAction.SUMMARIZE -> context.startActivity(AskActivity.intent(context, note.uri, summarize = true))
             CardAction.MOVE_TO_MINE -> scope.launch {
                 val result = withContext(Dispatchers.IO) {
                     Storage.noteWriteMutex.withLock { Storage.moveNoteOutOfSpace(context, note.uri, note.space!!.id, keepSource = note.space.frozen || note.space.gone) }
@@ -1366,6 +1370,10 @@ private fun NotesListScreen(
                                     },
                                 )
                             }
+                        }
+                        // Ask JotDrop: AI with the user's own key; off until they choose a service in Settings.
+                        IconButton(onClick = { context.startActivity(AskActivity.intent(context)) }) {
+                            Icon(Icons.Filled.AutoAwesome, contentDescription = stringResource(R.string.ai_title))
                         }
                         IconButton(onClick = onOpenSettings) {
                             Icon(Icons.Filled.Settings, contentDescription = stringResource(R.string.action_settings))
@@ -3099,13 +3107,13 @@ internal fun conflictOriginalName(filename: String): String =
     filename.replace(Regex("\\.cloud-conflict-r\\d+(?:-[0-9a-fA-F-]+)?(?=\\.[^.]*$|$)"), "")
 
 /** What a card's own menu can do, depending on the folder it is shown in. */
-internal enum class CardAction { COLOR, LABELS, EXPIRES, ARCHIVE, RESTORE, MOVE, COPY, DELETE, SHARE, LINK, GROUP, MOVE_TO_MINE }
+internal enum class CardAction { COLOR, LABELS, EXPIRES, ARCHIVE, RESTORE, MOVE, COPY, DELETE, SHARE, LINK, GROUP, MOVE_TO_MINE, ASK, SUMMARIZE }
 /** Pin, labels and archive are per person, so a shared note's card offers what goes for everyone. */
 internal val SHARED_CARD_ACTIONS = listOf(CardAction.COLOR, CardAction.GROUP, CardAction.MOVE_TO_MINE, CardAction.DELETE)
 
 internal fun cardActionsFor(folder: NoteFolder): List<CardAction> = when (folder) {
-    NoteFolder.NOTES -> listOf(CardAction.COLOR, CardAction.LABELS, CardAction.EXPIRES, CardAction.ARCHIVE, CardAction.SHARE, CardAction.MOVE, CardAction.COPY, CardAction.DELETE)
-    NoteFolder.ARCHIVE -> listOf(CardAction.COLOR, CardAction.LABELS, CardAction.EXPIRES, CardAction.RESTORE, CardAction.MOVE, CardAction.COPY, CardAction.DELETE)
+    NoteFolder.NOTES -> listOf(CardAction.COLOR, CardAction.LABELS, CardAction.EXPIRES, CardAction.ARCHIVE, CardAction.SHARE, CardAction.MOVE, CardAction.COPY, CardAction.ASK, CardAction.SUMMARIZE, CardAction.DELETE)
+    NoteFolder.ARCHIVE -> listOf(CardAction.COLOR, CardAction.LABELS, CardAction.EXPIRES, CardAction.RESTORE, CardAction.MOVE, CardAction.COPY, CardAction.ASK, CardAction.SUMMARIZE, CardAction.DELETE)
     NoteFolder.TRASH -> listOf(CardAction.RESTORE, CardAction.DELETE)
 }
 
@@ -3136,6 +3144,8 @@ private fun CardMenu(actions: List<CardAction>, foreground: Color, onAction: (Ca
                     CardAction.LINK -> Icons.Filled.Link to R.string.action_share_link
                     CardAction.GROUP -> Icons.Filled.Group to R.string.action_group
                     CardAction.MOVE_TO_MINE -> Icons.Filled.DriveFileMove to R.string.action_move_to_mine
+                    CardAction.ASK -> Icons.Filled.AutoAwesome to R.string.ai_card_ask
+                    CardAction.SUMMARIZE -> Icons.Filled.Summarize to R.string.ai_card_summarize
                     CardAction.DELETE -> if (inTrash) Icons.Filled.DeleteForever to R.string.action_delete_forever
                         else Icons.Filled.Delete to R.string.action_delete
                 }
