@@ -89,6 +89,16 @@ object AiAsk {
         return if (line.length <= max) line else line.take(max).trimEnd() + "…"
     }
 
-    /** The first line of a note's text, short, for the list of what goes along. */
-    fun firstLine(note: AiNote): String = shortTitle(note.text, 80)
+    private val WIKI_EMBED = Regex("^!\\[\\[[^\\]]+]]$")
+    private val MD_IMAGE = Regex("^!\\[[^\\]]*]\\([^)]+\\)$")
+
+    /**
+     * The first line of a note's text, short, for the list of what goes along. Lines that only embed a picture
+     * (![[file.webp]] or ![alt](file.png)) are skipped, like Storage.extractTitle does.
+     */
+    fun firstLine(note: AiNote): String {
+        val line = note.text.lineSequence().map { SPACES.replace(it, " ").trim() }
+            .firstOrNull { it.isNotEmpty() && !WIKI_EMBED.matches(it) && !MD_IMAGE.matches(it) }.orEmpty()
+        return shortTitle(line, 80)
+    }
 }

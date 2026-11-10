@@ -1,5 +1,5 @@
-// Which notes go with a question, chosen on this device: words from the question, a title match counts three
-// times a text match, newest first on a tie. At most 20 notes and 30,000 characters; a long note is cut with
+// Which notes go with a question, chosen on this device: words from the question (a word counts only from its
+// start: "kopen" does not find "verkopen"), a title match counts three times a text match, newest first on a tie. At most 20 notes and 30,000 characters; a long note is cut with
 // "[...]". Notes from shared spaces and list links (shared: true) stay home unless the user switches them on;
 // notes the user picks go first.
 //
@@ -27,10 +27,24 @@ export function words(question) {
   return [...new Set(found)];
 }
 
+/**
+ * True when the term begins a word of the text: "boodschap" finds "boodschappen", "kopen" does not find
+ * "verkopen" (10 Nov 2026). A word begins at the start or after anything that is not a letter or a number.
+ * Android's AiContext.kt does the same; ai-vectors.json holds the cases.
+ */
+function startsWord(haystack, term) {
+  for (let at = haystack.indexOf(term); at >= 0; at = haystack.indexOf(term, at + 1)) {
+    if (at === 0) return true;
+    const before = [...haystack.slice(Math.max(0, at - 2), at)].pop();
+    if (!/[\p{L}\p{N}]/u.test(before)) return true;
+  }
+  return false;
+}
+
 function score(note, terms) {
   const title = fold(note.title), text = fold(note.text);
   let total = 0;
-  for (const term of terms) total += (title.includes(term) ? 3 : 0) + (text.includes(term) ? 1 : 0);
+  for (const term of terms) total += (startsWord(title, term) ? 3 : 0) + (startsWord(text, term) ? 1 : 0);
   return total;
 }
 

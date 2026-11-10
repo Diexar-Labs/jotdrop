@@ -128,6 +128,51 @@ private suspend fun askScreen(tools: List<AiTool>, promptJson: String) {
     same(AiAsk.shortTitle("  First line\nsecond line"), "First line", "short title: first line")
     same(AiAsk.firstLine(AiNote("x", "T", "\n\n  - [ ] eggs and more\nmilk")), "- [ ] eggs and more", "first line of the text")
     same(AiAsk.firstLine(AiNote("x", "T", "")), "", "first line of an empty note")
+    same(AiAsk.firstLine(AiNote("x", "T", "![[0eec0ddc568e.webp]]\nbuy milk")), "buy milk", "first line: a wiki embed is skipped")
+    same(AiAsk.firstLine(AiNote("x", "T", "\n  ![chart](img/chart.png)  \n\n![[b.png]]\nsecond")), "second", "first line: markdown images and embeds are skipped")
+    same(AiAsk.firstLine(AiNote("x", "T", "![[only.webp]]\n![[two.webp]]")), "", "first line: only embeds gives no line")
+    same(AiAsk.firstLine(AiNote("x", "T", "see ![[inline.webp]] here")), "see ![[inline.webp]] here", "first line: an embed inside text stays")
+}
+
+/**
+ * 10 Nov 2026, Eric's phone: the answer showed **AI testnotitie** with its stars. Simple Markdown is shown as
+ * bold, italic, code, headings and bullets; nothing else is interpreted (no HTML, no links that open by themselves).
+ */
+private fun markdown() {
+    fun blocks(text: String) = AiMarkdown.parse(text).map { listOf(it.kind.name, it.level, it.spans.map { s -> s.text + (if (s.bold) "|b" else "") + (if (s.italic) "|i" else "") + (if (s.code) "|c" else "") }) }
+    @Suppress("UNCHECKED_CAST") fun spans(text: String) = blocks(text).single()[2] as List<String>
+
+    same(spans("Plain text"), listOf("Plain text"), "markdown: plain")
+    same(spans("A **bold** word"), listOf("A ", "bold|b", " word"), "markdown: bold")
+    same(spans("A __bold__ word"), listOf("A ", "bold|b", " word"), "markdown: bold with underscores")
+    same(spans("An *italic* word"), listOf("An ", "italic|i", " word"), "markdown: italic")
+    same(spans("An _italic_ word"), listOf("An ", "italic|i", " word"), "markdown: italic with underscores")
+    same(spans("Use `code` here"), listOf("Use ", "code|c", " here"), "markdown: code")
+    same(spans("**bold and *both* here**"), listOf("bold and |b", "both|b|i", " here|b"), "markdown: italic inside bold")
+    same(spans("`**not bold**`"), listOf("**not bold**|c"), "markdown: code keeps its stars")
+    same(spans("snake_case_name and 2*3*4"), listOf("snake_case_name and 2*3*4"), "markdown: underscores in words and spaced stars stay")
+    same(spans("a * b * c and ** x"), listOf("a * b * c and ** x"), "markdown: stars with spaces stay")
+    same(spans("Unclosed **bold and `code"), listOf("Unclosed **bold and `code"), "markdown: unclosed marks stay as typed")
+    same(spans("<b>html</b> [link](http://x.y)"), listOf("<b>html</b> [link](http://x.y)"), "markdown: no HTML and no links")
+    same(spans("**AI testnotitie**"), listOf("AI testnotitie|b"), "markdown: the case from the phone")
+
+    fun b(kind: MdKind, level: Int, vararg parts: String) = listOf(kind.name, level, parts.toList())
+    same(blocks("# Title\n## Smaller\n###### Last\n####### seven"), listOf(
+        b(MdKind.HEADING, 1, "Title|b"), b(MdKind.HEADING, 2, "Smaller|b"), b(MdKind.HEADING, 6, "Last|b"), b(MdKind.PARAGRAPH, 0, "####### seven"),
+    ), "markdown: headings")
+    same(blocks("-no space\n- one\n* two *x*\n+ three\n  - nested\n- [ ] open\n- [x] done"), listOf(
+        b(MdKind.PARAGRAPH, 0, "-no space"), b(MdKind.BULLET, 0, "one"), b(MdKind.BULLET, 0, "two ", "x|i"), b(MdKind.BULLET, 0, "three"),
+        b(MdKind.BULLET, 1, "nested"), b(MdKind.BULLET, 0, "☐ open"), b(MdKind.BULLET, 0, "☑ done"),
+    ), "markdown: bullets and tasks")
+    same(blocks("Line one\n\n\n\nLine two\n"), listOf(b(MdKind.PARAGRAPH, 0, "Line one"), b(MdKind.SPACE, 0), b(MdKind.PARAGRAPH, 0, "Line two")), "markdown: blank lines become one space")
+    same(blocks("```kotlin\nval a = **1**\n\n  indented\n```\nafter"), listOf(
+        b(MdKind.CODE, 0, "val a = **1**|c"), b(MdKind.CODE, 0, "|c"), b(MdKind.CODE, 0, "  indented|c"), b(MdKind.PARAGRAPH, 0, "after"),
+    ), "markdown: code block keeps every line as typed")
+    same(blocks("```\nnever closed"), listOf(b(MdKind.CODE, 0, "never closed|c")), "markdown: unclosed code block")
+    same(blocks("1. first\r\n2. second\r\n"), listOf(b(MdKind.PARAGRAPH, 0, "1. first"), b(MdKind.PARAGRAPH, 0, "2. second")), "markdown: numbers stay as typed, CRLF ok")
+    same(blocks("").size, 0, "markdown: empty")
+    // The plain text of the blocks is the answer without its marks, nothing is lost or added.
+    same(AiMarkdown.plain("# T\n**a** and *b*\n- c"), "T\na and b\nc", "markdown: plain text")
 }
 
 @Suppress("UNCHECKED_CAST")
@@ -271,6 +316,7 @@ fun main(arguments: Array<String>) = runBlocking {
     edits.child("promptDefaults")!!.let { same(AiPrompt.system(promptJson, null, it.str("date")!!, null, emptyList()), it["expect"], "system prompt defaults") }
 
     askScreen(tools, promptJson)
+    markdown()
 
     // The limits from the design.
     same(AiAssistant.MAX_ROUNDS, 6, "max rounds")

@@ -450,6 +450,55 @@
       "question": "?? !!",
       "notes": [{ "id": "1", "title": "Anything", "text": "at all" }],
       "expect": { "ids": [], "left": 0 }
+    },
+    {
+      "name": "a word counts from the start of a word: boodschap finds boodschappen",
+      "question": "boodschap",
+      "notes": [
+        { "id": "a", "title": "Boodschappen", "text": "" },
+        { "id": "b", "title": "Weekend", "text": "Vergeet de boodschappen niet." },
+        { "id": "c", "title": "Garage", "text": "Banden" }
+      ],
+      "expect": { "ids": ["a", "b"], "left": 0 }
+    },
+    {
+      "name": "a word inside a longer word does not count: kopen does not find verkopen",
+      "question": "kopen",
+      "notes": [
+        { "id": "v", "title": "Verkopen", "text": "auto verkopen" },
+        { "id": "k", "title": "Kopen", "text": "brood kopen" }
+      ],
+      "expect": { "ids": ["k"], "left": 0 }
+    },
+    {
+      "name": "the end of a word is not the start: lijst does not find boodschappenlijst",
+      "question": "lijst",
+      "notes": [
+        { "id": "b", "title": "Boodschappenlijst", "text": "melk" },
+        { "id": "l", "title": "Lijst", "text": "melk" }
+      ],
+      "expect": { "ids": ["l"], "left": 0 }
+    },
+    {
+      "name": "a word after punctuation or an underscore starts a word",
+      "question": "wifi",
+      "notes": [
+        { "id": "a", "title": "", "text": "code:wifi" },
+        { "id": "b", "title": "", "text": "(wifi-code)" },
+        { "id": "c", "title": "", "text": "superwifi" },
+        { "id": "d", "title": "", "text": "my_wifi" }
+      ],
+      "expect": { "ids": ["a", "b", "d"], "left": 0 }
+    },
+    {
+      "name": "a number counts from the start of a number: 42 does not find 1842",
+      "question": "42",
+      "notes": [
+        { "id": "a", "title": "History", "text": "1842 was a year" },
+        { "id": "b", "title": "Room", "text": "Room 42" },
+        { "id": "c", "title": "Street", "text": "42nd street" }
+      ],
+      "expect": { "ids": ["b", "c"], "left": 0 }
     }
   ],
   "redact": [

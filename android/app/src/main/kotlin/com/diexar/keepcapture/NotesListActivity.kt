@@ -1028,7 +1028,6 @@ private fun NotesListScreen(
     var showBulkDeleteDialog by remember { mutableStateOf(false) }
     var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
     var overflowOpen by remember { mutableStateOf(false) }
-    var sortMenuOpen by remember { mutableStateOf(false) }
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     var remindersOnly by remember { mutableStateOf(false) }
     var labelManagerOpen by remember { mutableStateOf(false) }
@@ -1337,40 +1336,6 @@ private fun NotesListScreen(
                         }
                     },
                     actions = {
-                        Box {
-                            IconButton(onClick = { sortMenuOpen = true }) {
-                                Icon(Icons.AutoMirrored.Filled.Sort, contentDescription = stringResource(R.string.sort_title))
-                            }
-                            DropdownMenu(
-                                expanded = sortMenuOpen,
-                                onDismissRequest = { sortMenuOpen = false },
-                            ) {
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.sort_newest)) },
-                                    leadingIcon = {
-                                        if (sortMode == NoteSortMode.NEWEST) {
-                                            Icon(Icons.Filled.Check, contentDescription = null)
-                                        }
-                                    },
-                                    onClick = {
-                                        sortMenuOpen = false
-                                        onSetSortMode(NoteSortMode.NEWEST)
-                                    },
-                                )
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.sort_manual)) },
-                                    leadingIcon = {
-                                        if (sortMode == NoteSortMode.MANUAL) {
-                                            Icon(Icons.Filled.Check, contentDescription = null)
-                                        }
-                                    },
-                                    onClick = {
-                                        sortMenuOpen = false
-                                        onSetSortMode(NoteSortMode.MANUAL)
-                                    },
-                                )
-                            }
-                        }
                         // Ask JotDrop: AI with the user's own key; off until they choose a service in Settings.
                         IconButton(onClick = { context.startActivity(AskActivity.intent(context)) }) {
                             Icon(Icons.Filled.AutoAwesome, contentDescription = stringResource(R.string.ai_title))
@@ -1386,6 +1351,42 @@ private fun NotesListScreen(
                                 expanded = overflowOpen,
                                 onDismissRequest = { overflowOpen = false },
                             ) {
+                                // Sort order lives here so the note count in the title keeps its room.
+                                // The active choice has a check mark, not just a colour.
+                                Text(
+                                    stringResource(R.string.sort_title),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.sort_newest)) },
+                                    leadingIcon = {
+                                        if (sortMode == NoteSortMode.NEWEST) {
+                                            Icon(Icons.Filled.Check, contentDescription = null)
+                                        } else {
+                                            Spacer(Modifier.size(24.dp))
+                                        }
+                                    },
+                                    onClick = {
+                                        overflowOpen = false
+                                        onSetSortMode(NoteSortMode.NEWEST)
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.sort_manual)) },
+                                    leadingIcon = {
+                                        if (sortMode == NoteSortMode.MANUAL) {
+                                            Icon(Icons.Filled.Check, contentDescription = null)
+                                        } else {
+                                            Spacer(Modifier.size(24.dp))
+                                        }
+                                    },
+                                    onClick = {
+                                        overflowOpen = false
+                                        onSetSortMode(NoteSortMode.MANUAL)
+                                    },
+                                )
                                 DropdownMenuItem(
                                     text = { Text(stringResource(R.string.update_check)) },
                                     leadingIcon = { Icon(Icons.Filled.SystemUpdate, contentDescription = null) },

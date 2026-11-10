@@ -23,7 +23,8 @@ data class AiMatch(val id: String, val title: String, val snippet: String, val l
 
 /**
  * Which notes go with a question, chosen on this device, the same as cloud/shared/ai/context.mjs: words from the
- * question, a title match counts three times a text match, newest first on a tie. At most 20 notes and 30,000
+ * question (a word counts only from its start: "kopen" does not find "verkopen"), a title match counts three
+ * times a text match, newest first on a tie. At most 20 notes and 30,000
  * characters; a long note is cut with "[...]". Notes from shared spaces and list links stay home unless the user
  * switches them on; notes the user picks go first.
  */
@@ -37,6 +38,7 @@ object AiContext {
     private val MARKS = Regex("\\p{M}")
     private val SPLIT = Regex("[^\\p{L}\\p{N}]+")
     private val DIGITS = Regex("^\\p{N}+$")
+    private val LETTER_OR_NUMBER = Regex("[\\p{L}\\p{N}]")
     // Any white space, like JavaScript's \s. No Unicode flag: Android's ICU regex does not take it.
     private val SPACES = Regex("[\\s\\p{Z}\\uFEFF]+")
 
@@ -52,10 +54,25 @@ object AiContext {
         .filter { (it.length >= 3 || (it.isNotEmpty() && DIGITS.matches(it))) && it !in COMMON }
         .distinct()
 
+    /**
+     * True when the term begins a word of the text: "boodschap" finds "boodschappen", "kopen" does not find
+     * "verkopen" (10 Nov 2026). A word begins at the start or after anything that is not a letter or a number.
+     * The same as startsWord in cloud/shared/ai/context.mjs; ai-vectors.json holds the cases.
+     */
+    private fun startsWord(haystack: String, term: String): Boolean {
+        var at = haystack.indexOf(term)
+        while (at >= 0) {
+            if (at == 0) return true
+            if (!LETTER_OR_NUMBER.matches(String(Character.toChars(Character.codePointBefore(haystack, at))))) return true
+            at = haystack.indexOf(term, at + 1)
+        }
+        return false
+    }
+
     private fun score(note: AiNote, terms: List<String>): Int {
         val title = fold(note.title)
         val text = fold(note.text)
-        return terms.sumOf { (if (title.contains(it)) 3 else 0) + (if (text.contains(it)) 1 else 0) }
+        return terms.sumOf { (if (startsWord(title, it)) 3 else 0) + (if (startsWord(text, it)) 1 else 0) }
     }
 
     private fun ranked(notes: List<AiNote>, question: String, includeShared: Boolean): List<AiNote> {

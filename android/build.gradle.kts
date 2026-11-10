@@ -243,7 +243,7 @@ tasks.register<JavaExec>("checkListLinks") {
 
 // Ask JotDrop: the same requests, answers, tool rules and note edits as cloud/shared/ai and cloud/web/ai-web.mjs.
 val aiClasses = layout.buildDirectory.dir("ai-check")
-val aiSources = files(listOf("AiJson", "AiRedact", "AiTools", "AiContext", "AiProviders", "AiAssistant", "AiNoteEdits", "AiAsk", "CloudVersionDiff")
+val aiSources = files(listOf("AiJson", "AiRedact", "AiTools", "AiContext", "AiProviders", "AiAssistant", "AiNoteEdits", "AiAsk", "AiMarkdown", "CloudVersionDiff")
     .map { "app/src/main/kotlin/com/diexar/keepcapture/$it.kt" } + "checks/AiCheck.kt")
 val aiCompile = tasks.register<JavaExec>("aiCompile") {
     inputs.files(aiSources)

@@ -364,7 +364,7 @@ private fun AiResult(
         if (report.answer.isNotBlank()) Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(stringResource(R.string.ai_answer_label, provider, model), style = MaterialTheme.typography.labelMedium)
-                Text(report.answer)
+                AiMarkdownText(report.answer)
             }
         }
         // The draft is already open in the editor, so it gets no source button.
