@@ -189,7 +189,7 @@ class AiExecutor(private val context: Context, private val open: (Uri) -> Unit) 
      */
     suspend fun load() = withContext(Dispatchers.IO) {
         val started = android.os.SystemClock.elapsedRealtime()
-        val summaries = Storage.listNotes(context, NoteFolder.NOTES).getOrDefault(emptyList()) + Storage.listNotes(context, NoteFolder.ARCHIVE).getOrDefault(emptyList())
+        val summaries = Storage.listNotesForAsk(context).getOrDefault(emptyList())
         listMs = android.os.SystemClock.elapsedRealtime() - started
         val iso = iso()
         val cached = java.util.concurrent.atomic.AtomicInteger()

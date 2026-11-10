@@ -70,6 +70,29 @@ if (/remember\([^)]*\)\s*\{[^}]*(uriOf|idOf)/.test(screen)) throw new Error('AiA
 if (!/AiAsk\.plan\(/.test(screen) || !/chosen = chosen/.test(screen)) throw new Error('AiActivity.kt: the ask screen must send what AiAsk.plan chose');
 if (/pinned = listOfNotNull\(pinnedId\)/.test(screen)) throw new Error('AiActivity.kt: the old pinnedId is back');
 
+// 10 Nov 2026: listing 500 notes for the ask screen took ~2.5 s on Eric's phone (3.9 s on the emulator). The attachments
+// folder was read three times (notes, Mail, Archive), Mail and Archive were looked up from the vault root each time, and
+// every note compiled some twenty Regex objects. The ask screen lists Notes and Archive in one pass without attachments.
+const android = readFileSync(path.join(kotlin, 'AiAndroid.kt'), 'utf8');
+if (/Storage\.listNotes\(/.test(android) || !/Storage\.listNotesForAsk\(/.test(android)) throw new Error('AiAndroid.kt: the ask screen must list with Storage.listNotesForAsk (one pass, no attachments)');
+const storage = readFileSync(path.join(kotlin, 'Storage.kt'), 'utf8');
+const body = (name) => {
+  const start = storage.indexOf(`fun ${name}(`);
+  if (start < 0) throw new Error(`Storage.kt: ${name} is missing`);
+  const open = storage.indexOf('{', storage.indexOf(')', start));
+  let depth = 0;
+  for (let i = open; i < storage.length; i++) {
+    if (storage[i] === '{') depth++;
+    else if (storage[i] === '}' && --depth === 0) return storage.slice(open, i);
+  }
+  throw new Error(`Storage.kt: ${name} has no end`);
+};
+for (const name of ['buildNoteSummaries', 'extractTitle', 'extractSnippet', 'withoutHeadingMarks', 'extractUrls', 'collectEmbedBasenames']) {
+  if (/Regex\(/.test(body(name))) throw new Error(`Storage.kt: ${name} compiles a Regex for every note; keep it in a val`);
+}
+if (/attachments: Map<String, Uri> = snapshotAttachments/.test(storage)) throw new Error('Storage.kt: buildNoteSummaries must get the attachments of its listing, not read the folder again');
+if (/traverseSubfolder\(context, tree, "\$\{getSubfolder\(context\)\}\/Mail"\)/.test(storage)) throw new Error('Storage.kt: Mail is a folder in the notes folder; take it from that listing');
+
 const temporary = mkdtempSync(path.join(tmpdir(), 'jotdrop-ai-android-'));
 try {
   const editsFile = path.join(temporary, 'edits.json');

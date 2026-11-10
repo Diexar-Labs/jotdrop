@@ -486,14 +486,39 @@ object Storage {
         }
     }
 
-    fun listNotes(context: Context): Result<List<NoteSummary>> {
+    fun listNotes(context: Context): Result<List<NoteSummary>> = listNotesFolder(context, attachments = true).map { it.notes }
+
+    /**
+     * Ask JotDrop: Notes and Archive in one pass, without attachments (a request never sends a picture). 10 Nov 2026:
+     * listing both the usual way took ~2.5 s for 496 notes on Eric's phone.
+     */
+    fun listNotesForAsk(context: Context): Result<List<NoteSummary>> = listNotesFolder(context, attachments = false).map { listing ->
+        val archive = listing.dirs["Archive"]?.let { buildNoteSummaries(context, listing.vaultUri, noteFiles(context, listing.vaultUri, it), null) }.orEmpty()
+        listing.notes + archive
+    }
+
+    private class Listing(val notes: List<NoteSummary>, val dirs: Map<String, Uri>, val vaultUri: Uri)
+
+    private fun noteFiles(context: Context, vaultUri: Uri, folder: Uri, dirs: MutableMap<String, Uri>? = null) =
+        queryChildren(context, vaultUri, folder, dirs = dirs).filter { !it.name.startsWith(".") && it.name.endsWith(".md", ignoreCase = true) }
+
+    /**
+     * The notes folder with Mail and the groups. Its subfolders (Mail, Archive, .attachments, Shared) come from the one
+     * listing of the notes folder, instead of looking each up again from the vault root, and the attachments are read once.
+     */
+    private fun listNotesFolder(context: Context, attachments: Boolean): Result<Listing> {
         recoverNoteJournals(context)
         val vaultUri = getVaultUri(context)
             ?: return Result.failure(IllegalStateException("Geen vault-map gekozen."))
         val subfolder = openOrCreateNotesFolder(context).getOrElse { return Result.failure(it) }
-        val children = queryChildren(context, vaultUri, subfolder.uri)
-            .filter { !it.name.startsWith(".") && it.name.endsWith(".md", ignoreCase = true) }
-        return Result.success(buildNoteSummaries(context, vaultUri, children) + mailNotes(context, vaultUri) + sharedNotes(context, vaultUri))
+        val dirs = HashMap<String, Uri>()
+        val children = noteFiles(context, vaultUri, subfolder.uri, dirs)
+        val files = if (attachments) snapshotAttachments(context, vaultUri, dirs) else null
+        val own = buildNoteSummaries(context, vaultUri, children, files)
+        // Mail to JotDrop puts its notes in the Mail folder, like the web app and the plugins; they belong in the list with the rest.
+        val mail = dirs["Mail"]?.let { buildNoteSummaries(context, vaultUri, noteFiles(context, vaultUri, it), files) }.orEmpty()
+        val shared = sharedNotes(context, vaultUri, dirs["Shared"], attachments)
+        return Result.success(Listing(own + mail + shared, dirs, vaultUri))
     }
 
     /**
@@ -510,9 +535,7 @@ object Storage {
                 val tree = DocumentFile.fromTreeUri(context, vaultUri) ?: return Result.success(emptyList())
                 val folderPath = folderPath(context, folder)
                 val folderDoc = traverseSubfolder(context, tree, folderPath) ?: return Result.success(emptyList())
-                val children = queryChildren(context, vaultUri, folderDoc.uri)
-                    .filter { !it.name.startsWith(".") && it.name.endsWith(".md", ignoreCase = true) }
-                Result.success(buildNoteSummaries(context, vaultUri, children))
+                Result.success(buildNoteSummaries(context, vaultUri, noteFiles(context, vaultUri, folderDoc.uri), snapshotAttachments(context, vaultUri)))
             }
         }
     }
@@ -521,14 +544,16 @@ object Storage {
         context: Context,
         vaultUri: Uri,
         children: List<ChildDoc>,
-        // A group's notes show the attachments of that group.
-        attachments: Map<String, Uri> = snapshotAttachments(context, vaultUri),
+        // The attachments of the listing, read once; a group's notes show the attachments of that group. Null: only what
+        // Ask JotDrop uses (title, labels, time), without the card's text, links and attachments.
+        attachments: Map<String, Uri>?,
     ): List<NoteSummary> {
         val summaries = children.map { child ->
             // Unchanged notes (same modified time and size) come from the preview cache instead of being opened again.
             val preview = NotePreviewCache.get(context, child.uri, child.lastModified, child.size)
                 ?: readPreview(context, child.uri).also { NotePreviewCache.put(context, child.uri, child.lastModified, child.size, it) }
             val parsed = FrontmatterParser.parse(preview)
+            if (attachments == null) return@map NoteSummary(child.uri, child.name, child.lastModified, extractTitle(parsed.body, child.name), "", meta = parsed.meta, size = child.size)
             val firstImage = findEmbeddedImageBasenames(parsed.body).firstOrNull()
             val firstAudio = if (firstImage == null) {
                 findEmbeddedAudioBasenames(parsed.body).firstOrNull()
@@ -590,7 +615,8 @@ object Storage {
         fallback
     }
 
-    private fun queryChildren(context: Context, treeUri: Uri, parentUri: Uri, strict: Boolean = false): List<ChildDoc> {
+    /** Files of a folder; its subfolders by name go into [dirs] when given, so a listing does not look them up again. */
+    private fun queryChildren(context: Context, treeUri: Uri, parentUri: Uri, strict: Boolean = false, dirs: MutableMap<String, Uri>? = null): List<ChildDoc> {
         val docId = DocumentsContract.getDocumentId(parentUri)
         val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, docId)
         val projection = arrayOf(
@@ -611,8 +637,8 @@ object Storage {
                     val mime = cursor.getString(2) ?: ""
                     val mtime = if (cursor.isNull(3)) 0L else cursor.getLong(3)
                     val size = if (cursor.isNull(4)) -1L else cursor.getLong(4)
-                    if (mime == DocumentsContract.Document.MIME_TYPE_DIR) continue
                     val uri = DocumentsContract.buildDocumentUriUsingTree(treeUri, id)
+                    if (mime == DocumentsContract.Document.MIME_TYPE_DIR) { dirs?.put(name, uri); continue }
                     out.add(ChildDoc(uri, name, mtime, size))
                 }
             }
@@ -623,16 +649,19 @@ object Storage {
         return out
     }
 
-    private fun snapshotAttachments(context: Context, vaultUri: Uri): Map<String, Uri> {
+    /** [notesDirs]: the subfolders of the notes folder from a listing; the legacy `.attachments` is one of them. */
+    private fun snapshotAttachments(context: Context, vaultUri: Uri, notesDirs: Map<String, Uri>? = null): Map<String, Uri> {
         val tree = DocumentFile.fromTreeUri(context, vaultUri) ?: return emptyMap()
         val result = HashMap<String, Uri>()
+        val legacy = legacyAssetsPath(context)
         // Legacy-locatie eerst; de effectieve map overschrijft daarna bij gelijke
         // basenames (deterministische volgorde, pariteit met de plugin). Zo blijven
         // oude notities die naar `.attachments` wijzen renderen én wint de
         // ingestelde map wanneer dezelfde basename op beide plekken bestaat.
-        for (path in listOf(legacyAssetsPath(context), resolveAssetsFolder(context)).distinct()) {
-            val folder = traverseSubfolder(context, tree, path) ?: continue
-            for (child in queryChildren(context, vaultUri, folder.uri)) {
+        for (path in listOf(legacy, resolveAssetsFolder(context)).distinct()) {
+            val folder = if (path == legacy && notesDirs != null) notesDirs[".attachments"] ?: continue
+                else traverseSubfolder(context, tree, path)?.uri ?: continue
+            for (child in queryChildren(context, vaultUri, folder)) {
                 result[child.name] = child.uri
             }
         }
@@ -682,22 +711,23 @@ object Storage {
     }
 
     /** The notes of every group this phone knows, among the own notes: like Keep, they are simply there. */
-    private fun sharedNotes(context: Context, vaultUri: Uri): List<NoteSummary> {
-        val tree = DocumentFile.fromTreeUri(context, vaultUri) ?: return emptyList()
-        return CloudSpacesFlow.known(context).flatMap { space ->
-            val folder = traverseSubfolder(context, tree, spacePath(context, space.id)) ?: return@flatMap emptyList()
-            val children = queryChildren(context, vaultUri, folder.uri).filter { !it.name.startsWith(".") && it.name.endsWith(".md", ignoreCase = true) }
+    /**
+     * The notes of every group this phone knows, among the own notes: like Keep, they are simply there. [sharedDir] is the
+     * Shared folder from the listing of the notes folder (none: no group has notes here).
+     */
+    private fun sharedNotes(context: Context, vaultUri: Uri, sharedDir: Uri?, attachments: Boolean): List<NoteSummary> {
+        val spaces = CloudSpacesFlow.known(context)
+        if (sharedDir == null || spaces.isEmpty()) return emptyList()
+        val spaceDirs = HashMap<String, Uri>()
+        queryChildren(context, vaultUri, sharedDir, dirs = spaceDirs)
+        return spaces.flatMap { space ->
+            val folder = spaceDirs[space.id] ?: return@flatMap emptyList()
+            val inner = HashMap<String, Uri>()
+            val children = noteFiles(context, vaultUri, folder, inner)
+            val files = if (attachments) inner["attachments"]?.let { dir -> queryChildren(context, vaultUri, dir).associate { it.name to it.uri } }.orEmpty() else null
             val mark = NoteSpace(space.id, space.name, space.others, space.frozen, space.gone)
-            buildNoteSummaries(context, vaultUri, children, spaceAttachments(context, vaultUri, space.id)).map { it.copy(space = mark) }
+            buildNoteSummaries(context, vaultUri, children, files).map { it.copy(space = mark) }
         }
-    }
-
-    /** Mail to JotDrop puts its notes in the Mail folder, like the web app and the plugins; they belong in the list with the rest. */
-    private fun mailNotes(context: Context, vaultUri: Uri): List<NoteSummary> {
-        val tree = DocumentFile.fromTreeUri(context, vaultUri) ?: return emptyList()
-        val folder = traverseSubfolder(context, tree, "${getSubfolder(context)}/Mail") ?: return emptyList()
-        val children = queryChildren(context, vaultUri, folder.uri).filter { !it.name.startsWith(".") && it.name.endsWith(".md", ignoreCase = true) }
-        return buildNoteSummaries(context, vaultUri, children)
     }
 
     fun noteCountInSpace(context: Context, spaceId: String): Int {
@@ -1444,13 +1474,11 @@ object Storage {
 
     private fun collectEmbedBasenames(content: String, accept: (String) -> Boolean): List<String> {
         val result = LinkedHashSet<String>()
-        val obsidian = Regex("!\\[\\[([^\\]\\n|]+)(?:\\|[^\\]\\n]+)?\\]\\]")
-        for (m in obsidian.findAll(content)) {
+        for (m in embedObsidian.findAll(content)) {
             val name = m.groupValues[1].trim().substringAfterLast('/')
             if (name.isNotEmpty() && accept(name)) result.add(name)
         }
-        val standard = Regex("!\\[[^\\]]*\\]\\(([^)\\s]+)(?:\\s+\"[^\"]*\")?\\)")
-        for (m in standard.findAll(content)) {
+        for (m in embedStandard.findAll(content)) {
             val path = m.groupValues[1].trim()
             val name = path.substringAfterLast('/').substringBefore('?').substringBefore('#')
             if (name.isNotEmpty() && accept(name)) result.add(name)
@@ -1780,21 +1808,43 @@ object Storage {
         }
     }
 
+    // Made once instead of some twenty per note when listing. (10 Nov 2026: the card text of 440 notes still takes
+    // ~0.7 s on the emulator; that is the matching itself, which Ask JotDrop skips.)
+    private val titleWikiEmbed = Regex("^!\\[\\[[^\\]]+]]$")
+    private val titleMdImage = Regex("^!\\[[^\\]]*]\\([^)]+\\)$")
+    private val titleTaskMarker = Regex("^-[ \\t]+\\[[ xX]\\](?:[ \\t]+|$)")
+    private val titleListMarker = Regex("^(?:[-*+][ \\t]+|\\d{1,9}[.)][ \\t]+)")
+    private val snippetWikiEmbed = Regex("^\\s*!\\[\\[[^\\]]+]]\\s*$")
+    private val snippetMdImage = Regex("^\\s*!\\[[^\\]]*]\\([^)]+\\)\\s*$")
+    private val snippetPreviewMarker = Regex("^\\s*<!--\\s*(?:jotdrop|diexar)-preview:.*?-->\\s*$")
+    private val snippetListLine = Regex("^[ \\t]*(?:-[ \\t]+\\[[ xX]\\](?:[ \\t]|$)|[-*+][ \\t]+|\\d{1,9}[.)][ \\t]+).*$")
+    private val snippetMdLink = Regex("\\[([^\\]\\n]+)]\\([^)\\n]+\\)")
+    private val snippetWikiLink = Regex("\\[\\[([^\\]|\\n]+)(?:\\|([^\\]\\n]+))?]]")
+    private val snippetUrl = Regex("https?://\\S+")
+    private val snippetTask = Regex("""(?m)^\s*-\s+\[[ xX]]""")
+    private val fenceMarker = Regex("^\\s{0,3}(`{3,}|~{3,})")
+    private val headingMarks = Regex("^\\s{0,3}#{1,6}[ \\t]+")
+    private val urlsWikiEmbed = Regex("!\\[\\[[^\\]]+]]")
+    private val urlsMdImage = Regex("!\\[[^\\]]*]\\([^)]+\\)")
+    private val urlsFirstHeading = Regex("(?m)^[ \\t]*#{1,6}[ \\t]+.*$")
+    private val urlsMdLink = Regex("\\[[^\\]\\n]*]\\((https?://[^)\\s]+)\\)")
+    private val urlsBare = Regex("https?://[^\\s)<>\"']+")
+    private val embedObsidian = Regex("!\\[\\[([^\\]\\n|]+)(?:\\|[^\\]\\n]+)?\\]\\]")
+    private val embedStandard = Regex("!\\[[^\\]]*\\]\\(([^)\\s]+)(?:\\s+\"[^\"]*\")?\\)")
+
     private fun extractTitle(body: String, fallbackFilename: String): String {
         // Embed-regels overslaan; anders krijg je `![[bestand.jpg]]` als
         // kaart-titel bij notities die met een afbeelding beginnen.
-        val wikiEmbed = Regex("^!\\[\\[[^\\]]+]]$")
-        val mdImage = Regex("^!\\[[^\\]]*]\\([^)]+\\)$")
         val firstLine = body.lineSequence()
             .map { it.trim() }
-            .filter { it.isNotEmpty() && !wikiEmbed.matches(it) && !mdImage.matches(it) }
+            .filter { it.isNotEmpty() && !titleWikiEmbed.matches(it) && !titleMdImage.matches(it) }
             .firstOrNull().orEmpty()
         // Lijstmarkers strippen zodat de kaarttitel niet met rauwe Markdown begint.
         // CardText haalt ook opmaaktekens weg en toont `\#tag` (geneutraliseerde gedeelde
         // tekst) zoals Obsidian's leesweergave: zonder backslash.
         val cleaned = CardText.plain(firstLine
-            .replace(Regex("^-[ \\t]+\\[[ xX]\\](?:[ \\t]+|$)"), "")
-            .replace(Regex("^(?:[-*+][ \\t]+|\\d{1,9}[.)][ \\t]+)"), "")
+            .replace(titleTaskMarker, "")
+            .replace(titleListMarker, "")
             .trimStart('#'))
             .trim()
         return cleaned.ifBlank { fallbackFilename.removeSuffix(".md") }
@@ -1802,19 +1852,14 @@ object Storage {
 
     private fun extractSnippet(body: String): String {
         // Filter zowel Obsidian-wikilink-embeds (![[…]]) als standaard markdown-images (![alt](…)).
-        val wikiEmbed = Regex("^\\s*!\\[\\[[^\\]]+]]\\s*$")
-        val mdImage = Regex("^\\s*!\\[[^\\]]*]\\([^)]+\\)\\s*$")
         // Preview-markering van PreviewWorker niet tonen (plugin-pariteit: extractPreview in view.ts).
-        val previewMarker = Regex("^\\s*<!--\\s*(?:jotdrop|diexar)-preview:.*?-->\\s*$")
         val lines = body.lineSequence()
             .map { it.trimEnd() }
-            .filter { it.isNotBlank() && !wikiEmbed.matches(it) && !mdImage.matches(it) && !previewMarker.matches(it) }
+            .filter { it.isNotBlank() && !snippetWikiEmbed.matches(it) && !snippetMdImage.matches(it) && !snippetPreviewMarker.matches(it) }
             .toList()
         // Een gewone eerste regel is al de kaarttitel en hoeft niet dubbel in de
         // snippet. Een lijstregel blijft juist staan, inclusief geneste checklists.
-        val firstIsList = lines.firstOrNull()?.matches(
-            Regex("^[ \\t]*(?:-[ \\t]+\\[[ xX]\\](?:[ \\t]|$)|[-*+][ \\t]+|\\d{1,9}[.)][ \\t]+).*$"),
-        ) == true
+        val firstIsList = lines.firstOrNull()?.matches(snippetListLine) == true
         val rest = withoutHeadingMarks(
             if (firstIsList) lines.joinToString("\n")
             else if (lines.size > 1) lines.drop(1).joinToString("\n")
@@ -1825,23 +1870,21 @@ object Storage {
         // Daarna opmaaktekens weg (plugin-pariteit), en `\#tag` zonder backslash.
         val stripped = CardText.plain(rest
             // Geen Markdown-tekens op de kaart (Eric): elke link toont alleen zijn label.
-            .replace(Regex("\\[([^\\]\\n]+)]\\([^)\\n]+\\)"), "$1")
-            .replace(Regex("\\[\\[([^\\]|\\n]+)(?:\\|([^\\]\\n]+))?]]")) { m ->
+            .replace(snippetMdLink, "$1")
+            .replace(snippetWikiLink) { m ->
                 m.groupValues[2].ifEmpty { m.groupValues[1].substringBefore('#') }
             }
-            .replace(Regex("https?://\\S+"), ""))
+            .replace(snippetUrl, ""))
             .lineSequence()
             .map { it.trimEnd() }
             .joinToString("\n")
             .trimEnd()
         // Every task stays on the card, however many: they tick from the overview (Eric, 7 nov).
-        return if (Regex("""(?m)^\s*-\s+\[[ xX]]""").containsMatchIn(stripped)) stripped else stripped.take(280)
+        return if (snippetTask.containsMatchIn(stripped)) stripped else stripped.take(280)
     }
 
     /** A heading further down keeps its words on the card, without the `#` signs; code in a fence stays as it is. */
     private fun withoutHeadingMarks(text: String): String {
-        val fenceMarker = Regex("^\\s{0,3}(`{3,}|~{3,})")
-        val heading = Regex("^\\s{0,3}#{1,6}[ \\t]+")
         var fence = ""
         return text.split("\n").joinToString("\n") { line ->
             val marker = fenceMarker.find(line)?.groupValues?.get(1)
@@ -1852,7 +1895,7 @@ object Storage {
                     line
                 }
                 fence.isNotEmpty() -> line
-                else -> heading.replaceFirst(line, "")
+                else -> headingMarks.replaceFirst(line, "")
             }
         }
     }
@@ -1865,12 +1908,12 @@ object Storage {
      */
     private fun extractUrls(body: String): List<String> {
         var stripped = body
-            .replace(Regex("!\\[\\[[^\\]]+]]"), "")
-            .replace(Regex("!\\[[^\\]]*]\\([^)]+\\)"), "")
+            .replace(urlsWikiEmbed, "")
+            .replace(urlsMdImage, "")
         // Eerste heading-regel (de titel) weghalen: een URL die al als kaart-titel
         // wordt getoond mag niet óók als losse chip verschijnen. Dit was de
         // oorzaak van twee identieke links per kaart bij gedeelde TikTok-video's.
-        stripped = stripped.replaceFirst(Regex("(?m)^[ \\t]*#{1,6}[ \\t]+.*$"), "")
+        stripped = stripped.replaceFirst(urlsFirstHeading, "")
 
         val seen = LinkedHashSet<String>()
         val out = ArrayList<String>()
@@ -1881,10 +1924,10 @@ object Storage {
         }
         // Markdown-link-targets eerst; verwijder de hele `[tekst](url)` zodat een
         // URL die als link-tekst staat niet nog eens als losse URL meetelt.
-        stripped = Regex("\\[[^\\]\\n]*]\\((https?://[^)\\s]+)\\)").replace(stripped) { m ->
+        stripped = urlsMdLink.replace(stripped) { m ->
             push(m.groupValues[1]); " "
         }
-        for (m in Regex("https?://[^\\s)<>\"']+").findAll(stripped)) push(m.value)
+        for (m in urlsBare.findAll(stripped)) push(m.value)
         return out
     }
 
