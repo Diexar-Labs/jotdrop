@@ -15,6 +15,7 @@ import { createDrawingEditor } from '/shared/drawing-editor.mjs';
 import { AiError, createProvider, pickDefaultModel } from '/shared/ai/providers.mjs';
 import { runAssistant } from '/shared/ai/assistant.mjs';
 import { selectNotes } from '/shared/ai/context.mjs';
+import { parseMarkdown } from '/shared/ai/markdown.mjs';
 import { AI_STORE_PATH, WEB_PROVIDERS, aiNotes, modelGroups, aiSettings, appendedText, describeChange, editorRequest, expiryChanges, labelChanges, newNoteText, reminderChanges, replacedText } from '/ai-web.mjs';
 import { DEFAULT_WARN, INTRO, PAPER_DRAWER, SUGGESTED_DRAWERS, WARN_OPTIONS, drawerLabel, drawerName, expiresBadge, inDrawer, isPaperDrawer, validExpires, warnReminder, withPaperDrawer } from '/shared/paper.mjs';
 
@@ -4557,6 +4558,43 @@ function aiActionLine(action) {
   if (action.reason === 'not_allowed') return 'Left alone: that note is shared, and shared notes are kept out.';
   return `Did not work: ${words.charAt(0).toLowerCase()}${words.slice(1)}.`;
 }
+// The answer as simple formatting (bold, italic, code, headings, bullets), built with textContent only: no HTML is
+// ever parsed and links stay as typed. "Save as a new note" and the report mail keep the raw text.
+function aiSpans(parent, spans) {
+  for (const span of spans) {
+    let node = document.createTextNode(span.text);
+    if (span.code) { const code = document.createElement('code'); code.append(node); node = code; }
+    if (span.italic) { const em = document.createElement('em'); em.append(node); node = em; }
+    if (span.bold) { const strong = document.createElement('strong'); strong.append(node); node = strong; }
+    parent.append(node);
+  }
+}
+function showAiAnswer(target, text) {
+  const nodes = [];
+  let list = null;
+  let pre = null;
+  for (const block of parseMarkdown(text)) {
+    if (block.kind !== 'bullet') list = null;
+    if (block.kind !== 'code') pre = null;
+    if (block.kind === 'space') continue;
+    if (block.kind === 'bullet') {
+      if (!list) { list = document.createElement('ul'); list.className = 'ai-list'; nodes.push(list); }
+      const item = document.createElement('li');
+      item.style.marginLeft = `${block.level * 1.2}rem`;
+      aiSpans(item, block.spans);
+      list.append(item);
+    } else if (block.kind === 'code') {
+      if (!pre) { pre = document.createElement('pre'); pre.className = 'ai-code'; nodes.push(pre); } else pre.append('\n');
+      pre.append(block.spans[0].text);
+    } else {
+      const line = document.createElement('p');
+      if (block.kind === 'heading') line.className = `ai-h ai-h${block.level}`;
+      aiSpans(line, block.spans);
+      nodes.push(line);
+    }
+  }
+  target.replaceChildren(...nodes);
+}
 function showAiReport(report, request, first) {
   const spec = WEB_PROVIDERS[aiConfig.provider];
   const model = aiConfig.model || spec.defaultModel;
@@ -4565,7 +4603,7 @@ function showAiReport(report, request, first) {
   $('ai-status').textContent = problem;
   $('ai-result').hidden = !report.answer && !report.actions.length && !report.sent.length;
   $('ai-badge').textContent = `AI answer from ${spec.name}, model ${model}. Check it before you rely on it.`;
-  $('ai-answer').textContent = report.answer || (problem ? '' : 'The AI gave no answer in words.');
+  showAiAnswer($('ai-answer'), report.answer || (problem ? '' : 'The AI gave no answer in words.'));
   if (!aiScope.editor) {
     $('ai-sources').replaceChildren(...report.sources.filter((note) => files.has(note.id)).map((note) => button(`Open "${note.title}"`, () => { const entry = files.get(note.id); $('ai-dialog').close(); if (entry) openEditor(entry); })));
     $('ai-actions').replaceChildren(...report.actions.filter((action) => !['search_notes', 'read_note'].includes(action.tool)).map((action) => {

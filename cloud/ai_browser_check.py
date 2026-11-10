@@ -51,6 +51,8 @@ class FakeAnthropic:
             return text(f"The wifi code at grandma's is {SECRET}.")
         if "wifi" in request.lower():
             return text(f'The code is {SECRET}, from "Wifi at grandma".') if SECRET in first else text("I cannot find that in the notes you sent.")
+        if request.startswith("Show formatting"):
+            return text("# Rooms\nThe **boiler** is in the *cellar*, run `bleed --all` first.\n- one\n  - nested\n- two\n```\nraw **stars**\n```\n<b>raw</b> [link](http://example.test)")
         if request.startswith("Put bread"):
             return text("Added bread to Groceries.") if followup else tools(("append_to_note", {"id": self.note_id(first, "Groceries"), "items": ["bread"]}))
         if request.startswith("Make a card"):
@@ -239,6 +241,22 @@ def check_ai(browser, url, token):
         page.locator("#editor[open]").wait_for()
         assert SECRET in page.locator("#note-content").input_value()
         page.locator("#close-editor").click()
+
+        # --- The answer shows simple formatting (10 Nov: the phone and the web app showed the stars as typed). Only
+        # bold, italic, code, headings and bullets; HTML and links stay as typed text, nothing opens by itself.
+        ask("Show formatting")
+        page.locator("#ai-send").click()
+        shown = answer()
+        assert "**" not in shown.replace("raw **stars**", "") and "`" not in shown, shown
+        assert page.locator("#ai-answer .ai-h1").inner_text() == "Rooms"
+        assert page.locator("#ai-answer p:not(.ai-h) strong").first.inner_text() == "boiler"
+        assert page.locator("#ai-answer p:not(.ai-h) em").first.inner_text() == "cellar"
+        assert page.locator("#ai-answer p code").first.inner_text() == "bleed --all"
+        assert page.locator("#ai-answer li").count() == 3 and page.locator("#ai-answer li").nth(1).get_attribute("style") == "margin-left: 1.2rem;"
+        assert page.locator("#ai-answer pre").inner_text() == "raw **stars**"
+        assert page.locator("#ai-answer b").count() == 0 and page.locator("#ai-answer a").count() == 0
+        assert "<b>raw</b> [link](http://example.test)" in shown, shown
+        page.locator("#ai-close").click()
 
         # --- A change to an existing note waits for yes, and shows + lines in words.
         ask("Put bread on the groceries list")

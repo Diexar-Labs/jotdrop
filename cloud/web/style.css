@@ -481,7 +481,15 @@ html { scrollbar-color: color-mix(in srgb, var(--ink) 35%, transparent) transpar
 .ai-status { min-height: 1.5em; margin: .5rem 0; }
 .ai-result { border-top: 1.5px dashed var(--line); padding-top: .8rem; }
 .ai-badge { display: inline-block; font-size: .8rem; font-weight: 600; letter-spacing: .02em; border: 1.5px solid var(--edge); border-radius: 999px; padding: .15rem .6rem; margin: 0 0 .6rem; }
-.ai-answer { white-space: pre-wrap; overflow-wrap: anywhere; margin: .4rem 0 .8rem; }
+.ai-answer { overflow-wrap: anywhere; margin: .4rem 0 .8rem; }
+.ai-answer p, .ai-answer ul, .ai-answer pre { margin: 0 0 .5rem; }
+.ai-answer .ai-list { padding-left: 1.2rem; }
+.ai-answer .ai-h { font-weight: 700; margin-top: .6rem; }
+.ai-answer .ai-h1 { font-size: 1.25em; }
+.ai-answer .ai-h2 { font-size: 1.15em; }
+.ai-answer .ai-h3 { font-size: 1.05em; }
+.ai-answer code { font-family: ui-monospace, monospace; font-size: .92em; }
+.ai-answer .ai-code { white-space: pre-wrap; overflow-wrap: anywhere; border: 1.5px solid var(--line); border-radius: 8px; padding: .5rem .7rem; background: var(--field); }
 .ai-sources { display: flex; flex-wrap: wrap; gap: .4rem; }
 .ai-actions { padding-left: 1.2rem; }
 .ai-actions li { margin: .3rem 0; }
