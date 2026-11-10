@@ -499,6 +499,23 @@
         { "id": "c", "title": "Street", "text": "42nd street" }
       ],
       "expect": { "ids": ["b", "c"], "left": 0 }
+    },
+    {
+      "name": "Dutch filler words pick no note (als, ook, maar, niet, nog)",
+      "question": "Als ook maar niet nog",
+      "notes": [
+        { "id": "a", "title": "Klinkt als een goed plan", "text": "Maar niet nog ook" }
+      ],
+      "expect": { "ids": [], "left": 0 }
+    },
+    {
+      "name": "Dutch filler words do not stop the real word from picking its note",
+      "question": "Boiler als ook maar niet nog",
+      "notes": [
+        { "id": "a", "title": "Klinkt als een goed plan", "text": "Maar niet nog ook" },
+        { "id": "b", "title": "Boiler", "text": "Service in maart" }
+      ],
+      "expect": { "ids": ["b"], "left": 0 }
     }
   ],
   "redact": [

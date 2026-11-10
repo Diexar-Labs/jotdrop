@@ -21,6 +21,7 @@ for (const vector of vectors.context) {
 test('words: short words and common words do not count, numbers do', () => {
   assert.deepEqual(words('What was the wifi code at oma\'s? 42'), ['wifi', 'code', 'oma', '42']);
   assert.deepEqual(words('Wat was de wifi-code bij oma?'), ['wifi', 'code', 'oma']);
+  assert.deepEqual(words('Als ook maar niet nog de wifi'), ['wifi']);
 });
 
 test('context: the text limit holds, long notes are cut with a mark', () => {

@@ -14,7 +14,8 @@ const CUT = '\n[...]';
 
 // Common words in the app's languages that say nothing about which note is meant.
 const COMMON = new Set(('the and for what was were who how when where which with from that this have has are you your about did does '
-  + 'wat was wie hoe waar wanneer welke met van voor bij het een die dat mijn heb heeft zijn ' +
+  + 'wat was wie hoe waar wanneer welke met van voor bij het een die dat mijn heb heeft zijn '
+  + 'als ook maar niet nog dan naar over wel toch zou zal alle deze dit mij jij wij zij hun onze werd wordt worden geen ' +
   'que qué los las una con por para del como cómo der die das und mit von für ist les des une pour avec est').split(' ').map((word) => fold(word)));
 
 function fold(text) {
