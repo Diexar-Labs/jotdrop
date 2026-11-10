@@ -493,7 +493,7 @@ object Storage {
      * listing both the usual way took ~2.5 s for 496 notes on Eric's phone.
      */
     fun listNotesForAsk(context: Context): Result<List<NoteSummary>> = listNotesFolder(context, attachments = false).map { listing ->
-        val archive = listing.dirs["Archive"]?.let { buildNoteSummaries(context, listing.vaultUri, noteFiles(context, listing.vaultUri, it), null) }.orEmpty()
+        val archive = listing.dirs["Archive"]?.let { buildNoteSummaries(context, noteFiles(context, listing.vaultUri, it), null) }.orEmpty()
         listing.notes + archive
     }
 
@@ -514,9 +514,9 @@ object Storage {
         val dirs = HashMap<String, Uri>()
         val children = noteFiles(context, vaultUri, subfolder.uri, dirs)
         val files = if (attachments) snapshotAttachments(context, vaultUri, dirs) else null
-        val own = buildNoteSummaries(context, vaultUri, children, files)
+        val own = buildNoteSummaries(context, children, files)
         // Mail to JotDrop puts its notes in the Mail folder, like the web app and the plugins; they belong in the list with the rest.
-        val mail = dirs["Mail"]?.let { buildNoteSummaries(context, vaultUri, noteFiles(context, vaultUri, it), files) }.orEmpty()
+        val mail = dirs["Mail"]?.let { buildNoteSummaries(context, noteFiles(context, vaultUri, it), files) }.orEmpty()
         val shared = sharedNotes(context, vaultUri, dirs["Shared"], attachments)
         return Result.success(Listing(own + mail + shared, dirs, vaultUri))
     }
@@ -535,14 +535,13 @@ object Storage {
                 val tree = DocumentFile.fromTreeUri(context, vaultUri) ?: return Result.success(emptyList())
                 val folderPath = folderPath(context, folder)
                 val folderDoc = traverseSubfolder(context, tree, folderPath) ?: return Result.success(emptyList())
-                Result.success(buildNoteSummaries(context, vaultUri, noteFiles(context, vaultUri, folderDoc.uri), snapshotAttachments(context, vaultUri)))
+                Result.success(buildNoteSummaries(context, noteFiles(context, vaultUri, folderDoc.uri), snapshotAttachments(context, vaultUri)))
             }
         }
     }
 
     private fun buildNoteSummaries(
         context: Context,
-        vaultUri: Uri,
         children: List<ChildDoc>,
         // The attachments of the listing, read once; a group's notes show the attachments of that group. Null: only what
         // Ask JotDrop uses (title, labels, time), without the card's text, links and attachments.
@@ -726,7 +725,7 @@ object Storage {
             val children = noteFiles(context, vaultUri, folder, inner)
             val files = if (attachments) inner["attachments"]?.let { dir -> queryChildren(context, vaultUri, dir).associate { it.name to it.uri } }.orEmpty() else null
             val mark = NoteSpace(space.id, space.name, space.others, space.frozen, space.gone)
-            buildNoteSummaries(context, vaultUri, children, files).map { it.copy(space = mark) }
+            buildNoteSummaries(context, children, files).map { it.copy(space = mark) }
         }
     }
 
