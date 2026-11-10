@@ -2093,3 +2093,33 @@ button.jotdrop-provider-github:not(.clickable-icon):hover { background: #32383f;
 .jotdrop-card-drawing-label {
   font-size: var(--font-ui-small);
 }
+
+/* Ask JotDrop: AI with your own key. Never color alone: added/removed lines carry + and -, problems say "Problem:". */
+.jotdrop-ai-modal { width: min(720px, 100%); }
+.jotdrop-ai-request { width: 100%; min-height: 4.5em; resize: vertical; }
+.jotdrop-ai-via, .jotdrop-ai-badge { color: var(--text-muted); font-size: var(--font-ui-small); }
+.jotdrop-ai-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
+.jotdrop-ai-buttons a.mod-cta { display: inline-flex; align-items: center; padding: 4px 12px; border-radius: var(--button-radius); background: var(--interactive-accent); color: var(--text-on-accent); text-decoration: none; }
+.jotdrop-ai-goes { margin: 8px 0; }
+.jotdrop-ai-goes summary { cursor: pointer; }
+.jotdrop-ai-goes-list { list-style: none; padding-left: 0; max-height: 12em; overflow-y: auto; }
+.jotdrop-ai-goes-list label { display: flex; gap: 6px; align-items: baseline; }
+.jotdrop-ai-status { min-height: 1.4em; }
+.jotdrop-ai-confirm { border: 1px solid var(--background-modifier-border); border-radius: 8px; padding: 8px 12px; margin: 8px 0; max-height: 40vh; overflow-y: auto; }
+.jotdrop-ai-confirm h3 { margin: 4px 0 8px; font-size: var(--font-ui-medium); }
+.jotdrop-ai-facts { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 0; }
+.jotdrop-ai-facts dt { font-weight: 600; }
+.jotdrop-ai-facts dd { margin: 0; }
+.jotdrop-ai-result { border-top: 1px solid var(--background-modifier-border); margin-top: 8px; padding-top: 8px; }
+.jotdrop-ai-answer { user-select: text; overflow-wrap: anywhere; }
+.jotdrop-ai-answer p { margin: 0.3em 0; }
+.jotdrop-ai-h { font-weight: 600; }
+.jotdrop-ai-h1, .jotdrop-ai-h2 { font-size: 1.1em; }
+.jotdrop-ai-list { margin: 0.3em 0; padding-left: 1.4em; }
+.jotdrop-ai-code { white-space: pre-wrap; font-family: var(--font-monospace); font-size: var(--font-smaller); background: var(--background-secondary); padding: 6px 8px; border-radius: 6px; }
+.jotdrop-ai-sources { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+.jotdrop-ai-actions { padding-left: 1.2em; }
+.jotdrop-ai-inline { margin-left: 6px; }
+.jotdrop-ai-problem { font-weight: 600; }
+.jotdrop-ai-said { color: var(--text-muted); }
+.jotdrop-ai-models { margin-left: 8px; max-width: 100%; }

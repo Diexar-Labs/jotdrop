@@ -11,6 +11,7 @@ import { identifyClient } from "../cloud/shared/client.mjs";
 import { fetchOg, safeMarkdownLink } from "./ogfetch";
 import { legacyAssetsPath } from "./attachments";
 import { ExcalidrawPreviews } from "./excalidraw";
+import { AiSettingsStore } from "./ai";
 import { ConfirmModal } from "./confirmModal";
 import { ImportFiles, keepNoteFileName, keepNoteMarkdown, parseKeepExport, readZip } from "./keepImport";
 import { markdownNoteFileName, markdownNoteMarkdown, parseMarkdownExport } from "./markdownImport";
@@ -44,6 +45,8 @@ export default class JotDropPlugin extends Plugin {
   private clipServer!: ClipServer;
   cloud!: CloudController;
   excalidraw!: ExcalidrawPreviews;
+  /** Ask JotDrop's settings and key, on this device only (never in data.json). */
+  aiStore!: AiSettingsStore;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -51,6 +54,7 @@ export default class JotDropPlugin extends Plugin {
     this.cloud = new CloudController(this);
     this.cloud.register();
     this.excalidraw = new ExcalidrawPreviews(this.app);
+    this.aiStore = new AiSettingsStore(this.app);
 
     this.registerView(VIEW_TYPE_JOTDROP, (leaf) => new JotDropView(leaf, this));
 
@@ -63,6 +67,16 @@ export default class JotDropPlugin extends Plugin {
       id: "open-jotdrop",
       name: t("cmd_open_view"),
       callback: () => this.activateView(),
+    });
+
+    this.addCommand({
+      id: "ask-jotdrop",
+      name: t("cmd_ask_jotdrop"),
+      callback: async () => {
+        await this.activateView();
+        const view = this.app.workspace.getLeavesOfType(VIEW_TYPE_JOTDROP)[0]?.view;
+        if (view instanceof JotDropView) view.openAsk();
+      },
     });
 
     this.addCommand({

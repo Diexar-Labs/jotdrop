@@ -10,6 +10,8 @@ import { MarkdownHelpModal } from "./markdownHelp";
 import { t } from "./i18n";
 import { keepModalAboveKeyboard } from "./mobileKeyboard";
 import { enhanceListEditing } from "./listEditor";
+import { AskJotDropModal } from "./askJotDrop";
+import { draftAnswer } from "./ai";
 import {
   colorLabel,
   COLOR_NAMES,
@@ -397,6 +399,12 @@ export class EditNoteModal extends Modal {
       new DrawingModal(this.app, null, (png) => this.addDrawing(png)).open();
     });
 
+    // Ask JotDrop on the draft: only the title and text in this editor go along, and nothing changes before Save.
+    for (const [kind, label] of [["rewrite", t("action_ai_rewrite")], ["checklist", t("action_ai_checklist")]] as const) {
+      const aiBtn = pinWrap.createEl("button", { cls: "jotdrop-edit-linkbtn jotdrop-edit-aibtn", text: label });
+      aiBtn.addEventListener("click", () => this.askAi(kind));
+    }
+
     const helpBtn = pinWrap.createEl("button", {
       cls: "jotdrop-edit-linkbtn",
       text: t("md_help_button"),
@@ -731,6 +739,24 @@ export class EditNoteModal extends Modal {
         vaultPath: c.vaultPath,
       })),
     };
+  }
+
+  private askAi(kind: "rewrite" | "checklist"): void {
+    if (!this.state.body.trim()) { new Notice(t("notice_ai_write_first")); return; }
+    const title = this.state.title;
+    new AskJotDropModal(this.app, this.plugin, {
+      editor: {
+        title, text: this.state.body, kind,
+        use: (answer, replace) => {
+          this.state.body = draftAnswer(title, this.state.body, answer, replace);
+          this.bodyEl.value = this.state.body;
+          // The list editor's preview follows the text area's input event.
+          this.bodyEl.dispatchEvent(new Event("input", { bubbles: true }));
+          new Notice(t("notice_ai_save_to_keep"));
+        },
+      },
+      openNote: () => {},
+    }).open();
   }
 
   private async save(): Promise<void> {

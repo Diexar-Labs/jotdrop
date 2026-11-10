@@ -314,10 +314,11 @@ JotDrop is deliberately simple plumbing:
 
 ### Network use, accounts and payments
 
-Without JotDrop Cloud, the Obsidian plugin goes online for only two things:
+Without JotDrop Cloud, the Obsidian plugin goes online for only three things:
 
 - It fetches the web page of a link you save, to build the preview card.
 - The first time you use "Text from photo", it asks before downloading the English and Dutch language data (about 6 MB) once from the [`ocr-data-1` release](https://github.com/Diexar-Labs/jotdrop/releases/tag/ocr-data-1), checks it against a fixed SHA-256 and keeps it in the plugin folder. The recognition itself runs on your device, and your photos never leave it.
+- Ask JotDrop, the AI assistant, once you turn it on in the settings and send a request. Your request, and the notes listed under "What goes along", go straight from your device to the AI service you picked: Claude, OpenAI, Gemini, OpenRouter, or an OpenAI-compatible address such as Ollama or LM Studio on your own computer. You use your own API key, and no JotDrop server sits in between. The key stays on this device, outside your vault and outside the plugin's `data.json`. The service handles your request under its own terms, and a paid service bills you for what you use. Some services may use what you send to improve their products, Google for example on the free tier of the Gemini API outside the EEA, Switzerland and the UK, so read the terms of the one you pick. Ask JotDrop makes new notes at once and changes an existing note only after you apply the change. It cannot delete, archive or share notes.
 
 If you sign in to the optional JotDrop Cloud, the plugin also connects to `app.jotdrop.net` to sign in and to sync your notes and attachments, encrypted on your device first. The cloud needs an account. Its free plan needs no payment details; JotDrop Plus is a paid plan, bought on the website.
 
@@ -330,6 +331,9 @@ No. We don't hold the key that decrypts your notes and attachments; the server s
 
 **What if I lose my password or recovery code?**
 Resetting your login and opening your encrypted notes are two different things. A password reset gets you into your account; your notes open on a device that is still signed in, or with your recovery code. Keep that code somewhere safe outside JotDrop.
+
+**Does JotDrop see what I ask Ask JotDrop?**
+No. Your request and the notes that go along travel from your device straight to the AI service you picked, with your own key. With a local model such as Ollama on your own computer, they stay on that computer.
 
 **Is my local notes folder encrypted too?**
 Not by JotDrop. Local notes are readable Markdown files, which is the point. Use your device's encryption and screen lock.

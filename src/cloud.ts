@@ -57,7 +57,7 @@ type ProviderSignIn = Awaited<ReturnType<typeof providerTicket>> & { provider: s
 type MomentFile = { id: string; revision: number | null; deleted: boolean; locked: boolean; cleared: boolean };
 export type CloudVersion = { revision: number; deleted: boolean; updatedAt: string; locked: boolean };
 export type CloudMoment ={ at: string; then: MomentFile[]; files: Array<{ path: string; bytes: Uint8Array }>; trashed: number; locked: number; cleared: number };
-type Sealed = { key: CryptoKey; iv: Uint8Array; data: ArrayBuffer };
+export type Sealed = { key: CryptoKey; iv: Uint8Array; data: ArrayBuffer };
 
 /** fetch() on top of Obsidian's requestUrl: no CORS, so the same code works on desktop and mobile. */
 export async function cloudFetch(url: string, init: RequestInit = {}): Promise<Response> {
@@ -79,8 +79,8 @@ export async function cloudFetch(url: string, init: RequestInit = {}): Promise<R
 }
 
 /** Per device and per vault, outside data.json: that file lives in the vault and can travel to other devices. */
-type KeyValues = { get<T>(key: string): Promise<T | undefined>; put(key: string, value: unknown): Promise<void>; delete(key: string): Promise<void> };
-class CloudStore implements KeyValues {
+export type KeyValues = { get<T>(key: string): Promise<T | undefined>; put(key: string, value: unknown): Promise<void>; delete(key: string): Promise<void> };
+export class CloudStore implements KeyValues {
   private db: Promise<IDBDatabase>;
   constructor(name: string) {
     this.db = new Promise((resolve, reject) => {
@@ -105,12 +105,12 @@ class CloudStore implements KeyValues {
 }
 
 // Signed in until Log out, like Keep: the connection is sealed with a key this device keeps but cannot export.
-async function seal(value: unknown): Promise<Sealed> {
+export async function seal(value: unknown): Promise<Sealed> {
   const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
   const iv = crypto.getRandomValues(new Uint8Array(12));
   return { key, iv, data: await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, encoder.encode(JSON.stringify(value))) };
 }
-async function unseal<T = Session>(saved: Sealed): Promise<T> {
+export async function unseal<T = Session>(saved: Sealed): Promise<T> {
   return JSON.parse(decoder.decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: new Uint8Array(saved.iv) }, saved.key, saved.data)));
 }
 

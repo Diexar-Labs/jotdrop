@@ -6,6 +6,7 @@ import { ConfirmModal } from "./confirmModal";
 import { renderCloudAccount } from "./cloudAccount";
 import { DEFAULT_CLOUD_SERVER, privacyLink } from "./cloud";
 import { ConflictReviewModal, TimeMachineModal } from "./cloudReview";
+import { renderAiSettings } from "./askJotDrop";
 
 function generateToken(): string {
   const bytes = new Uint8Array(24);
@@ -319,6 +320,7 @@ export class JotDropSettingTab extends PluginSettingTab {
     );
 
     this.displayCloud(containerEl.createDiv({ cls: "jotdrop-cloud-settings" }));
+    renderAiSettings(containerEl.createDiv({ cls: "jotdrop-ai-settings" }), this.plugin);
   }
 
   /** JotDrop Cloud: the same account as the website and the Android app. */

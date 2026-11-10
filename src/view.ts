@@ -38,6 +38,7 @@ import { voidAsync } from "./asyncUtil";
 import { ConflictReviewModal, NoteHistoryModal } from "./cloudReview";
 import { EndListLinkModal, NoteLinkModal } from "./noteLink";
 import { SharedGroupsModal } from "./cloud";
+import { AskJotDropModal, type AskOptions, addAskButton } from "./askJotDrop";
 import { betweenRank, rankForManualOrder, respaceRanks } from "./manualOrder";
 import { t } from "./i18n";
 
@@ -500,6 +501,9 @@ export class JotDropView extends ItemView {
     drawBtn.addEventListener("click", () => {
       new DrawingModal(this.app, null, (png) => this.saveDrawingNote(png)).open();
     });
+
+    // Ask JotDrop: AI with the user's own key, for everyone (ontwerp-ai-eigen-sleutel.md, phase 4).
+    addAskButton(this.normalToolbarEl, t("action_ask_jotdrop"), () => this.openAsk());
 
     this.searchEl = this.normalToolbarEl.createEl("input", {
       cls: "jotdrop-search",
@@ -1546,6 +1550,11 @@ export class JotDropView extends ItemView {
    * display order (pinned section first, then the rest), so the modal can step
    * to the previous/next card with arrows, swipe or the header buttons.
    */
+  /** Ask JotDrop, for all notes or about one note; a note it names opens in the editor. */
+  openAsk(options: Omit<AskOptions, "openNote"> = {}): void {
+    new AskJotDropModal(this.app, this.plugin, { ...options, openNote: (file) => this.openEditModal(file) }).open();
+  }
+
   private openEditModal(file: TFile, attachment?: AttachmentResource | null): void {
     // A drawing is opened by the Excalidraw plugin (or as plain Markdown without it), never in this editor:
     // saving here would rewrite its frontmatter.
@@ -2536,6 +2545,10 @@ export class JotDropView extends ItemView {
             .setIcon("link")
             .onClick(() => new NoteLinkModal(this.app, this.plugin.cloud, file).open())
         );
+      }
+      if (!this.showTrash && !this.plugin.excalidraw.isDrawingFile(file)) {
+        menu.addItem((i) => i.setTitle(t("action_ask_about_note")).setIcon("sparkles").onClick(() => this.openAsk({ file })));
+        menu.addItem((i) => i.setTitle(t("action_ai_summarize")).setIcon("sparkles").onClick(() => this.openAsk({ file, summarize: true })));
       }
       // Attachments stay: the note in Trash still shows them and can come back.
       menu.addItem((i) =>
