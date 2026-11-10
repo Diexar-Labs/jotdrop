@@ -6,6 +6,8 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.AtomicFile
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.coroutineScope
@@ -30,6 +32,10 @@ import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
+
+/** Reading notes for Ask JotDrop: four at a time, so the storage provider is not flooded. */
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+private val READERS = Dispatchers.IO.limitedParallelism(4)
 
 /** What the user chose in Settings. The key stays on this phone; it is not synced and not in a backup. */
 data class AiSettings(val provider: String = "", val key: String = "", val model: String = "", val baseUrl: String = "", val includeShared: Boolean = false) {
@@ -162,25 +168,62 @@ object AiAssets {
  */
 class AiExecutor(private val context: Context, private val open: (Uri) -> Unit) {
     private val uris = LinkedHashMap<String, Uri>()
+    // The other way round, by the Uri's text: a card's Uri finds its note whatever Uri object it came in.
+    private val ids = HashMap<String, String>()
     var notes: List<AiNote> = emptyList(); private set
     var labels: List<String> = emptyList(); private set
+    /** For the log line: how many notes came from the preview cache, and how long listing took. Counts and times only. */
+    var fromCache = 0; private set
+    var listMs = 0L; private set
 
-    /** Notes and Archive, not the bin. Call on IO. */
-    fun load() {
-        val iso = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
+    private fun iso() = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
+    private fun linked(uri: Uri) = runCatching { CloudSyncManager.listLinksOf(context, uri).isNotEmpty() }.getOrDefault(false)
+
+    // A note made in this conversation gets the next free number, also when a note in between could not be read.
+    private var next = 0
+    private fun remember(index: Int, uri: Uri): String = "n${index + 1}".also { uris[it] = uri; ids[uri.toString()] = it; next = maxOf(next, index + 1) }
+
+    /**
+     * Notes and Archive, not the bin. Most texts come from the preview cache the note list keeps (same time and
+     * size); the others are read four at a time.
+     */
+    suspend fun load() = withContext(Dispatchers.IO) {
+        val started = android.os.SystemClock.elapsedRealtime()
         val summaries = Storage.listNotes(context, NoteFolder.NOTES).getOrDefault(emptyList()) + Storage.listNotes(context, NoteFolder.ARCHIVE).getOrDefault(emptyList())
-        uris.clear()
-        notes = summaries.mapIndexedNotNull { index, summary ->
-            val text = Storage.readNote(context, summary.uri).getOrNull() ?: return@mapIndexedNotNull null
-            val id = "n${index + 1}"
-            uris[id] = summary.uri
-            val shared = summary.space != null || runCatching { CloudSyncManager.listLinksOf(context, summary.uri).isNotEmpty() }.getOrDefault(false)
-            AiNote(id, summary.title, AiNoteEdits.splitNote(text).body, summary.meta.labels, iso.format(Date(summary.lastModified)), shared)
+        listMs = android.os.SystemClock.elapsedRealtime() - started
+        val iso = iso()
+        val cached = java.util.concurrent.atomic.AtomicInteger()
+        val texts = coroutineScope {
+            summaries.map { summary -> async(READERS) {
+                Storage.cachedNoteText(context, summary)?.also { cached.incrementAndGet() } ?: Storage.readNote(context, summary.uri).getOrNull()
+            } }.awaitAll()
         }
+        uris.clear(); ids.clear(); next = summaries.size
+        notes = summaries.zip(texts).mapIndexedNotNull { index, (summary, text) ->
+            if (text == null) return@mapIndexedNotNull null
+            val id = remember(index, summary.uri)
+            AiNote(id, summary.title, AiNoteEdits.splitNote(text).body, summary.meta.labels, iso.format(Date(summary.lastModified)), summary.space != null || linked(summary.uri))
+        }
+        fromCache = cached.get()
         labels = Storage.getLabels(context)
     }
 
+    /** Only the note a card asks about ("Summarize with AI"): one file, not the whole vault. */
+    suspend fun loadOne(uri: Uri, shared: Boolean) {
+        val (summary, text) = withContext(Dispatchers.IO) {
+            val summary = Storage.noteSummary(context, uri)
+            summary to summary?.let { Storage.readNote(context, uri).getOrNull() }
+        }
+        uris.clear(); ids.clear(); next = 1
+        notes = if (summary == null || text == null) emptyList()
+            else listOf(AiNote(remember(0, uri), summary.title, AiNoteEdits.splitNote(text).body, summary.meta.labels, iso().format(Date(summary.lastModified)), shared || linked(uri)))
+        labels = withContext(Dispatchers.IO) { Storage.getLabels(context) }
+    }
+
     fun uriOf(id: String): Uri? = uris[id]
+
+    /** The id of a note by its Uri (a card's), or null when that note was not read. */
+    fun idOf(uri: Uri): String? = ids[uri.toString()]
 
     private fun uri(input: Map<String, Any?>) = requireNotNull(uris[input["id"] as String]) { "There is no note with this id." }
 
@@ -198,8 +241,7 @@ class AiExecutor(private val context: Context, private val open: (Uri) -> Unit) 
             val body = AiNoteEdits.newNoteBody(input["title"] as String, input["text"] as? String, input["items"] as? List<String>)
             val content = FrontmatterWriter.apply(body, NoteMeta(color = NoteColor.fromKey(input["color"] as? String)), listOfNotNull(label))
             val uri = Storage.noteWriteMutex.withLock { withContext(Dispatchers.IO) { Storage.createNote(context, content).getOrThrow().second } }
-            val id = "n${uris.size + 1}"
-            uris[id] = uri
+            val id = remember(next, uri)
             mapOf("id" to id, "title" to input["title"])
         },
         "append_to_note" to { input -> change(input) { AiNoteEdits.appendedText(it, input["text"] as? String, input["items"] as? List<String>) }; "Done." },

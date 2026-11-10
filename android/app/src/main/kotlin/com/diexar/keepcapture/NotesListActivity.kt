@@ -1216,7 +1216,7 @@ private fun NotesListScreen(
             CardAction.LINK -> context.startActivity(Intent(context, CloudActivity::class.java).putExtra(CloudActivity.EXTRA_LINK, note.uri.toString()))
             CardAction.GROUP -> context.startActivity(Intent(context, CloudActivity::class.java))
             CardAction.ASK -> context.startActivity(AskActivity.intent(context, note.uri))
-            CardAction.SUMMARIZE -> context.startActivity(AskActivity.intent(context, note.uri, summarize = true))
+            CardAction.SUMMARIZE -> context.startActivity(AskActivity.intent(context, note.uri, summarize = true, shared = note.space != null))
             CardAction.MOVE_TO_MINE -> scope.launch {
                 val result = withContext(Dispatchers.IO) {
                     Storage.noteWriteMutex.withLock { Storage.moveNoteOutOfSpace(context, note.uri, note.space!!.id, keepSource = note.space.frozen || note.space.gone) }

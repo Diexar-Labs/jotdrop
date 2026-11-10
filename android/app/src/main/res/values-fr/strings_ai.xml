@@ -107,4 +107,9 @@
     <string name="ai_replace_text">Remplacer le texte de la note</string>
     <string name="ai_write_first">Écris d\'abord quelque chose.</string>
     <string name="ai_too_long">Cette note est trop longue pour Demander à JotDrop.</string>
+    <string name="ai_what_goes_none">Aucune note n\'est envoyée avec cette demande. Si l\'IA en a besoin d\'une, elle peut encore chercher dans tes notes, et ensuite tu vois ce qui a été envoyé.</string>
+    <string name="ai_untick_all">Tout décocher</string>
+    <string name="ai_tick_all">Tout cocher</string>
+    <string name="ai_stays_home">Reste sur ce téléphone</string>
+    <string name="ai_note_missing">Cette note n\'a pas pu être lue sur ce téléphone, donc rien n\'a été envoyé. Reviens en arrière et réessaie.</string>
 </resources>

@@ -62,6 +62,14 @@ for (const file of readdirSync(kotlin).filter((name) => /^Ai.*\.kt$/.test(name))
   if (/\(\?[a-zA-Z]*U/.test(readFileSync(path.join(kotlin, file), 'utf8'))) throw new Error(`${file}: Android's ICU regex does not take the U flag`);
 }
 
+// 10 Nov 2026, Eric's phone: "Summarize with AI" sent only the request. The screen kept the card's note id from a
+// composition before the notes were read, and the automatic send used that old, empty value. What goes along must
+// be decided by AiAsk.plan when it is needed, and the request must carry exactly that choice.
+const screen = readFileSync(path.join(kotlin, 'AiActivity.kt'), 'utf8');
+if (/remember\([^)]*\)\s*\{[^}]*(uriOf|idOf)/.test(screen)) throw new Error('AiActivity.kt: the card\'s note is looked up in a remembered value; look it up when sending');
+if (!/AiAsk\.plan\(/.test(screen) || !/chosen = chosen/.test(screen)) throw new Error('AiActivity.kt: the ask screen must send what AiAsk.plan chose');
+if (/pinned = listOfNotNull\(pinnedId\)/.test(screen)) throw new Error('AiActivity.kt: the old pinnedId is back');
+
 const temporary = mkdtempSync(path.join(tmpdir(), 'jotdrop-ai-android-'));
 try {
   const editsFile = path.join(temporary, 'edits.json');

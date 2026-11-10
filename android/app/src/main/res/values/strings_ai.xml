@@ -107,4 +107,9 @@
     <string name="ai_replace_text">Replace the note text</string>
     <string name="ai_write_first">Write something first.</string>
     <string name="ai_too_long">This note is too long for Ask JotDrop.</string>
+    <string name="ai_what_goes_none">No notes go along with this request. If the AI needs one, it can still search your notes, and afterwards you see what was sent.</string>
+    <string name="ai_untick_all">Untick all</string>
+    <string name="ai_tick_all">Tick all</string>
+    <string name="ai_stays_home">Stays on this phone</string>
+    <string name="ai_note_missing">This note could not be read on this phone, so nothing was sent. Go back and try again.</string>
 </resources>

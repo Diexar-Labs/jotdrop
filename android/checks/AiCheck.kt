@@ -51,6 +51,85 @@ private fun fetcherFor(replies: MutableList<Map<String, Any?>>, urls: MutableLis
     AiHttpResponse((next["status"] as? Number)?.toInt() ?: 200, next.str("text") ?: AiJson.stringify(next["body"]))
 }
 
+/**
+ * Android's ask screen (10 Nov 2026, Eric's phone test of 0.28.51): what goes along is decided in one place, at the
+ * moment of sending, and is exactly what the screen shows.
+ */
+private suspend fun askScreen(tools: List<AiTool>, promptJson: String) {
+    val shopping = AiNote("n1", "Shopping list", "- [ ] eggs\nPut the new text here", updatedAt = "2026-11-01T10:00:00.000Z")
+    val boiler = AiNote("n2", "Boiler", "Make a note of the new pressure. Put the list of parts in the text.", updatedAt = "2026-11-02T10:00:00.000Z")
+    val pin = AiNote("n3", "Wifi at oma's", "The code is 1234", updatedAt = "2026-11-03T10:00:00.000Z")
+    val notes = listOf(shopping, boiler, pin)
+    fun ids(plan: AiPlan) = plan.chosen.map { it.id }
+
+    // Bug A: "Summarize with AI" from a card sent only the request. The card's note goes, and only that one.
+    val summary = AiAsk.plan(notes, AiNoteEdits.editorRequest("summarize", pin.title), pinned = "n3", target = true, summarize = true)
+    same(ids(summary), listOf("n3"), "summarize: the card's note goes along")
+    same(summary.notes.map { it.id }, listOf("n3"), "summarize: the AI sees no other note")
+    same(summary.missing, false, "summarize: found")
+    // The card's note could not be read: nothing goes out, and the screen says so.
+    val lost = AiAsk.plan(notes, "Summarize the note", pinned = null, target = true, summarize = true)
+    same(lost.missing, true, "summarize without the note: missing")
+    same(ids(lost), emptyList<String>(), "summarize without the note: nothing chosen")
+    same(AiAsk.plan(notes, "What is in it?", pinned = null, target = true, summarize = false).missing, true, "ask about a note that is gone: missing")
+    // "Ask JotDrop about this note…": that note first, whatever the question says.
+    same(ids(AiAsk.plan(notes, "boiler pressure", pinned = "n3", target = true, summarize = false)).first(), "n3", "ask about a note: it goes first")
+
+    // A request to make something new takes no notes along: the AI can still search when it needs one.
+    for (request in listOf(
+        "Make a new note titled AI proef with the text hallo",
+        "Create a checklist for the trip",
+        "Maak een nieuwe notitie met de tekst hallo",
+        "Maak een lijst voor de verhuizing",
+        "Erstelle eine neue Notiz mit dem Text hallo",
+        "Crea una nota nueva con el texto hola",
+        "Crée une nouvelle note avec le texte bonjour",
+        "Crea una nuova nota con il testo ciao",
+    )) {
+        same(AiAsk.isCreate(request), true, "create: $request")
+        same(ids(AiAsk.plan(notes, request)), emptyList<String>(), "create sends no notes: $request")
+    }
+    // Changing a note of your own is not making a new one.
+    for (request in listOf("Make my shopping list shorter", "Put milk and bread on my shopping list", "Maak mijn boodschappenlijst korter")) same(AiAsk.isCreate(request), false, "not create: $request")
+    // Words that say what to do (put, new, text, list, note, make) pick no note; the words about the thing do.
+    same(ids(AiAsk.plan(notes, "Put milk and bread on my shopping list")), listOf("n1"), "instruction words pick no note")
+    same(ids(AiAsk.plan(notes, "Make a note with the new text")), emptyList<String>(), "only instruction words: nothing goes")
+    same(ids(AiAsk.plan(notes, "What was the wifi code at oma's?")), listOf("n3"), "a question still finds its note")
+
+    // Unticking a note: the count goes down, no other note takes its place, and the AI cannot search it.
+    val tea = (1..3).map { AiNote("t$it", "Tea $it", "tea", updatedAt = "2026-11-0${it}T10:00:00.000Z") }
+    val all = AiAsk.plan(tea, "tea", maxNotes = 2)
+    same(ids(all), listOf("t3", "t2"), "two of three fit")
+    val untick = AiAsk.plan(tea, "tea", excluded = setOf("t3"), maxNotes = 2)
+    same(ids(untick), listOf("t2"), "unticked: one goes, the third does not slip in")
+    same(untick.shown.map { it.id }, listOf("t3", "t2"), "unticked: still on the list, to tick again")
+    same(untick.notes.map { it.id }, listOf("t1", "t2"), "unticked: the AI cannot search it")
+    same(ids(AiAsk.plan(tea, "tea", excluded = setOf("t1", "t2", "t3"))), emptyList<String>(), "untick all: nothing goes")
+
+    // The request carries exactly the notes the screen showed, no more.
+    val sent = AiAssistant.run(
+        request = "tea", notes = untick.notes, labels = emptyList(), tools = tools,
+        system = AiPrompt.system(promptJson, "English", "2026-11-10", "Europe/Madrid", emptyList()),
+        provider = { object : AiProvider {
+            override val id = "fake"
+            override val model = "fake"
+            override suspend fun complete(system: String, messages: List<AiMessage>, tools: List<AiTool>, timeoutMs: Long) = AiAnswer("ok", emptyList(), "end", 1, 1, null)
+        } },
+        executor = emptyMap(), confirm = { false }, chosen = untick.chosen,
+    )
+    same(sent.sent.map { it.id }, listOf("t2"), "sent: exactly what the screen showed")
+    check(!(sent.messages.first() as AiMessage.User).text.contains("Tea 1")) { "sent: a note that was not shown went along" }
+    passed++
+
+    // On screen a note is one short line, whatever its first line is; the report names notes the same way.
+    val long = "word ".repeat(80).trim()
+    check(AiAsk.shortTitle(long).length <= AiAsk.SHORT + 1 && AiAsk.shortTitle(long).endsWith("…")) { "short title: ${AiAsk.shortTitle(long)}" }
+    passed++
+    same(AiAsk.shortTitle("  First line\nsecond line"), "First line", "short title: first line")
+    same(AiAsk.firstLine(AiNote("x", "T", "\n\n  - [ ] eggs and more\nmilk")), "- [ ] eggs and more", "first line of the text")
+    same(AiAsk.firstLine(AiNote("x", "T", "")), "", "first line of an empty note")
+}
+
 @Suppress("UNCHECKED_CAST")
 fun main(arguments: Array<String>) = runBlocking {
     val vectors = AiJson.parse(File(arguments[0]).readText()).obj()!!
@@ -190,6 +269,8 @@ fun main(arguments: Array<String>) = runBlocking {
     }
     edits.child("prompt")!!.let { same(AiPrompt.system(promptJson, it.str("language"), it.str("date")!!, it.str("timeZone"), it["labels"] as List<String>), it["expect"], "system prompt") }
     edits.child("promptDefaults")!!.let { same(AiPrompt.system(promptJson, null, it.str("date")!!, null, emptyList()), it["expect"], "system prompt defaults") }
+
+    askScreen(tools, promptJson)
 
     // The limits from the design.
     same(AiAssistant.MAX_ROUNDS, 6, "max rounds")

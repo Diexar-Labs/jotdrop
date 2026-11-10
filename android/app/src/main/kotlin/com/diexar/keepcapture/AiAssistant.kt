@@ -55,6 +55,8 @@ object AiAssistant {
         pinned: List<String> = emptyList(),
         includeShared: Boolean = false,
         secrets: List<String> = emptyList(),
+        // The notes the user saw ticked (AiAsk.plan): exactly these go along with the request, no choice of its own.
+        chosen: List<AiPicked>? = null,
         maxRounds: Int = MAX_ROUNDS,
         timeoutMs: Long = TIMEOUT_MS,
         maxChars: Int = AiContext.MAX_CHARS,
@@ -75,7 +77,8 @@ object AiAssistant {
         fun allowed(note: AiNote) = includeShared || !note.shared
         fun markSent(id: String, title: String) { if (report.sent.none { it.id == id }) report.sent.add(AiSent(id, title)) }
 
-        val picked = AiContext.selectNotes(notes, request, maxChars = maxChars, includeShared = includeShared, pinned = pinned)
+        val picked = if (chosen != null) AiSelection(chosen, chosen.sumOf { it.title.length + it.text.length }, 0)
+            else AiContext.selectNotes(notes, request, maxChars = maxChars, includeShared = includeShared, pinned = pinned)
         picked.notes.forEach { markSent(it.id, it.title) }
         report.chars = picked.chars
         val asked = "Request from the user:\n$request"

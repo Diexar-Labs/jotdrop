@@ -546,10 +546,28 @@ object Storage {
                 audioBasename = firstAudio,
                 audioUri = firstAudio?.let { attachments[it] },
                 documents = findEmbeddedDocumentBasenames(parsed.body).mapNotNull { name -> attachments[name]?.let { NoteDocument(name, it) } },
+                size = child.size,
             )
         }
         NotePreviewCache.save(context)
         return summaries
+    }
+
+    /**
+     * A listed note's whole text, for Ask JotDrop: from the preview cache when that holds the whole file (a file of
+     * at most PREVIEW_MAX_BYTES, unchanged in time and size since it was listed), or null: then read it with readNote.
+     * A note with a save still in its journal gives null, so readNote deals with the journal first. (10 Nov 2026: reading 496
+     * notes one by one took 12 to 27 seconds on Eric's phone.)
+     */
+    fun cachedNoteText(context: Context, note: NoteSummary): String? {
+        if (note.size !in 1..PREVIEW_MAX_BYTES.toLong() || noteJournal(context).baseFile.exists() || parkedJournal(context, note.uri).baseFile.exists()) return null
+        return NotePreviewCache.get(context, note.uri, note.lastModified, note.size)?.takeIf { it.isNotEmpty() }
+    }
+
+    /** One note as a card would show it, without listing the folder: for a request about that note only. */
+    fun noteSummary(context: Context, uri: Uri): NoteSummary? {
+        val name = runCatching { DocumentFile.fromSingleUri(context, uri)?.name }.getOrNull() ?: return null
+        return refreshNoteSummary(context, NoteSummary(uri, name, 0L, "", ""))
     }
 
     /** Refresh one changed card without reopening every note in the vault. */
@@ -1917,6 +1935,8 @@ data class NoteSummary(
     /** The note's other files (a PDF, a document) that exist in the attachments folder, as chips. */
     val documents: List<NoteDocument> = emptyList(),
     val space: NoteSpace? = null,
+    /** The file's size when it was listed, or -1: with lastModified it says whether the preview cache still holds it. */
+    val size: Long = -1L,
 )
 
 /** A file in a note that is not a photo or recording. */

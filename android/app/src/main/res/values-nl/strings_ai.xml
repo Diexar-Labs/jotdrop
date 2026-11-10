@@ -107,4 +107,9 @@
     <string name="ai_replace_text">Notitietekst vervangen</string>
     <string name="ai_write_first">Schrijf eerst iets.</string>
     <string name="ai_too_long">Deze notitie is te lang voor Vraag JotDrop.</string>
+    <string name="ai_what_goes_none">Er gaan geen notities mee met deze vraag. Heeft de AI er een nodig, dan kan hij je notities nog doorzoeken, en daarna zie je wat er is verstuurd.</string>
+    <string name="ai_untick_all">Alles uitvinken</string>
+    <string name="ai_tick_all">Alles aanvinken</string>
+    <string name="ai_stays_home">Blijft op deze telefoon</string>
+    <string name="ai_note_missing">Deze notitie kon niet worden gelezen op deze telefoon, dus er is niets verstuurd. Ga terug en probeer het opnieuw.</string>
 </resources>

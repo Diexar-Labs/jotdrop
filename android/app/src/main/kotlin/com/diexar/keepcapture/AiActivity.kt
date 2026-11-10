@@ -27,6 +27,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -65,11 +66,13 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.diexar.keepcapture.ui.JotDropTheme
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.CancellationException
@@ -109,13 +112,15 @@ class AskActivity : ThemedComponentActivity() {
     companion object {
         const val EXTRA_NOTE = "ai_note"
         const val EXTRA_SUMMARIZE = "ai_summarize"
+        private const val EXTRA_SHARED = "ai_note_shared"
         private const val EXTRA_KIND = "ai_kind"
         private const val EXTRA_TITLE = "ai_draft_title"
         private const val EXTRA_TEXT = "ai_draft_text"
         const val RESULT_TEXT = "ai_result_text"
         const val RESULT_REPLACE = "ai_result_replace"
-        fun intent(context: Context, note: Uri? = null, summarize: Boolean = false): Intent =
-            Intent(context, AskActivity::class.java).putExtra(EXTRA_NOTE, note?.toString()).putExtra(EXTRA_SUMMARIZE, summarize)
+        /** shared: the note is in a shared space (the card knows; a summary does not list the folder to find out). */
+        fun intent(context: Context, note: Uri? = null, summarize: Boolean = false, shared: Boolean = false): Intent =
+            Intent(context, AskActivity::class.java).putExtra(EXTRA_NOTE, note?.toString()).putExtra(EXTRA_SUMMARIZE, summarize).putExtra(EXTRA_SHARED, shared)
         /** kind is "rewrite", "checklist" or "summarize". */
         fun draftIntent(context: Context, kind: String, title: String, text: String): Intent =
             Intent(context, AskActivity::class.java).putExtra(EXTRA_KIND, kind).putExtra(EXTRA_TITLE, title).putExtra(EXTRA_TEXT, text)
@@ -126,11 +131,12 @@ class AskActivity : ThemedComponentActivity() {
         super.onCreate(savedInstanceState)
         val note = intent.getStringExtra(EXTRA_NOTE)?.let(Uri::parse)
         val summarize = intent.getBooleanExtra(EXTRA_SUMMARIZE, false)
+        val shared = intent.getBooleanExtra(EXTRA_SHARED, false)
         val kind = intent.getStringExtra(EXTRA_KIND)
         val draft = kind?.let { AiNote("draft", intent.getStringExtra(EXTRA_TITLE).orEmpty(), intent.getStringExtra(EXTRA_TEXT).orEmpty()) }
         setContent {
             JotDropTheme {
-                AskScreen(note, summarize, draft, kind, onClose = { finish() }, onDraftAnswer = { answer, replace ->
+                AskScreen(note, shared, summarize, draft, kind, onClose = { finish() }, onDraftAnswer = { answer, replace ->
                     setResult(RESULT_OK, Intent().putExtra(RESULT_TEXT, answer).putExtra(RESULT_REPLACE, replace))
                     finish()
                 })
@@ -143,12 +149,14 @@ private class Pending(val change: AiChange, val answer: CompletableDeferred<Bool
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AskScreen(target: Uri?, summarize: Boolean, draft: AiNote?, kind: String?, onClose: () -> Unit, onDraftAnswer: (String, Boolean) -> Unit) {
+private fun AskScreen(target: Uri?, targetShared: Boolean, summarize: Boolean, draft: AiNote?, kind: String?, onClose: () -> Unit, onDraftAnswer: (String, Boolean) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var settings by remember { mutableStateOf(AiSecretStore(context).load()) }
     val executor = remember { AiExecutor(context) { uri -> context.startActivity(EditorActivity.openNoteIntent(context, uri)) } }
     var loaded by remember { mutableStateOf(false) }
+    // Done when the notes are read: the screen can be used before that, and a request waits for it.
+    val reading = remember { CompletableDeferred<Unit>() }
     var request by remember { mutableStateOf("") }
     var excluded by remember { mutableStateOf(setOf<String>()) }
     var goesOpen by remember { mutableStateOf(false) }
@@ -159,19 +167,17 @@ private fun AskScreen(target: Uri?, summarize: Boolean, draft: AiNote?, kind: St
     var savedNote by remember { mutableStateOf(false) }
     var addedBelow by remember { mutableStateOf(false) }
     var stopped by remember { mutableStateOf(false) }
-    val pinnedId = remember(loaded) { target?.let { uri -> executor.notes.firstOrNull { executor.uriOf(it.id) == uri }?.id } }
+    var missing by remember { mutableStateOf(false) }
+    var listed by remember { mutableStateOf<AiPlan?>(null) }
     val provider = aiProviderName(context, settings.provider)
     val model = settings.model.ifEmpty { AiProviders.SPECS[settings.provider]?.defaultModel.orEmpty() }
 
     // A fixed request (card summary or editor button) cannot be edited or dictated, and has no list of notes to untick.
     val fixed = summarize || draft != null
 
-    // Only the notes the user leaves in can go along or be searched; a summary takes only its own note, an editor button only the draft.
-    fun usable(): List<AiNote> = when {
-        draft != null -> listOf(draft)
-        summarize -> executor.notes.filter { it.id == pinnedId }
-        else -> executor.notes.filter { it.id !in excluded }
-    }
+    // What goes along, decided from the notes as they are now: the list on screen and the request use the same plan.
+    fun plan(text: String, unticked: Set<String>): AiPlan = AiAsk.plan(executor.notes, text, unticked,
+        pinned = target?.let(executor::idOf), target = target != null, summarize = summarize, includeShared = settings.includeShared)
 
     fun send() {
         val text = request.trim()
@@ -181,14 +187,25 @@ private fun AskScreen(target: Uri?, summarize: Boolean, draft: AiNote?, kind: St
         savedNote = false
         addedBelow = false
         stopped = false
+        missing = false
+        val unticked = excluded
         job = scope.launch {
-            val (tools, prompt) = withContext(Dispatchers.IO) { AiAssets.get(context) }
-            val day = SimpleDateFormat("yyyy-MM-dd EEEE", Locale.US).format(Date())
-            val system = AiPrompt.system(prompt, Locale.getDefault().getDisplayLanguage(Locale.ENGLISH), day, TimeZone.getDefault().id, executor.labels)
             try {
+                // An editor button sends only the draft; anything else waits until the notes are read.
+                val (notes, chosen) = if (draft != null) listOf(draft) to AiContext.selectNotes(listOf(draft), "", pinned = listOf(draft.id)).notes
+                else {
+                    reading.await()
+                    val now = plan(text, unticked)
+                    // The card's note could not be read: say so instead of sending the request without it.
+                    if (now.missing) { missing = true; return@launch }
+                    now.notes to now.chosen
+                }
+                val (tools, prompt) = withContext(Dispatchers.IO) { AiAssets.get(context) }
+                val day = SimpleDateFormat("yyyy-MM-dd EEEE", Locale.US).format(Date())
+                val system = AiPrompt.system(prompt, Locale.getDefault().getDisplayLanguage(Locale.ENGLISH), day, TimeZone.getDefault().id, executor.labels)
                 report = AiAssistant.run(
                     request = text,
-                    notes = usable(),
+                    notes = notes,
                     labels = executor.labels,
                     tools = tools,
                     system = system,
@@ -196,9 +213,9 @@ private fun AskScreen(target: Uri?, summarize: Boolean, draft: AiNote?, kind: St
                     // The draft is not saved yet, so the AI changes nothing: the answer waits for Replace or Add below.
                     executor = if (draft != null) emptyMap() else executor.tools,
                     confirm = if (draft != null) { _ -> false } else { change -> val answer = CompletableDeferred<Boolean>(); pending = Pending(change, answer); answer.await().also { pending = null } },
-                    pinned = if (draft != null) listOf(draft.id) else listOfNotNull(pinnedId),
                     includeShared = settings.includeShared,
                     secrets = listOf(settings.key),
+                    chosen = chosen,
                 )
             } catch (error: CancellationException) {
                 stopped = true
@@ -211,19 +228,31 @@ private fun AskScreen(target: Uri?, summarize: Boolean, draft: AiNote?, kind: St
         if (!settings.on) return@LaunchedEffect
         if (draft != null && kind != null) {
             loaded = true
+            reading.complete(Unit)
             request = AiNoteEdits.editorRequest(kind, draft.title)
             send()
             return@LaunchedEffect
         }
         val started = SystemClock.elapsedRealtime()
-        withContext(Dispatchers.IO) { executor.load() }
-        // Only a count and a time, never note content: to see how long a big vault takes to read.
-        Log.i("AskJotDrop", "Read ${executor.notes.size} notes in ${SystemClock.elapsedRealtime() - started} ms")
+        // A summary needs its own note only.
+        if (summarize && target != null) executor.loadOne(target, targetShared) else executor.load()
+        // Only counts and times, never note content: to see how long a big vault takes to read.
+        Log.i("AskJotDrop", "Read ${executor.notes.size} notes in ${SystemClock.elapsedRealtime() - started} ms (listing ${executor.listMs} ms, ${executor.fromCache} from the cache)")
         loaded = true
+        reading.complete(Unit)
         if (summarize) {
-            val title = executor.notes.firstOrNull { executor.uriOf(it.id) == target }?.title
-            if (title != null) { request = AiNoteEdits.editorRequest("summarize", title); send() }
+            val note = target?.let(executor::idOf)?.let { id -> executor.notes.firstOrNull { it.id == id } }
+            if (note != null) { request = AiNoteEdits.editorRequest("summarize", note.title); send() } else missing = true
         }
+    }
+
+    // The list of what goes along follows the request while typing, worked out off the main thread.
+    LaunchedEffect(loaded, request, excluded) {
+        if (!loaded || fixed) return@LaunchedEffect
+        val text = request
+        val unticked = excluded
+        delay(150)
+        listed = withContext(Dispatchers.Default) { plan(text, unticked) }
     }
 
     val speech = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -265,7 +294,7 @@ private fun AskScreen(target: Uri?, summarize: Boolean, draft: AiNote?, kind: St
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (job == null) {
                         if (!fixed) OutlinedButton(onClick = { dictate() }) { Icon(Icons.Filled.Mic, contentDescription = null); Text(" " + stringResource(R.string.ai_dictate)) }
-                        Button(onClick = { send() }, enabled = loaded && request.isNotBlank()) { Text(stringResource(R.string.ai_send)) }
+                        Button(onClick = { send() }, enabled = request.isNotBlank()) { Text(stringResource(R.string.ai_send)) }
                     } else {
                         OutlinedButton(onClick = { job?.cancel() }) { Text(stringResource(R.string.ai_stop)) }
                     }
@@ -275,29 +304,41 @@ private fun AskScreen(target: Uri?, summarize: Boolean, draft: AiNote?, kind: St
             if (!loaded) item {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
                 Text(stringResource(R.string.ai_reading_notes), style = MaterialTheme.typography.bodySmall)
-            } else if (!fixed && job == null && report == null) {
-                val goes = AiContext.selectNotes(executor.notes.filter { it.id !in excluded }, request, includeShared = settings.includeShared, pinned = listOfNotNull(pinnedId)).notes
-                val shown = (goes.map { it.id } + excluded).distinct().mapNotNull { id -> executor.notes.firstOrNull { it.id == id } }
+            } else if (!fixed && job == null && report == null) listed?.let { now ->
+                val ticked = now.shown.filter { it.id !in excluded }
                 item {
                     Text(
-                        (if (goesOpen) "▾ " else "▸ ") + stringResource(R.string.ai_what_goes, goes.size),
+                        (if (goesOpen) "▾ " else "▸ ") + stringResource(R.string.ai_what_goes, now.chosen.size),
                         style = MaterialTheme.typography.titleSmall,
                         modifier = Modifier.fillMaxWidth().clickable(role = Role.Button) { goesOpen = !goesOpen }.padding(vertical = 8.dp),
                     )
-                    if (goesOpen) Text(stringResource(R.string.ai_what_goes_help), style = MaterialTheme.typography.bodySmall)
+                    if (goesOpen) Text(stringResource(if (now.shown.isEmpty()) R.string.ai_what_goes_none else R.string.ai_what_goes_help), style = MaterialTheme.typography.bodySmall)
+                    if (goesOpen && now.shown.isNotEmpty()) TextButton(onClick = {
+                        val ids = now.shown.map { it.id }
+                        excluded = if (ticked.isNotEmpty()) excluded + ids else excluded - ids.toSet()
+                    }) { Text(stringResource(if (ticked.isNotEmpty()) R.string.ai_untick_all else R.string.ai_tick_all)) }
                 }
-                if (goesOpen) items(shown, key = { it.id }) { note ->
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable(role = Role.Checkbox) {
-                        excluded = if (note.id in excluded) excluded - note.id else excluded + note.id
-                    }) {
-                        Checkbox(checked = note.id !in excluded, onCheckedChange = null)
-                        Text(note.title.ifBlank { stringResource(R.string.ai_untitled) }, Modifier.padding(start = 8.dp))
+                // One short row per note, the whole row a switch; an unticked note also says so in words.
+                if (goesOpen) items(now.shown, key = { it.id }) { note ->
+                    val on = note.id !in excluded
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                        .toggleable(value = on, role = Role.Checkbox) { excluded = if (it) excluded - note.id else excluded + note.id }.padding(vertical = 4.dp)) {
+                        Checkbox(checked = on, onCheckedChange = null)
+                        Column(Modifier.padding(start = 8.dp)) {
+                            val title = AiAsk.shortTitle(note.title).ifBlank { stringResource(R.string.ai_untitled) }
+                            Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            AiAsk.firstLine(note).takeIf { it.isNotEmpty() && it != title }?.let {
+                                Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            if (!on) Text(stringResource(R.string.ai_stays_home), style = MaterialTheme.typography.labelSmall)
+                        }
                     }
                 }
             }
+            if (missing || (job == null && report == null && listed?.missing == true)) item { Text(stringResource(R.string.ai_note_missing)) }
             if (job != null) item {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
-                Text(stringResource(R.string.ai_working, provider), style = MaterialTheme.typography.bodySmall)
+                Text(if (loaded) stringResource(R.string.ai_working, provider) else stringResource(R.string.ai_reading_notes), style = MaterialTheme.typography.bodySmall)
             }
             if (stopped) item { Text(stringResource(R.string.ai_stopped)) }
             report?.let { done -> item { AiResult(done, asked, provider, model, executor, target, summarize, kind.takeIf { draft != null }, savedNote, addedBelow, onSaved = { savedNote = true }, onAddedBelow = { addedBelow = true }, onDraft = { replace -> onDraftAnswer(done.answer, replace) }) } }
@@ -329,7 +370,7 @@ private fun AiResult(
         // The draft is already open in the editor, so it gets no source button.
         if (draftKind == null && report.sources.isNotEmpty()) {
             Text(stringResource(R.string.ai_sources), style = MaterialTheme.typography.titleSmall)
-            for (source in report.sources) OutlinedButton(onClick = { executor.uriOf(source.id)?.let { context.startActivity(EditorActivity.openNoteIntent(context, it)) } }) { Text(source.title) }
+            for (source in report.sources) OutlinedButton(onClick = { executor.uriOf(source.id)?.let { context.startActivity(EditorActivity.openNoteIntent(context, it)) } }) { Text(AiAsk.shortTitle(source.title).ifBlank { context.getString(R.string.ai_untitled) }, maxLines = 1, overflow = TextOverflow.Ellipsis) }
         }
         if (report.actions.any { it.tool !in setOf("search_notes", "read_note") }) {
             Text(stringResource(R.string.ai_actions), style = MaterialTheme.typography.titleSmall)
@@ -338,7 +379,8 @@ private fun AiResult(
                 Text("$status: ${aiToolText(context, action)}")
             }
         }
-        val names = report.sent.map { it.title.ifBlank { context.getString(R.string.ai_untitled) } }
+        // Titles only, one short line each, as in the list of what goes along: never the note's text.
+        val names = report.sent.map { AiAsk.shortTitle(it.title).ifBlank { context.getString(R.string.ai_untitled) } }
         Text(if (names.isEmpty()) stringResource(R.string.ai_sent_none, provider) else stringResource(R.string.ai_sent_notes, provider, names.joinToString(", ")), style = MaterialTheme.typography.bodySmall)
         if (report.rounds > 0) Text(stringResource(R.string.ai_tokens, report.input, report.output), style = MaterialTheme.typography.bodySmall)
         // Back in the editor the answer is part of the draft; it is saved like any edit.
@@ -389,7 +431,7 @@ private fun aiToolText(context: Context, action: AiAction): String {
 @Composable
 private fun AiConfirmDialog(change: AiChange, onAnswer: (Boolean) -> Unit) {
     val context = LocalContext.current
-    val name = change.note.title.ifBlank { context.getString(R.string.ai_untitled) }
+    val name = AiAsk.shortTitle(change.note.title).ifBlank { context.getString(R.string.ai_untitled) }
     val none = stringResource(R.string.ai_none)
     AlertDialog(
         onDismissRequest = { onAnswer(false) },

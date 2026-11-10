@@ -107,4 +107,9 @@
     <string name="ai_replace_text">Notiztext ersetzen</string>
     <string name="ai_write_first">Schreib zuerst etwas.</string>
     <string name="ai_too_long">Diese Notiz ist zu lang für JotDrop fragen.</string>
+    <string name="ai_what_goes_none">Mit dieser Anfrage gehen keine Notizen mit. Braucht die KI eine, kann sie deine Notizen noch durchsuchen, und danach siehst du, was gesendet wurde.</string>
+    <string name="ai_untick_all">Alle abwählen</string>
+    <string name="ai_tick_all">Alle auswählen</string>
+    <string name="ai_stays_home">Bleibt auf diesem Telefon</string>
+    <string name="ai_note_missing">Diese Notiz konnte auf diesem Telefon nicht gelesen werden, deshalb wurde nichts gesendet. Geh zurück und versuch es noch einmal.</string>
 </resources>
