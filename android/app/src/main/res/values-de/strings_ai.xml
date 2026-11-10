@@ -8,7 +8,7 @@
     <string name="ai_provider">KI-Dienst</string>
     <string name="ai_provider_off">Aus</string>
     <string name="ai_provider_custom">Eigene Adresse (OpenAI-kompatibel)</string>
-    <string name="ai_gemini_warning">Hinweis: Im kostenlosen Gemini-Tarif darf Google das Gesendete zur Verbesserung seiner Produkte nutzen. Im bezahlten Tarif nicht.</string>
+    <string name="ai_gemini_warning">Hinweis: Außerhalb des EWR, der Schweiz und des Vereinigten Königreichs darf Google im kostenlosen Gemini-Tarif das Gesendete zur Verbesserung seiner Produkte nutzen. Im bezahlten Tarif nicht.</string>
     <string name="ai_custom_help">Eine https-Adresse mit OpenAI-API, etwa Ollama oder LM Studio hinter https, oder Mistral. Einfaches http ist auf Android gesperrt.</string>
     <string name="ai_address">Adresse (https)</string>
     <string name="ai_https_only">Nutze auf Android eine https-Adresse.</string>

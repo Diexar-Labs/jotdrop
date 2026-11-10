@@ -8,7 +8,7 @@
     <string name="ai_provider">Service d\'IA</string>
     <string name="ai_provider_off">Désactivé</string>
     <string name="ai_provider_custom">Adresse personnelle (compatible OpenAI)</string>
-    <string name="ai_gemini_warning">Attention : avec l\'offre gratuite de Gemini, Google peut utiliser ce que tu envoies pour améliorer ses produits. Avec l\'offre payante, non.</string>
+    <string name="ai_gemini_warning">Attention : en dehors de l\'EEE, de la Suisse et du Royaume-Uni, Google peut utiliser ce que tu envoies avec l\'offre gratuite de Gemini pour améliorer ses produits. Avec l\'offre payante, non.</string>
     <string name="ai_custom_help">Une adresse https qui parle l\'API d\'OpenAI, comme Ollama ou LM Studio derrière https, ou Mistral. Le http simple est bloqué sur Android.</string>
     <string name="ai_address">Adresse (https)</string>
     <string name="ai_https_only">Sur Android, utilise une adresse https.</string>

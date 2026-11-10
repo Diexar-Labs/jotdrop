@@ -1,6 +1,6 @@
 # JotDrop Android Privacy Policy
 
-Last updated: November 9, 2026
+Last updated: November 10, 2026
 
 JotDrop (`com.diexar.keepcapture`) is a local-first Android notes app from Diexar Labs. Contact us at [eric@diexar.com](mailto:eric@diexar.com) about privacy questions.
 
@@ -26,10 +26,10 @@ You can create a free JotDrop Cloud account to sync your notes between devices, 
 
 ## Ask JotDrop: AI with your own key (optional)
 
-Ask JotDrop is an assistant you can give tasks to in your own words, typed or dictated. It is off until you choose an AI service in Settings and enter your own key: Anthropic (Claude), OpenAI, Google (Gemini), OpenRouter, or an https address of your own that speaks the OpenAI API, such as a server that runs Ollama. When you send a request, the app sends it straight from your phone to that service, together with the notes listed under "What goes along" and any note the AI reads while it answers, at most 20 notes or 30,000 characters at a time. You see that list before you send and can take notes off it. Notes in shared groups and notes with a live list link stay out unless you switch them on. Nothing of this passes through our servers, and we never see your key.
+Ask JotDrop is an assistant you can give tasks to in your own words, typed or dictated. It is off until you choose an AI service in Settings and enter your own key: Anthropic (Claude), OpenAI, Google (Gemini), OpenRouter, or an https address of your own that speaks the OpenAI API, such as a server that runs Ollama. When you send a request, the app sends it straight from your phone to that service, together with the notes listed under "What goes along" and any note the AI reads while it answers, at most 20 notes or 30,000 characters at a time. You see that list before you send and can take notes off it. If you use "Rewrite with AI", "Make a checklist with AI" or "Summarize with AI" in the editor, only the text of that note is sent. Notes in shared groups and notes with a live list link stay out unless you switch them on. Nothing of this passes through our servers, and we never see your key.
 
 - **Your key** is stored in JotDrop's private storage on this phone, encrypted with a key from the Android Keystore, and excluded from Android backups. It is not synced to your other devices. "Turn off and remove key" deletes it.
-- **The AI service** handles what you send under your own agreement with it; we are not part of that and do not process it for you. Some services may use what you send to improve their products, Google for example on the free tier of the Gemini API, so read the terms of the service you pick.
+- **The AI service** handles what you send under your own agreement with it; we are not part of that and do not process it for you. Some services may use what you send to improve their products, Google for example on the free tier of the Gemini API outside the EEA, Switzerland and the UK, so read the terms of the service you pick.
 - **Changes to your notes** happen only on your phone. A new note is made at once; a change to a note you already have, a label, a reminder or an expiry date waits until you say yes.
 - **Dictating** a request uses the speech recognition app on your phone, as described under Speech recognition below.
 - **Reporting an answer** opens your mail app with an email to hello@jotdrop.net that holds the question and the answer. We use it only to look into the report and reply.

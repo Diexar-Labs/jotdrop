@@ -8,7 +8,7 @@
     <string name="ai_provider">AI-dienst</string>
     <string name="ai_provider_off">Uit</string>
     <string name="ai_provider_custom">Eigen adres (OpenAI-compatibel)</string>
-    <string name="ai_gemini_warning">Let op: bij de gratis laag van Gemini mag Google gebruiken wat je stuurt om zijn producten te verbeteren. Bij de betaalde laag niet.</string>
+    <string name="ai_gemini_warning">Let op: buiten de EER, Zwitserland en het Verenigd Koninkrijk mag Google bij de gratis laag van Gemini gebruiken wat je stuurt om zijn producten te verbeteren. Bij de betaalde laag niet.</string>
     <string name="ai_custom_help">Een https-adres dat de OpenAI-API spreekt, zoals Ollama of LM Studio achter https, of Mistral. Gewone http is op Android geblokkeerd.</string>
     <string name="ai_address">Adres (https)</string>
     <string name="ai_https_only">Gebruik op Android een https-adres.</string>
