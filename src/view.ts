@@ -6,6 +6,7 @@ import type JotDropPlugin from "./main";
 import { QuickCaptureModal, createNoteInFolder } from "./capture";
 import { AttachmentPreviewHint, EditNoteModal } from "./edit";
 import { DrawingModal, saveDrawingFile } from "./drawing";
+import { drawingEmbedBeforeImage, drawingTitle } from "./excalidraw";
 import { LOGO_ICON } from "./logo";
 import { FolderPickerModal } from "./folderPicker";
 import { TagPickerModal, TagItem } from "./tagPicker";
@@ -138,6 +139,8 @@ interface CardData {
   content: string;
   meta: NoteMeta;
   archived: boolean;
+  /** The note is an Excalidraw drawing: its text is data, not words. */
+  isDrawing?: boolean;
 }
 
 interface AttachmentResource {
@@ -1544,10 +1547,16 @@ export class JotDropView extends ItemView {
    * to the previous/next card with arrows, swipe or the header buttons.
    */
   private openEditModal(file: TFile, attachment?: AttachmentResource | null): void {
+    // A drawing is opened by the Excalidraw plugin (or as plain Markdown without it), never in this editor:
+    // saving here would rewrite its frontmatter.
+    if (this.plugin.excalidraw.isDrawingFile(file)) {
+      void this.app.workspace.getLeaf("tab").openFile(file);
+      return;
+    }
     const ordered = [
       ...this.lastFiltered.filter((c) => c.meta.pinned),
       ...this.lastFiltered.filter((c) => !c.meta.pinned),
-    ].map((c) => c.file);
+    ].filter((c) => !c.isDrawing).map((c) => c.file);
     const index = ordered.findIndex((f) => f.path === file.path);
     new EditNoteModal(
       this.app,
@@ -2035,11 +2044,15 @@ export class JotDropView extends ItemView {
     for (const file of files) {
       const content = await this.app.vault.cachedRead(file);
       const meta = readMeta(this.app, file);
+      const isDrawing = this.plugin.excalidraw.isDrawingFile(file);
+      // The plugin tags every drawing "excalidraw"; that is its own bookkeeping, not a tag of the user.
+      if (isDrawing) { meta.tags = meta.tags.filter((tag) => tag.toLowerCase() !== "excalidraw"); meta.inlineTags = []; }
       cards.push({
         file,
         content,
         meta,
         archived: isUnder(file.path, archive),
+        isDrawing,
       });
     }
 
@@ -2060,7 +2073,7 @@ export class JotDropView extends ItemView {
     const matchesQuery =
       !q ||
       card.file.basename.toLowerCase().includes(q) ||
-      card.content.toLowerCase().includes(q) ||
+      (!card.isDrawing && card.content.toLowerCase().includes(q)) ||
       cardTags(card.meta).some((t) => t.toLowerCase().includes(q)) ||
       card.meta.labels.some((l) => l.toLowerCase().includes(q));
     if (!matchesQuery) return false;
@@ -2145,23 +2158,31 @@ export class JotDropView extends ItemView {
       quickPinBtn.addEventListener("pointerdown", (e) => e.stopPropagation());
     }
 
-    const titleText = extractTitle(content, file.basename);
-    const previewText = extractPreview(content);
-    const previewRows = checklistPreviewRows(content);
+    // A drawing file holds data, not words: only its name is the card text.
+    const isDrawing = Boolean(card.isDrawing);
+    const titleText = isDrawing ? drawingTitle(file.basename) : extractTitle(content, file.basename);
+    const previewText = isDrawing ? "" : extractPreview(content);
+    const previewRows = isDrawing ? [] : checklistPreviewRows(content);
     const fullPreview = previewRows.map((row) => row.text).join("\n");
     const plainTruncated = !previewRows.some((row) => row.index !== undefined) && previewText !== fullPreview;
     if (!previewRows.some((row) => row.index !== undefined) && previewText) previewRows.splice(0, previewRows.length, { text: previewText });
-    const urls = extractUrls(content);
+    const urls = isDrawing ? [] : extractUrls(content);
 
     const body = cardEl.createDiv({ cls: "jotdrop-card-body" });
 
-    const thumbnailBasename = extractFirstEmbeddedImage(content);
+    // The drawing itself, or a drawing embedded above the first photo: it takes the picture slot of the card.
+    const drawingLink = isDrawing ? null : drawingEmbedBeforeImage(stripFrontmatter(content));
+    const embeddedDrawing = drawingLink ? this.plugin.excalidraw.resolveDrawing(drawingLink, file) : null;
+    const firstImage = isDrawing ? null : extractFirstEmbeddedImage(content);
+    // A drawing that cannot be pictured (no export, no plugin) gives way to a photo further down, as before.
+    const drawing = isDrawing ? file : embeddedDrawing && (!firstImage || this.plugin.excalidraw.canPicture(embeddedDrawing)) ? embeddedDrawing : null;
+    const thumbnailBasename = drawing ? null : firstImage;
     const attachment = thumbnailBasename
       ? this.resolveAttachmentResource(file, thumbnailBasename)
       : null;
     // Voice-memo cards have no image thumb but do have an audio embed —
     // show an equalizer banner so the card type is visually recognizable.
-    const audioBasename = attachment ? null : extractFirstEmbeddedAudio(content);
+    const audioBasename = attachment || drawing ? null : extractFirstEmbeddedAudio(content);
 
     // Every part of the card body, including the thumbnail, opens the editor.
     // The full image is available by clicking it inside the opened editor.
@@ -2195,6 +2216,8 @@ export class JotDropView extends ItemView {
           thumbWrap.remove();
         }
       });
+    } else if (drawing) {
+      this.renderDrawingThumb(body, drawing);
     } else if (audioBasename) {
       const banner = body.createDiv({ cls: "jotdrop-card-voice-banner" });
       banner.setAttribute("aria-label", t("voice_memo_card_label"));
@@ -2705,6 +2728,47 @@ export class JotDropView extends ItemView {
       );
     }
     menu.showAtMouseEvent(event);
+  }
+
+  /**
+   * The picture slot of a card for an Excalidraw drawing. A fresh export next to
+   * the drawing comes first (no plugin needed), then the Excalidraw plugin's own
+   * rendering, then an older export; the words "Excalidraw drawing" show until a
+   * picture is there, and stay when there is none.
+   */
+  private renderDrawingThumb(body: HTMLElement, drawing: TFile): void {
+    const previews = this.plugin.excalidraw;
+    const label = t("excalidraw_card_label");
+    const wrap = body.createDiv({ cls: "jotdrop-card-thumbnail jotdrop-card-drawing" });
+    const placeholder = (): void => {
+      wrap.empty();
+      wrap.addClass("is-placeholder");
+      setIcon(wrap.createSpan({ cls: "jotdrop-card-drawing-icon" }), "pen-tool");
+      wrap.createSpan({ cls: "jotdrop-card-drawing-label", text: label });
+    };
+    const show = (src: string, onError: () => void): void => {
+      wrap.empty();
+      wrap.removeClass("is-placeholder");
+      const img = wrap.createEl("img");
+      img.alt = label;
+      img.decoding = "async";
+      img.draggable = false;
+      img.addEventListener("error", onError);
+      img.src = src;
+    };
+    const found = previews.findExport(drawing);
+    const old = found && !found.fresh ? found.file : null;
+    const useOld = (): void => (old ? show(previews.resourcePath(old), placeholder) : placeholder());
+    const usePlugin = (): void => {
+      placeholder();
+      void previews.render(drawing).then((url) => {
+        if (!wrap.isConnected) return;
+        if (url) show(url, useOld);
+        else useOld();
+      });
+    };
+    if (found?.fresh) show(previews.resourcePath(found.file), usePlugin);
+    else usePlugin();
   }
 
   /**

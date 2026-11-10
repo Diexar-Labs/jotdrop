@@ -2071,3 +2071,25 @@ button.jotdrop-provider-github:not(.clickable-icon):hover { background: #32383f;
   top: 8px;
   right: 8px;
 }
+
+/* Excalidraw drawings: a picture of the drawing, or the words "Excalidraw drawing" while there is none. */
+.jotdrop-card-drawing img {
+  object-fit: contain;
+  background: #fff;
+}
+
+.jotdrop-card-drawing.is-placeholder {
+  aspect-ratio: 16 / 9;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--text-muted);
+}
+
+.jotdrop-card-drawing-icon svg {
+  width: 40px;
+  height: 40px;
+}
+
+.jotdrop-card-drawing-label {
+  font-size: var(--font-ui-small);
+}

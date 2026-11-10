@@ -10,6 +10,7 @@ import { CloudController } from "./cloud";
 import { identifyClient } from "../cloud/shared/client.mjs";
 import { fetchOg, safeMarkdownLink } from "./ogfetch";
 import { legacyAssetsPath } from "./attachments";
+import { ExcalidrawPreviews } from "./excalidraw";
 import { ConfirmModal } from "./confirmModal";
 import { ImportFiles, keepNoteFileName, keepNoteMarkdown, parseKeepExport, readZip } from "./keepImport";
 import { markdownNoteFileName, markdownNoteMarkdown, parseMarkdownExport } from "./markdownImport";
@@ -42,12 +43,14 @@ export default class JotDropPlugin extends Plugin {
   private reminderScheduler!: ReminderScheduler;
   private clipServer!: ClipServer;
   cloud!: CloudController;
+  excalidraw!: ExcalidrawPreviews;
 
   async onload(): Promise<void> {
     await this.loadSettings();
     identifyClient("obsidian", this.manifest.version);
     this.cloud = new CloudController(this);
     this.cloud.register();
+    this.excalidraw = new ExcalidrawPreviews(this.app);
 
     this.registerView(VIEW_TYPE_JOTDROP, (leaf) => new JotDropView(leaf, this));
 
@@ -153,6 +156,7 @@ export default class JotDropPlugin extends Plugin {
     this.reminderScheduler?.cancelAll();
     this.clipServer?.stop();
     this.cloud?.lock();
+    this.excalidraw?.dispose();
   }
 
   /**

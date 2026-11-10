@@ -23,6 +23,7 @@
     "check:plugin-labels": "node scripts/check-plugin-labels.cjs",
     "check:plugin-expires": "node scripts/check-plugin-expires.cjs",
     "check:hashtags": "node scripts/check-hashtags.cjs",
+    "check:excalidraw": "node scripts/check-excalidraw.cjs",
     "check:keep-import": "node scripts/check-keep-import.cjs",
     "check:markdown-import": "node scripts/check-markdown-import.cjs",
     "check:evernote-import": "node scripts/check-evernote-import.cjs",
