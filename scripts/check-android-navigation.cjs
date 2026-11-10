@@ -104,8 +104,12 @@ const titleBar = list.slice(list.indexOf('TopAppBar(', list.indexOf('SelectionTo
 assert(titleBar.includes('R.plurals.notes_count'), 'The top bar must show the number of notes');
 assert(titleBar.includes('fontFamily = Handwriting'), 'The number must be in the handwriting of the Joplin board');
 assert(titleBar.includes('rotationZ = -2f'), 'The number must sit a little askew, like in Joplin');
-assert.match(titleBar, /Modifier\.weight\(1f, fill = false\)\.alignByBaseline\(\)\.graphicsLayer/, 'On a narrow phone the number gives way, never the name');
-assert.equal((titleBar.match(/Modifier\.weight\(/g) || []).length, 1, 'Only the number may give way');
+// 10 Nov: next to the name the number was cut off at 1000 notes ("1000 no...") on a 375 dp phone; under the name it has the full width.
+assert(titleBar.includes('Column {'),'The number sits under the name, in a column, so the buttons never push it away');
+assert(!titleBar.includes('Row('), 'The name and the number must not share a row: the buttons leave too little width');
+assert(!titleBar.includes('Modifier.weight('), 'Nothing in the title may give way to the buttons');
+assert(titleBar.indexOf('screenTitle') < titleBar.indexOf('R.plurals.notes_count'), 'The name comes first, the number under it');
+assert(titleBar.includes('graphicsLayer { rotationZ = -2f }'), 'The askew number must stay');
 for (const folder of ['values', 'values-nl', 'values-de', 'values-es', 'values-fr', 'values-it']) {
   assert(fs.readFileSync(path.join(root, 'res', folder, 'strings.xml'), 'utf8').includes('<plurals name="notes_count">'), `${folder} must say how many notes there are`);
 }
@@ -207,4 +211,9 @@ assert(source('CloudActivity').includes('BackupSection'), 'The backup needs its 
 assert(manifest.includes('android:foregroundServiceType="microphone"'));
 assert(manifest.includes('android.permission.FOREGROUND_SERVICE_MICROPHONE'));
 assert(manifest.includes('android.permission.WAKE_LOCK'));
+// Back closes the open menu: with targetSdk 36 Android 16 no longer sends KEYCODE_BACK, and the Compose popups of
+// BOM 2024.06 only listen for that key, so the menus stayed open. Remove this opt-out only after a Compose upgrade
+// that is tested on an Android 16 device.
+const application = manifest.slice(manifest.indexOf('<application'), manifest.indexOf('>', manifest.indexOf('<application')));
+assert(application.includes('android:enableOnBackInvokedCallback="false"'), 'Back must close dropdown menus on Android 16 (old Compose popups)');
 console.log('Android navigation and recording safety wiring checks passed');

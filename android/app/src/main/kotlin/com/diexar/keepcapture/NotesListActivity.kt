@@ -1311,17 +1311,16 @@ private fun NotesListScreen(
                         }
                     },
                     title = {
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Column {
                             Text(
                                 screenTitle,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.alignByBaseline(),
                             )
                             // The number of notes shown, handwritten and a little askew, like the board in Joplin.
-                            // On a narrow phone this gives way, not the name.
+                            // Under the name, not next to it: next to it three buttons left too little width for "1000 notes".
                             if (state is NotesUiState.Loaded) Text(
                                 pluralStringResource(R.plurals.notes_count, filtered.size, filtered.size),
                                 maxLines = 1,
@@ -1329,9 +1328,10 @@ private fun NotesListScreen(
                                 softWrap = false,
                                 fontFamily = Handwriting,
                                 fontWeight = FontWeight.SemiBold,
-                                fontSize = 21.sp,
+                                fontSize = 17.sp,
+                                lineHeight = 18.sp,
                                 color = if (isSystemInDarkTheme()) PlayfulAmber else Color(0xFF8A5A00),
-                                modifier = Modifier.weight(1f, fill = false).alignByBaseline().graphicsLayer { rotationZ = -2f },
+                                modifier = Modifier.graphicsLayer { rotationZ = -2f },
                             )
                         }
                     },
