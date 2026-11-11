@@ -223,6 +223,7 @@ var EN = {
   record_confirm_message: "Voice memo of {0} \u2014 save it as a new card?",
   audio_load_failed: "Audio unavailable",
   voice_memo_card_label: "Voice memo",
+  excalidraw_card_label: "Excalidraw drawing",
   action_photo: "Photo",
   action_add_photo: "Add photo",
   action_text_from_photo: "Text from photo",
@@ -266,6 +267,15 @@ var EN = {
   // Drawing (same words as the Android app)
   action_new_drawing: "New drawing",
   action_add_drawing: "\u270F\uFE0F Add drawing",
+  // Ask JotDrop: AI with your own key (the window itself is in English, like the cloud screens)
+  action_ask_jotdrop: "Ask JotDrop",
+  action_ask_about_note: "Ask JotDrop about this note\u2026",
+  action_ai_summarize: "Summarize with AI",
+  action_ai_rewrite: "\u2728 Rewrite with AI",
+  action_ai_checklist: "\u2728 Checklist with AI",
+  cmd_ask_jotdrop: "Ask JotDrop (AI with your own key)",
+  notice_ai_write_first: "Write something first.",
+  notice_ai_save_to_keep: "Changes are saved only when you select Save.",
   action_edit_drawing: "Edit drawing",
   drawing_title: "Drawing",
   drawing_note_title: "Drawing",
