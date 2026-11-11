@@ -44,7 +44,7 @@ Ideas, to-do lists, links, photos and voice memos land on colorful **Keep-style 
   <img src="https://raw.githubusercontent.com/Diexar-Labs/jotdrop/main/docs/readme/board.webp" alt="JotDrop web app, a Google Keep alternative, with colorful note cards, a checklist, a voice memo and a saved video link" width="820" />
 </p>
 
-A card shows what matters at a glance: its title and text, ticked tasks with a pen stroke through them, the first photo, a voice memo you can play right there, links as little chips that open at once, up to four labels and tags that filter your notes with one tap, a "Due" or "Overdue" badge for reminders and when it last changed. Pinned cards get a strip of tape and float to the top.
+A card shows what matters at a glance: its title and text, ticked tasks with a pen stroke through them, the first photo, a voice memo you can play right there, attached files (a PDF, a spreadsheet) as chips with their name and size, links as little chips that open at once, up to four labels and tags that filter your notes with one tap, a "Due" or "Overdue" badge for reminders and when it last changed. Pinned cards get a strip of tape and float to the top.
 
 ## Your notes, your way: Android, Obsidian, web and Chrome
 
@@ -93,6 +93,7 @@ Step-by-step instructions for each part are under [Install](#install).
 - **Type, dictate or record.** Write a note, use Android's speech recognition, or record a voice memo with one tap, on Android (`.m4a`), in Obsidian (`.webm`) and in the web app.
 - **Text from photos (OCR).** Take or pick a photo and turn its text into a note. On Android this uses ML Kit on your phone; in Obsidian and the web app it runs on your own device too, for English and Dutch.
 - **Photo notes.** Add a photo as a card from the camera or the gallery.
+- **Attach any file.** Put a PDF, a spreadsheet or any other file on a note: with **Attach file** in the editor or the card menu, by dragging it onto a card in the web app and Obsidian, by pasting a screenshot, or by sharing it to JotDrop from another app on Android and choosing a new note or an existing one. The note shows it as a chip with the name and size.
 - **Clip the web.** Save the page you're on with Chrome, including your selected text, tags, color and pin.
 - **Import your old notes.** Bring your notes over from Google Keep (Google Takeout), Evernote (`.enex`), Apple Notes and other Markdown exports, with colors, pins, labels, checklists, images and dates where the export has them. See [Switch from Google Keep](#switch-from-google-keep).
 
@@ -111,7 +112,7 @@ Step-by-step instructions for each part are under [Install](#install).
 ### Edit
 
 - **Checklists** that you tick right on the card.
-- **Photos and voice memos** inside a note, with a full-screen photo view and a player.
+- **Photos, voice memos and files** inside a note, with a full-screen photo view, a player and a chip for every other file.
 - **Excalidraw drawings** show as a picture on the card in Obsidian. JotDrop uses the picture the Excalidraw plugin saves next to the drawing, or asks the plugin to draw it. It only reads your drawings and never changes them.
 - **Ask JotDrop**, an optional AI assistant with your own key: ask about your notes, add to a list, summarize a note or tidy up a draft. A change to a note waits until you apply it. See [Network use, accounts and payments](#network-use-accounts-and-payments).
 - **Markdown help** for headings, lists, links, quotes, code and tables, while the card itself shows clean text without Markdown signs.
@@ -181,7 +182,7 @@ The encryption code is in this repository ([`cloud/shared/crypto.mjs`](cloud/sha
 - **Extra protection**: add an authenticator app to your account in the web app.
 - **Syncs by itself.** Changes go up when you save and come in when you open the app; Android also syncs in the background. You can pause sync, sync now, disconnect a device or revoke one that you lost.
 - **Changed in two places?** If you edit the same note on two devices before they sync, JotDrop merges what it safely can and otherwise keeps both versions. The other version shows as its own card with **Resolve now**, where you compare and choose.
-- **Big files are fine.** Photos and recordings are uploaded in encrypted pieces and continue after a broken connection.
+- **Big files are fine.** Photos, recordings and other files are uploaded in encrypted pieces and continue after a broken connection. JotDrop checks the size when you attach a file, so a file over your plan's limit is turned away right then, not later during sync. The web app shows how much of your space goes to notes and how much to attachments.
 - **Leave whenever you want.** Your local files stay yours. Export everything from the web app, or delete your cloud account in the app.
 
 ### Free to start. Yours to keep.
@@ -342,8 +343,11 @@ Not by JotDrop. Local notes are readable Markdown files, which is the point. Use
 **Can I use JotDrop Cloud and Obsidian Sync together?**
 Not on the same notes. Two sync systems on one folder can produce conflicting changes. Pick one per folder.
 
-**Are photos and voice memos encrypted as well?**
+**Are photos, voice memos and files encrypted as well?**
 Yes. Attachments synced with JotDrop Cloud are encrypted on your device like notes.
+
+**Can I attach a PDF or another file to a note?**
+Yes, in the Android app, Obsidian and the web app. Use **Attach file**, drag a file onto a card (web app and Obsidian on a computer), or share it to JotDrop from another app on Android. A file stays inside your plan's limit per file: 25 MB on Free, 200 MB on Plus. In Joplin you attach files the Joplin way, and the card shows them as chips.
 
 **Does the Chrome clipper work without Obsidian?**
 Yes. Choose JotDrop Cloud in its settings and clips go, encrypted, straight into your cloud and the web app. With Obsidian, the desktop plugin creates the card.
@@ -376,6 +380,7 @@ English and Dutch. Spanish, German, French and Italian are ready for translators
 - [x] JotDrop for Joplin: a card board on Joplin desktop and Android
 - [x] JotDrop for Joplin: notes from the JotDrop app through JotDrop Cloud, one way
 - [x] JotDrop on Google Play for everyone
+- [x] Attach any file to a note, in every app
 - [ ] Light and dark choice in the Android app
 - [ ] iOS share extension
 - [ ] Firefox and Edge clipper
