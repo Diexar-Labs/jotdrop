@@ -47,6 +47,7 @@
     "check:cloud-photo": "python cloud/photo_browser_check.py",
     "check:cloud-drawing": "python cloud/drawing_browser_check.py",
     "check:cloud-attachments": "python cloud/attachments_browser_check.py",
+    "check:cloud-attach-web": "python cloud/attach_everywhere_browser_check.py",
     "check:cloud-paper": "python cloud/paper_browser_check.py",
     "check:cloud-mail": "python cloud/mail_browser_check.py",
     "check:cloud-parity": "python cloud/parity_browser_check.py",

@@ -156,7 +156,7 @@ async function sealFile(path, bytes, revision, modifiedAt = new Date().toISOStri
 // Plus is offered where a free limit is in the way, not as a standing button: at the start nobody notices
 // the difference, and the trial works once per account (Eric, 27 Oct). The error says what happened, the offer what helps.
 const filePlus = 'JotDrop Plus takes files up to 200 MB.';
-let currentPlan, storageShare = 0, plusReason = '', plusQuiet = false;
+let currentPlan, storageShare = 0, storageFilesShare = 0, plusReason = '', plusQuiet = false;
 // Every new account starts with 14 days of Plus (Eric, 2 Nov 2026); the last 3 days say so, once per page.
 const trialDaysLeft = (plan) => plan?.trialEnds ? Math.max(1, Math.ceil((Date.parse(plan.trialEnds) - Date.now()) / 86400000)) : 0;
 function plusChoice() {
@@ -166,7 +166,7 @@ function plusChoice() {
   return currentPlan.checkout && !currentPlan.subscribed ? 'buy' : undefined;
 }
 function showPlusNudge() {
-  const nearlyFull = !plusQuiet && storageShare >= .8 ? `Your cloud storage is ${Math.round(storageShare * 100)}% full. JotDrop Plus has 10 GB.` : '';
+  const nearlyFull = !plusQuiet && storageShare >= .8 ? `Your cloud storage is ${Math.round(storageShare * 100)}% full${storageFilesShare > .5 ? ', mostly with attached files' : ''}. JotDrop Plus has 10 GB and takes files up to 200 MB.` : '';
   const days = trialDaysLeft(currentPlan);
   const trialEnding = !plusQuiet && days && days <= 3 ? `Your JotDrop Plus trial ends in ${days === 1 ? '1 day' : `${days} days`}. After that you are on Free: nothing is deleted, and you keep 250 MB, 2 devices and 30 days of history.` : '';
   const reason = plusReason || trialEnding || nearlyFull, choice = plusChoice();
@@ -544,22 +544,83 @@ async function keepAttachment(original, bytes) {
     return name;
   }
 }
-$('attach-file').addEventListener('change', async () => {
-  const picked = [...$('attach-file').files];
-  $('attach-file').value = '';
+// Files from the picker, a drop or a paste go in the same way: every size is checked before anything is uploaded.
+async function keepAttachments(picked, wanted = () => true) {
+  for (const file of picked) if (file.size > maxFileBytes) throw fileTooLarge(`"${file.name}" is larger than ${maxFileText()}, your plan's maximum per file. It has not been uploaded.`);
+  const names = [];
+  for (const file of picked) {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    if (!wanted()) return names;
+    names.push(await keepAttachment(file.name, bytes));
+  }
+  return names;
+}
+// The line that links an attachment: the first file in an empty note also gives it its title.
+function embedSuffix(hasText, name) {
+  const stem = name.slice(0, name.lastIndexOf('.') > 0 ? name.lastIndexOf('.') : name.length);
+  return hasText ? `\n\n![[${name}]]\n` : `# ${stem}\n\n![[${name}]]\n`;
+}
+async function attachToEditor(picked) {
   if (!picked.length) return;
   try {
-    for (const file of picked) {
-      if (file.size > maxFileBytes) throw fileTooLarge(`"${file.name}" is larger than ${maxFileText()}, your plan's maximum per file. It has not been uploaded.`);
-      const bytes = new Uint8Array(await file.arrayBuffer());
-      if (!$('editor').open) return;
-      const name = await keepAttachment(file.name, bytes);
-      if (!$('editor').open) return;
-      const stem = name.slice(0, name.lastIndexOf('.') > 0 ? name.lastIndexOf('.') : name.length);
-      appendToNote($('note-content').value.trim() ? `\n\n![[${name}]]\n` : `# ${stem}\n\n![[${name}]]\n`);
-    }
+    const names = await keepAttachments(picked, () => $('editor').open);
+    if (!$('editor').open) return;
+    for (const name of names) appendToNote(embedSuffix($('note-content').value.trim(), name));
     $('editor-message').textContent = `${picked.length === 1 ? 'File' : 'Files'} kept as encrypted attachments. Select Save note to keep ${picked.length === 1 ? 'it' : 'them'} in this note.`;
   } catch (error) { $('editor-message').textContent = errorText(error); }
+}
+$('attach-file').addEventListener('change', () => {
+  const picked = [...$('attach-file').files];
+  $('attach-file').value = '';
+  return attachToEditor(picked);
+});
+
+// "Attach file…" in a card's menu, or a file dropped on the card: the file is kept and linked in the note without opening it.
+async function attachToCard(entry, picked) {
+  if (!picked.length) return;
+  if (activeSpace?.frozen || moment) throw new Error('This note is read-only here.');
+  const names = await keepAttachments(picked);
+  const latest = files.get(entry.id);
+  if (!latest || latest.deleted) throw new Error('This note is no longer available. The files are kept in Files.');
+  let text = noteText(latest.file);
+  for (const name of names) text = text.trimEnd() + embedSuffix(text.trim(), name);
+  await queueFile(latest.file.path, encoder.encode(text), latest.revision);
+  message(names.length === 1 ? `Attached ${names[0]}. It is encrypted like your notes.` : `Attached ${names.length} files. They are encrypted like your notes.`);
+}
+let attachTarget;
+function chooseCardFiles(entry) { attachTarget = entry; $('card-attach-file').click(); }
+$('card-attach-file').addEventListener('change', () => {
+  const picked = [...$('card-attach-file').files], entry = attachTarget;
+  $('card-attach-file').value = '';
+  attachTarget = undefined;
+  if (entry) attachToCard(entry, picked).catch((error) => message(errorText(error)));
+});
+
+// Dragging files over a card or the editor: a dashed edge and words, not only a colour (Eric is colour blind).
+const hasFiles = (event) => [...(event.dataTransfer?.types || [])].includes('Files');
+function fileDropTarget(element, attach) {
+  element.addEventListener('dragover', (event) => {
+    if (!hasFiles(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = 'copy';
+    element.classList.add('is-file-target');
+  });
+  element.addEventListener('dragleave', (event) => { if (!element.contains(event.relatedTarget)) element.classList.remove('is-file-target'); });
+  element.addEventListener('drop', (event) => {
+    if (!hasFiles(event)) return;
+    event.preventDefault();
+    element.classList.remove('is-file-target');
+    attach([...event.dataTransfer.files]);
+  });
+}
+fileDropTarget($('editor'), attachToEditor);
+// A pasted screenshot is a file; text pasted from elsewhere stays text, even when it brings a picture along.
+$('editor').addEventListener('paste', (event) => {
+  const pasted = [...(event.clipboardData?.files || [])];
+  if (!pasted.length || [...event.clipboardData.types].includes('text/plain')) return;
+  event.preventDefault();
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+  void attachToEditor(pasted.map((file) => /^image\.\w+$/i.test(file.name) ? new File([file], `Pasted ${stamp}.${file.name.split('.').pop()}`, { type: file.type }) : file));
 });
 
 // The editor shows the note's photos and recordings above the text, like the plugin; a photo opens large.
@@ -874,6 +935,7 @@ function render() {
           moveCard(moved, entry, before(event), viewNotes).catch((error) => message(errorText(error)));
         });
       }
+      if (!entry.deleted && !moment && !activeSpace?.frozen && view !== 'trash') fileDropTarget(card, (picked) => attachToCard(entry, picked).catch((error) => message(errorText(error))));
       if (selectableIds.has(entry.id)) {
         card.dataset.id = entry.id;
         card.append(iconButton('check', 'Select note', () => toggleSelected(entry.id), 'card-select'));
@@ -961,6 +1023,7 @@ function render() {
       ]));
       const more = iconButton('more', 'More', () => showMenu(more, [
         { label: 'Download', action: save },
+        ...(moment || activeSpace?.frozen ? [] : [{ label: 'Attach file…', action: () => chooseCardFiles(entry) }]),
         ...(activeSpace ? [{ label: activeSpace.frozen ? 'Copy to my notes' : 'Move to my notes', action: () => moveToOwn(entry) }] : view === 'notes' ? [{ label: 'Share…', action: () => showShare(entry) }, ...(isMarkdown(entry.file.path) ? [{ label: 'Share by link…', action: () => showLink(entry) }, ...(hasChecklist(noteText(entry.file)) ? [{ label: 'Share list by link…', action: () => showLink(entry, 'list') }] : [])] : [])] : []),
         ...(moment ? [] : [{ label: 'Ask JotDrop about this note…', action: () => openAi({ entry }) }, { label: 'Summarize with AI', action: () => openAi({ entry, summarize: true }) }]),
         ...(activeSpace?.frozen ? [] : [{ label: 'Move to trash', action: () => deleteEntry(entry) }]),
@@ -1445,6 +1508,12 @@ async function showPlan(activeClient, activeGeneration) {
   }
   $('storage-usage').classList.remove('checking');
   $('storage-usage').textContent = `${(status.usedBytes / 1048576).toFixed(1)} / ${(status.quotaBytes / 1048576).toFixed(0)} MiB encrypted storage`;
+  // Files the cloud already holds count as attachments; what is left of the used space is notes and their history.
+  let attached = 0;
+  for (const entry of files.values()) if (!entry.deleted && !entry.pending && !isMarkdown(entry.file.path)) attached += contentBytes(entry.file.content);
+  attached = Math.min(attached, status.usedBytes);
+  storageFilesShare = status.usedBytes ? attached / status.usedBytes : 0;
+  $('storage-split').textContent = `Notes ${((status.usedBytes - attached) / 1048576).toFixed(1)} MiB · Attachments ${(attached / 1048576).toFixed(1)} MiB`;
   if (status.pieces?.maxFileBytes) maxFileBytes = status.pieces.maxFileBytes;
   const plan = status.plan;
   const trialDays = trialDaysLeft(plan);

@@ -167,6 +167,9 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .note-card.is-pending { border-style: dashed; }
 /* Manual order: the dragged card fades and a bar shows where it lands; no layout shift while dragging. */
 .note-card.is-dragging { opacity: .45; }
+.note-card.is-file-target, #editor.is-file-target { outline: 3px dashed var(--accent); outline-offset: 3px; }
+.note-card.is-file-target { position: relative; }
+.note-card.is-file-target::after { content: "Drop to attach"; position: absolute; inset: auto .6rem .6rem auto; padding: .2rem .6rem; border-radius: 999px; background: var(--surface); border: 1px solid var(--accent); font-size: .8rem; font-weight: 600; pointer-events: none; }
 .note-card.drop-before { box-shadow: 0 -6px 0 var(--accent); }
 .note-card.drop-after { box-shadow: 0 6px 0 var(--accent); }
 :is(.note-card, .swatch).note-red { --note: light-dark(#fbe5e4, #432d30); }
