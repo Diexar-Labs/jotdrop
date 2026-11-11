@@ -131,6 +131,8 @@ export async function runAssistant({
   // Time counts while the AI service works, not while the user looks at a confirmation.
   let aiTime = 0;
   for (let round = 0; round < maxRounds; round++) {
+    // A Stop during a confirmation comes between two rounds, when no listener is waiting for it.
+    if (signal?.aborted) return finish('cancelled', new AiError('cancelled'));
     const left = timeoutMs - aiTime;
     if (left <= 0) return finish('timeout', new AiError('timeout'));
     const controller = new AbortController();

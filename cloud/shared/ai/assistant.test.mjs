@@ -162,3 +162,16 @@ test('usage adds up over the rounds', async () => {
   const report = await runAssistant({ request: 'x', notes: [], settings, executor: memoryExecutor().executor, confirm: async () => false, provider: scripted([{ toolCalls: [{ id: 'a', name: 'open_note', input: { id: 'q' } }] }, { text: 'ok' }]) });
   assert.deepEqual(report.usage, { input: 200, output: 40 });
 });
+
+test('a Stop while the user looks at a confirmation sends nothing more to the AI service', async () => {
+  const seen = [];
+  const stop = new AbortController();
+  const report = await runAssistant({
+    request: 'x', notes: [{ id: 'n', title: 'N', text: '' }], settings, signal: stop.signal,
+    executor: memoryExecutor().executor,
+    confirm: async () => { stop.abort(new DOMException('Stopped.', 'AbortError')); return false; },
+    provider: scripted([{ toolCalls: [{ id: 'a', name: 'append_to_note', input: { id: 'n', text: 'x' } }] }, { text: 'done' }], seen),
+  });
+  assert.equal(report.stop, 'cancelled');
+  assert.equal(seen.length, 1);
+});
