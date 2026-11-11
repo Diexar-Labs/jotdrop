@@ -12,6 +12,7 @@ import { keepModalAboveKeyboard } from "./mobileKeyboard";
 import { enhanceListEditing } from "./listEditor";
 import { AskJotDropModal } from "./askJotDrop";
 import { draftAnswer } from "./ai";
+import { fileKind, isFileEmbed, renderFileChip } from "./fileKinds";
 import {
   colorLabel,
   COLOR_NAMES,
@@ -86,8 +87,11 @@ export class EditNoteModal extends Modal {
   private touchOnTextField = false;
   private cleanupKeyboard: (() => void) | null = null;
   private cleanupListEditor: (() => void) | null = null;
+  private dropReady = false;
   // The warning picked in this modal; it is not stored, the reminder it made is.
   private warnChoice = "";
+  // Files whose embed was taken off in this modal: after saving, the ones no note uses any more go to the trash.
+  private removedFiles: string[] = [];
 
   constructor(
     app: App,
@@ -147,6 +151,7 @@ export class EditNoteModal extends Modal {
     this.originalBody = body;
     this.originalEmbeds = [...embeds];
     this.originalTags = [...meta.tags];
+    this.removedFiles = [];
 
     this.buildLayout();
   }
@@ -257,7 +262,7 @@ export class EditNoteModal extends Modal {
     const controls = root.createDiv({ cls: "jotdrop-edit-controls" });
     this.renderControls(controls);
 
-    this.renderEmbedThumbnail(root);
+    this.renderAttachments(root);
 
     this.titleInputEl = root.createEl("input", {
       cls: "jotdrop-edit-title",
@@ -283,6 +288,41 @@ export class EditNoteModal extends Modal {
     cancel.addEventListener("click", () => this.close());
     const save = footer.createEl("button", { text: t("action_save"), cls: "mod-cta" });
     save.addEventListener("click", () => void this.save());
+
+    // Desktop: files dragged onto the editor, or pasted (a screenshot), are attached like "Attach file".
+    // A paste with text (from Word or a web page) stays a text paste.
+    const pastedFiles = (e: ClipboardEvent): File[] =>
+      e.clipboardData && !Array.from(e.clipboardData.types).includes("text/plain") ? Array.from(e.clipboardData.files) : [];
+    for (const field of [this.titleInputEl, this.bodyEl]) {
+      field.addEventListener("paste", (e) => {
+        const files = pastedFiles(e as ClipboardEvent);
+        if (!files.length) return;
+        e.preventDefault();
+        void this.addFiles(files);
+      });
+    }
+    if (!this.dropReady) {
+      this.dropReady = true;
+      const carriesFiles = (e: DragEvent): boolean => !!e.dataTransfer && Array.from(e.dataTransfer.types).includes("Files");
+      this.modalEl.addEventListener("dragover", (e) => {
+        if (!carriesFiles(e)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+        this.modalEl.addClass("is-file-over");
+      });
+      this.modalEl.addEventListener("dragleave", (e) => {
+        if (!this.modalEl.contains(e.relatedTarget as Node | null)) this.modalEl.removeClass("is-file-over");
+      });
+      this.modalEl.addEventListener("drop", (e) => {
+        if (!carriesFiles(e)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        this.modalEl.removeClass("is-file-over");
+        const files = Array.from(e.dataTransfer?.files ?? []);
+        if (files.length) void this.addFiles(files);
+      });
+    }
 
     this.bodyEl.addEventListener("keydown", (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
@@ -398,6 +438,13 @@ export class EditNoteModal extends Modal {
     drawBtn.addEventListener("click", () => {
       new DrawingModal(this.app, null, (png) => this.addDrawing(png)).open();
     });
+
+    // Like "Attach file" on the website: any file, several at once, as a chip in this note.
+    const attachBtn = pinWrap.createEl("button", {
+      cls: "jotdrop-edit-linkbtn jotdrop-edit-attachbtn",
+      text: `📎 ${t("action_attach_file")}`,
+    });
+    attachBtn.addEventListener("click", () => this.plugin.pickAttachments((files) => void this.addFiles(files)));
 
     // Ask JotDrop on the draft: only the title and text in this editor go along, and nothing changes before Save.
     for (const [kind, label] of [["rewrite", t("action_ai_rewrite")], ["checklist", t("action_ai_checklist")]] as const) {
@@ -630,20 +677,54 @@ export class EditNoteModal extends Modal {
   }
 
   /**
-   * Shows the first embedded attachment as a thumbnail (image) of inline
-   * audio player (m4a/webm/etc.) at the top of the modal. Embed lines are
-   * not in the text field (they are re-added on save), so without this
-   * preview the attachment would be inaccessible from the edit modal.
+   * Embed lines are not in the text field (they are re-added on save), so they show here: the first photo
+   * (or else the first sound) as a big preview, and every embed as a chip with a cross to take it off.
    */
-  private renderEmbedThumbnail(parent: HTMLElement): void {
+  private renderAttachments(parent: HTMLElement): void {
     if (this.state.embedLines.length === 0) return;
-    const basename = extractEmbedBasename(this.state.embedLines[0]);
-    if (!basename) return;
+    const names = this.state.embedLines.map((line) => extractEmbedBasename(line));
+    const preview = names.find((name) => name && fileKind(name) === "image") ?? names.find((name) => name && fileKind(name) === "audio");
+    if (preview) this.renderEmbedThumbnail(parent, preview);
+    const row = parent.createDiv({ cls: "jotdrop-edit-files" });
+    this.state.embedLines.forEach((line, index) => {
+      const name = names[index];
+      if (!name) return;
+      renderFileChip(this.plugin, row, this.file, name, {
+        // A photo opens in the lightbox, like the big preview; anything else in its own app.
+        open: fileKind(name) === "image" ? () => this.openImage(name) : undefined,
+        remove: () => {
+          this.state.embedLines.splice(index, 1);
+          if (isFileEmbed(name)) this.removedFiles.push(name);
+          this.attachmentHint = null;
+          this.buildLayout();
+        },
+      });
+    });
+  }
+
+  private openImage(basename: string): void {
+    const resolved = this.resolveAttachment(basename);
+    if (!resolved) return;
+    const editDrawing = isDrawingName(basename) ? () => void this.editDrawing(basename, resolved.vaultPath) : null;
+    new LightboxModal(this.app, this.plugin, this.file, resolved.resourcePath, resolved.file, resolved.vaultPath, editDrawing).open();
+  }
+
+  /** Saves picked, dropped or pasted files as attachments of this note and saves the note right away, like a drawing. */
+  private async addFiles(files: File[]): Promise<void> {
+    const names = await this.plugin.saveAttachedFiles(this.file, files);
+    if (!names.length) return;
+    this.state.embedLines.push(...names.map((name) => `![[${name}]]`));
+    await this.persist();
+    this.buildLayout();
+  }
+
+  /** A photo as a thumbnail, or a sound as a player, at the top of the modal. */
+  private renderEmbedThumbnail(parent: HTMLElement, basename: string): void {
     // On mobile, adapter URLs for dot-folders can be expensive or unreliable to
     // reconstruct. Prefer the exact path that already rendered successfully in
     // the grid for the initially opened card, then use normal resolution for
     // keyboard/swipe navigation to another card.
-    const resolved = this.attachmentHint?.notePath === this.file.path
+    const resolved = this.attachmentHint?.notePath === this.file.path && this.attachmentHint.vaultPath.split("/").pop() === basename
       ? {
           resourcePath: this.attachmentHint.resourcePath,
           file: this.attachmentHint.file,
@@ -653,7 +734,7 @@ export class EditNoteModal extends Modal {
       : this.resolveAttachment(basename);
     if (!resolved) return;
 
-    if (/\.(m4a|mp3|wav|ogg|aac|flac|3gp|amr|webm)$/i.test(basename)) {
+    if (fileKind(basename) === "audio") {
       const wrap = parent.createDiv({ cls: "jotdrop-edit-audio" });
       const audio = wrap.createEl("audio");
       audio.controls = true;
@@ -711,7 +792,7 @@ export class EditNoteModal extends Modal {
    * With [replaces] the embed of that earlier drawing is pointed at the new file; the earlier picture stays.
    */
   private async addDrawing(png: Uint8Array, replaces?: string): Promise<void> {
-    const basename = await saveDrawingFile(this.app, this.plugin, png);
+    const basename = await saveDrawingFile(this.plugin, png, this.file);
     const index = replaces ? this.state.embedLines.findIndex((line) => extractEmbedBasename(line) === replaces) : -1;
     if (index >= 0) this.state.embedLines[index] = `![[${basename}]]`;
     else this.state.embedLines.push(`![[${basename}]]`);
@@ -800,6 +881,9 @@ export class EditNoteModal extends Modal {
       this.originalBody = this.state.body;
       this.originalEmbeds = [...this.state.embedLines];
       this.originalTags = [...this.state.tags];
+      const removed = this.removedFiles.filter((name) => !this.state.embedLines.some((line) => extractEmbedBasename(line) === name));
+      this.removedFiles = [];
+      void this.plugin.trashUnusedAttachments(this.file, removed);
       new Notice(t("notice_saved", this.file.basename));
       this.plugin.refreshViews();
       return true;

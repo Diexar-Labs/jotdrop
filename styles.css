@@ -1014,6 +1014,107 @@
   background: rgba(255, 255, 255, 0.04);
 }
 
+/* Attached files: kind icon, name and size, like the website's file chips. */
+.jotdrop-card-files,
+.jotdrop-edit-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.jotdrop-edit-files {
+  margin: 0 0 10px;
+}
+
+.jotdrop-file-chip {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.jotdrop-file-chip:hover,
+.jotdrop-file-chip:focus-within {
+  border-color: var(--text-accent);
+}
+
+.theme-dark .jotdrop-file-chip {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.jotdrop-card[data-color]:not([data-color="default"]) .jotdrop-file-chip {
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.jotdrop-file-chip button {
+  height: auto;
+  min-width: 0;
+  margin: 0;
+  padding: 2px 8px;
+  border: none;
+  border-radius: 999px;
+  background: none;
+  box-shadow: none;
+  color: inherit;
+  font-size: 0.72em;
+  cursor: pointer;
+}
+
+.jotdrop-file-chip-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.jotdrop-file-chip-icon {
+  display: inline-flex;
+  opacity: 0.75;
+}
+
+.jotdrop-file-chip-icon svg {
+  width: 12px;
+  height: 12px;
+}
+
+.jotdrop-file-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jotdrop-file-chip-size {
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
+.jotdrop-file-chip-size::before {
+  content: "· ";
+}
+
+.jotdrop-edit-files .jotdrop-file-chip button {
+  padding: 4px 10px;
+  font-size: 0.85em;
+}
+
+.jotdrop-edit-files .jotdrop-file-chip-remove {
+  padding-left: 4px;
+  font-size: 1.1em;
+}
+
+.is-mobile .jotdrop-edit-files .jotdrop-file-chip button {
+  min-height: 36px;
+}
+
+/* A file dragged over a card or the editor: a thick dashed outline, so it never depends on colour. */
+.jotdrop-card.is-file-over,
+.modal.is-file-over {
+  outline: 3px dashed var(--text-accent);
+  outline-offset: 2px;
+}
+
 .jotdrop-card-tags {
   display: flex;
   flex-wrap: wrap;

@@ -1,0 +1,6 @@
+{
+  "image": { "jpg": "image/jpeg", "jpeg": "image/jpeg", "png": "image/png", "gif": "image/gif", "webp": "image/webp", "bmp": "image/bmp", "svg": "image/svg+xml" },
+  "audio": { "m4a": "audio/mp4", "mp3": "audio/mpeg", "wav": "audio/wav", "ogg": "audio/ogg", "aac": "audio/aac", "flac": "audio/flac", "3gp": "audio/3gpp", "amr": "audio/amr", "webm": "audio/webm" },
+  "video": { "mp4": "video/mp4", "mov": "video/quicktime", "mkv": "video/x-matroska", "avi": "video/x-msvideo" },
+  "pdf": { "pdf": "application/pdf" }
+}

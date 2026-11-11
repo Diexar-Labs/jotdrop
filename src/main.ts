@@ -1,4 +1,4 @@
-import { Notice, Platform, Plugin, TFile, WorkspaceLeaf, addIcon, normalizePath } from "obsidian";
+import { FileSystemAdapter, Notice, Platform, Plugin, TFile, WorkspaceLeaf, addIcon, normalizePath } from "obsidian";
 import { LOGO_ICON, LOGO_ICON_SVG } from "./logo";
 import { DEFAULT_SETTINGS, JotDropSettings, JotDropSettingTab } from "./settings";
 import { JotDropView, VIEW_TYPE_JOTDROP } from "./view";
@@ -8,8 +8,10 @@ import { ReminderScheduler } from "./reminderScheduler";
 import { ClipServer } from "./clipServer";
 import { CloudController } from "./cloud";
 import { identifyClient } from "../cloud/shared/client.mjs";
+import { MAX_CHUNKED_BYTES } from "../cloud/shared/crypto.mjs";
 import { fetchOg, safeMarkdownLink } from "./ogfetch";
 import { legacyAssetsPath } from "./attachments";
+import { cleanFileName, collectEmbedBasenames, isFileEmbed, uniqueFileName } from "./fileKinds";
 import { ExcalidrawPreviews } from "./excalidraw";
 import { AiSettingsStore } from "./ai";
 import { ConfirmModal } from "./confirmModal";
@@ -305,6 +307,138 @@ export default class JotDropPlugin extends Plugin {
     push(noteFolder ? `${noteFolder}/.attachments/${basename}` : `.attachments/${basename}`, null);
     push(`${legacyAssetsPath(this.settings.notesFolder)}/${basename}`, null);
     return out;
+  }
+
+  /** Where a note's new attachments go: a shared group keeps its own next to its notes, like the website and Android. */
+  attachmentsFolderFor(note?: TFile): string {
+    const space = note ? this.cloud?.spaceOf(note.path) : undefined;
+    if (space) return normalizePath(`${this.settings.notesFolder}/Shared/${space.id}/attachments`);
+    return this.resolveAssetsFolder();
+  }
+
+  /**
+   * Writes a new attachment under its own (cleaned) name and returns the basename for its embed. Never overwrites:
+   * a name that `![[name]]` could already point at becomes `name (2).ext`.
+   */
+  async saveAttachment(name: string, data: ArrayBuffer | Uint8Array, note?: TFile): Promise<string> {
+    const adapter = this.app.vault.adapter;
+    const folder = this.attachmentsFolderFor(note);
+    const taken = async (candidate: string): Promise<boolean> => {
+      const paths = note
+        ? this.resolveAssetCandidates(note, candidate).map((c) => c.vaultPath)
+        : [`${this.resolveAssetsFolder()}/${candidate}`, `${legacyAssetsPath(this.settings.notesFolder)}/${candidate}`];
+      if (!note && this.app.metadataCache.getFirstLinkpathDest(candidate, "")) return true;
+      for (const path of [...paths, `${folder}/${candidate}`]) if (await adapter.exists(normalizePath(path))) return true;
+      return false;
+    };
+    const basename = await uniqueFileName(cleanFileName(name), taken);
+    const path = normalizePath(`${folder}/${basename}`);
+    const buffer = data instanceof Uint8Array ? data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer : data;
+    // Obsidian does not index hidden folders like `.attachments`: there only the adapter writes.
+    if (folder.split("/").some((part) => part.startsWith("."))) {
+      if (!(await adapter.exists(folder))) await adapter.mkdir(folder);
+      await adapter.writeBinary(path, buffer);
+    } else {
+      if (!this.app.vault.getAbstractFileByPath(folder)) await this.app.vault.createFolder(folder);
+      await this.app.vault.createBinary(path, buffer);
+    }
+    return basename;
+  }
+
+  /** Picked, dropped or pasted files for [note]; one over the plan's maximum is refused with the Plus line. Returns the saved basenames. */
+  async saveAttachedFiles(note: TFile, files: File[]): Promise<string[]> {
+    const limit = this.cloud?.enabled ? this.cloud.maxFileBytes : undefined;
+    const names: string[] = [];
+    for (const file of files) {
+      if (limit && file.size > limit) {
+        const plus = limit < MAX_CHUNKED_BYTES ? ` ${t("attach_plus")}` : "";
+        new Notice(`${t("attach_too_large", file.name, `${Math.round(limit / 1048576)} MB`)}${plus}`, 10000);
+        continue;
+      }
+      try {
+        names.push(await this.saveAttachment(file.name, await file.arrayBuffer(), note));
+      } catch (err) {
+        new Notice(t("notice_save_failed", err instanceof Error ? err.message : String(err)));
+      }
+    }
+    if (names.length) new Notice(names.length === 1 ? t("attach_done_one", names[0]) : t("attach_done_many", String(names.length)));
+    return names;
+  }
+
+  /** The file picker for "Attach file", attached to the page so mobile webviews also open it. */
+  pickAttachments(onPick: (files: File[]) => void): void {
+    const input = document.body.createEl("input", { type: "file", attr: { multiple: "", hidden: "" } });
+    input.addEventListener("cancel", () => input.remove());
+    input.addEventListener("change", () => {
+      const picked = Array.from(input.files ?? []);
+      input.remove();
+      if (picked.length) onPick(picked);
+    });
+    input.click();
+  }
+
+  /** Puts `![[name]]` lines at the end of a note that is not open in the editor. */
+  async appendEmbeds(note: TFile, names: string[]): Promise<void> {
+    if (!names.length) return;
+    const embeds = names.map((name) => `![[${name}]]`).join("\n");
+    await this.app.vault.process(note, (content) => `${content.replace(/\s+$/, "")}\n\n${embeds}\n`);
+    this.refreshViews();
+  }
+
+  /** Opens an attachment in the app that handles its kind: the system app on a computer, the phone's choice on mobile. */
+  async openAttachment(note: TFile, name: string): Promise<void> {
+    // Another note or a drawing opens in Obsidian itself.
+    if (!isFileEmbed(name)) { await this.app.workspace.openLinkText(name, note.path, "tab"); return; }
+    const adapter = this.app.vault.adapter;
+    for (const c of this.resolveAssetCandidates(note, name)) {
+      if (c.file?.extension === "md" || !(await adapter.exists(c.vaultPath))) continue;
+      if (adapter instanceof FileSystemAdapter) {
+        // Electron's shell — desktop only; not part of Obsidian's plugin TS types.
+        // eslint-disable-next-line @typescript-eslint/no-require-imports -- desktop-only "open in system app", as in the lightbox
+        const { shell } = require("electron") as { shell: { openPath(path: string): Promise<string> } };
+        const error = await shell.openPath(adapter.getFullPath(c.vaultPath));
+        if (error) new Notice(t("notice_error", error));
+        return;
+      }
+      // Obsidian mobile hands the file to the phone ("Open in default app"); not in the plugin TS types.
+      const app = this.app as unknown as { openWithDefaultApp?: (path: string) => unknown };
+      if (typeof app.openWithDefaultApp === "function") { await app.openWithDefaultApp(c.vaultPath); return; }
+      const file = c.file ?? this.app.vault.getAbstractFileByPath(c.vaultPath);
+      if (file instanceof TFile) { await this.app.workspace.getLeaf("tab").openFile(file); return; }
+    }
+    new Notice(t("attach_missing", name));
+  }
+
+  /**
+   * After an attachment's embed was removed from [note]: a file in an attachments folder that no note uses any more
+   * goes to the trash, like deleting a note. A file elsewhere in the vault is the person's own and stays.
+   */
+  async trashUnusedAttachments(note: TFile, names: string[]): Promise<void> {
+    if (!names.length) return;
+    const used = new Set<string>();
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      try {
+        for (const name of collectEmbedBasenames(await this.app.vault.cachedRead(file), isFileEmbed)) used.add(name);
+      } catch {
+        // An unreadable note keeps its files: nothing is thrown away on doubt.
+        return;
+      }
+    }
+    const noteFolder = note.parent?.path ?? "";
+    const folders = new Set([this.attachmentsFolderFor(note), this.resolveAssetsFolder(), legacyAssetsPath(this.settings.notesFolder), normalizePath(noteFolder ? `${noteFolder}/.attachments` : ".attachments")]);
+    for (const name of names) {
+      if (used.has(name)) continue;
+      for (const c of this.resolveAssetCandidates(note, name)) {
+        if (!folders.has(c.vaultPath.slice(0, c.vaultPath.lastIndexOf("/")))) continue;
+        try {
+          if (c.file) await this.app.fileManager.trashFile(c.file);
+          // A phone has no system trash: then the vault's own .trash, never a file left behind.
+          else if (await this.app.vault.adapter.exists(c.vaultPath) && !(await this.app.vault.adapter.trashSystem(c.vaultPath))) await this.app.vault.adapter.trashLocal(c.vaultPath);
+        } catch {
+          // The next candidate still goes.
+        }
+      }
+    }
   }
 
   async activateView(): Promise<void> {

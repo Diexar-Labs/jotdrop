@@ -366,6 +366,8 @@ export class CloudController {
   readonly lastUploaded = new Set<string>();
   /** Your live list links as the last check saw them, for the question when a note with one goes to the trash. */
   listLinks: ListLink[] = [];
+  /** The plan's maximum per file as the last sync heard it, kept for offline; unknown before the first sync. */
+  maxFileBytes?: number;
 
   constructor(private plugin: JotDropPlugin, store?: KeyValues) {
     const app = plugin.app as unknown as { appId?: string };
@@ -448,6 +450,7 @@ export class CloudController {
     const spaces = await this.store.get<Sealed>("spaces");
     this.spaces = spaces ? await unseal<KnownSpace[]>(spaces) : [];
     this.putAside = await this.store.get<string[]>("spaces-aside") ?? [];
+    this.maxFileBytes = await this.store.get<number>("max-file-bytes");
     this.status = this.state?.message || "Signed in. Cloud sync is off.";
     this.changed();
   }
@@ -606,6 +609,7 @@ export class CloudController {
       const cloudStatus = await client.status();
       const pieces = cloudStatus.pieces;
       const maxFileBytes: number = pieces?.maxFileBytes ?? MAX_FILE_BYTES;
+      if (this.maxFileBytes !== maxFileBytes) { this.maxFileBytes = maxFileBytes; await this.store.put("max-file-bytes", maxFileBytes); }
       // Mail to JotDrop: open waiting sealed mail into local files first; the sync below uploads them like any other note.
       let convertedMail: { wrote: boolean; items: { id: string; paths: string[] }[] } = { wrote: false, items: [] };
       if (cloudStatus.mail?.enabled && cloudStatus.mail.pending) convertedMail = await this.convertMail(client, folder, cloudStatus.mail, active);

@@ -1,4 +1,4 @@
-import { App, Modal, normalizePath } from "obsidian";
+import { App, Modal, TFile } from "obsidian";
 import type JotDropPlugin from "./main";
 import { createDrawingEditor } from "../cloud/shared/drawing-editor.mjs";
 import { drawingFileName, isDrawingName, read as readDrawing } from "../cloud/shared/drawing.mjs";
@@ -76,13 +76,9 @@ export class DrawingModal extends Modal {
   }
 }
 
-/** Writes a drawing as a new file drawing-<date time>.png in the attachments folder; the basename for its embed. */
-export async function saveDrawingFile(app: App, plugin: JotDropPlugin, png: Uint8Array): Promise<string> {
-  const folder = plugin.resolveAssetsFolder();
-  if (!(await app.vault.adapter.exists(folder))) await app.vault.adapter.mkdir(folder);
-  const basename = drawingFileName();
-  await app.vault.adapter.writeBinary(normalizePath(`${folder}/${basename}`), png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength) as ArrayBuffer);
-  return basename;
+/** Writes a drawing as a new file drawing-<date time>.png in the attachments folder of [note]; the basename for its embed. */
+export async function saveDrawingFile(plugin: JotDropPlugin, png: Uint8Array, note?: TFile): Promise<string> {
+  return plugin.saveAttachment(drawingFileName(), png, note);
 }
 
 /** The lines inside an attachment, or null when the file is not a JotDrop drawing (or cannot be read). */

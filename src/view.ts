@@ -7,6 +7,7 @@ import { QuickCaptureModal, createNoteInFolder } from "./capture";
 import { AttachmentPreviewHint, EditNoteModal } from "./edit";
 import { DrawingModal, saveDrawingFile } from "./drawing";
 import { drawingEmbedBeforeImage, drawingTitle } from "./excalidraw";
+import { collectEmbedBasenames, fileKind, isFileEmbed, renderFileChip } from "./fileKinds";
 import { LOGO_ICON } from "./logo";
 import { FolderPickerModal } from "./folderPicker";
 import { TagPickerModal, TagItem } from "./tagPicker";
@@ -50,6 +51,8 @@ const TITLE_MAX_CHARS = 80;
 const PREVIEW_MAX_CHARS = 240;
 const LINK_CHIPS_VISIBLE = 3;
 const CARD_CHIPS_VISIBLE = 4;
+// Like the website: more than three files on a card become "+ N files".
+const FILE_CHIPS_VISIBLE = 3;
 // The pen's jotdrop-draw animation in styles.css.
 const STRIKE_MS = 350;
 // A paper tray for the Paper drawer label; "archive" already means the Archive here.
@@ -79,41 +82,24 @@ function tiltFor(path: string): string {
   return `${TILT_ANGLES[Math.abs(hash) % TILT_ANGLES.length]}deg`;
 }
 
-// Mirrors Storage.findEmbeddedImageBasenames / findEmbeddedAudioBasenames in
-// the Android app. Covers both Obsidian-style `![[name.ext]]` and standard
-// `![](path/name.ext)`. Both forms are extension-filtered — otherwise a
-// `![[memo.m4a]]` ends up in image detection and the card thumbnail slot
-// reserves space for an image that never loads.
-const EMBED_OBSIDIAN_RE = /!\[\[([^\]\n|]+)(?:\|[^\]\n]+)?\]\]/g;
-const EMBED_STANDARD_RE = /!\[[^\]]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
-const IMAGE_EXT_RE = /\.(jpg|jpeg|png|gif|webp|bmp|svg)$/i;
-const AUDIO_EXT_RE = /\.(m4a|mp3|wav|ogg|aac|flac|3gp|amr|webm)$/i;
-
-function collectEmbedBasenames(content: string, accept: (name: string) => boolean): string[] {
-  const result = new Set<string>();
-  for (const m of content.matchAll(EMBED_OBSIDIAN_RE)) {
-    const name = m[1].trim().split("/").pop() ?? "";
-    if (name && accept(name)) result.add(name);
-  }
-  for (const m of content.matchAll(EMBED_STANDARD_RE)) {
-    const path = m[1].trim();
-    const name = (path.split("/").pop() ?? "").split("?")[0].split("#")[0];
-    if (name && accept(name)) result.add(name);
-  }
-  return Array.from(result);
-}
-
+// Extension-filtered (cloud/shared/filekinds.json): otherwise a `![[memo.m4a]]` ends up
+// in image detection and the card thumbnail slot reserves space for an image that never loads.
 function findEmbeddedImageBasenames(content: string): string[] {
-  return collectEmbedBasenames(content, (n) => IMAGE_EXT_RE.test(n));
+  return collectEmbedBasenames(content, (n) => fileKind(n) === "image");
 }
 
 function findEmbeddedAudioBasenames(content: string): string[] {
-  return collectEmbedBasenames(content, (n) => AUDIO_EXT_RE.test(n));
+  return collectEmbedBasenames(content, (n) => fileKind(n) === "audio");
 }
 
-/** Image + audio combined — used by the delete flow for refcount + cleanup. */
+/** Every attached file (photo, sound, pdf, anything) — used by the delete flow for refcount + cleanup. */
 function findEmbeddedAttachmentBasenames(content: string): string[] {
-  return collectEmbedBasenames(content, (n) => IMAGE_EXT_RE.test(n) || AUDIO_EXT_RE.test(n));
+  return collectEmbedBasenames(content, isFileEmbed);
+}
+
+/** The files on a card other than photos and sounds: they show as chips with name and size, like the website. */
+function findEmbeddedDocumentBasenames(content: string): string[] {
+  return collectEmbedBasenames(content, (n) => isFileEmbed(n) && fileKind(n) !== "image" && fileKind(n) !== "audio");
 }
 
 /** Frontmatter tags plus inline `#hashtags`, as Obsidian's tag pane counts them. */
@@ -786,16 +772,10 @@ export class JotDropView extends ItemView {
 
   private async saveVoiceMemo(result: RecordResult): Promise<void> {
     const stamp = formatStamp(new Date());
-    const basename = `diexar-${stamp}.${result.extension}`;
     const notesFolder = this.plugin.settings.notesFolder;
-    const attachmentsDir = this.plugin.resolveAssetsFolder();
-    const attachmentPath = normalizePath(`${attachmentsDir}/${basename}`);
+    let basename: string;
     try {
-      if (!(await this.app.vault.adapter.exists(attachmentsDir))) {
-        await this.app.vault.adapter.mkdir(attachmentsDir);
-      }
-      const buf = await result.blob.arrayBuffer();
-      await this.app.vault.adapter.writeBinary(attachmentPath, buf);
+      basename = await this.plugin.saveAttachment(`diexar-${stamp}.${result.extension}`, await result.blob.arrayBuffer());
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       new Notice(t("record_save_failed", msg));
@@ -883,13 +863,10 @@ export class JotDropView extends ItemView {
       }
     }
     const stamp = formatStamp(new Date());
-    const basename = `diexar-${stamp}.${extension}`;
-    const attachmentsDir = this.plugin.resolveAssetsFolder();
     const notesFolder = this.plugin.settings.notesFolder;
     const title = `Foto ${stamp}`;
     try {
-      if (!(await this.app.vault.adapter.exists(attachmentsDir))) await this.app.vault.adapter.mkdir(attachmentsDir);
-      await this.app.vault.adapter.writeBinary(normalizePath(`${attachmentsDir}/${basename}`), await file.arrayBuffer());
+      const basename = await this.plugin.saveAttachment(`diexar-${stamp}.${extension}`, await file.arrayBuffer());
       if (!(await this.app.vault.adapter.exists(notesFolder))) await this.app.vault.adapter.mkdir(notesFolder);
       const body = [`# ${title}`, "", `![[${basename}]]`, ...(text ? ["", text] : []), ""].join("\n");
       await this.app.vault.create(normalizePath(`${notesFolder}/${stamp} ${title}.md`), body);
@@ -902,7 +879,7 @@ export class JotDropView extends ItemView {
 
   /** Same note as Android's New drawing: `# Drawing` and the picture, as a new card. */
   private async saveDrawingNote(png: Uint8Array): Promise<void> {
-    const basename = await saveDrawingFile(this.app, this.plugin, png);
+    const basename = await saveDrawingFile(this.plugin, png);
     const notesFolder = this.plugin.settings.notesFolder;
     if (!(await this.app.vault.adapter.exists(notesFolder))) await this.app.vault.adapter.mkdir(notesFolder);
     const title = t("drawing_note_title");
@@ -1086,6 +1063,8 @@ export class JotDropView extends ItemView {
     // hit. A failure on one candidate must not block the others or the note.
     const candidates = this.plugin.resolveAssetCandidates(noteFile, basename);
     for (const c of candidates) {
+      // `![[Meeting 2024.05]]` is another note, never an attachment to clean up.
+      if (c.file?.extension === "md") continue;
       try {
         if (c.file) {
           await this.app.fileManager.trashFile(c.file);
@@ -2137,6 +2116,11 @@ export class JotDropView extends ItemView {
 
     this.attachLongPress(cardEl, file.path);
 
+    // A file can be attached where the note can change: not in Trash, a read-only group, a conflict copy or a drawing file.
+    const groupNote = this.plugin.cloud?.spaceOf(file.path);
+    const canAttach = !this.showTrash && !card.isDrawing && !groupNote?.frozen && !groupNote?.gone && !file.name.includes(".cloud-conflict-");
+    if (canAttach) this.attachFileDrop(cardEl, file);
+
     // Selection-marker overlay (top-right). Shape-based (filled vs empty
     // circle icon) so selected state is visible without color perception.
     // Shown only in selection mode via CSS.
@@ -2374,6 +2358,21 @@ export class JotDropView extends ItemView {
       }
     }
 
+    // Every other file (a pdf, an offer) as a chip with its name and size, like the website; a click opens it.
+    const documents = isDrawing ? [] : findEmbeddedDocumentBasenames(stripFrontmatter(content))
+      .filter((name) => this.app.metadataCache.getFirstLinkpathDest(name, file.path)?.extension !== "md");
+    if (documents.length > 0) {
+      const fileWrap = body.createDiv({ cls: "jotdrop-card-files" });
+      for (const name of documents.slice(0, FILE_CHIPS_VISIBLE)) {
+        renderFileChip(this.plugin, fileWrap, file, name, {
+          open: () => { if (this.selectionMode) this.toggleSelect(file.path); else void this.plugin.openAttachment(file, name); },
+        });
+      }
+      // "+ N files" passes through to the card click: the editor shows them all.
+      const rest = documents.length - FILE_CHIPS_VISIBLE;
+      if (rest > 0) fileWrap.createSpan({ cls: "jotdrop-card-link-more", text: rest === 1 ? t("attach_more_one") : t("attach_more_many", String(rest)) });
+    }
+
     if (meta.labels.length > 0 || cardTags(meta).length > 0) {
       const tagWrap = body.createDiv({ cls: "jotdrop-card-tags" });
       // Like the website: a chip filters the view by its label or tag; while selecting it selects the card.
@@ -2498,6 +2497,9 @@ export class JotDropView extends ItemView {
           })
           : i.setTitle("Share…").setIcon("users").onClick(() => new SharedGroupsModal(this.app, cloud, file).open()));
       }
+      if (canAttach) {
+        menu.addItem((i) => i.setTitle(t("action_attach_file")).setIcon("paperclip").onClick(() => this.plugin.pickAttachments((files) => void this.attachFiles(file, files))));
+      }
       menu.addItem((i) =>
         i
           .setTitle(t("action_open_in_tab"))
@@ -2586,6 +2588,38 @@ export class JotDropView extends ItemView {
         );
       }
       menu.showAtMouseEvent(e);
+    });
+  }
+
+  /** Saves the files and puts their embeds at the end of the note, like "Attach file" in the editor. */
+  private async attachFiles(note: TFile, files: File[]): Promise<void> {
+    try {
+      await this.plugin.appendEmbeds(note, await this.plugin.saveAttachedFiles(note, files));
+    } catch (err) {
+      new Notice(t("notice_save_failed", err instanceof Error ? err.message : String(err)));
+    }
+  }
+
+  /** Desktop: files dragged from the computer onto a card are attached to that note. Card reordering is a different drag. */
+  private attachFileDrop(cardEl: HTMLElement, note: TFile): void {
+    const carriesFiles = (e: DragEvent): boolean => !this.dragInfo && !!e.dataTransfer && Array.from(e.dataTransfer.types).includes("Files");
+    cardEl.addEventListener("dragover", (e) => {
+      if (!carriesFiles(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+      cardEl.addClass("is-file-over");
+    });
+    cardEl.addEventListener("dragleave", (e) => {
+      if (!cardEl.contains(e.relatedTarget as Node | null)) cardEl.removeClass("is-file-over");
+    });
+    cardEl.addEventListener("drop", (e) => {
+      if (!carriesFiles(e)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      cardEl.removeClass("is-file-over");
+      const files = Array.from(e.dataTransfer?.files ?? []);
+      if (files.length) void this.attachFiles(note, files);
     });
   }
 

@@ -358,9 +358,10 @@ function download(bytes, filename, type = 'application/octet-stream') {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+// Photos and sounds shown on the card: the image and audio kinds of cloud/shared/filekinds.json (filekinds-parity.test.mjs keeps them equal).
+const MEDIA_TYPES = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif', webp: 'image/webp', bmp: 'image/bmp', svg: 'image/svg+xml', m4a: 'audio/mp4', mp3: 'audio/mpeg', wav: 'audio/wav', ogg: 'audio/ogg', aac: 'audio/aac', flac: 'audio/flac', '3gp': 'audio/3gpp', amr: 'audio/amr', webm: 'audio/webm' };
 function mediaType(path) {
-  const extension = path.split('.').pop().toLowerCase();
-  return ({ png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', m4a: 'audio/mp4', mp3: 'audio/mpeg', ogg: 'audio/ogg', webm: 'audio/webm', wav: 'audio/wav' })[extension];
+  return MEDIA_TYPES[path.split('.').pop().toLowerCase()];
 }
 
 // Any other file in a note (a PDF, a document) shows as a chip with its name and size, and a click downloads it (Eric, 3 Nov).

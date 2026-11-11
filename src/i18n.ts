@@ -147,6 +147,17 @@ const EN: Record<string, string> = {
   // Drawing (same words as the Android app)
   action_new_drawing: "New drawing",
   action_add_drawing: "✏️ Add drawing",
+  // Attach file (same words as the website)
+  action_attach_file: "Attach file",
+  attach_done_one: "Attached {0}.",
+  attach_done_many: "Attached {0} files.",
+  attach_too_large: "\"{0}\" is larger than {1}, your plan's maximum per file. It was not attached.",
+  attach_plus: "JotDrop Plus takes files up to 200 MB.",
+  attach_missing: "{0} is not on this device.",
+  attach_open: "Open {0}",
+  attach_remove: "Remove {0} from this note",
+  attach_more_one: "+ 1 file",
+  attach_more_many: "+ {0} files",
   // Ask JotDrop: AI with your own key (the window itself is in English, like the cloud screens)
   action_ask_jotdrop: "Ask JotDrop",
   action_ask_about_note: "Ask JotDrop about this note…",
@@ -551,6 +562,17 @@ const NL: Record<string, string> = {
   // Tekenen
   action_new_drawing: "Nieuwe tekening",
   action_add_drawing: "✏️ Tekening toevoegen",
+  // Bestand toevoegen
+  action_attach_file: "Bestand toevoegen",
+  attach_done_one: "{0} toegevoegd.",
+  attach_done_many: "{0} bestanden toegevoegd.",
+  attach_too_large: "\"{0}\" is groter dan {1}, het maximum per bestand van je abonnement. Het is niet toegevoegd.",
+  attach_plus: "JotDrop Plus neemt bestanden tot 200 MB.",
+  attach_missing: "{0} staat niet op dit apparaat.",
+  attach_open: "{0} openen",
+  attach_remove: "{0} uit deze notitie halen",
+  attach_more_one: "+ 1 bestand",
+  attach_more_many: "+ {0} bestanden",
   action_ask_jotdrop: "Vraag JotDrop",
   action_ask_about_note: "Vraag JotDrop over deze notitie…",
   action_ai_summarize: "Samenvatten met AI",

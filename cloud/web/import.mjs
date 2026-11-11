@@ -267,6 +267,17 @@ var EN = {
   // Drawing (same words as the Android app)
   action_new_drawing: "New drawing",
   action_add_drawing: "\u270F\uFE0F Add drawing",
+  // Attach file (same words as the website)
+  action_attach_file: "Attach file",
+  attach_done_one: "Attached {0}.",
+  attach_done_many: "Attached {0} files.",
+  attach_too_large: `"{0}" is larger than {1}, your plan's maximum per file. It was not attached.`,
+  attach_plus: "JotDrop Plus takes files up to 200 MB.",
+  attach_missing: "{0} is not on this device.",
+  attach_open: "Open {0}",
+  attach_remove: "Remove {0} from this note",
+  attach_more_one: "+ 1 file",
+  attach_more_many: "+ {0} files",
   // Ask JotDrop: AI with your own key (the window itself is in English, like the cloud screens)
   action_ask_jotdrop: "Ask JotDrop",
   action_ask_about_note: "Ask JotDrop about this note\u2026",
