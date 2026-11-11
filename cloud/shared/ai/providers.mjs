@@ -1,11 +1,13 @@
 import { redact } from './redact.mjs';
+import { base64Bytes, capabilities, checkParts, explain } from './parts.mjs';
 
 // The AI services Ask JotDrop talks to, straight from this device with the user's own key; never through our
 // server. Three forms: Anthropic's Messages API, OpenAI's Chat Completions (also OpenRouter, Ollama and any
 // OpenAI-compatible address) and Gemini's generateContent. No streaming in version 1.
 //
 // Messages are in JotDrop's own form, the same for every provider:
-//   { role: 'user', text }
+//   { role: 'user', text, parts? }    parts: files the user pointed at (parts.mjs); without them the request is
+//                                     byte for byte the one of version 1
 //   { role: 'assistant', text, toolCalls: [{ id, name, input }], raw }   raw: the provider's own content, sent back
 //                                                                         as it came (thinking blocks, signatures)
 //   { role: 'tool', results: [{ id, name, content, isError }] }
@@ -43,6 +45,9 @@ const MESSAGES = {
   timeout: 'The AI service took too long to answer.',
   cancelled: 'Stopped.',
   bad_response: 'The AI service sent an answer JotDrop does not understand.',
+  unsupported_input: 'This AI service or model cannot read this kind of file.',
+  too_large: 'This is too much to send to the AI service at once.',
+  refusal: 'The AI service would not do this.',
 };
 
 /** An error for the user: a fixed message per code, and a short detail from the service with keys hidden. */
@@ -101,8 +106,35 @@ function openApi(schema) {
 
 const isGeminiOwnId = (id) => typeof id === 'string' && !id.startsWith('gemini_');
 
+const hasParts = (message) => message.role === 'user' && Array.isArray(message.parts) && message.parts.length > 0;
+const dataUrl = (part) => `data:${part.mime};base64,${part.data}`;
+const fileName = (part) => String(part.name ?? '').replace(/[\x00-\x1f\x7f"\\]+/g, ' ').trim().slice(0, 100) || 'document.pdf';
+// Files first, the text last: Anthropic advises it, and it does no harm elsewhere.
+const AUDIO_FORMAT = { 'audio/mp4': 'm4a', 'audio/m4a': 'm4a', 'audio/x-m4a': 'm4a', 'audio/aac': 'aac', 'audio/webm': 'webm', 'audio/ogg': 'ogg', 'audio/mpeg': 'mp3', 'audio/wav': 'wav', 'audio/x-wav': 'wav' };
+// Gemini's lists (11 Nov 2026): no GIF among the pictures; recordings as audio/m4a, not audio/mp4.
+const GEMINI_IMAGES = ['image/jpeg', 'image/png', 'image/webp'];
+const GEMINI_AUDIO = { 'audio/mp4': 'audio/m4a', 'audio/x-m4a': 'audio/m4a', 'audio/x-wav': 'audio/wav' };
+
+function anthropicPart(part) {
+  if (part.kind === 'image') return { type: 'image', source: { type: 'base64', media_type: part.mime, data: part.data } };
+  if (part.kind === 'pdf') return { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: part.data } };
+  throw new AiError('unsupported_input', explain('anthropic', part.kind));
+}
+
+function openAiPart(part) {
+  if (part.kind === 'image') return { type: 'image_url', image_url: { url: dataUrl(part) } };
+  if (part.kind === 'pdf') return { type: 'file', file: { filename: fileName(part), file_data: dataUrl(part) } };
+  return { type: 'input_audio', input_audio: { data: part.data, format: AUDIO_FORMAT[part.mime] } };
+}
+
+function geminiPart(part) {
+  if (part.kind === 'image' && !GEMINI_IMAGES.includes(part.mime)) throw new AiError('unsupported_input', 'Gemini cannot read GIF pictures. Use a JPEG, PNG or WebP picture.');
+  return { inlineData: { mimeType: GEMINI_AUDIO[part.mime] ?? part.mime, data: part.data } };
+}
+
 function anthropicMessages(messages) {
   return messages.map((message) => {
+    if (hasParts(message)) return { role: 'user', content: [...message.parts.map(anthropicPart), { type: 'text', text: message.text }] };
     if (message.role === 'user') return { role: 'user', content: message.text };
     if (message.role === 'tool') return { role: 'user', content: message.results.map((r) => ({ type: 'tool_result', tool_use_id: r.id, content: r.content, ...(r.isError ? { is_error: true } : {}) })) };
     return { role: 'assistant', content: message.raw ?? [...(message.text ? [{ type: 'text', text: message.text }] : []), ...(message.toolCalls ?? []).map((c) => ({ type: 'tool_use', id: c.id, name: c.name, input: c.input ?? {} }))] };
@@ -111,6 +143,7 @@ function anthropicMessages(messages) {
 
 function openAiMessages(system, messages) {
   return [{ role: 'system', content: system }, ...messages.flatMap((message) => {
+    if (hasParts(message)) return [{ role: 'user', content: [...message.parts.map(openAiPart), { type: 'text', text: message.text }] }];
     if (message.role === 'user') return [{ role: 'user', content: message.text }];
     if (message.role === 'tool') return message.results.map((r) => ({ role: 'tool', tool_call_id: r.id, content: r.content }));
     if (message.raw) return [{ role: 'assistant', ...message.raw }];
@@ -121,6 +154,7 @@ function openAiMessages(system, messages) {
 
 function geminiContents(messages) {
   return messages.map((message) => {
+    if (hasParts(message)) return { role: 'user', parts: [...message.parts.map(geminiPart), { text: message.text }] };
     if (message.role === 'user') return { role: 'user', parts: [{ text: message.text }] };
     if (message.role === 'tool') return { role: 'user', parts: message.results.map((r) => ({ functionResponse: { ...(isGeminiOwnId(r.id) ? { id: r.id } : {}), name: r.name, response: r.isError ? { error: r.content } : { content: r.content } } })) };
     return { role: 'model', parts: message.raw ?? [...(message.text ? [{ text: message.text }] : []), ...(message.toolCalls ?? []).map((c) => ({ functionCall: { ...(isGeminiOwnId(c.id) ? { id: c.id } : {}), name: c.name, args: c.input ?? {} } }))] };
@@ -131,6 +165,8 @@ function geminiContents(messages) {
 export function buildRequest(config, { system, messages, tools = [] }) {
   const target = resolve(config);
   const { spec, base, model } = target;
+  const parts = messages.filter(hasParts).flatMap((message) => message.parts);
+  checkFiles(target, config, parts, 'ask');
   const headers = headersFor(target, true);
   let url, body;
   if (spec.form === 'anthropic') {
@@ -142,8 +178,89 @@ export function buildRequest(config, { system, messages, tools = [] }) {
   } else {
     url = `${base}/chat/completions`;
     body = { model, messages: openAiMessages(system, messages), ...(tools.length ? { tools: tools.map(({ name, description, input_schema }) => ({ type: 'function', function: { name, description, parameters: input_schema } })) } : {}) };
+    // Without file input of its own, OpenRouter turns a PDF into text; its default for that is the paid OCR
+    // (mistral-ocr, read 11 Nov 2026). JotDrop asks for the free conversion; a model that reads files gets the PDF.
+    if (target.id === 'openrouter' && parts.some((part) => part.kind === 'pdf') && !(config.inputs ?? []).includes('file')) body.plugins = [{ id: 'file-parser', pdf: { engine: 'cloudflare-ai' } }];
   }
   return { url, method: 'POST', headers, body: JSON.stringify(body) };
+}
+
+const capsFor = (target, config) => capabilities(target.id, { id: target.model, inputs: config.inputs });
+
+// What cannot go stops here, before anything goes out: a kind the service cannot read, then the limits.
+function checkFiles(target, config, parts, use) {
+  if (!parts.length) return;
+  const caps = capsFor(target, config);
+  const field = (kind) => kind === 'audio' && use === 'transcribe' ? 'transcribe' : kind;
+  for (const part of parts) if (caps[field(part?.kind)] === false) throw new AiError('unsupported_input', explain(target.id, part.kind, use));
+  checkParts(parts, use === 'transcribe' ? { audio: caps.transcribe } : caps);
+}
+
+// Writing out a recording (version 2). OpenAI has its own address and model for it; the old whisper-1 and
+// gpt-4o-transcribe stop on 26 Feb 2027 (read 11 Nov 2026). Gemini and OpenRouter get the recording with this
+// instruction and no tools.
+export const TRANSCRIBE_MODEL = 'gpt-transcribe';
+export const TRANSCRIBE_PROMPT = 'Write out this recording word for word, in the language that is spoken. Return only the text.';
+const OPENAI_AUDIO = { 'audio/mp4': 'm4a', 'audio/m4a': 'm4a', 'audio/x-m4a': 'm4a', 'audio/webm': 'webm', 'audio/mpeg': 'mp3', 'audio/wav': 'wav', 'audio/x-wav': 'wav' };
+
+function freshBoundary() {
+  const bytes = new Uint8Array(16);
+  globalThis.crypto.getRandomValues(bytes);
+  return `jotdrop-${Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')}`;
+}
+
+// multipart/form-data as bytes, made here so that every fetcher (browser, Obsidian, Joplin, Android) sends the same.
+function multipart(boundary, fields, file) {
+  const encoder = new TextEncoder();
+  const head = encoder.encode(fields.map(([name, value]) => `--${boundary}\r\nContent-Disposition: form-data; name="${name}"\r\n\r\n${value}\r\n`).join('')
+    + `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${file.filename}"\r\nContent-Type: ${file.mime}\r\n\r\n`);
+  const tail = encoder.encode(`\r\n--${boundary}--\r\n`);
+  const body = new Uint8Array(head.length + file.bytes.length + tail.length);
+  body.set(head, 0);
+  body.set(file.bytes, head.length);
+  body.set(tail, head.length + file.bytes.length);
+  return body;
+}
+
+/**
+ * The HTTP request that writes out a recording: { url, method, headers, body }; body is bytes for OpenAI.
+ * language: the app's language as a hint ("nl" or "nl-NL"); left out when it is not a two-letter code.
+ */
+export function transcribeRequest(config, { audio, language, boundary } = {}) {
+  const target = resolve(config);
+  const { spec, base, model, id } = target;
+  if (audio?.kind !== 'audio') throw new AiError('unsupported_input', 'Only a recording can be written out.');
+  checkFiles(target, config, [audio], 'transcribe');
+  if (id === 'openai') {
+    const ext = OPENAI_AUDIO[audio.mime];
+    if (!ext) throw new AiError('unsupported_input', `OpenAI cannot write out ${AUDIO_FORMAT[audio.mime] ?? 'these'} recordings. Gemini can.`);
+    const code = /^([a-z]{2})(?:[-_]|$)/i.exec(String(language ?? '').trim())?.[1]?.toLowerCase();
+    const mark = boundary ?? freshBoundary();
+    const fields = [['model', TRANSCRIBE_MODEL], ...(code ? [['languages[]', code]] : [])];
+    const body = multipart(mark, fields, { filename: `recording.${ext}`, mime: audio.mime, bytes: base64Bytes(audio.data) });
+    return { url: `${base}/audio/transcriptions`, method: 'POST', headers: { ...headersFor(target, false), 'Content-Type': `multipart/form-data; boundary=${mark}` }, body };
+  }
+  if (spec.form === 'gemini') {
+    const body = { contents: [{ role: 'user', parts: [geminiPart(audio), { text: TRANSCRIBE_PROMPT }] }] };
+    return { url: `${base}/models/${encodeURIComponent(model.replace(/^models\//, ''))}:generateContent`, method: 'POST', headers: headersFor(target, true), body: JSON.stringify(body) };
+  }
+  if (id === 'openrouter') {
+    const body = { model, messages: [{ role: 'user', content: [openAiPart(audio), { type: 'text', text: TRANSCRIBE_PROMPT }] }] };
+    return { url: `${base}/chat/completions`, method: 'POST', headers: headersFor(target, true), body: JSON.stringify(body) };
+  }
+  throw new AiError('unsupported_input', explain(id, 'audio', 'transcribe'));
+}
+
+/** A transcription answer as { text, usage: { input, output, seconds? } }. */
+export function parseTranscription(provider, json) {
+  if (provider === 'openai') {
+    if (typeof json?.text !== 'string') throw new AiError('bad_response');
+    const usage = json.usage ?? {};
+    return { text: json.text.trim(), usage: usage.type === 'duration' ? { input: 0, output: 0, seconds: Number(usage.seconds) || 0 } : { input: usage.input_tokens ?? 0, output: usage.output_tokens ?? 0 } };
+  }
+  const answer = parseResponse(provider, json);
+  if (answer.stop === 'refusal') throw new AiError('refusal');
+  return { text: answer.text.trim(), usage: answer.usage };
 }
 
 /** The request for the provider's model list. */
@@ -192,12 +309,12 @@ export function parseResponse(provider, json) {
 
 const NOT_CHAT = /embed|tts|whisper|transcri|dall-e|image|moderation|realtime|audio|live|search/i;
 
-/** The provider's model list as [{ id, name, tools }]; tools is null when the list does not say. */
+/** The provider's model list as [{ id, name, tools }]; tools is null when the list does not say. OpenRouter adds inputs (text, image, file, audio, video). */
 export function parseModels(provider, json) {
   const form = PROVIDERS[provider]?.form;
   if (form === 'anthropic') return (json?.data ?? []).map((m) => ({ id: m.id, name: m.display_name || m.id, tools: true }));
   if (form === 'gemini') return (json?.models ?? []).filter((m) => (m.supportedGenerationMethods ?? []).includes('generateContent')).map((m) => { const id = String(m.name).replace(/^models\//, ''); return { id, name: m.displayName || id, tools: true }; });
-  if (provider === 'openrouter') return (json?.data ?? []).map((m) => ({ id: m.id, name: m.name || m.id, tools: (m.supported_parameters ?? []).includes('tools'), price: Number(m.pricing?.prompt ?? 0) + Number(m.pricing?.completion ?? 0) }));
+  if (provider === 'openrouter') return (json?.data ?? []).map((m) => ({ id: m.id, name: m.name || m.id, tools: (m.supported_parameters ?? []).includes('tools'), price: Number(m.pricing?.prompt ?? 0) + Number(m.pricing?.completion ?? 0), ...(Array.isArray(m.architecture?.input_modalities) ? { inputs: m.architecture.input_modalities } : {}) }));
   return (json?.data ?? []).filter((m) => provider !== 'openai' || !NOT_CHAT.test(m.id)).map((m) => ({ id: m.id, name: m.id, tools: null }));
 }
 
@@ -246,11 +363,25 @@ export function createProvider(config, fetcher = (url, init) => globalThis.fetch
     if (json === undefined) throw new AiError('bad_response', redact(text, secrets));
     return json;
   }
+  const caps = capsFor(target, config);
   return {
     id: target.id,
     model: target.model,
+    capabilities: caps,
     async complete({ system, messages, tools = [], signal }) {
-      return parseResponse(target.id, await send(buildRequest(config, { system, messages, tools }), signal));
+      const request = buildRequest(config, { system, messages, tools });
+      try {
+        return parseResponse(target.id, await send(request, signal));
+      } catch (error) {
+        // A service that may or may not read a kind of file (Ollama, an own address, an OpenRouter model not in the
+        // list) says no with a plain 400, or with a 404 that names the input: tell the user what it is.
+        const unknown = messages.filter(hasParts).flatMap((m) => m.parts).some((part) => caps[part.kind] === 'unknown');
+        if (unknown && error instanceof AiError && (error.code === 'bad_request' || (error.code === 'model' && /support|image|audio|file|pdf|vision|modalit|input/i.test(error.detail)))) throw new AiError('unsupported_input', error.detail, error.status);
+        throw error;
+      }
+    },
+    async transcribe({ audio, language, signal } = {}) {
+      return parseTranscription(target.id, await send(transcribeRequest(config, { audio, language }), signal));
     },
     async listModels({ signal } = {}) {
       return parseModels(target.id, await send(modelsRequest(config), signal));
