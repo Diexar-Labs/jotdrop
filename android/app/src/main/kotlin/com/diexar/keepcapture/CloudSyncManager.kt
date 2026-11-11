@@ -55,6 +55,17 @@ object CloudSyncManager {
 
     fun client(context: Context): CloudClient? = CloudPreviewStore(context).credentials()?.let(::CloudClient)
 
+    /**
+     * The plan's maximum per file from the last sync, so Attach file and Share to JotDrop refuse a file that would
+     * never reach the cloud. Null when cloud sync is off or has not run yet: then the file is simply attached.
+     */
+    fun attachLimit(context: Context): Long? {
+        val store = CloudPreviewStore(context)
+        val settings = store.settings()
+        if (!settings.optBoolean("enabled") || store.credentials() == null) return null
+        return settings.optLong("maxFileBytes").takeIf { it > 0 }
+    }
+
     fun status(context: Context): CloudSyncStatus {
         val store = CloudPreviewStore(context)
         val credentials = store.credentials()
@@ -674,6 +685,8 @@ object CloudSyncManager {
             val cloudStatus = client.call("/status")
             // The plan's maximum per file, and no more than this device can hold a few times over while syncing it.
             val planMax = cloudStatus.optJSONObject("pieces")?.optLong("maxFileBytes")?.takeIf { it > 0 } ?: CloudCrypto.MAX_FILE_BYTES.toLong()
+            // Kept for Attach file, which checks a file against it at once, also offline.
+            if (settings.optLong("maxFileBytes") != planMax) store.saveSettings(settings.put("maxFileBytes", planMax))
             val maxFileBytes = minOf(planMax, Runtime.getRuntime().maxMemory() / 4)
             // A big first sync takes a while: show how far it is, once a second at most.
             var shownAt = 0L

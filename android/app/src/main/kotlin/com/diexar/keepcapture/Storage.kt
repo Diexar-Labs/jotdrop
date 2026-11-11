@@ -303,6 +303,28 @@ object Storage {
     }
 
     /**
+     * Share to JotDrop > New note for files ([names] are already in the attachments folder): the subject, or "Foto …"
+     * for photos only (as before), or the first file's own name ([shownName], as the other app calls it, not the
+     * cleaned or numbered name it got here) as the title; then the files and the shared text.
+     */
+    fun saveFilesNote(context: Context, names: List<String>, subject: String?, extraText: String?, shownName: String? = null): Result<String> {
+        val stamp = SimpleDateFormat("yyyy-MM-dd HHmmss", Locale.US).format(Date())
+        val fallback = if (names.all(::looksLikeImage)) "Foto $stamp"
+            else sanitizeTitleFromShare((shownName ?: names.first()).substringBeforeLast('.')).ifBlank { "File $stamp" }
+        val title = subject?.trim()?.takeIf { it.isNotEmpty() }?.let(::sanitizeTitleFromShare)?.takeIf { it.isNotEmpty() } ?: fallback
+        val body = buildString {
+            append("# "); append(title); append("\n\n")
+            append(names.joinToString("\n") { "![[$it]]" })
+            val text = extraText?.trim().orEmpty()
+            if (text.isNotEmpty() && text != subject?.trim()) { append("\n\n"); append(text) }
+        }
+        return saveNote(context, body)
+    }
+
+    /** The notes Share to JotDrop > Add to a note offers: the own notes and the groups', without the archive. */
+    fun listNotesForChooser(context: Context): Result<List<NoteSummary>> = listNotesFolder(context, attachments = false).map { it.notes }
+
+    /**
      * Paper drawer: a scanned document becomes a note with the first page as its picture, the PDF,
      * and the recognized text at the bottom, so search finds it. It goes in the Paper drawer.
      */
@@ -312,7 +334,7 @@ object Storage {
     ): Result<String> {
         val stamp = SimpleDateFormat("yyyy-MM-dd HHmmss", Locale.US).format(Date())
         val picture = firstPage?.let { copyImageToAttachments(context, it, name = "scan-$stamp.jpg").getOrElse { e -> return Result.failure(e) } }
-        val pdf = pdfUri?.let { copyFileToAttachments(context, it, "application/pdf", "scan-$stamp.pdf").getOrElse { e -> return Result.failure(e) } }
+        val pdf = pdfUri?.let { copyFileToAttachments(context, it, name = "scan-$stamp.pdf", mime = "application/pdf").getOrElse { e -> return Result.failure(e) } }
         val heading = sanitizeTitleFromShare(title).ifEmpty { "Scan $stamp" }
         // The text from the page follows the pictures; its first line is usually the title already.
         val lines = text.trim().lines()
@@ -329,23 +351,85 @@ object Storage {
         return saveNote(context, content)
     }
 
-    /** Copies any file into the attachments folder under [basename]. */
-    private fun copyFileToAttachments(context: Context, source: Uri, mime: String, basename: String): Result<String> {
+    /**
+     * Copies any file into the attachments folder (of the group [spaceId], or the own one) and returns the name it
+     * really got, for the `![[name]]` embed. [name] is the wished name (the picked file's own name when null), cleaned
+     * like the Obsidian plugin does; a taken name becomes `name (2).ext`, so an attachment never overwrites another.
+     */
+    fun copyFileToAttachments(context: Context, source: Uri, spaceId: String? = null, name: String? = null, mime: String? = null): Result<String> {
         synchronized(cloudFileLock) {
-            val folder = getOrCreateAttachmentsFolder(context).getOrElse { return Result.failure(it) }
-            val target = folder.createFile(mime, basename) ?: return Result.failure(IllegalStateException("Kan bijlage niet aanmaken."))
-            return try {
-                val copied = context.contentResolver.openInputStream(source)?.use { input ->
-                    context.contentResolver.openOutputStream(target.uri, "wt")?.use { out -> input.copyTo(out) }
-                }
-                if (copied == null) { target.delete(); Result.failure(IllegalStateException("Kan bijlage niet schrijven.")) }
-                else Result.success(target.name ?: basename)
-            } catch (e: Exception) {
-                target.delete()
-                Result.failure(e)
-            }
+            val folder = getOrCreateAttachmentsFolder(context, spaceId).getOrElse { return Result.failure(it) }
+            val clean = cleanFileName(name ?: displayName(context, source) ?: "file-${System.currentTimeMillis()}")
+            // A name without an extension ("image" from some apps) gets one from its type, or no app would know it as a file.
+            val wished = if (clean.lastIndexOf('.') > 0) clean else
+                android.webkit.MimeTypeMap.getSingleton().getExtensionFromMimeType(mime ?: context.contentResolver.getType(source))?.let { "$clean.$it" } ?: clean
+            // octet-stream: the provider keeps the name as it is instead of adding an extension of its own.
+            return writeAttachment(context, folder, source, mime ?: "application/octet-stream", uniqueFilename(folder, wished))
         }
     }
+
+    /** Copies [source] into a new file [basename] in [folder]; the result is the name the provider gave it. */
+    private fun writeAttachment(context: Context, folder: DocumentFile, source: Uri, mime: String, basename: String): Result<String> {
+        val target = folder.createFile(mime, basename) ?: return Result.failure(IllegalStateException("Kan bijlage niet aanmaken."))
+        return try {
+            val copied = context.contentResolver.openInputStream(source)?.use { input ->
+                context.contentResolver.openOutputStream(target.uri, "wt")?.use { out -> input.copyTo(out) }
+            }
+            if (copied == null) { target.delete(); Result.failure(IllegalStateException("Kan bijlage niet schrijven.")) }
+            else Result.success(target.name ?: basename)
+        } catch (e: Exception) {
+            target.delete()
+            Result.failure(e)
+        }
+    }
+
+    /** The name a shared or picked file has in its own app ("Offerte keuken.pdf"), or null. */
+    fun displayName(context: Context, uri: Uri): String? = runCatching {
+        context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getString(0) else null
+        }
+    }.getOrNull()?.takeIf { it.isNotBlank() } ?: uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() && uri.scheme == "file" }
+
+    /** The size in bytes of a shared or picked file, or -1 when its app does not say. */
+    fun fileSize(context: Context, uri: Uri): Long = runCatching {
+        context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst() && !cursor.isNull(0)) cursor.getLong(0) else null
+        } ?: if (uri.scheme == "file") uri.path?.let { File(it).length() } else null
+    }.getOrNull() ?: -1L
+
+    /**
+     * The original name, safe for a vault path and an `![[embed]]`: no folders, no characters that end a wiki link,
+     * no leading dot (the cloud leaves hidden files alone). Same as `cleanFileName` in the plugin (src/fileKinds.ts).
+     */
+    fun cleanFileName(name: String): String {
+        val base = name.split('\\', '/').last()
+        val cleaned = base
+            .replace(Regex("[\\u0000-\\u001f<>:\"|?*\\[\\]#^]"), "-")
+            .replace(Regex("\\s+"), " ")
+            .replace(Regex("^[\\s.]+"), "")
+            .replace(Regex("[\\s.]+$"), "")
+        val dot = cleaned.lastIndexOf('.')
+        val stem = (if (dot > 0) cleaned.substring(0, dot) else cleaned).take(100).trim()
+        val extension = if (dot > 0) cleaned.substring(dot) else ""
+        return "${stem.ifEmpty { "file" }}$extension"
+    }
+
+    /**
+     * Puts `![[name]]` lines at the end of a note that is not open in the editor (Attach file from the card's menu,
+     * Share to JotDrop > Add to a note). The editor shows embed lines at the bottom too.
+     */
+    fun appendAttachmentEmbeds(context: Context, uri: Uri, names: List<String>): Result<Unit> {
+        if (names.isEmpty()) return Result.success(Unit)
+        synchronized(cloudFileLock) {
+            val current = readNote(context, uri).getOrElse { return Result.failure(it) }
+            val lines = names.joinToString("\n") { "![[$it]]" }
+            val body = current.trimEnd()
+            val next = if (body.isEmpty()) "$lines\n" else if (body.lines().last().let { EMBED_ONLY_LINE.matches(it) }) "$body\n$lines\n" else "$body\n\n$lines\n"
+            return updateNote(context, uri, next)
+        }
+    }
+
+    private val EMBED_ONLY_LINE = Regex("^\\s*!\\[\\[[^\\]]+]]\\s*$")
 
     /**
      * Kopieert een lokaal opgenomen voicememo (cache-bestand) naar de assets-map
@@ -435,27 +519,10 @@ object Storage {
             else -> "image/*"
         }
         val stamp = SimpleDateFormat("yyyy-MM-dd HHmmss", Locale.US).format(Date())
-        val basename = name ?: "diexar-$stamp.$ext"
-
-        val target = attachmentsFolder.createFile(mimeForFile, basename)
-            ?: return Result.failure(IllegalStateException("Kan attachment niet aanmaken."))
-        try {
-            context.contentResolver.openInputStream(imageUri)?.use { input ->
-                context.contentResolver.openOutputStream(target.uri, "wt")?.use { out ->
-                    input.copyTo(out)
-                } ?: run {
-                    target.delete()
-                    return Result.failure(IllegalStateException("Kan attachment niet schrijven."))
-                }
-            } ?: run {
-                target.delete()
-                return Result.failure(IllegalStateException("Kan bron-afbeelding niet lezen."))
-            }
-        } catch (e: Exception) {
-            target.delete()
-            return Result.failure(e)
-        }
-        return Result.success(basename)
+        // Never the asked name blindly: a second photo in the same second (or a drawing saved twice) used to get the
+        // same name, the provider made it "name (1).jpg", and the note pointed at the first file (11 Nov 2026).
+        val basename = uniqueFilename(attachmentsFolder, name ?: "diexar-$stamp.$ext")
+        return writeAttachment(context, attachmentsFolder, imageUri, mimeForFile, basename)
         }
     }
 
@@ -569,7 +636,7 @@ object Storage {
                 thumbnailUri = firstImage?.let { attachments[it] },
                 audioBasename = firstAudio,
                 audioUri = firstAudio?.let { attachments[it] },
-                documents = findEmbeddedDocumentBasenames(parsed.body).mapNotNull { name -> attachments[name]?.let { NoteDocument(name, it) } },
+                documents = findEmbeddedDocumentBasenames(parsed.body).mapNotNull { name -> attachments[name]?.let { NoteDocument(name, it, attachmentSize(it)) } },
                 size = child.size,
             )
         }
@@ -660,7 +727,7 @@ object Storage {
         for (path in listOf(legacy, resolveAssetsFolder(context)).distinct()) {
             val folder = if (path == legacy && notesDirs != null) notesDirs[".attachments"] ?: continue
                 else traverseSubfolder(context, tree, path)?.uri ?: continue
-            for (child in queryChildren(context, vaultUri, folder)) {
+            for (child in rememberSizes(queryChildren(context, vaultUri, folder))) {
                 result[child.name] = child.uri
             }
         }
@@ -706,8 +773,17 @@ object Storage {
     private fun spaceAttachments(context: Context, vaultUri: Uri, spaceId: String): Map<String, Uri> {
         val tree = DocumentFile.fromTreeUri(context, vaultUri) ?: return emptyMap()
         val folder = traverseSubfolder(context, tree, "${spacePath(context, spaceId)}/attachments") ?: return emptyMap()
-        return queryChildren(context, vaultUri, folder.uri).associate { it.name to it.uri }
+        return rememberSizes(queryChildren(context, vaultUri, folder.uri)).associate { it.name to it.uri }
     }
+
+    /** Sizes of attachment files from the last listing of their folder, so a card shows them without asking again. */
+    private val attachmentSizes = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private fun rememberSizes(children: List<ChildDoc>): List<ChildDoc> {
+        for (child in children) if (child.size >= 0) attachmentSizes[child.uri.toString()] = child.size
+        return children
+    }
+    /** The size of an attachment from the last listing, or -1 when it was not listed. */
+    fun attachmentSize(uri: Uri): Long = attachmentSizes[uri.toString()] ?: -1L
 
     /** The notes of every group this phone knows, among the own notes: like Keep, they are simply there. */
     /**
@@ -723,7 +799,7 @@ object Storage {
             val folder = spaceDirs[space.id] ?: return@flatMap emptyList()
             val inner = HashMap<String, Uri>()
             val children = noteFiles(context, vaultUri, folder, inner)
-            val files = if (attachments) inner["attachments"]?.let { dir -> queryChildren(context, vaultUri, dir).associate { it.name to it.uri } }.orEmpty() else null
+            val files = if (attachments) inner["attachments"]?.let { dir -> rememberSizes(queryChildren(context, vaultUri, dir)).associate { it.name to it.uri } }.orEmpty() else null
             val mark = NoteSpace(space.id, space.name, space.others, space.frozen, space.gone)
             buildNoteSummaries(context, children, files).map { it.copy(space = mark) }
         }
@@ -1458,17 +1534,23 @@ object Storage {
     }
 
     /**
-     * Levert álle ingebedde attachment-basenames (image + audio). Gebruikt door
-     * [deleteNote] om bij verwijderen ook audio-bestanden refcount-aware mee te
-     * nemen — anders blijven `.m4a`-bestanden in `.attachments/` rondhangen.
+     * Every embedded attachment: photos, sounds and every other file (a PDF too, since Attach file, 11 Nov 2026).
+     * Used by [deleteNote] (refcount-aware, so a file another note shows stays), and when a note moves into or out
+     * of a group, so its files go along.
      */
     fun findEmbeddedAttachmentBasenames(content: String): List<String> {
-        return collectEmbedBasenames(content) { looksLikeImage(it) || looksLikeAudio(it) }
+        return collectEmbedBasenames(content) { looksLikeImage(it) || looksLikeAudio(it) || looksLikeFile(it) }
     }
 
     /** Elke andere bijlage (PDF, document): geen foto, geen opname. Toont als chip op de kaart en in de editor, zoals de web-app (Eric, 3 nov). */
     fun findEmbeddedDocumentBasenames(content: String): List<String> {
-        return collectEmbedBasenames(content) { !looksLikeImage(it) && !looksLikeAudio(it) }
+        return collectEmbedBasenames(content) { !looksLikeImage(it) && !looksLikeAudio(it) && looksLikeFile(it) }
+    }
+
+    /** An embed of a file, not of another note (`![[Other note]]`) or an Excalidraw drawing: like `isFileEmbed` in the plugin. */
+    private fun looksLikeFile(name: String): Boolean {
+        val ext = Regex("\\.([^./\\\\]+)$").find(name)?.groupValues?.get(1)?.lowercase() ?: return false
+        return ext != "md" && ext != "excalidraw"
     }
 
     private fun collectEmbedBasenames(content: String, accept: (String) -> Boolean): List<String> {
@@ -1982,7 +2064,7 @@ data class NoteSummary(
 )
 
 /** A file in a note that is not a photo or recording. */
-data class NoteDocument(val name: String, val uri: Uri)
+data class NoteDocument(val name: String, val uri: Uri, val size: Long = -1L)
 
 /** The shared group a note is in, for the mark on its card. */
 data class NoteSpace(val id: String, val name: String, val others: List<String>, val frozen: Boolean, val gone: Boolean)

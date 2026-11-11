@@ -1,8 +1,12 @@
 package com.diexar.keepcapture
 
 import android.content.Intent
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
+import androidx.activity.compose.setContent
+import com.diexar.keepcapture.ui.JotDropTheme
 
 /**
  * Onzichtbare activiteit die alleen wordt geactiveerd door een share-intent.
@@ -29,10 +33,25 @@ class ShareActivity : ThemedAppCompatActivity() {
             return
         }
 
-        // Image-share heeft voorrang: Camera/Galerij sturen image/* met EXTRA_STREAM.
-        // Sommige apps zetten daar ook een caption in EXTRA_TEXT bij.
-        if (isImageShare(intent)) {
-            handleImageShare()
+        // Files first (a photo, a PDF from a mail or WhatsApp, several at once): the person chooses New note or
+        // Add to a note. A text share that also carries a file (some apps add a .txt) stays a text note, as before.
+        val shared = sharedFiles(intent)
+        if (shared.isNotEmpty() && !isTextShare(intent)) {
+            val files = shared.filter { Attachments.isReadableSource(this, it) }
+            if (files.isEmpty()) {
+                toast(getString(R.string.attach_unreadable))
+                finish()
+                return
+            }
+            val subject = intent?.getStringExtra(Intent.EXTRA_SUBJECT)
+            val extraText = intent?.getStringExtra(Intent.EXTRA_TEXT)
+            // The theme's title bar was never seen while a share closed at once; over the chooser it only looks odd.
+            supportActionBar?.hide()
+            setContent {
+                JotDropTheme {
+                    ShareFilesChooser(files, subject, extraText, onDone = { finish() })
+                }
+            }
             return
         }
 
@@ -68,37 +87,28 @@ class ShareActivity : ThemedAppCompatActivity() {
         finish()
     }
 
-    private fun isImageShare(intent: Intent?): Boolean {
-        if (intent == null) return false
-        val type = intent.type?.lowercase().orEmpty()
-        if (!type.startsWith("image/")) return false
-        return getImageUri(intent) != null
-    }
+    /** A shared text (a link, a quote): a text type with text in it, even when the app also adds a file. */
+    private fun isTextShare(intent: Intent?): Boolean =
+        intent?.type?.lowercase().orEmpty().startsWith("text/") && !intent?.getStringExtra(Intent.EXTRA_TEXT).isNullOrBlank()
 
+    /** The files in a share: EXTRA_STREAM (one, or several with SEND_MULTIPLE), or the clip's file items. */
     @Suppress("DEPRECATION")
-    private fun getImageUri(intent: Intent): android.net.Uri? {
-        return if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
-            intent.getParcelableExtra(Intent.EXTRA_STREAM, android.net.Uri::class.java)
+    private fun sharedFiles(intent: Intent?): List<Uri> {
+        if (intent == null) return emptyList()
+        val found = mutableListOf<Uri>()
+        if (intent.action == Intent.ACTION_SEND_MULTIPLE) {
+            val list = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                else intent.getParcelableArrayListExtra<Uri>(Intent.EXTRA_STREAM)
+            list?.let(found::addAll)
         } else {
-            intent.getParcelableExtra(Intent.EXTRA_STREAM)
+            val one = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+                else intent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM)
+            one?.let(found::add)
         }
-    }
-
-    private fun handleImageShare() {
-        val imageUri = getImageUri(intent)
-        if (imageUri == null) {
-            toast(getString(R.string.no_image_in_share))
-            finish()
-            return
+        if (found.isEmpty() && !intent.type.orEmpty().startsWith("text/")) {
+            intent.clipData?.let { clip -> for (i in 0 until clip.itemCount) clip.getItemAt(i).uri?.let(found::add) }
         }
-        val subject = intent?.getStringExtra(Intent.EXTRA_SUBJECT)
-        val extraText = intent?.getStringExtra(Intent.EXTRA_TEXT)
-        Storage.saveImageNote(this, imageUri, subject, extraText).onSuccess { filename ->
-            toast(getString(R.string.toast_saved, filename))
-        }.onFailure { err ->
-            toast(getString(R.string.toast_error, err.message ?: "onbekende fout"))
-        }
-        finish()
+        return found.distinct()
     }
 
     private fun saveTextNote(text: String) {

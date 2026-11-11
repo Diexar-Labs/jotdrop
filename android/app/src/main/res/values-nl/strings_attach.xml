@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="action_attach_file">Bestand toevoegen</string>
+    <string name="attach_done_one">%1$s toegevoegd.</string>
+    <string name="attach_done_many">%1$d bestanden toegevoegd.</string>
+    <string name="attach_too_large">\"%1$s\" is groter dan %2$s, het maximum per bestand van je abonnement. Het is niet toegevoegd.</string>
+    <string name="attach_plus">JotDrop Plus neemt bestanden tot 200 MB. Upgraden kan op onze website.</string>
+    <string name="attach_failed">%1$s kon niet worden toegevoegd: %2$s</string>
+    <string name="attach_unreadable">JotDrop kan dit bestand niet lezen.</string>
+    <string name="attach_open">%1$s openen</string>
+    <string name="attach_remove">%1$s uit deze notitie halen</string>
+    <string name="attach_problems_title">Niet toegevoegd</string>
+    <plurals name="attach_more">
+        <item quantity="one">+ %d bestand</item>
+        <item quantity="other">+ %d bestanden</item>
+    </plurals>
+    <string name="share_choice_title">Opslaan in JotDrop</string>
+    <string name="share_new_note">Nieuwe notitie</string>
+    <string name="share_add_to_note">Toevoegen aan een notitie</string>
+    <string name="share_search_hint">Notities zoeken</string>
+    <string name="share_no_notes">Geen notities gevonden.</string>
+    <string name="share_saving">Bezig met opslaan…</string>
+    <string name="share_added_to">Toegevoegd aan %1$s.</string>
+</resources>

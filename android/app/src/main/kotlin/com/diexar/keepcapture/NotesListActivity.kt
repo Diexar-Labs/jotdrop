@@ -12,6 +12,7 @@ import android.util.Log
 import android.text.format.DateUtils
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.compose.ReportDrawnWhen
 import androidx.activity.enableEdgeToEdge
@@ -69,6 +70,7 @@ import androidx.compose.material.icons.filled.Draw
 import androidx.compose.material.icons.filled.EventBusy
 import androidx.compose.material.icons.filled.Inbox
 import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Delete
@@ -1186,8 +1188,36 @@ private fun NotesListScreen(
                 .putExtra(CloudActivity.EXTRA_RESOLVE, conflictOriginalName(note.filename)),
         )
     }
+    // Attach file from the card's menu: the files go into the note without opening it, like the plugin and the website.
+    var attachTarget by rememberSaveable { mutableStateOf<String?>(null) }
+    var attachProblems by remember { mutableStateOf<List<String>>(emptyList()) }
+    val attachFilesLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        val target = attachTarget?.let(Uri::parse)
+        attachTarget = null
+        if (target == null || uris.isEmpty()) return@rememberLauncherForActivityResult
+        scope.launch {
+            val outcome = withContext(Dispatchers.IO) { Attachments.copy(context, uris, Storage.spaceIdOf(target)) }
+            val written = if (outcome.names.isEmpty()) Result.success(Unit) else withContext(Dispatchers.IO) {
+                Storage.noteWriteMutex.withLock { Storage.appendAttachmentEmbeds(context, target, outcome.names) }
+            }
+            written.fold(
+                { Attachments.toastAttached(context, outcome.names) },
+                { Toast.makeText(context, context.getString(R.string.toast_error, it.message ?: ""), Toast.LENGTH_SHORT).show() },
+            )
+            attachProblems = outcome.problems
+            if (outcome.names.isNotEmpty()) onRefresh()
+        }
+    }
+    if (attachProblems.isNotEmpty()) AttachProblemsDialog(attachProblems) { attachProblems = emptyList() }
     val onCardAction: (NoteSummary, CardAction) -> Unit = { note, action ->
         when (action) {
+            CardAction.ATTACH -> {
+                attachTarget = note.uri.toString()
+                runCatching { attachFilesLauncher.launch(arrayOf("*/*")) }.onFailure {
+                    attachTarget = null
+                    Toast.makeText(context, context.getString(R.string.toast_error, it.message ?: ""), Toast.LENGTH_SHORT).show()
+                }
+            }
             CardAction.COLOR -> { cardTarget = note.uri; bulkColorOpen = true }
             CardAction.LABELS -> { cardTarget = note.uri; bulkLabelsOpen = true }
             CardAction.EXPIRES -> expiresTarget = note
@@ -3108,13 +3138,13 @@ internal fun conflictOriginalName(filename: String): String =
     filename.replace(Regex("\\.cloud-conflict-r\\d+(?:-[0-9a-fA-F-]+)?(?=\\.[^.]*$|$)"), "")
 
 /** What a card's own menu can do, depending on the folder it is shown in. */
-internal enum class CardAction { COLOR, LABELS, EXPIRES, ARCHIVE, RESTORE, MOVE, COPY, DELETE, SHARE, LINK, GROUP, MOVE_TO_MINE, ASK, SUMMARIZE }
+internal enum class CardAction { COLOR, LABELS, EXPIRES, ATTACH, ARCHIVE, RESTORE, MOVE, COPY, DELETE, SHARE, LINK, GROUP, MOVE_TO_MINE, ASK, SUMMARIZE }
 /** Pin, labels and archive are per person, so a shared note's card offers what goes for everyone. */
-internal val SHARED_CARD_ACTIONS = listOf(CardAction.COLOR, CardAction.GROUP, CardAction.MOVE_TO_MINE, CardAction.DELETE)
+internal val SHARED_CARD_ACTIONS = listOf(CardAction.COLOR, CardAction.ATTACH, CardAction.GROUP, CardAction.MOVE_TO_MINE, CardAction.DELETE)
 
 internal fun cardActionsFor(folder: NoteFolder): List<CardAction> = when (folder) {
-    NoteFolder.NOTES -> listOf(CardAction.COLOR, CardAction.LABELS, CardAction.EXPIRES, CardAction.ARCHIVE, CardAction.SHARE, CardAction.MOVE, CardAction.COPY, CardAction.ASK, CardAction.SUMMARIZE, CardAction.DELETE)
-    NoteFolder.ARCHIVE -> listOf(CardAction.COLOR, CardAction.LABELS, CardAction.EXPIRES, CardAction.RESTORE, CardAction.MOVE, CardAction.COPY, CardAction.ASK, CardAction.SUMMARIZE, CardAction.DELETE)
+    NoteFolder.NOTES -> listOf(CardAction.COLOR, CardAction.LABELS, CardAction.EXPIRES, CardAction.ATTACH, CardAction.ARCHIVE, CardAction.SHARE, CardAction.MOVE, CardAction.COPY, CardAction.ASK, CardAction.SUMMARIZE, CardAction.DELETE)
+    NoteFolder.ARCHIVE -> listOf(CardAction.COLOR, CardAction.LABELS, CardAction.EXPIRES, CardAction.ATTACH, CardAction.RESTORE, CardAction.MOVE, CardAction.COPY, CardAction.ASK, CardAction.SUMMARIZE, CardAction.DELETE)
     NoteFolder.TRASH -> listOf(CardAction.RESTORE, CardAction.DELETE)
 }
 
@@ -3137,6 +3167,7 @@ private fun CardMenu(actions: List<CardAction>, foreground: Color, onAction: (Ca
                     CardAction.COLOR -> Icons.Filled.Palette to R.string.action_color
                     CardAction.LABELS -> Icons.Filled.Label to R.string.nav_labels
                     CardAction.EXPIRES -> Icons.Filled.EventBusy to R.string.action_expires
+                    CardAction.ATTACH -> Icons.Filled.AttachFile to R.string.action_attach_file
                     CardAction.ARCHIVE -> Icons.Filled.Archive to R.string.action_archive
                     CardAction.RESTORE -> Icons.Filled.Restore to R.string.action_restore
                     CardAction.MOVE -> Icons.Filled.DriveFileMove to R.string.action_move_to_folder

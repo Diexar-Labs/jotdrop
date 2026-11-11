@@ -37,3 +37,15 @@ test('Android shows the same photos and sounds', () => {
     assert.deepEqual(found.filter((list) => list.includes('m4a')), [audio], `${file}: audio extensions`);
   }
 });
+
+// Videos and PDFs get their own icon on Android's file chips (DocumentChip.kt).
+test('Android shows the same videos and PDFs as files with their own icon', () => {
+  const source = read('../../android/app/src/main/kotlin/com/diexar/keepcapture/DocumentChip.kt');
+  const list = (name) => {
+    const found = source.match(new RegExp(`${name} = setOf\\(((?:\\s*"[a-z0-9]+",?)+)\\s*\\)`));
+    assert.ok(found, `${name} in DocumentChip.kt`);
+    return sorted(found[1].match(/[a-z0-9]+/g));
+  };
+  assert.deepEqual(list('VIDEO_EXTENSIONS'), sorted(Object.keys(kinds.video)));
+  assert.deepEqual(list('PDF_EXTENSIONS'), sorted(Object.keys(kinds.pdf)));
+});

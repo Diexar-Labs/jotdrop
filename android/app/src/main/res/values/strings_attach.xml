@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Attach file and Share to JotDrop for every file (11 Nov 2026). Same words as the Obsidian plugin and the website.
+     Plus is named in words only: no price and no link (Google Play payments policy, check:android-play-policy). -->
+<resources>
+    <string name="action_attach_file">Attach file</string>
+    <string name="attach_done_one">Attached %1$s.</string>
+    <string name="attach_done_many">Attached %1$d files.</string>
+    <string name="attach_too_large">\"%1$s\" is larger than %2$s, your plan\'s maximum per file. It was not attached.</string>
+    <string name="attach_plus">JotDrop Plus takes files up to 200 MB. Upgrade on our website.</string>
+    <string name="attach_failed">Could not attach %1$s: %2$s</string>
+    <string name="attach_unreadable">JotDrop cannot read this file.</string>
+    <string name="attach_open">Open %1$s</string>
+    <string name="attach_remove">Remove %1$s from this note</string>
+    <string name="attach_problems_title">Not attached</string>
+    <plurals name="attach_more">
+        <item quantity="one">+ %d file</item>
+        <item quantity="other">+ %d files</item>
+    </plurals>
+    <string name="share_choice_title">Save to JotDrop</string>
+    <string name="share_new_note">New note</string>
+    <string name="share_add_to_note">Add to a note</string>
+    <string name="share_search_hint">Search notes</string>
+    <string name="share_no_notes">No notes found.</string>
+    <string name="share_saving">Saving…</string>
+    <string name="share_added_to">Added to %1$s.</string>
+</resources>

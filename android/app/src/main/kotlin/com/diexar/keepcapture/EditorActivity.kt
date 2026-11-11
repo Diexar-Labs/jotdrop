@@ -43,6 +43,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -68,6 +69,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AddAPhoto
 import androidx.compose.material.icons.filled.Draw
 import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.AttachFile
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.Check
@@ -89,6 +91,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material3.AlertDialog
+import androidx.compose.runtime.produceState
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DatePicker
@@ -439,6 +442,27 @@ private fun EditorScreen(
         val path = result.data?.getStringExtra(DrawingActivity.RESULT_FILE) ?: return@rememberLauncherForActivityResult
         val file = File(path)
         handleImageUri(Uri.fromFile(file), cleanupFile = file, withOcr = false, name = file.name, replaces = replaced)
+    }
+    // Attach file: any file, several at once, like the website and the plugin. A file over the plan's maximum is refused at once.
+    var attachProblems by remember { mutableStateOf<List<String>>(emptyList()) }
+    val pickFilesLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        scope.launch {
+            val spaceId = Storage.spaceIdOf(initialUri)
+            val outcome = withContext(Dispatchers.IO) { Attachments.copy(context, uris, spaceId) }
+            if (outcome.names.isNotEmpty()) {
+                val hadCompleteIndex = attachmentIndexLoaded
+                val refreshed = withContext(Dispatchers.IO) {
+                    if (hadCompleteIndex) outcome.names.mapNotNull { name -> Storage.findAttachmentUri(context, name, spaceId)?.let { name to it } }.toMap()
+                    else Storage.listAttachmentUris(context, spaceId)
+                }
+                attachmentUris = if (hadCompleteIndex) attachmentUris + refreshed else refreshed
+                attachmentIndexLoaded = true
+                for (name in outcome.names) insertImageEmbed(name)
+                Attachments.toastAttached(context, outcome.names)
+            }
+            attachProblems = outcome.problems
+        }
     }
     val pickImageLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.PickVisualMedia()
@@ -913,6 +937,16 @@ private fun EditorScreen(
                                     },
                                 )
                                 DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.action_attach_file)) },
+                                    leadingIcon = { Icon(Icons.Filled.AttachFile, contentDescription = null) },
+                                    onClick = {
+                                        photoMenuExpanded = false
+                                        runCatching { pickFilesLauncher.launch(arrayOf("*/*")) }.onFailure {
+                                            Toast.makeText(context, context.getString(R.string.toast_error, it.message ?: ""), Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                )
+                                DropdownMenuItem(
                                     text = { Text(stringResource(R.string.action_insert_drawing)) },
                                     leadingIcon = { Icon(Icons.Filled.Draw, contentDescription = null) },
                                     onClick = {
@@ -1259,12 +1293,18 @@ private fun EditorScreen(
                         editingDrawing = Uri.decode(uri.lastPathSegment.orEmpty()).substringAfterLast('/')
                         editDrawingLauncher.launch(Intent(context, DrawingActivity::class.java).putExtra(DrawingActivity.EXTRA_SOURCE, uri.toString()))
                     },
+                    // Only the link goes: the file stays in the attachments folder (Android has no trash for files).
+                    onRemoveEmbed = { name -> embedLines.removeAll { extractEmbedBasename(it) == name } },
                     foreground = fg,
                 )
             }
             }
         }
     }
+    }
+
+    if (attachProblems.isNotEmpty()) {
+        AttachProblemsDialog(attachProblems) { attachProblems = emptyList() }
     }
 
     if (labelsSheetOpen) {
@@ -1469,6 +1509,7 @@ private fun EditorBody(
     onLimitChange: (Int?) -> Unit,
     onClear: () -> Unit,
     onEditDrawing: (Uri) -> Unit,
+    onRemoveEmbed: (String) -> Unit,
     foreground: Color,
 ) {
     val context = LocalContext.current
@@ -1541,8 +1582,11 @@ private fun EditorBody(
                         if (isAudioBasename(name)) {
                             AudioPlayerCard(uri = uri, foreground = foreground)
                         } else if (isDocumentBasename(name)) {
-                            // A PDF or document: a chip that opens it, like the web app (Eric, 3 Nov).
-                            DocumentChip(name, foreground) { openAttachment(context, uri, name) }
+                            // A PDF or document: a chip with its size that opens it, like the web app (Eric, 3 Nov), and a cross.
+                            val size by produceState(Storage.attachmentSize(uri), uri) {
+                                if (this.value < 0) this.value = withContext(Dispatchers.IO) { Storage.fileSize(context, uri) }
+                            }
+                            DocumentChip(name, foreground, size = size, onRemove = { onRemoveEmbed(name) }, modifier = Modifier.widthIn(max = 280.dp)) { openAttachment(context, uri, name) }
                         } else {
                             AsyncImage(
                                 model = uri,
