@@ -674,6 +674,8 @@ object Storage {
                 audioUri = firstAudio?.let { attachments[it] },
                 documents = findEmbeddedDocumentBasenames(parsed.body).mapNotNull { name -> attachments[name]?.let { NoteDocument(name, it, attachmentSize(it)) } },
                 size = child.size,
+                // All embeds, not only the first photo: a drawing first must not hide a photo further down.
+                aiKinds = collectEmbedBasenames(parsed.body) { attachments.containsKey(it) }.mapNotNullTo(HashSet()) { AiParts.fileKind(it)?.first },
             )
         }
         NotePreviewCache.save(context)
@@ -2097,6 +2099,8 @@ data class NoteSummary(
     val space: NoteSpace? = null,
     /** The file's size when it was listed, or -1: with lastModified it says whether the preview cache still holds it. */
     val size: Long = -1L,
+    /** The kinds of file (image, pdf, audio) the note embeds that can go to Ask JotDrop, drawings left out: its card's file actions. */
+    val aiKinds: Set<String> = emptySet(),
 )
 
 /** A file in a note that is not a photo or recording. */

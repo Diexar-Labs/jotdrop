@@ -96,6 +96,8 @@ import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.ImageSearch
+import androidx.compose.material.icons.filled.Receipt
 import androidx.compose.material.icons.filled.Summarize
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DeleteForever
@@ -1246,6 +1248,9 @@ private fun NotesListScreen(
             CardAction.GROUP -> context.startActivity(Intent(context, CloudActivity::class.java))
             CardAction.ASK -> context.startActivity(AskActivity.intent(context, note.uri))
             CardAction.SUMMARIZE -> context.startActivity(AskActivity.intent(context, note.uri, summarize = true, shared = note.space != null))
+            CardAction.TRANSCRIBE -> context.startActivity(AskActivity.intent(context, note.uri, action = "transcribe"))
+            CardAction.READ_PHOTO -> context.startActivity(AskActivity.intent(context, note.uri, action = "photo"))
+            CardAction.RECEIPT -> context.startActivity(AskActivity.intent(context, note.uri, action = "receipt"))
             CardAction.MOVE_TO_MINE -> scope.launch {
                 val result = withContext(Dispatchers.IO) {
                     Storage.noteWriteMutex.withLock { Storage.moveNoteOutOfSpace(context, note.uri, note.space!!.id, keepSource = note.space.frozen || note.space.gone) }
@@ -3080,7 +3085,7 @@ private fun NoteCard(
                         }
                         // Each card has its own menu, like the card buttons in Obsidian; selecting uses the top bar.
                         if (cardActions.isNotEmpty() && !selectionMode) {
-                            CardMenu(if (note.space != null) SHARED_CARD_ACTIONS else cardActions, foreground = fg, onAction = onCardAction)
+                            CardMenu(if (note.space != null) SHARED_CARD_ACTIONS else withFileActions(cardActions, note), foreground = fg, onAction = onCardAction)
                         }
                     }
                 }
@@ -3138,9 +3143,24 @@ internal fun conflictOriginalName(filename: String): String =
     filename.replace(Regex("\\.cloud-conflict-r\\d+(?:-[0-9a-fA-F-]+)?(?=\\.[^.]*$|$)"), "")
 
 /** What a card's own menu can do, depending on the folder it is shown in. */
-internal enum class CardAction { COLOR, LABELS, EXPIRES, ATTACH, ARCHIVE, RESTORE, MOVE, COPY, DELETE, SHARE, LINK, GROUP, MOVE_TO_MINE, ASK, SUMMARIZE }
+internal enum class CardAction { COLOR, LABELS, EXPIRES, ATTACH, ARCHIVE, RESTORE, MOVE, COPY, DELETE, SHARE, LINK, GROUP, MOVE_TO_MINE, ASK, SUMMARIZE, TRANSCRIBE, READ_PHOTO, RECEIPT }
 /** Pin, labels and archive are per person, so a shared note's card offers what goes for everyone. */
 internal val SHARED_CARD_ACTIONS = listOf(CardAction.COLOR, CardAction.ATTACH, CardAction.GROUP, CardAction.MOVE_TO_MINE, CardAction.DELETE)
+
+/**
+ * Ask JotDrop's file actions after "Summarize with AI", only where the AI actions are (Notes and Archive) and only for
+ * a file the card has: a recording, a photo that is not a drawing, and for a receipt a photo or a PDF.
+ */
+internal fun withFileActions(actions: List<CardAction>, note: NoteSummary): List<CardAction> {
+    val at = actions.indexOf(CardAction.SUMMARIZE)
+    if (at < 0 || note.aiKinds.isEmpty()) return actions
+    val files = listOfNotNull(
+        CardAction.TRANSCRIBE.takeIf { "audio" in note.aiKinds },
+        CardAction.READ_PHOTO.takeIf { "image" in note.aiKinds },
+        CardAction.RECEIPT.takeIf { "image" in note.aiKinds || "pdf" in note.aiKinds },
+    )
+    return actions.take(at + 1) + files + actions.drop(at + 1)
+}
 
 internal fun cardActionsFor(folder: NoteFolder): List<CardAction> = when (folder) {
     NoteFolder.NOTES -> listOf(CardAction.COLOR, CardAction.LABELS, CardAction.EXPIRES, CardAction.ATTACH, CardAction.ARCHIVE, CardAction.SHARE, CardAction.MOVE, CardAction.COPY, CardAction.ASK, CardAction.SUMMARIZE, CardAction.DELETE)
@@ -3178,6 +3198,9 @@ private fun CardMenu(actions: List<CardAction>, foreground: Color, onAction: (Ca
                     CardAction.MOVE_TO_MINE -> Icons.Filled.DriveFileMove to R.string.action_move_to_mine
                     CardAction.ASK -> Icons.Filled.AutoAwesome to R.string.ai_card_ask
                     CardAction.SUMMARIZE -> Icons.Filled.Summarize to R.string.ai_card_summarize
+                    CardAction.TRANSCRIBE -> Icons.Filled.Mic to R.string.ai_card_transcribe
+                    CardAction.READ_PHOTO -> Icons.Filled.ImageSearch to R.string.ai_card_photo
+                    CardAction.RECEIPT -> Icons.Filled.Receipt to R.string.ai_card_receipt
                     CardAction.DELETE -> if (inTrash) Icons.Filled.DeleteForever to R.string.action_delete_forever
                         else Icons.Filled.Delete to R.string.action_delete
                 }

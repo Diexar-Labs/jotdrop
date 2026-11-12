@@ -131,24 +131,27 @@ internal fun ExpiresDialog(initial: String?, onSave: (String?, String?) -> Unit,
             }
         },
     )
-    if (picking) {
-        val state = rememberDatePickerState(
-            initialSelectedDateMillis = LocalDate.parse(day).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli(),
-        )
-        DatePickerDialog(
-            onDismissRequest = { picking = false },
-            confirmButton = {
-                TextButton(onClick = {
-                    state.selectedDateMillis?.let { millis ->
-                        day = java.time.Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalDate().toString()
-                    }
-                    picking = false
-                }) { Text(stringResource(android.R.string.ok)) }
-            },
-            dismissButton = { TextButton(onClick = { picking = false }) { Text(stringResource(android.R.string.cancel)) } },
-        ) {
-            DatePicker(state = state)
-        }
+    if (picking) DayPicker(day, onPick = { day = it }, onDismiss = { picking = false })
+}
+
+/** A calendar to pick one day ("YYYY-MM-DD"); day is where it opens, today when it is null. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun DayPicker(day: String?, onPick: (String) -> Unit, onDismiss: () -> Unit) {
+    val state = rememberDatePickerState(
+        initialSelectedDateMillis = (day?.let(LocalDate::parse) ?: LocalDate.now()).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli(),
+    )
+    DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = {
+                state.selectedDateMillis?.let { millis -> onPick(java.time.Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalDate().toString()) }
+                onDismiss()
+            }) { Text(stringResource(android.R.string.ok)) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(android.R.string.cancel)) } },
+    ) {
+        DatePicker(state = state)
     }
 }
 
@@ -215,16 +218,52 @@ internal fun PaperDrawerTip(onClose: () -> Unit) {
     }
 }
 
-/** After a scan: which small drawer, and keep the expiry date found on the paper with a warning a week before. */
+/** Which drawer a paper goes in: the Paper drawer, one of its small drawers, or a new one typed in. */
+internal class DrawerChoice(initial: String) {
+    var drawer by mutableStateOf(initial)
+    var adding by mutableStateOf(false)
+    var newName by mutableStateOf("")
+    /** The label: "Paper drawer" or "Paper drawer/Work". */
+    fun chosen(): String = if (adding && newName.isNotBlank()) PaperDrawer.drawerLabel(newName) else drawer
+}
+
+/** The drawers as chips; the chosen one has a check mark, never only a colour. drawers: small-drawer labels. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
+internal fun DrawerChips(choice: DrawerChoice, drawers: List<String>) {
+    val check: @Composable () -> Unit = { Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        val base = !choice.adding && choice.drawer == PaperDrawer.LABEL
+        FilterChip(selected = base, onClick = { choice.adding = false; choice.drawer = PaperDrawer.LABEL }, label = { Text(PaperDrawer.LABEL) }, leadingIcon = if (base) check else null)
+        for (label in drawers) {
+            val chosen = !choice.adding && choice.drawer == label
+            FilterChip(selected = chosen, onClick = { choice.adding = false; choice.drawer = label }, label = { Text(PaperDrawer.drawerName(label)) }, leadingIcon = if (chosen) check else null)
+        }
+        FilterChip(
+            selected = choice.adding,
+            onClick = { choice.adding = true },
+            label = { Text(stringResource(R.string.scan_save_new_drawer)) },
+            leadingIcon = { Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp)) },
+        )
+    }
+    if (choice.adding) {
+        OutlinedTextField(
+            value = choice.newName,
+            onValueChange = { choice.newName = it.replace("/", "").take(40) },
+            label = { Text(stringResource(R.string.scan_save_drawer_name)) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+/** After a scan: which small drawer, and keep the expiry date found on the paper with a warning a week before. */
+@Composable
 internal fun ScanSaveDialog(expiresFound: String?, drawers: List<String>, onSave: (String, String?, String?) -> Unit) {
-    var drawer by remember { mutableStateOf(PaperDrawer.LABEL) }
-    var adding by remember { mutableStateOf(false) }
-    var newName by remember { mutableStateOf("") }
+    val choice = remember { DrawerChoice(PaperDrawer.LABEL) }
     var keepExpiry by remember { mutableStateOf(expiresFound != null) }
     val save = {
-        val chosen = if (adding && newName.isNotBlank()) PaperDrawer.drawerLabel(newName) else drawer
+        val chosen = choice.chosen()
         val expires = expiresFound?.takeIf { keepExpiry }
         // A date that is less than a week away or past is kept for the badge, without a reminder that would go off at once.
         val lead = expires?.takeIf { !LocalDate.parse(it).minusDays(7).isBefore(LocalDate.now()) }?.let { PaperDrawer.DEFAULT_WARN }
@@ -236,31 +275,7 @@ internal fun ScanSaveDialog(expiresFound: String?, drawers: List<String>, onSave
         title = { Text(stringResource(R.string.scan_save_title)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                // The chosen drawer has a check mark, never only a colour.
-                val check: @Composable () -> Unit = { Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    val base = !adding && drawer == PaperDrawer.LABEL
-                    FilterChip(selected = base, onClick = { adding = false; drawer = PaperDrawer.LABEL }, label = { Text(PaperDrawer.LABEL) }, leadingIcon = if (base) check else null)
-                    for (label in drawers) {
-                        val chosen = !adding && drawer == label
-                        FilterChip(selected = chosen, onClick = { adding = false; drawer = label }, label = { Text(PaperDrawer.drawerName(label)) }, leadingIcon = if (chosen) check else null)
-                    }
-                    FilterChip(
-                        selected = adding,
-                        onClick = { adding = true },
-                        label = { Text(stringResource(R.string.scan_save_new_drawer)) },
-                        leadingIcon = { Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                    )
-                }
-                if (adding) {
-                    OutlinedTextField(
-                        value = newName,
-                        onValueChange = { newName = it.replace("/", "").take(40) },
-                        label = { Text(stringResource(R.string.scan_save_drawer_name)) },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
+                DrawerChips(choice, drawers)
                 if (expiresFound != null) {
                     val date = LocalDate.parse(expiresFound).format(DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM))
                     Row(
