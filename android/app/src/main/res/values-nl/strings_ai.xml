@@ -160,4 +160,5 @@
         <item quantity="one">%d jaar</item>
         <item quantity="other">%d jaar</item>
     </plurals>
+    <string name="ai_no_answer">De AI gaf geen antwoord in woorden.</string>
 </resources>

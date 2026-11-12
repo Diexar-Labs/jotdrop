@@ -160,4 +160,5 @@
         <item quantity="one">%d year</item>
         <item quantity="other">%d years</item>
     </plurals>
+    <string name="ai_no_answer">The AI gave no answer in words.</string>
 </resources>

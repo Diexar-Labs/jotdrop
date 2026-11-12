@@ -547,6 +547,8 @@ private fun AiResult(
             "max_rounds" -> Text(stringResource(R.string.ai_problem, stringResource(R.string.ai_stop_max_rounds)), color = MaterialTheme.colorScheme.error)
             "refusal" -> Text(stringResource(R.string.ai_stop_refusal))
         }
+        // An answer without words (a silent recording, a blank page) says so, as the web app does.
+        if (report.stop == "done" && report.answer.isBlank()) Text(stringResource(R.string.ai_no_answer))
         // A receipt the app could read shows as the receipt screen, not as the AI's raw answer.
         if (report.answer.isNotBlank() && !hideAnswer) Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
