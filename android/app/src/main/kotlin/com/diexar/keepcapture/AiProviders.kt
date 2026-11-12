@@ -396,6 +396,17 @@ object AiProviders {
         return AiRequest("${target.base}$path", "GET", headersFor(target, false), null)
     }
 
+    /**
+     * The request that checks the key on its own, or null when the model list already does. OpenRouter lists its models
+     * to anyone, a wrong key included, so there "Test and load models" said "Connected" for nothing (12 Nov 2026):
+     * GET /key answers 401 to a wrong key. The same as keyRequest in cloud/shared/ai/providers.mjs.
+     */
+    fun keyRequest(config: AiConfig): AiRequest? {
+        val target = resolve(config, needModel = false)
+        if (target.spec.id != "openrouter") return null
+        return AiRequest("${target.base}/key", "GET", headersFor(target, false), null)
+    }
+
     private val REFUSED = setOf("SAFETY", "PROHIBITED_CONTENT", "BLOCKLIST", "SPII", "RECITATION", "IMAGE_SAFETY")
 
     /** One round's answer in JotDrop's form. */
@@ -553,6 +564,9 @@ object AiProviders {
     private val NAMES_INPUT = Regex("(?i)support|image|audio|file|pdf|vision|modalit|input")
 
     /** The provider's models, for Settings. */
-    suspend fun listModels(config: AiConfig, fetcher: AiFetcher, timeoutMs: Long = 20000): List<AiModel> =
-        parseModels(config.provider, send(fetcher, modelsRequest(config), timeoutMs, listOf(config.key.trim())))
+    suspend fun listModels(config: AiConfig, fetcher: AiFetcher, timeoutMs: Long = 20000): List<AiModel> {
+        // A wrong key is an AiError("auth") here, before the (public) model list is asked.
+        keyRequest(config)?.let { send(fetcher, it, timeoutMs, listOf(config.key.trim())) }
+        return parseModels(config.provider, send(fetcher, modelsRequest(config), timeoutMs, listOf(config.key.trim())))
+    }
 }

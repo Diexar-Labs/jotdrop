@@ -223,6 +223,17 @@ private fun fake(answer: suspend () -> AiAnswer): () -> AiProvider = { object : 
 /** Version 2: files to the AI service, writing out recordings, receipts (ai-vectors-v2.json), plus edits from ai-web.mjs. */
 @Suppress("UNCHECKED_CAST")
 private suspend fun version2(vectors: Map<String, Any?>, edits: Map<String, Any?>, tools: List<AiTool>, promptJson: String) {
+    // 12 Nov 2026: the OpenRouter model list is public, so the key is checked at /key (cloud/shared/ai/providers.mjs keyRequest).
+    for (case in vectors.items("keyRequests").map { it.obj()!! }) {
+        val name = case.str("name")!!
+        val request = AiProviders.keyRequest(config(case.child("config")))
+        val expect = case.child("expect")
+        if (expect == null) { same(request == null, true, "$name: no key request"); continue }
+        same(request?.url, expect["url"], "$name: key url")
+        same(request?.method, "GET", "$name: key method")
+        same(request?.headers, expect["headers"], "$name: key headers")
+    }
+
     for (case in vectors.items("partRequests").map { it.obj()!! }) {
         val name = case.str("name")!!
         val input = case.child("input")!!

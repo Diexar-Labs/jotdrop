@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { AiError, TRANSCRIBE_MODEL, buildRequest, createProvider, parseTranscription, transcribeRequest } from './providers.mjs';
+import { AiError, TRANSCRIBE_MODEL, buildRequest, createProvider, keyRequest, parseTranscription, transcribeRequest } from './providers.mjs';
 
 // A part with "size" gets that many zero bytes as base64 (the same as in parts.test.mjs).
 const fakeData = (size) => 'A'.repeat(4 * Math.floor(size / 3)) + ['', 'AA==', 'AAA='][size % 3];
@@ -127,4 +127,43 @@ test('a message with files goes out as JSON text; a version 1 message is unchang
   const empty = buildRequest(config, { system: 'S', messages: [{ role: 'user', text: 'Hi', parts: [] }] });
   assert.equal(empty.body, plain.body);
   assert.equal(typeof buildRequest(config, { system: 'S', messages: [{ role: 'user', text: 'Hi', parts: [{ kind: 'image', mime: 'image/jpeg', name: 'a.jpg', data: '/9j/4AAQ' }] }] }).body, 'string');
+});
+
+// 12 Nov 2026: "Test and load models" said "Connected" on OpenRouter with a wrong key, because its model list is public.
+// Only the key's own address (GET /key) says no with a wrong key, so OpenRouter is asked there first.
+for (const vector of vectors.keyRequests) {
+  test(`key check: ${vector.name}`, () => {
+    const request = keyRequest(vector.config);
+    if (vector.expect === null) { assert.equal(request, null); return; }
+    assert.equal(request.url, vector.expect.url);
+    assert.equal(request.method, 'GET');
+    assert.deepEqual(request.headers, vector.expect.headers);
+  });
+}
+
+test('OpenRouter listModels checks the key first: a wrong key is an auth error and the list is never asked', async () => {
+  const calls = [];
+  const fetcher = async (url) => { calls.push(url); return url.endsWith('/key') ? reply(401, { error: { message: 'User not found.', code: 401 } }) : reply(200, { data: [{ id: 'a/b', name: 'B' }] }); };
+  const provider = createProvider({ provider: 'openrouter', key: 'sk-or-v1-wrong-0009', model: 'any' }, fetcher);
+  const error = await provider.listModels().catch((e) => e);
+  assert.ok(error instanceof AiError);
+  assert.equal(error.code, 'auth');
+  assert.ok(!`${error.message} ${error.detail}`.includes('sk-or-v1-wrong-0009'));
+  assert.deepEqual(calls, ['https://openrouter.ai/api/v1/key']);
+});
+
+test('OpenRouter listModels with a good key asks /key, then the list', async () => {
+  const calls = [];
+  const fetcher = async (url) => { calls.push(url); return url.endsWith('/key') ? reply(200, { data: { label: 'sk-or-v1-abc...xyz', limit: 5 } }) : reply(200, { data: [{ id: 'a/b', name: 'B' }] }); };
+  const provider = createProvider({ provider: 'openrouter', key: 'sk-or-v1-good-0010', model: 'any' }, fetcher);
+  const models = await provider.listModels();
+  assert.deepEqual(models.map((m) => m.id), ['a/b']);
+  assert.deepEqual(calls, ['https://openrouter.ai/api/v1/key', 'https://openrouter.ai/api/v1/models']);
+});
+
+test('the other services ask for their model list only, as before', async () => {
+  const calls = [];
+  const fetcher = async (url) => { calls.push(url); return reply(200, { data: [] }); };
+  await createProvider({ provider: 'openai', key: 'sk-proj-test-key-0002', model: 'any' }, fetcher).listModels();
+  assert.deepEqual(calls, ['https://api.openai.com/v1/models']);
 });

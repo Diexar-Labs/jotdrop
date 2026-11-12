@@ -97,6 +97,10 @@ def check_ai(browser, url, token):
             route.fulfill(status=204, headers=cors)
             return
         openrouter_calls.append(route.request.headers)
+        # Like the real one: the model list is public, only /key says no to a wrong key (12 Nov 2026).
+        if route.request.url.endswith("/key") and "wrong" in route.request.headers.get("authorization", ""):
+            route.fulfill(status=401, headers={**cors, "Content-Type": "application/json"}, body=json.dumps({"error": {"message": "User not found.", "code": 401}}))
+            return
         models = [
             {"id": "mistralai/mistral-nemo", "name": "Mistral Nemo", "supported_parameters": ["tools"], "pricing": {"prompt": "0.00000002", "completion": "0.00000004"}},
             {"id": "anthropic/claude-haiku-5.5", "name": "Claude Haiku 5.5", "supported_parameters": ["tools", "temperature"], "pricing": {"prompt": "0.0000001", "completion": "0.0000005"}},
@@ -175,6 +179,11 @@ def check_ai(browser, url, token):
         assert "message" in page.locator("#ai-message").get_attribute("class")
         # OpenRouter: every model shows in the list, not only the family of the one filled in (Eric, 9 Nov).
         page.locator("#ai-provider").select_option("openrouter")
+        # A wrong key is refused at once, not "Connected": OpenRouter's model list is public, so the key is checked at /key.
+        page.locator("#ai-key").fill("sk-or-wrong-0123456789abcdef")
+        page.locator("#ai-test").click()
+        page.locator("#ai-message").filter(has_text="Problem: ").wait_for()
+        assert "Connected" not in page.locator("#ai-message").inner_text()
         page.locator("#ai-key").fill("sk-or-test-0123456789abcdef")
         page.locator("#ai-test").click()
         page.locator("#ai-message").filter(has_text="Connected: 3 models").wait_for()
