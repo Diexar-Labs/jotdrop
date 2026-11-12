@@ -115,7 +115,9 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.LocalMinimumInteractiveComponentEnforcement
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -878,6 +880,10 @@ private fun EditorScreen(
     Scaffold(
         containerColor = Color.Transparent,
         topBar = {
+            // Seven 48 dp buttons do not fit a 360 dp phone: there the bar keeps the buttons at their own 40 dp.
+            CompositionLocalProvider(
+                LocalMinimumInteractiveComponentEnforcement provides (LocalConfiguration.current.screenWidthDp >= 400),
+            ) {
             TopAppBar(
                 title = { /* geen titel — geeft ruimte aan acties op smalle schermen */ },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -912,6 +918,14 @@ private fun EditorScreen(
                         IconButton(onClick = { launchSpeech() }) {
                             Icon(Icons.Filled.Mic, contentDescription = stringResource(R.string.action_speech))
                         }
+                        // Attach file has its own button next to the photo button: nobody looks for a file in the photo menu.
+                        IconButton(onClick = {
+                            runCatching { pickFilesLauncher.launch(arrayOf("*/*")) }.onFailure {
+                                Toast.makeText(context, context.getString(R.string.toast_error, it.message ?: ""), Toast.LENGTH_SHORT).show()
+                            }
+                        }) {
+                            Icon(Icons.Filled.AttachFile, contentDescription = stringResource(R.string.action_attach_file))
+                        }
                         Box {
                             IconButton(onClick = { photoMenuExpanded = true }) {
                                 Icon(Icons.Filled.AddAPhoto, contentDescription = stringResource(R.string.action_insert_photo))
@@ -934,16 +948,6 @@ private fun EditorScreen(
                                     onClick = {
                                         photoMenuExpanded = false
                                         launchPicker(withOcr = false)
-                                    },
-                                )
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.action_attach_file)) },
-                                    leadingIcon = { Icon(Icons.Filled.AttachFile, contentDescription = null) },
-                                    onClick = {
-                                        photoMenuExpanded = false
-                                        runCatching { pickFilesLauncher.launch(arrayOf("*/*")) }.onFailure {
-                                            Toast.makeText(context, context.getString(R.string.toast_error, it.message ?: ""), Toast.LENGTH_SHORT).show()
-                                        }
                                     },
                                 )
                                 DropdownMenuItem(
@@ -1112,6 +1116,7 @@ private fun EditorScreen(
                     }
                 },
             )
+            }
         },
     ) { padding ->
         Column(
