@@ -385,10 +385,30 @@
       <div class="ai-ask-row"><button id="ai-send" class="primary" type="submit">Send</button><button id="ai-dictate" type="button" aria-pressed="false" hidden>Dictate</button><button id="ai-stop" type="button" hidden>Stop</button></div>
       <p id="ai-via" class="ai-note"></p>
       <details id="ai-goes" class="ai-goes"><summary id="ai-goes-summary">What goes along</summary>
-        <p class="ai-note">These notes go along with your question. Clear a box to keep a note out of this conversation. While it answers, the AI can also search your other notes; what it reads is listed afterwards.</p>
+        <p class="ai-note">These notes go along with your question. Clear a box to keep a note out of this conversation. While it answers, the AI can also search your other notes; what it reads is listed afterwards. A file of the note goes only when you tick it.</p>
         <ul id="ai-goes-list" class="ai-goes-list"></ul>
+        <p id="ai-goes-files" class="ai-note" hidden>The ticked file goes to the AI service as it is; a photo is made smaller first. A photo or recording can hold other people's details, so only send what you may share.</p>
       </details>
     </form>
+    <section id="ai-receipt" class="ai-confirm ai-receipt" hidden aria-labelledby="ai-receipt-title">
+      <h3 id="ai-receipt-title">Receipt to Paper drawer</h3>
+      <p class="ai-note">The AI read this from the receipt. Check it and change what is wrong. Nothing is saved until you select Apply.</p>
+      <label for="ai-receipt-name">Title</label>
+      <input id="ai-receipt-name" maxlength="120" autocomplete="off">
+      <label for="ai-receipt-drawer">Drawer</label>
+      <select id="ai-receipt-drawer"></select>
+      <label for="ai-receipt-bought">Day of purchase</label>
+      <input id="ai-receipt-bought" type="date">
+      <fieldset class="ai-receipt-keep"><legend>Keep it for</legend>
+        <div id="ai-receipt-years" class="ai-form-actions"></div>
+        <p id="ai-receipt-years-note" class="ai-note" hidden>Fill in the day of purchase to use these.</p>
+      </fieldset>
+      <label for="ai-receipt-until">Keep until</label>
+      <input id="ai-receipt-until" type="date">
+      <label for="ai-receipt-lines">Added below the note</label>
+      <textarea id="ai-receipt-lines" rows="3" maxlength="400"></textarea>
+      <div class="ai-form-actions"><button id="ai-receipt-apply" class="primary" type="button">Apply</button><button id="ai-receipt-skip" type="button">Do not change</button></div>
+    </section>
     <section id="ai-confirm" class="ai-confirm" hidden aria-labelledby="ai-confirm-title">
       <h3 id="ai-confirm-title"></h3>
       <p class="ai-note">The AI asks to change a note you already have. Nothing changes unless you say yes.</p>

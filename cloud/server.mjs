@@ -1724,7 +1724,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   // providers' fixed addresses and Ollama on the user's own computer. Never `https:` in general, and no free address.
   const aiConnect = 'https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com https://openrouter.ai http://127.0.0.1:11434 http://localhost:11434';
   assets.set('/ai-web.mjs', [join(webRoot, 'ai-web.mjs'), 'text/javascript']);
-  for (const name of ['assistant.mjs', 'providers.mjs', 'tools.mjs', 'prompt.mjs', 'context.mjs', 'redact.mjs', 'markdown.mjs']) assets.set(`/shared/ai/${name}`, [join(directory, 'shared', 'ai', name), 'text/javascript']);
+  for (const name of ['assistant.mjs', 'providers.mjs', 'tools.mjs', 'prompt.mjs', 'context.mjs', 'redact.mjs', 'markdown.mjs', 'parts.mjs', 'receipt.mjs']) assets.set(`/shared/ai/${name}`, [join(directory, 'shared', 'ai', name), 'text/javascript']);
   // Turnstile's widget is the one script and frame from elsewhere, and only when the person check is on.
   const challenges = turnstile ? ' https://challenges.cloudflare.com' : '';
   let server, activeRequests = 0;

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { aiNotes, appendedText, modelGroups, aiSettings, describeChange, editorRequest, expiryChanges, labelChanges, newNoteText, reminderChanges, replacedText, WEB_PROVIDERS } from './ai-web.mjs';
+import { aiFileKind, aiNotes, appendedText, modelGroups, aiSettings, describeChange, editorRequest, expiryChanges, fileRequest, labelChanges, newNoteText, plainBase64, receiptApplied, receiptLines, reminderChanges, replacedText, WEB_PROVIDERS } from './ai-web.mjs';
 import { noteSummary, updateMetadata } from './note.mjs';
 
 const note = (path, text, extra = {}) => ({ id: `id-${path}`, path, text, modifiedAt: '2026-11-09T10:00:00Z', ...extra });
@@ -136,4 +136,57 @@ test('a long model list comes in groups: suggested first, then per company, mode
   const own = modelGroups('anthropic', [{ id: 'claude-sonnet-5-5', name: 'Claude Sonnet 5.5', tools: true }, { id: 'claude-haiku-5-5', name: 'Claude Haiku 5.5', tools: true }], 'claude-haiku-5-5');
   assert.deepEqual(own.map((group) => [group.label, group.models.map((model) => model.id)]), [['Suggested', ['claude-haiku-5-5']], ['All models', ['claude-haiku-5-5', 'claude-sonnet-5-5']]]);
   assert.deepEqual(modelGroups('ollama', []), []);
+});
+
+test('version 2: photos, PDFs and recordings a note links to can go along; other files cannot', () => {
+  assert.deepEqual(aiFileKind('attachments/IMG_0042.JPG'), { kind: 'image', mime: 'image/jpeg' });
+  assert.deepEqual(aiFileKind('attachments/scan.png'), { kind: 'image', mime: 'image/png' });
+  assert.deepEqual(aiFileKind('attachments/Pasted.webp'), { kind: 'image', mime: 'image/webp' });
+  assert.deepEqual(aiFileKind('attachments/offer.PDF'), { kind: 'pdf', mime: 'application/pdf' });
+  assert.deepEqual(aiFileKind('attachments/voice-1.webm'), { kind: 'audio', mime: 'audio/webm' });
+  assert.deepEqual(aiFileKind('attachments/voice-2.ogg'), { kind: 'audio', mime: 'audio/ogg' });
+  assert.deepEqual(aiFileKind('attachments/diexar-20261111.m4a'), { kind: 'audio', mime: 'audio/mp4' });
+  assert.deepEqual(aiFileKind('attachments/song.mp3'), { kind: 'audio', mime: 'audio/mpeg' });
+  // Handwriting from drawings waits (decision 4); a document, an SVG and odd sound formats stay home.
+  for (const path of ['attachments/drawing-20261111-101500.png', 'attachments/budget.xlsx', 'attachments/logo.svg', 'attachments/memo.amr', 'attachments/x.flac', 'notes/a.md']) assert.equal(aiFileKind(path), null, path);
+});
+
+test('a file kept as base64url goes to the AI service as plain base64', () => {
+  assert.equal(plainBase64('-_8'), '+/8=');
+  assert.equal(plainBase64('AAEC'), 'AAEC');
+  assert.equal(plainBase64('AA'), 'AA==');
+  assert.equal(Buffer.from(plainBase64(Buffer.from([251, 255, 0, 1, 2]).toString('base64url')), 'base64').toString('hex'), 'fbff000102');
+});
+
+test('the fixed requests for a photo and a recording ask for the text only', () => {
+  assert.match(fileRequest('photo'), /handwriting/);
+  assert.match(fileRequest('photo'), /only the text/i);
+  assert.match(fileRequest('transcribe'), /recording/i);
+  assert.throws(() => fileRequest('delete'));
+});
+
+test('a receipt becomes lines under the note, only for what is on it', () => {
+  assert.equal(receiptLines({ shop: 'MediaMarkt', amount: '499.00', currency: 'EUR', bought: '2026-11-03' }), 'Shop: MediaMarkt\nAmount: 499.00 EUR\nBought: 2026-11-03');
+  assert.equal(receiptLines({ amount: '12,50' }), 'Amount: 12,50');
+  assert.equal(receiptLines({}), '');
+});
+
+test('applying a receipt sets title, lines and expiry in one change; the note keeps its photo and labels', () => {
+  const before = '---\njotdrop_labels: ["Home"]\n---\n# Untitled\n\n![[IMG_0042.jpg]]\n';
+  const after = receiptApplied(before, { title: 'Washing machine', lines: 'Shop: MediaMarkt\nBought: 2026-11-03', expires: '2028-11-03', drawer: '' });
+  const parts = noteSummary(after, 'notes/x.md');
+  assert.equal(parts.title, 'Washing machine');
+  assert.equal(parts.expires, '2028-11-03');
+  assert.deepEqual(parts.labels, ['Home', 'Paper drawer']);
+  assert.ok(after.endsWith('![[IMG_0042.jpg]]\n\nShop: MediaMarkt\nBought: 2026-11-03\n'), after);
+  // Without a reminder of its own the note gets the usual warning before the date.
+  assert.ok(parts.reminder);
+  // A small drawer, a note without a title, and no lines.
+  const plain = receiptApplied('![[r.pdf]]\n', { title: 'Bike', lines: '', expires: '2027-01-31', drawer: 'Work' });
+  assert.equal(noteSummary(plain, 'notes/x.md').title, 'Bike');
+  assert.deepEqual(noteSummary(plain, 'notes/x.md').labels, ['Paper drawer/Work']);
+  assert.ok(plain.endsWith('# Bike\n\n![[r.pdf]]\n'), plain);
+  // An empty title leaves the title as it is; a bad date changes nothing.
+  assert.equal(noteSummary(receiptApplied(before, { title: ' ', lines: '', expires: '2028-11-03' }), 'notes/x.md').title, 'Untitled');
+  assert.throws(() => receiptApplied(before, { title: 'X', lines: '', expires: '2028-02-30' }));
 });
