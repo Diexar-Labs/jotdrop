@@ -478,6 +478,9 @@ html { scrollbar-color: color-mix(in srgb, var(--ink) 35%, transparent) transpar
 .ai-goes-list .check-label { margin: .4rem 0; }
 .ai-confirm { border: 1.5px solid var(--edge); border-radius: 10px; padding: .8rem 1rem; margin: 1rem 0; background: var(--field); }
 .ai-confirm h3 { margin: 0 0 .3rem; }
+.ai-receipt-keep { border: 1px solid var(--line); border-radius: 8px; margin: 1rem 0 0; padding: .3rem .8rem; }
+.ai-receipt-keep legend { font-weight: 600; padding: 0 .3rem; }
+.ai-receipt textarea { width: 100%; box-sizing: border-box; }
 .ai-facts { display: grid; grid-template-columns: max-content 1fr; gap: .3rem 1rem; margin: .5rem 0; }
 .ai-facts dt { font-weight: 600; }
 .ai-facts dd { margin: 0; overflow-wrap: anywhere; }

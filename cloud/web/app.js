@@ -12,11 +12,13 @@ import { noteSummary, updateMetadata, toggleTask, attachmentPath, plainPreviewTe
 import { drawingFileName, isDrawingName, read as readDrawing } from '/shared/drawing.mjs';
 import { addressHash, mailAddress, mailKeyPair, mailToNote, openMailBody, openMailKey, openMailPart, senderHash } from '/shared/mail.mjs';
 import { createDrawingEditor } from '/shared/drawing-editor.mjs';
-import { AiError, createProvider, pickDefaultModel } from '/shared/ai/providers.mjs';
-import { runAssistant } from '/shared/ai/assistant.mjs';
+import { AiError, TRANSCRIBE_MODEL, createProvider, pickDefaultModel } from '/shared/ai/providers.mjs';
+import { FILE_TIMEOUT_MS, runAssistant } from '/shared/ai/assistant.mjs';
 import { selectNotes } from '/shared/ai/context.mjs';
 import { parseMarkdown } from '/shared/ai/markdown.mjs';
-import { AI_STORE_PATH, WEB_PROVIDERS, aiNotes, modelGroups, aiSettings, appendedText, describeChange, editorRequest, expiryChanges, labelChanges, newNoteText, reminderChanges, replacedText } from '/ai-web.mjs';
+import { LIMITS, capabilities, decodedLength, explain } from '/shared/ai/parts.mjs';
+import { KEEP_YEARS, keepUntil, parseReceipt, receiptRequest } from '/shared/ai/receipt.mjs';
+import { AI_STORE_PATH, PHOTO_SYSTEM, WEB_PROVIDERS, aiFileKind, aiNotes, modelGroups, aiSettings, appendedText, describeChange, editorRequest, expiryChanges, fileRequest, labelChanges, newNoteText, plainBase64, receiptApplied, receiptLines, reminderChanges, replacedText } from '/ai-web.mjs';
 import { DEFAULT_WARN, INTRO, PAPER_DRAWER, SUGGESTED_DRAWERS, WARN_OPTIONS, drawerLabel, drawerName, expiresBadge, inDrawer, isPaperDrawer, validExpires, warnReminder, withPaperDrawer } from '/shared/paper.mjs';
 
 // The server sees this page as the web app; it has no version of its own, because a reload always brings the current one.
@@ -1026,6 +1028,8 @@ function render() {
         ...(moment || activeSpace?.frozen ? [] : [{ label: 'Attach file…', action: () => chooseCardFiles(entry) }]),
         ...(activeSpace ? [{ label: activeSpace.frozen ? 'Copy to my notes' : 'Move to my notes', action: () => moveToOwn(entry) }] : view === 'notes' ? [{ label: 'Share…', action: () => showShare(entry) }, ...(isMarkdown(entry.file.path) ? [{ label: 'Share by link…', action: () => showLink(entry) }, ...(hasChecklist(noteText(entry.file)) ? [{ label: 'Share list by link…', action: () => showLink(entry, 'list') }] : [])] : [])] : []),
         ...(moment ? [] : [{ label: 'Ask JotDrop about this note…', action: () => openAi({ entry }) }, { label: 'Summarize with AI', action: () => openAi({ entry, summarize: true }) }]),
+        // Version 2: only on a card that has such a file, never on an earlier moment.
+        ...(moment ? [] : aiFileActions(entry, activeSpace?.frozen).map(([label, kind]) => ({ label, action: () => openAi({ entry, kind }) }))),
         ...(activeSpace?.frozen ? [] : [{ label: 'Move to trash', action: () => deleteEntry(entry) }]),
       ]));
       if (activeSpace) actions.append(iconButton('pencil', 'Open note', () => openEditor(entry)), color, more);
@@ -4273,6 +4277,9 @@ $('secure-form').addEventListener('submit', async (event) => {
 let aiConfig = aiSettings();
 let aiScope = { pinned: [] };
 let aiExcluded = new Set();
+// Version 2: the files of the note in this conversation, and the ones the user pointed at. Only those go.
+let aiFilesOn = new Set();
+let aiReceipt;
 let aiRun;
 let aiConfirming;
 let aiLast;
@@ -4302,8 +4309,10 @@ async function saveAiSettings(next) {
 // Ollama from a web page needs two things the page cannot do itself (measured 9 Nov 2026, Chrome 156 and Edge 157):
 // the browser's permission to reach this computer, and OLLAMA_ORIGINS with this page's address.
 const ollamaHelp = () => `Is Ollama running, started with OLLAMA_ORIGINS=${location.origin}? Your browser also has to allow this site to use apps and services on this device: look for the question next to the address bar, or in the site settings.`;
+// A file that cannot go is mostly JotDrop's own check, in JotDrop's words; then "The service said" would be wrong.
 const aiErrorText = (error, provider = aiConfig.provider) => (error instanceof AiError || (error?.code && typeof error?.message === 'string' && 'detail' in error)
-  ? `${error.message}${error.detail ? ` The service said: ${error.detail}` : ''}${provider === 'ollama' && error.code === 'network' ? ` ${ollamaHelp()}` : ''}` : errorText(error));
+  ? ['too_large', 'unsupported_input'].includes(error.code) ? `${error.message}${error.detail ? ` ${error.detail}` : ''}`
+    : `${error.message}${error.detail ? ` The service said: ${error.detail}` : ''}${provider === 'ollama' && error.code === 'network' ? ` ${ollamaHelp()}` : ''}` : errorText(error));
 
 function aiProviderNote(provider) {
   return {
@@ -4402,18 +4411,80 @@ function aiNotesNow() {
   const entries = [...files.values()].filter((entry) => isMarkdown(entry.file.path)).map((entry) => ({ id: entry.id, path: entry.file.path, text: noteText(entry.file), modifiedAt: entry.file.modifiedAt, deleted: entry.deleted }));
   return aiNotes(entries, { sharedPaths: activeSpace ? [] : liveLists.map((link) => link.path), inSpace: Boolean(activeSpace) });
 }
+
+// Version 2: the photos, PDFs and recordings a note links to, as { id, name, kind, mime, bytes, attachment }.
+// Both link forms count: ![[name]] and [Voice memo](../attachments/…).
+const FILE_KINDS = new Set(['transcribe', 'photo', 'receipt']);
+const FILE_WORDS = { image: 'Photo', pdf: 'PDF', audio: 'Recording' };
+const FILE_ICONS = { image: '🖼', pdf: '📄', audio: '🎙' };
+function aiFilesOf(entry) {
+  const available = [...files.values()].filter((item) => !item.deleted && !isMarkdown(item.file.path));
+  return noteAttachments(entry, noteParts(noteText(entry.file), entry.file.path), available).flatMap((attachment) => {
+    const found = aiFileKind(attachment.file.path);
+    return found ? [{ id: attachment.id, name: attachment.file.path.split('/').pop(), ...found, bytes: contentBytes(attachment.file.content), attachment }] : [];
+  });
+}
+function aiFileActions(entry, frozen) {
+  const kinds = new Set(aiFilesOf(entry).map((file) => file.kind));
+  return [
+    ...(kinds.has('audio') ? [['Transcribe with AI', 'transcribe']] : []),
+    ...(kinds.has('image') ? [['Read photo with AI', 'photo']] : []),
+    ...(!frozen && (kinds.has('image') || kinds.has('pdf')) ? [['Receipt to Paper drawer…', 'receipt']] : []),
+  ];
+}
+const FILE_ACTION_KINDS = { transcribe: ['audio'], photo: ['image'], receipt: ['image', 'pdf'] };
+// Why a file cannot go with this service, in words, or ''. The limits before reading; a photo is made small first.
+function aiFileProblem(file) {
+  const use = aiScope.kind === 'transcribe' ? 'transcribe' : 'ask';
+  const caps = capabilities(aiConfig.provider, { id: aiConfig.model || WEB_PROVIDERS[aiConfig.provider]?.defaultModel });
+  if (caps[file.kind === 'audio' && use === 'transcribe' ? 'transcribe' : file.kind] === false) return explain(aiConfig.provider, file.kind, use);
+  if (file.kind !== 'image' && file.bytes > LIMITS[file.kind]) return `Larger than ${Math.round(LIMITS[file.kind] / 1048576)} MiB, too large to send.`;
+  return '';
+}
+
+// A photo goes as a JPEG of at most 2048 pixels on its long side: small, one type, and the same on every service.
+async function photoData(bytes, mime) {
+  let bitmap;
+  try { bitmap = await createImageBitmap(new Blob([bytes], { type: mime })); } catch { throw new Error('This browser cannot read this photo.'); }
+  const scale = Math.min(1, 2048 / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  const context = canvas.getContext('2d');
+  // JPEG has no transparency: a see-through PNG gets a white background, not a black one.
+  context.fillStyle = '#fff';
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  for (const quality of [0.85, 0.7, 0.5]) {
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
+    if (blob && blob.size <= LIMITS.image) return new Uint8Array(await blob.arrayBuffer());
+  }
+  throw new Error('This photo stays too large, even made smaller.');
+}
+// A file as a part for the shared core: read from the encrypted copy on this device, never from our server.
+async function aiPart(file) {
+  if (file.kind !== 'image') return { kind: file.kind, mime: file.mime, name: file.name, data: plainBase64(file.attachment.file.content) };
+  const photo = await photoData(base64ToBytes(file.attachment.file.content), file.mime);
+  return { kind: 'image', mime: 'image/jpeg', name: file.name.replace(/\.[^.]+$/, '.jpg'), data: plainBase64(bytesToBase64(photo)) };
+}
+
 const aiCandidates = () => (aiScope.editor ? [aiScope.editor] : aiScope.only ?? aiNotesNow());
 const aiPick = (notes, request) => selectNotes(notes, request, { includeShared: aiConfig.includeShared, pinned: aiScope.pinned });
 function aiOffReason() {
   if (moment) return 'Go back to now first: Ask JotDrop works on your notes as they are.';
   if (!aiConfig.provider) return 'Ask JotDrop is off. Choose an AI service, and add your own key, in Devices & recovery.';
   if (activeSpace && !aiConfig.includeShared && !aiScope.editor) return 'This is a shared group. Ask JotDrop keeps shared notes out, unless you switch on "Also use notes from shared groups" in its settings.';
+  if (FILE_KINDS.has(aiScope.kind) && aiScope.shared && !aiConfig.includeShared) return 'This note has a live list link. Ask JotDrop keeps shared notes and their files out, unless you switch on "Also use notes from shared groups and notes with a live list link" in its settings.';
   return '';
 }
+// OpenAI writes out a recording with its own model, which the line names.
+const aiModelNow = () => (aiScope.kind === 'transcribe' && aiConfig.provider === 'openai' ? TRANSCRIBE_MODEL : aiConfig.model || WEB_PROVIDERS[aiConfig.provider]?.defaultModel);
 function renderAiVia() {
   const spec = WEB_PROVIDERS[aiConfig.provider];
-  const model = aiConfig.model || spec?.defaultModel || 'no model chosen';
-  $('ai-via').textContent = !spec ? '' : aiConfig.provider === 'ollama' ? `Goes to Ollama on this computer, model ${model}. Your request and notes stay on this computer.` : `Goes straight to ${spec.name}, model ${model}. Nothing goes to JotDrop.`;
+  const model = aiModelNow() || 'no model chosen';
+  const what = aiScope.files?.length ? 'Your request, notes and files' : 'Your request and notes';
+  $('ai-via').textContent = !spec ? '' : aiConfig.provider === 'ollama' ? `Goes to Ollama on this computer, model ${model}. ${what} stay on this computer.` : `Goes straight to ${spec.name}, model ${model}. Nothing goes to JotDrop.`;
 }
 // The list is what really goes: the same choice the assistant makes, minus the notes the user cleared.
 function renderGoes() {
@@ -4432,8 +4503,39 @@ function renderGoes() {
     item.append(label);
     return item;
   };
-  $('ai-goes-list').replaceChildren(...picked.map((note) => row(note, true)), ...kept.map((note) => row(note, false)));
-  $('ai-goes-summary').textContent = picked.length ? `What goes along: ${picked.length} ${picked.length === 1 ? 'note' : 'notes'}` : 'What goes along: your question, no notes yet';
+  // A file row: a mark, the name, the kind in words and the size; one that cannot go says why and cannot be ticked.
+  // A file action sends one file, so there the rows are a choice of one.
+  const one = FILE_KINDS.has(aiScope.kind);
+  const fileRow = (file) => {
+    const item = document.createElement('li');
+    const label = document.createElement('label');
+    label.className = 'check-label';
+    const box = document.createElement('input');
+    box.type = one ? 'radio' : 'checkbox';
+    box.name = 'ai-file';
+    const problem = aiFileProblem(file);
+    box.disabled = Boolean(problem);
+    box.checked = !problem && aiFilesOn.has(file.id);
+    box.addEventListener('change', () => {
+      if (one) aiFilesOn = new Set([file.id]);
+      else if (box.checked) aiFilesOn.add(file.id);
+      else aiFilesOn.delete(file.id);
+      renderGoes();
+    });
+    const icon = document.createElement('span');
+    icon.setAttribute('aria-hidden', 'true');
+    icon.textContent = FILE_ICONS[file.kind];
+    label.append(box, icon, ` ${file.name} · ${FILE_WORDS[file.kind]} · ${sizeText(file.bytes)}${problem ? ` (cannot go: ${problem})` : box.checked ? '' : ' (stays home)'}`);
+    item.append(label);
+    return item;
+  };
+  const shownFiles = aiScope.files ?? [];
+  const sending = shownFiles.filter((file) => aiFilesOn.has(file.id) && !aiFileProblem(file));
+  $('ai-goes-list').replaceChildren(...picked.map((note) => row(note, true)), ...kept.map((note) => row(note, false)), ...shownFiles.map(fileRow));
+  $('ai-goes-files').hidden = !sending.length;
+  const noteWords = picked.length ? `${picked.length} ${picked.length === 1 ? 'note' : 'notes'}` : '';
+  const fileWords = sending.length ? `${sending.length} ${sending.length === 1 ? 'file' : 'files'}` : '';
+  $('ai-goes-summary').textContent = noteWords || fileWords ? `What goes along: ${[noteWords, fileWords].filter(Boolean).join(' and ')}` : one ? 'What goes along: no file yet' : 'What goes along: your question, no notes yet';
 }
 let goesTimer;
 $('ai-request').addEventListener('input', () => { clearTimeout(goesTimer); goesTimer = setTimeout(renderGoes, 200); });
@@ -4445,12 +4547,18 @@ function resetAiResult() {
   $('ai-result').hidden = true;
   $('ai-report-box').hidden = true;
   $('ai-confirm').hidden = true;
+  $('ai-receipt').hidden = true;
+  aiReceipt = undefined;
   $('ai-status').textContent = '';
   for (const id of ['ai-answer', 'ai-sources', 'ai-actions']) $(id).replaceChildren();
   for (const id of ['ai-also', 'ai-usage', 'ai-badge']) $(id).textContent = '';
 }
 
-/** Open Ask JotDrop: for all notes, about one card (entry), to summarize a card, or for the draft in the editor. */
+/**
+ * Open Ask JotDrop: for all notes, about one card (entry), to summarize a card, or for the draft in the editor.
+ * Version 2, with an entry: kind 'transcribe', 'photo' or 'receipt' sends one of the card's files and no notes;
+ * asking about a card lists its files unticked.
+ */
 function openAi({ entry, editor, request = '', send = false, summarize = false, kind = 'ask' } = {}) {
   if (!client || aiRun) return;
   aiScope = { pinned: entry ? [entry.id] : editor ? [editor.id] : [], target: entry, editor, kind: summarize ? 'summarize' : kind };
@@ -4459,17 +4567,31 @@ function openAi({ entry, editor, request = '', send = false, summarize = false, 
     request = editorRequest('summarize', aiScope.only[0]?.title);
     send = true;
   }
+  aiFilesOn = new Set();
+  if (entry && !summarize) {
+    aiScope.shared = Boolean(aiNotesNow().find((note) => note.id === entry.id)?.shared);
+    const own = aiScope.shared && !aiConfig.includeShared ? [] : aiFilesOf(entry);
+    if (FILE_KINDS.has(kind)) {
+      aiScope.only = [];
+      aiScope.files = own.filter((file) => FILE_ACTION_KINDS[kind].includes(file.kind));
+      const first = aiScope.files.find((file) => !aiFileProblem(file));
+      if (first) aiFilesOn.add(first.id);
+      request = kind === 'receipt' ? receiptRequest(navigator.language).text : fileRequest(kind);
+    } else aiScope.files = own;
+  }
   aiExcluded = new Set();
   resetAiResult();
   $('ai-request').value = request;
-  $('ai-request').readOnly = Boolean(editor) || summarize;
+  $('ai-request').readOnly = Boolean(editor) || summarize || FILE_KINDS.has(kind);
   const off = aiOffReason();
   $('ai-off').hidden = !off;
   $('ai-ask').hidden = Boolean(off);
   $('ai-off-text').textContent = off;
   $('ai-setup').hidden = !off || Boolean(moment) || Boolean(aiConfig.provider && activeSpace);
   $('ai-goes').hidden = Boolean(editor);
-  $('ai-goes').open = false;
+  // A file action shows the file at once: the user sends it, or chooses another one first. Its request is fixed.
+  $('ai-goes').open = FILE_KINDS.has(kind);
+  $('ai-dictate').hidden = !Recognition || FILE_KINDS.has(kind);
   if (!$('ai-dialog').open) $('ai-dialog').showModal();
   renderAiVia();
   renderGoes();
@@ -4571,7 +4693,34 @@ function aiToday() {
 function setAiBusy(busy) {
   $('ai-send').disabled = busy;
   $('ai-stop').hidden = !busy;
-  $('ai-request').readOnly = busy || Boolean(aiScope.editor) || aiScope.kind === 'summarize';
+  $('ai-request').readOnly = busy || Boolean(aiScope.editor) || aiScope.kind === 'summarize' || FILE_KINDS.has(aiScope.kind);
+}
+
+// Writing out a recording and reading a receipt are one request each, without tools, with the longer AI time of
+// files. Their result takes the form of the assistant's report, so the answer, the report and the "sent" line work
+// the same.
+async function aiOnce(request, parts, run, signal) {
+  const report = { request, sent: [], files: parts.map((part) => ({ name: part.name, kind: part.kind, bytes: decodedLength(part.data) })), actions: [], answer: '', sources: [], usage: { input: 0, output: 0 }, rounds: 1, stop: 'done' };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new DOMException('The AI service took too long.', 'TimeoutError')), FILE_TIMEOUT_MS);
+  const passOn = () => controller.abort(signal.reason);
+  signal.addEventListener('abort', passOn, { once: true });
+  try {
+    const answer = await run(createProvider({ provider: aiConfig.provider, key: aiConfig.key, model: aiConfig.model }), controller.signal);
+    report.answer = answer.text ?? '';
+    report.usage = { input: answer.usage?.input ?? 0, output: answer.usage?.output ?? 0, ...(answer.usage?.seconds ? { seconds: answer.usage.seconds } : {}) };
+    if (answer.stop === 'refusal') report.stop = 'refusal';
+  } catch (error) {
+    const known = error instanceof AiError ? error : new AiError('bad_response', String(error?.message ?? ''));
+    // JotDrop's own check stops a file before anything goes out.
+    if (!known.status && ['unsupported_input', 'too_large', 'bad_request'].includes(known.code)) report.rounds = 0;
+    report.stop = known.code === 'timeout' || known.code === 'cancelled' ? known.code : known.code === 'refusal' ? 'refusal' : ['no_key', 'no_model', 'no_provider'].includes(known.code) ? 'off' : 'error';
+    if (report.stop !== 'refusal') report.error = { code: known.code, message: known.message, detail: known.detail };
+  } finally {
+    clearTimeout(timer);
+    signal.removeEventListener('abort', passOn);
+  }
+  return report;
 }
 async function sendAi() {
   const request = $('ai-request').value.trim();
@@ -4580,21 +4729,42 @@ async function sendAi() {
   const notes = aiCandidates().filter((note) => !aiExcluded.has(note.id));
   const first = new Set(aiPick(notes, request).notes.map((note) => note.id));
   const before = new Map(notes.filter((note) => files.has(note.id)).map((note) => [note.id, noteText(files.get(note.id).file)]));
+  const chosen = (aiScope.files ?? []).filter((file) => aiFilesOn.has(file.id) && !aiFileProblem(file));
+  if (FILE_KINDS.has(aiScope.kind) && !chosen.length) { $('ai-status').textContent = 'Choose a file first.'; return; }
+  const target = aiScope.target && files.get(aiScope.target.id);
+  if (target) before.set(target.id, noteText(target.file));
   const controller = new AbortController();
   aiRun = { controller };
   resetAiResult();
   setAiBusy(true);
-  $('ai-status').textContent = `Asking ${spec.name}...`;
   try {
-    const report = await runAssistant({
-      request, notes, labels: allLabels(), pinned: aiScope.pinned, includeShared: aiConfig.includeShared,
-      settings: { language: navigator.language || 'English', date: aiToday(), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
-      config: { provider: aiConfig.provider, key: aiConfig.key, model: aiConfig.model },
-      executor: aiScope.editor ? {} : aiExecutor(before),
-      confirm: aiScope.editor ? async () => false : aiConfirm,
-      signal: controller.signal,
-    });
+    let parts = [];
+    if (chosen.length) {
+      $('ai-status').textContent = chosen.some((file) => file.kind === 'image') ? 'Making the photo smaller on this device...' : 'Getting the file ready...';
+      parts = await Promise.all(chosen.map(aiPart));
+    }
+    $('ai-status').textContent = `Asking ${spec.name}...`;
+    let report;
+    if (aiScope.kind === 'transcribe') {
+      report = await aiOnce(request, parts, (ai, signal) => ai.transcribe({ audio: parts[0], language: navigator.language, signal }), controller.signal);
+    } else if (aiScope.kind === 'receipt') {
+      const { system, text } = receiptRequest(navigator.language);
+      report = await aiOnce(request, parts, (ai, signal) => ai.complete({ system, messages: [{ role: 'user', text, parts }], tools: [], signal }), controller.signal);
+    } else if (aiScope.kind === 'photo') {
+      // A fixed action has no tools: text on a photo can never make or change a note.
+      report = await aiOnce(request, parts, (ai, signal) => ai.complete({ system: PHOTO_SYSTEM, messages: [{ role: 'user', text: request, parts }], tools: [], signal }), controller.signal);
+    } else {
+      report = await runAssistant({
+        request, notes, labels: allLabels(), pinned: aiScope.pinned, includeShared: aiConfig.includeShared,
+        settings: { language: navigator.language || 'English', date: aiToday(), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+        config: { provider: aiConfig.provider, key: aiConfig.key, model: aiConfig.model },
+        executor: aiScope.editor ? {} : aiExecutor(before),
+        confirm: aiScope.editor ? async () => false : aiConfirm,
+        signal: controller.signal, parts,
+      });
+    }
     showAiReport(report, request, first);
+    if (aiScope.kind === 'receipt' && report.stop === 'done') showReceipt(parseReceipt(report.answer), before.get(target?.id));
   } catch (error) {
     $('ai-status').textContent = aiErrorText(error);
   } finally {
@@ -4667,7 +4837,7 @@ function showAiAnswer(target, text) {
 }
 function showAiReport(report, request, first) {
   const spec = WEB_PROVIDERS[aiConfig.provider];
-  const model = aiConfig.model || spec.defaultModel;
+  const model = aiModelNow();
   aiLast = { report, request, model, provider: spec.name };
   const problem = report.error ? aiErrorText(report.error) : AI_STOPS[report.stop] ?? '';
   $('ai-status').textContent = problem;
@@ -4685,16 +4855,78 @@ function showAiReport(report, request, first) {
     }));
   }
   const also = report.sent.filter((note) => !first.has(note.id));
-  $('ai-also').textContent = report.stop === 'off' ? 'Nothing was sent.' : `${report.error ? 'Tried to send' : 'Sent'} to ${spec.name}: your question${first.size ? ` and ${first.size} ${first.size === 1 ? 'note' : 'notes'}` : ''}${also.length ? `. While answering it also read: ${also.map((note) => `"${note.title}"`).join(', ')}` : ''}.`;
+  // In words what went: the question (a recording goes on its own), the notes, and each file by name.
+  const went = [...(aiScope.kind === 'transcribe' ? [] : ['your question']), ...(first.size ? [`${first.size} ${first.size === 1 ? 'note' : 'notes'}`] : []),
+    ...(report.files ?? []).map((file) => `the ${FILE_WORDS[file.kind]?.toLowerCase() ?? 'file'} "${file.name}"`)];
+  const wentText = went.length > 1 ? `${went.slice(0, -1).join(', ')} and ${went.at(-1)}` : went[0];
+  $('ai-also').textContent = report.stop === 'off' || (report.error && !report.rounds) ? 'Nothing was sent.' : `${report.error ? 'Tried to send' : 'Sent'} to ${spec.name}: ${wentText}${also.length ? `. While answering it also read: ${also.map((note) => `"${note.title}"`).join(', ')}` : ''}.`;
+  const seconds = report.usage.seconds ? `Recording: ${Math.round(report.usage.seconds)} seconds` : `Tokens: ${report.usage.input} in, ${report.usage.output} out`;
   $('ai-usage').textContent = aiConfig.provider === 'ollama'
-    ? `Tokens: ${report.usage.input} in, ${report.usage.output} out, on this computer.`
-    : `Tokens: ${report.usage.input} in, ${report.usage.output} out. ${spec.name} bills these to your account.`;
+    ? `${seconds}, on this computer.`
+    : `${seconds}. ${spec.name} bills these to your account.`;
   const answered = Boolean(report.answer.trim());
   $('ai-use-replace').hidden = !answered || !aiScope.editor || aiScope.kind === 'summarize';
-  $('ai-use-below').hidden = !answered || !(aiScope.editor || aiScope.kind === 'summarize');
+  $('ai-use-below').hidden = !answered || !(aiScope.editor || aiScope.kind === 'summarize' || FILE_KINDS.has(aiScope.kind));
   $('ai-save-answer').hidden = !answered;
   $('ai-report').hidden = !answered;
 }
+
+// "Receipt to Paper drawer": the AI's fields in one screen to check and change. Nothing is saved before Apply, and
+// the AI's answer is only data here: the app checked every field (parseReceipt) and works out the date itself.
+// Nothing usable in the answer: it stays as plain text with the usual buttons.
+function showReceipt(receipt, before) {
+  if (!receipt || !aiScope.target) return;
+  aiReceipt = { receipt, before, id: aiScope.target.id };
+  $('ai-answer').replaceChildren();
+  for (const id of ['ai-use-below', 'ai-save-answer']) $(id).hidden = true;
+  const note = noteParts(before, aiScope.target.file.path);
+  $('ai-receipt-name').value = receipt.title ?? '';
+  $('ai-receipt-name').placeholder = note.title || 'Title';
+  const drawers = allLabels().map(drawerName).filter(Boolean);
+  const current = note.labels.map(drawerName).find(Boolean) ?? '';
+  $('ai-receipt-drawer').replaceChildren(new Option(PAPER_DRAWER, ''), ...[...new Set([...drawers, ...SUGGESTED_DRAWERS])].map((name) => new Option(`${PAPER_DRAWER} / ${name}`, name)));
+  $('ai-receipt-drawer').value = current;
+  $('ai-receipt-bought').value = receipt.bought ?? '';
+  $('ai-receipt-until').value = receipt.warrantyUntil ?? keepUntil(receipt.bought, 2);
+  $('ai-receipt-lines').value = receiptLines(receipt);
+  renderReceiptYears();
+  $('ai-receipt').hidden = false;
+  $('ai-status').textContent = 'Check what the AI read. Nothing is saved until you select Apply.';
+  $('ai-receipt-name').focus();
+}
+// The keep buttons count from the day of purchase; the pressed one carries a ✓, not only a colour.
+function renderReceiptYears() {
+  const bought = $('ai-receipt-bought').value, until = $('ai-receipt-until').value, printed = aiReceipt?.receipt.warrantyUntil;
+  const choice = (text, date) => {
+    const pressed = Boolean(date) && date === until;
+    const item = button(`${pressed ? '✓ ' : ''}${text}`, () => { $('ai-receipt-until').value = date; renderReceiptYears(); });
+    item.disabled = !date;
+    item.setAttribute('aria-pressed', String(pressed));
+    return item;
+  };
+  $('ai-receipt-years').replaceChildren(...KEEP_YEARS.map((years) => choice(`${years} ${years === 1 ? 'year' : 'years'}`, keepUntil(bought, years))), ...(printed ? [choice('Date on the receipt', printed)] : []));
+  $('ai-receipt-years-note').hidden = Boolean(bought);
+}
+for (const id of ['ai-receipt-bought', 'ai-receipt-until']) $(id).addEventListener('input', renderReceiptYears);
+$('ai-receipt-apply').addEventListener('click', async () => {
+  try {
+    const entry = files.get(aiReceipt?.id);
+    if (!entry || entry.deleted) throw new Error('This note is gone.');
+    if (noteText(entry.file) !== aiReceipt.before) throw new Error('This note changed while Ask JotDrop worked, so it was left as it is.');
+    if (!validExpires($('ai-receipt-until').value)) throw new Error('Choose how long to keep it, or fill in a date.');
+    const text = receiptApplied(aiReceipt.before, { title: $('ai-receipt-name').value, lines: $('ai-receipt-lines').value, expires: $('ai-receipt-until').value, drawer: $('ai-receipt-drawer').value });
+    await queueFile(entry.file.path, encoder.encode(text), entry.revision);
+    const drawer = $('ai-receipt-drawer').value;
+    $('ai-receipt').hidden = true;
+    aiReceipt = undefined;
+    $('ai-status').textContent = `Done: in the ${drawer ? `${PAPER_DRAWER} / ${drawer}` : PAPER_DRAWER}, kept until ${$('ai-receipt-until').value}.`;
+  } catch (error) { $('ai-status').textContent = errorText(error); }
+});
+$('ai-receipt-skip').addEventListener('click', () => {
+  $('ai-receipt').hidden = true;
+  aiReceipt = undefined;
+  $('ai-status').textContent = 'Not changed: the note stays as it was.';
+});
 
 // The answer for the editor's draft: it replaces the text or follows it; Save note keeps it, as with any edit.
 function useForDraft(replace) {
@@ -4719,7 +4951,8 @@ $('ai-use-below').addEventListener('click', async () => {
 $('ai-save-answer').addEventListener('click', async () => {
   try {
     const target = aiScope.editor?.title || aiScope.target && noteParts(noteText(aiScope.target.file), aiScope.target.file.path).title;
-    const title = aiScope.kind === 'summarize' && target ? `Summary of ${target}` : aiLast.request.split('\n')[0].slice(0, 80);
+    const titles = { summarize: 'Summary of', transcribe: 'Recording in', photo: 'Text from the photo in', receipt: 'Receipt in' };
+    const title = titles[aiScope.kind] && target ? `${titles[aiScope.kind]} ${target}` : aiLast.request.split('\n')[0].slice(0, 80);
     const text = newNoteText({ title, text: aiLast.report.answer });
     const name = noteFilename(text);
     let path = `notes/${name}`;
