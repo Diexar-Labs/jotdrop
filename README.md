@@ -209,7 +209,7 @@ The apps are free and always will be. Pay only when you want more from the cloud
 
 Notes go to the `Mini Notes` folder of your vault; you can choose another folder in the settings.
 
-**Manual install** (offline or pre-release): download `manifest.json`, `main.js` and `styles.css` from the [latest plugin release](https://github.com/Diexar-Labs/jotdrop/releases/tag/0.28.1), put them in `<your-vault>/.obsidian/plugins/jotdrop/` and enable JotDrop under Community plugins.
+**Manual install** (offline or pre-release): download `manifest.json`, `main.js` and `styles.css` from the [latest plugin release](https://github.com/Diexar-Labs/jotdrop/releases/tag/0.29.0), put them in `<your-vault>/.obsidian/plugins/jotdrop/` and enable JotDrop under Community plugins.
 
 ### Android app
 
