@@ -43,9 +43,13 @@ assert(source('EditorActivity').includes('LabelAssignmentSheet('), 'Individual n
 const editor = source('EditorActivity');
 const editorBody = editor.slice(editor.indexOf('private fun EditorBody('), editor.indexOf('private fun EditorNavHeader('));
 for (const name of ['google', 'github']) assert(list.includes(`ProviderButton("${name}", stringResource(R.string.welcome_${name})`), `The welcome screen must offer ${name}`);
-// Back arrow + 6 buttons of 48dp fit on a 360dp phone; a seventh slides over the back arrow.
+// Back arrow + 6 buttons of 48dp fit on a 360dp phone; a seventh slides over the back arrow, unless the bar
+// drops to the buttons' own 40dp below 400dp (Attach file got its own button next to the photo button, 12 Nov 2026).
 const editorActions = editor.slice(editor.indexOf('actions = {', editor.indexOf('geen titel')), editor.indexOf('R.string.action_save)', editor.indexOf('geen titel')));
-assert((editorActions.match(/IconButton\(/g) || []).length <= 6, 'The editor bar must not hold more than 6 buttons, or they cover the back arrow');
+const editorButtons = (editorActions.match(/IconButton\(/g) || []).length;
+assert(editorButtons <= 7, 'The editor bar must not hold more than 7 buttons, or they cover the back arrow');
+assert(editorButtons <= 6 || /LocalMinimumInteractiveComponentEnforcement provides \(LocalConfiguration\.current\.screenWidthDp >= 400\)/.test(editor), 'Seven editor buttons need the 40dp bar on phones narrower than 400dp');
+assert(editorActions.includes('pickFilesLauncher.launch(arrayOf("*/*"))') && !/DropdownMenuItem\([^]*?action_attach_file/.test(editorActions), 'Attach file is its own button in the editor bar, not an item in the photo menu');
 for (const name of ['action_color', 'action_link']) assert.match(editorActions, new RegExp(`DropdownMenuItem\\([^]*?R\\.string\\.${name}`), `${name} must stay reachable in the More menu`);
 assert(editor.includes('mutableStateOf(initialUri == null)'), 'New notes must remain directly editable');
 assert.match(editor, /bodyText = TextFieldValue\(loadedBody\)\s+bodyEditing = false/, 'Navigation must reset the link reading view');
