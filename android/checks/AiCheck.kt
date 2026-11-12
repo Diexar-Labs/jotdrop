@@ -1,14 +1,23 @@
 package com.diexar.keepcapture
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.runBlocking
 import java.io.File
+import java.io.OutputStream
+import java.util.Base64
 
 /**
  * Holds Android's Ask JotDrop to the shared one: every case of cloud/shared/ai/ai-vectors.json (requests per
  * provider, answers, errors, model lists, addresses, note choice, hiding keys, whole conversations), the tool list
  * and prompt from tools.json and prompt.json, and note edits computed by cloud/web/ai-web.mjs
- * (scripts/check-ai-android.mjs writes those and runs this).
- * Arguments: ai-vectors.json, tools.json, prompt.json, edits.json.
+ * (scripts/check-ai-android.mjs writes those and runs this). Version 2 (files, transcription, receipts): every case
+ * of ai-vectors-v2.json, and the file table and receipt lines as cloud/web/ai-web.mjs makes them.
+ * Arguments: ai-vectors.json, tools.json, prompt.json, edits.json, ai-vectors-v2.json.
  */
 private var passed = 0
 
@@ -26,11 +35,16 @@ private fun normal(value: Any?): Any? = when (value) {
     else -> value
 }
 
-private fun config(json: Map<String, Any?>?) = AiConfig(json.str("provider") ?: "", json.str("key") ?: "", json.str("model") ?: "", json.str("baseUrl") ?: "")
+@Suppress("UNCHECKED_CAST")
+private fun config(json: Map<String, Any?>?) = AiConfig(json.str("provider") ?: "", json.str("key") ?: "", json.str("model") ?: "", json.str("baseUrl") ?: "", json?.get("inputs") as? List<String>)
+
+// A file from the vectors: data is base64, or size gives that many zero bytes (fakeData in the JavaScript tests).
+private fun part(json: Map<String, Any?>): AiPart = AiPart(json.str("kind") ?: "", json.str("mime") ?: "", json.str("name") ?: "",
+    json.num("size")?.let { ByteArray(it.toInt()) } ?: Base64.getDecoder().decode(json.str("data") ?: ""))
 
 @Suppress("UNCHECKED_CAST")
 private fun message(json: Map<String, Any?>): AiMessage = when (json["role"]) {
-    "user" -> AiMessage.User(json.str("text") ?: "")
+    "user" -> AiMessage.User(json.str("text") ?: "", json.items("parts").map { part(it.obj()!!) })
     "tool" -> AiMessage.Tool(json.items("results").map { val r = it.obj(); AiToolResult(r.str("id")!!, r.str("name")!!, r.str("content")!!, r?.get("isError") == true) })
     else -> AiMessage.Assistant(json.str("text") ?: "", json.items("toolCalls").map(::toolCall), json["raw"])
 }
@@ -175,12 +189,292 @@ private fun markdown() {
     same(AiMarkdown.plain("# T\n**a** and *b*\n- c"), "T\na and b\nc", "markdown: plain text")
 }
 
+private fun caps(json: Map<String, Any?>?): AiCaps? = json?.let {
+    fun one(name: String): Boolean? = it[name] as? Boolean
+    AiCaps(one("image"), one("pdf"), one("audio"), one("transcribe"))
+}
+
+private fun capsJson(caps: AiCaps) = listOf("image" to caps.image, "pdf" to caps.pdf, "audio" to caps.audio, "transcribe" to caps.transcribe)
+    .associate { (name, value) -> name to (value ?: "unknown") }
+
+private fun failure(what: String, block: () -> Unit): AiError = try { block(); error("$what: no error") } catch (failure: AiError) { failure }
+
+private suspend fun failing(what: String, block: suspend () -> Unit): AiError = try { block(); error("$what: no error") } catch (failure: AiError) { failure }
+
+private fun receiptJson(data: AiReceiptData?): Map<String, Any?>? = data?.let {
+    listOf("title" to it.title, "shop" to it.shop, "amount" to it.amount, "currency" to it.currency, "bought" to it.bought, "warrantyUntil" to it.warrantyUntil)
+        .filter { (_, value) -> value != null }.toMap()
+}
+
+private fun receiptData(json: Map<String, Any?>?) = AiReceiptData(json.str("title"), json.str("shop"), json.str("amount"), json.str("currency"), json.str("bought"), json.str("warrantyUntil"))
+
+private class Counting : OutputStream() {
+    var count = 0L
+    override fun write(b: Int) { count++ }
+    override fun write(b: ByteArray, off: Int, len: Int) { count += len }
+}
+
+private fun fake(answer: suspend () -> AiAnswer): () -> AiProvider = { object : AiProvider {
+    override val id = "fake"
+    override val model = "fake"
+    override suspend fun complete(system: String, messages: List<AiMessage>, tools: List<AiTool>, timeoutMs: Long) = answer()
+} }
+
+/** Version 2: files to the AI service, writing out recordings, receipts (ai-vectors-v2.json), plus edits from ai-web.mjs. */
+@Suppress("UNCHECKED_CAST")
+private suspend fun version2(vectors: Map<String, Any?>, edits: Map<String, Any?>, tools: List<AiTool>, promptJson: String) {
+    for (case in vectors.items("partRequests").map { it.obj()!! }) {
+        val name = case.str("name")!!
+        val input = case.child("input")!!
+        val build = { AiProviders.buildRequest(config(case.child("config")), input.str("system")!!, input.items("messages").map { message(it.obj()!!) }, emptyList()) }
+        if (case["error"] != null) {
+            val error = failure(name) { build() }
+            same(error.code, case["error"], "$name: error")
+            check(error.detail.length > 10) { "$name: the detail must say what cannot go" }
+            continue
+        }
+        val request = build()
+        val expect = case.child("expect")!!
+        same(request.url, expect["url"], "$name: url")
+        same(request.method, expect["method"], "$name: method")
+        same(request.headers, expect["headers"], "$name: headers")
+        same(AiJson.parse(request.body!!.text()), expect["body"], "$name: body")
+    }
+
+    for (case in vectors.items("partErrors").map { it.obj()!! }) {
+        val name = case.str("name")!!
+        val config = config(case.child("config"))
+        val reply = linkedMapOf<String, Any?>("status" to case["status"], "body" to case["body"])
+        val provider = AiProviders.create(config, fetcherFor(mutableListOf(reply), mutableListOf()))
+        val error = failing(name) { provider.complete("S", listOf(AiMessage.User("Hi", case.items("parts").map { part(it.obj()!!) })), emptyList(), 1000) }
+        same(error.code, case.child("expect").str("code"), "$name: code")
+        check(config.key.isEmpty() || !error.detail.contains(config.key)) { "$name: the key is in the error" }
+    }
+
+    for (case in vectors.items("capabilities").map { it.obj()!! }) {
+        val model = case["model"]
+        same(capsJson(AiParts.capabilities(case.str("provider")!!, model.obj()?.get("inputs") as? List<String>)), case["expect"], "capabilities ${case["provider"]} ${AiJson.stringify(model)}")
+    }
+    for (case in vectors.items("explain").map { it.obj()!! }) same(AiParts.explain(case.str("provider")!!, case.str("kind")!!, case.str("use")!!), case["expect"], "explain ${case["provider"]} ${case["kind"]} ${case["use"]}")
+
+    val limits = vectors.child("limits")!!
+    same(AiParts.LIMITS, limits["constants"], "limits")
+    // K6 (plan for phase 3): Android holds a file as bytes, so base64 with a line break cannot happen on the phone.
+    // Exactly this one case is skipped; a new case Android cannot play makes the check fail instead of falling away.
+    val skipped = mutableListOf<String>()
+    for (case in limits.items("checks").map { it.obj()!! }) {
+        val name = case.str("name")!!
+        if (case.items("parts").any { (it.obj().str("data") ?: "").contains('\n') }) { skipped.add(name); continue }
+        val parts = case.items("parts").map { part(it.obj()!!) }
+        val given = caps(case.child("caps")) ?: AiCaps(true, true, true, null)
+        if (case["error"] != null) same(failure(name) { AiParts.checkParts(parts, given) }.code, case["error"], "limits $name")
+        else same(mapOf("bytes" to AiParts.checkParts(parts, given)), case["expect"], "limits $name")
+    }
+    same(skipped, listOf("base64 with a line break is the app's mistake"), "limits: the only case Android cannot play")
+    same(AiParts.checkParts(emptyList(), null), 0L, "limits: no files")
+    val passport = failure("passport") { AiParts.checkParts(listOf(AiPart("image", "image/jpeg", "Passport.jpg", ByteArray(AiParts.LIMITS.getValue("image").toInt() + 3))), null) }
+    check(passport.code == "too_large" && passport.detail.contains("Passport.jpg") && passport.detail.contains("4 MiB")) { "limits: the reason names the file: ${passport.detail}" }
+    passed++
+
+    for (case in vectors.items("transcribe").map { it.obj()!! }) {
+        val name = case.str("name")!!
+        val build = { AiProviders.transcribeRequest(config(case.child("config")), part(case.child("audio")!!), case.str("language"), case.str("boundary")) }
+        if (case["error"] != null) { same(failure(name) { build() }.code, case["error"], "$name: error"); continue }
+        val request = build()
+        val expect = case.child("expect")!!
+        same(request.url, expect["url"], "$name: url")
+        same(request.method, expect["method"], "$name: method")
+        same(request.headers, expect["headers"], "$name: headers")
+        expect["body"]?.let { same(AiJson.parse(request.body!!.text()), it, "$name: body") }
+        expect["bodyText"]?.let { same(String(request.body!!.bytes(), Charsets.ISO_8859_1), it, "$name: body bytes") }
+        expect["bodyBase64"]?.let { same(Base64.getEncoder().encodeToString(request.body!!.bytes()), it, "$name: body bytes") }
+        same(request.body!!.length, request.body!!.bytes().size, "$name: body length")
+    }
+    // A fresh boundary every time, in the form of the shared code.
+    val audio = AiPart("audio", "audio/mp4", "a.m4a", "fake m4a".toByteArray())
+    val openAi = AiConfig("openai", "sk-proj-test-key-0002")
+    val marks = List(2) { AiProviders.transcribeRequest(openAi, audio, null).headers.getValue("Content-Type").substringAfter("boundary=") }
+    check(marks.all { Regex("^jotdrop-[0-9a-f]{32}$").matches(it) } && marks[0] != marks[1]) { "transcribe: boundary $marks" }
+    passed++
+
+    for (case in vectors.items("transcribeResponses").map { it.obj()!! }) {
+        val name = case.str("name")!!
+        if (case["error"] != null) { same(failure(name) { AiProviders.parseTranscription(case.str("provider")!!, case["json"]) }.code, case["error"], "$name: error"); continue }
+        val heard = AiProviders.parseTranscription(case.str("provider")!!, case["json"])
+        val usage = linkedMapOf<String, Any?>("input" to heard.input, "output" to heard.output).also { if (heard.seconds != null) it["seconds"] = heard.seconds }
+        same(mapOf("text" to heard.text, "usage" to usage), case["expect"], name)
+    }
+
+    // A provider writes out a recording through the app's fetcher; Claude refuses before anything goes out.
+    val seen = mutableListOf<String>()
+    val reply = linkedMapOf<String, Any?>("body" to mapOf("text" to "Hallo", "usage" to mapOf("type" to "tokens", "input_tokens" to 3, "output_tokens" to 1)))
+    val heard = AiProviders.create(openAi, fetcherFor(mutableListOf(reply), seen)).transcribe(audio, "nl", 1000)
+    same(listOf(heard.text, heard.input, heard.output, seen), listOf("Hallo", 3, 1, listOf("https://api.openai.com/v1/audio/transcriptions")), "provider.transcribe")
+    val claude = failing("claude transcribe") { AiProviders.create(AiConfig("anthropic", "sk-ant-api03-test-key-0001"), fetcherFor(mutableListOf(), seen)).transcribe(audio, null, 1000) }
+    same(listOf(claude.code, claude.detail, seen.size), listOf("unsupported_input", "Claude cannot listen to recordings. Gemini and OpenAI can.", 1), "provider.transcribe refuses first")
+    same(AiProviders.create(openAi, fetcherFor(mutableListOf(), seen)).capabilities?.let(::capsJson), mapOf("image" to true, "pdf" to true, "audio" to false, "transcribe" to true), "provider capabilities")
+    same(AiProviders.TRANSCRIBE_MODEL, "gpt-transcribe", "transcription model")
+
+    // K2: the body goes out in pieces. A recording of 14 MiB is written once, as base64, without a copy of the whole.
+    val big = AiBody(listOf("{\"data\":\"", AiBase64(ByteArray(AiParts.LIMITS.getValue("audio").toInt())), "\"}"))
+    val counting = Counting()
+    big.writeTo(counting)
+    same(counting.count, big.length, "body: a 14 MiB recording writes exactly its length")
+    same(big.length, 11L + (AiParts.LIMITS.getValue("audio") + 2) / 3 * 4, "body: length of base64")
+    val small = AiJson.body(linkedMapOf("url" to AiBase64(byteArrayOf(1, 2, 3, 4), "data:image/png;base64,"), "text" to "héllo"))
+    same(small.length, small.bytes().size, "body: length of a data URL")
+    same(small.text(), "{\"url\":\"data:image/png;base64,AQIDBA==\",\"text\":\"héllo\"}", "body: a data URL in the JSON")
+    same(AiJson.stringify(mapOf("url" to AiBase64(byteArrayOf(1, 2, 3, 4), "data:image/png;base64,"))), "{\"url\":\"data:image/png;base64,AQIDBA==\"}", "stringify: base64 as text")
+    same(AiJson.body(mapOf("a" to listOf(1, "x"))).pieces.size, 1, "body: without files one piece of text")
+    for (size in listOf(0, 1, 2, 3, 49151, 49152, 49153, 100000)) {
+        val bytes = ByteArray(size) { (it * 7).toByte() }
+        same(AiBody(listOf(AiBase64(bytes))).text(), Base64.getEncoder().encodeToString(bytes), "body: base64 in blocks, $size bytes")
+    }
+
+    val receipts = vectors.child("receipts")!!
+    same(AiReceipt.KEEP_YEARS, listOf(1, 2, 3, 5, 7), "receipt: years")
+    for (case in receipts.items("requests").map { it.obj()!! }) {
+        val (system, text) = AiReceipt.request(case.str("language"))
+        same(mapOf("system" to system, "text" to text), case["expect"], "receipt request ${case["language"]}")
+    }
+    for (case in receipts.items("parse").map { it.obj()!! }) same(receiptJson(AiReceipt.parse(case.str("answer")!!)), case["expect"], "receipt: ${case["name"]}")
+    for (case in receipts.items("keepUntil").map { it.obj()!! }) {
+        val years = case["years"] as Number
+        // A year count that is not whole cannot be passed in Kotlin; the shared code gives "" for it.
+        if (years !is Long) { same(case["expect"], "", "keep until ${case["bought"]} + $years"); continue }
+        same(AiReceipt.keepUntil(case.str("bought")!!, years.toInt()), case["expect"], "keep until ${case["bought"]} + $years")
+    }
+    val safe = AiReceipt.parse("{\"title\":\"x\\n- [ ] new task\",\"shop\":\"y\\r\\n# Heading\",\"amount\":\"1\\n2\"}")!!
+    check(listOfNotNull(safe.title, safe.shop, safe.amount).none { it.contains('\n') || it.contains('\r') }) { "receipt: a field has a line of its own" }
+    passed++
+    same(AiReceipt.parse(""), null, "receipt: empty answer")
+
+    for (case in vectors.items("conversations").map { it.obj()!! }) {
+        val name = case.str("name")!!
+        val executed = mutableListOf<String>()
+        val asked = mutableListOf<String>()
+        val answers = case.items("confirm").map { it == true }.toMutableList()
+        val urls = mutableListOf<String>()
+        val replies = case.items("http").map { it.obj()!! }.toMutableList()
+        val script = case.items("script").map { it.obj()!! }.toMutableList()
+        val requests = mutableListOf<List<AiMessage>>()
+        val parts = case.items("parts").map { part(it.obj()!!) }
+        val provider: () -> AiProvider = if (case["script"] != null) {
+            { object : AiProvider {
+                override val id = "fake"
+                override val model = "fake"
+                override suspend fun complete(system: String, messages: List<AiMessage>, tools: List<AiTool>, timeoutMs: Long): AiAnswer {
+                    requests.add(messages.toList())
+                    val step = script.removeFirstOrNull() ?: emptyMap()
+                    val calls = step.items("toolCalls").map(::toolCall)
+                    return AiAnswer(step.str("text") ?: "", calls, if (calls.isNotEmpty()) "tool" else "end", 10, 2, null)
+                }
+            } }
+        } else {
+            { AiProviders.create(config(case.child("config")), fetcherFor(replies, urls)) }
+        }
+        val run: (String) -> suspend (Map<String, Any?>) -> Any? = { tool -> { _ -> executed.add(tool); if (tool == "create_note") mapOf("id" to "new-1") else "Done." } }
+        val stopAtConfirm = case["stopAtConfirm"] == true
+        val expect = case.child("expect")!!
+        val report = coroutineScope {
+            val running = async {
+                AiAssistant.run(
+                    request = case.str("request")!!,
+                    notes = case.items("notes").map(::note),
+                    labels = emptyList(),
+                    tools = tools,
+                    system = AiPrompt.system(promptJson, "English", "2026-11-11", "Europe/Madrid", emptyList()),
+                    provider = provider,
+                    executor = listOf("create_note", "append_to_note", "replace_note_text", "set_labels", "set_reminder", "set_expiry", "open_note").associateWith(run),
+                    confirm = { change ->
+                        asked.add(change.tool)
+                        // K5: Stop on Android cancels the coroutine; a confirmation that is waiting ends with it.
+                        if (stopAtConfirm) { currentCoroutineContext().cancel(); awaitCancellation() }
+                        answers.removeFirstOrNull() ?: false
+                    },
+                    parts = parts,
+                )
+            }
+            try { running.await() } catch (_: CancellationException) { null }
+        }
+        if (stopAtConfirm) {
+            // K5: stop, actions and rounds of this case belong to the JavaScript signal; here the run ends with the
+            // cancellation, nothing ran, and the confirmation was asked.
+            check(report == null) { "$name: the run must end with the cancellation" }
+            passed++
+            same(executed, expect["executed"], "$name: executed")
+            same(asked, expect["asked"], "$name: asked")
+            continue
+        }
+        checkNotNull(report) { "$name: no report" }
+        same(report.stop, expect["stop"], "$name: stop")
+        same(report.answer, expect["answer"], "$name: answer")
+        same(report.actions.map { listOf(it.tool, it.status) }, expect.items("actions").map { (it as List<Any?>).take(2) }, "$name: actions")
+        expect.items("actions").forEachIndexed { index, item -> (item as List<Any?>).getOrNull(2)?.let { same(report.actions[index].reason, it, "$name: reason $index") } }
+        same(executed, expect["executed"], "$name: executed")
+        same(asked, expect["asked"], "$name: asked")
+        same(report.sent.map { it.id }, expect["sent"], "$name: sent")
+        same(report.rounds, expect["rounds"], "$name: rounds")
+        same(report.files.map { mapOf("name" to it.name, "kind" to it.kind, "bytes" to it.bytes) }, expect["files"], "$name: files")
+        expect["error"]?.let { same(report.error?.code, it, "$name: error") }
+        expect["fetches"]?.let { same(urls, it, "$name: fetches") }
+        expect["timeoutMs"]?.let { same(report.timeoutMs, it, "$name: time allowed") }
+        expect["partsInRequests"]?.let { want ->
+            same(requests.map { messages -> messages.indices.filter { (messages[it] as? AiMessage.User)?.parts?.isNotEmpty() == true } }, want, "$name: files per request")
+            // The first message carries exactly what the app handed in, nothing more.
+            if (parts.isNotEmpty()) check((requests.first().first() as AiMessage.User).parts == parts) { "$name: other files in the first message" }
+            passed++
+        }
+    }
+    // A set time wins over the 180 seconds for files.
+    val quick = AiAssistant.run(request = "x", notes = emptyList(), labels = emptyList(), tools = tools, system = "S", provider = fake { AiAnswer("ok", emptyList(), "end", 1, 1, null) },
+        executor = emptyMap(), confirm = { false }, parts = listOf(AiPart("image", "image/jpeg", "a.jpg", byteArrayOf(1))), timeoutMs = 5000)
+    same(quick.timeoutMs, 5000, "a set time wins")
+    same(AiAssistant.FILE_TIMEOUT_MS, 180000, "time with files")
+
+    // once: one request without tools for the fixed file actions (aiOnce in app.js).
+    val photo = AiPart("image", "image/jpeg", "Note.jpg", byteArrayOf(1, 2, 3))
+    val good = AiAssistant.once("Read", listOf(photo), fake { AiAnswer("Milk", emptyList(), "end", 5, 1, null) }, emptyList()) { ai, time -> ai.complete(AiParts.PHOTO_SYSTEM, listOf(AiMessage.User("Read", listOf(photo))), emptyList(), time) }
+    same(listOf(good.stop, good.answer, good.rounds, good.input, good.output, good.timeoutMs, good.files.map { listOf(it.name, it.kind, it.bytes) }),
+        listOf("done", "Milk", 1, 5, 1, 180000, listOf(listOf("Note.jpg", "image", 3))), "once: a good answer")
+    val held = AiAssistant.once("Read", listOf(photo), fake { throw AiError("unsupported_input", "This address cannot read photos.") }, emptyList()) { ai, time -> ai.complete("S", emptyList(), emptyList(), time) }
+    same(listOf(held.stop, held.rounds, held.error?.code), listOf("error", 0, "unsupported_input"), "once: JotDrop held the file back, nothing went out")
+    val key = "sk-proj-test-key-0002"
+    val said = AiAssistant.once("Read", listOf(photo), fake { throw AiError("auth", "Incorrect API key provided: $key", 401) }, listOf(key)) { ai, time -> ai.complete("S", emptyList(), emptyList(), time) }
+    same(listOf(said.stop, said.rounds, said.error?.code), listOf("error", 1, "auth"), "once: the service said no")
+    check(said.error?.detail?.contains(key) == false) { "once: the key is in the report" }
+    passed++
+    same(AiAssistant.once("Read", emptyList(), { throw AiError("no_key") }, emptyList()) { ai, time -> ai.complete("S", emptyList(), emptyList(), time) }.stop, "off", "once: no key")
+    val nay = AiAssistant.once("Read", emptyList(), fake { AiAnswer("No.", emptyList(), "refusal", 1, 1, null) }, emptyList()) { ai, time -> ai.complete("S", emptyList(), emptyList(), time) }
+    same(listOf(nay.stop, nay.answer), listOf("refusal", "No."), "once: a refusal")
+    same(AiAssistant.once("Read", emptyList(), fake { throw AiError("refusal") }, emptyList()) { ai, time -> ai.complete("S", emptyList(), emptyList(), time) }.let { listOf(it.stop, it.error) }, listOf("refusal", null), "once: a refused recording")
+    same(AiAssistant.once("Read", emptyList(), fake { throw AiError("timeout") }, emptyList()) { ai, time -> ai.complete("S", emptyList(), emptyList(), time) }.stop, "timeout", "once: too slow")
+    val minute = AiAssistant.once("Hear", emptyList(), fake { AiAnswer("x", emptyList(), "end", 0, 0, null) }, emptyList()) { _, _ -> AiTranscript("Hi", 0, 0, 12.5).answer() }
+    same(listOf(minute.answer, minute.seconds), listOf("Hi", 12.5), "once: seconds of a recording")
+
+    // The file table, the fixed requests and the receipt lines, as the web app makes them.
+    for (case in edits.items("files").map { it.obj()!! }) same(AiParts.fileKind(case.str("name")!!)?.let { (kind, mime) -> mapOf("kind" to kind, "mime" to mime) }, case["expect"], "file ${case["name"]}")
+    edits.child("fileRequests")!!.let {
+        same(AiParts.fileRequest("photo"), it["photo"], "file request photo")
+        same(AiParts.fileRequest("transcribe"), it["transcribe"], "file request transcribe")
+        same(AiParts.PHOTO_SYSTEM, it["photoSystem"], "photo system text")
+    }
+    for (case in edits.items("receiptLines").map { it.obj()!! }) same(AiReceipt.lines(receiptData(case.child("data"))), case["expect"], "receipt lines ${AiJson.stringify(case["data"])}")
+    for (case in edits.items("receiptNote").map { it.obj()!! }) same(AiReceipt.noteText(case.str("file")!!, case.str("title")!!, case.str("lines")!!), case["expect"], "receipt note ${AiJson.stringify(case["file"])} ${AiJson.stringify(case["title"])}")
+
+    // A photo goes as a JPEG of at most 2048 pixels on its long side, never larger than it was (photoData in app.js).
+    same(AiParts.photoSize(4096, 2048).toList(), listOf(2048, 1024), "photo 4096x2048")
+    same(AiParts.photoSize(800, 600).toList(), listOf(800, 600), "photo 800x600")
+    same(AiParts.photoSize(1, 5000).toList(), listOf(1, 2048), "photo 1x5000")
+}
+
 @Suppress("UNCHECKED_CAST")
 fun main(arguments: Array<String>) = runBlocking {
     val vectors = AiJson.parse(File(arguments[0]).readText()).obj()!!
     val tools = AiTools.load(File(arguments[1]).readText())
     val promptJson = File(arguments[2]).readText()
     val edits = AiJson.parse(File(arguments[3]).readText()).obj()!!
+    val vectorsV2 = AiJson.parse(File(arguments[4]).readText()).obj()!!
     val oneTool = vectors.child("tool")!!.let { AiTool(it.str("name")!!, it.str("mode")!!, it.str("description")!!, it.child("input_schema")!!) }
 
     // The catalogue: nine tools, nothing that deletes, archives, shares or sends.
@@ -194,7 +488,7 @@ fun main(arguments: Array<String>) = runBlocking {
         same(request.url, expect["url"], "${case["name"]}: url")
         same(request.method, expect["method"], "${case["name"]}: method")
         same(request.headers, expect["headers"], "${case["name"]}: headers")
-        same(AiJson.parse(request.body!!), expect["body"], "${case["name"]}: body")
+        same(AiJson.parse(request.body!!.text()), expect["body"], "${case["name"]}: body")
     }
 
     for (case in vectors.items("responses").map { it.obj()!! }) {
@@ -317,9 +611,11 @@ fun main(arguments: Array<String>) = runBlocking {
 
     askScreen(tools, promptJson)
     markdown()
+    version2(vectorsV2, edits, tools, promptJson)
 
     // The limits from the design.
     same(AiAssistant.MAX_ROUNDS, 6, "max rounds")
     same(AiAssistant.TIMEOUT_MS, 60000, "timeout")
-    println("PASS: Ask JotDrop on Android matches the shared vectors ($passed checks)")
+    check(passed > 454) { "fewer checks than version 1 had: $passed" }
+    println("PASS: Ask JotDrop on Android matches the shared vectors, version 1 and 2 ($passed checks)")
 }

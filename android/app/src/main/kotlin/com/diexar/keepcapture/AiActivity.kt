@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
 import android.util.Log
+import android.text.format.Formatter
 import android.speech.RecognizerIntent
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -16,6 +17,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -23,6 +26,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
@@ -33,6 +37,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -78,6 +84,9 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
+import java.time.format.FormatStyle
+import java.time.format.DateTimeFormatter
+import java.time.LocalDate
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
@@ -96,8 +105,23 @@ internal fun aiErrorText(context: Context, code: String?): String = context.getS
     "network" -> R.string.ai_error_network
     "timeout" -> R.string.ai_error_timeout
     "bad_response" -> R.string.ai_error_bad_response
+    "unsupported_input" -> R.string.ai_error_unsupported_input
+    "too_large" -> R.string.ai_error_too_large
     else -> R.string.ai_error_bad_request
 })
+
+/**
+ * The words for a report's error. A file JotDrop itself stopped (status 0) also gets JotDrop's own sentence, which
+ * names the file and never holds a key; a detail from the AI service stays hidden, as always.
+ */
+private fun aiReportError(context: Context, error: AiError?): String {
+    val words = aiErrorText(context, error?.code)
+    val own = error != null && error.status == 0 && error.code in setOf("unsupported_input", "too_large", "bad_request") && error.detail.isNotBlank()
+    return if (own) "$words ${error!!.detail}" else words
+}
+
+/** Ask JotDrop's fixed file actions on a card, and the kinds of file each can send. */
+private val FILE_ACTION_KINDS = mapOf("transcribe" to setOf("audio"), "photo" to setOf("image"), "receipt" to setOf("image", "pdf"))
 
 internal fun aiProviderName(context: Context, id: String): String =
     if (id == "custom") context.getString(R.string.ai_provider_custom) else AiProviders.SPECS[id]?.name ?: id
@@ -113,14 +137,19 @@ class AskActivity : ThemedComponentActivity() {
         const val EXTRA_NOTE = "ai_note"
         const val EXTRA_SUMMARIZE = "ai_summarize"
         private const val EXTRA_SHARED = "ai_note_shared"
+        private const val EXTRA_ACTION = "ai_file_action"
         private const val EXTRA_KIND = "ai_kind"
         private const val EXTRA_TITLE = "ai_draft_title"
         private const val EXTRA_TEXT = "ai_draft_text"
         const val RESULT_TEXT = "ai_result_text"
         const val RESULT_REPLACE = "ai_result_replace"
-        /** shared: the note is in a shared space (the card knows; a summary does not list the folder to find out). */
-        fun intent(context: Context, note: Uri? = null, summarize: Boolean = false, shared: Boolean = false): Intent =
+        /**
+         * shared: the note is in a shared space (the card knows; a summary does not list the folder to find out).
+         * action: a card's file action, "transcribe", "photo" or "receipt": one of the note's files goes, no notes.
+         */
+        fun intent(context: Context, note: Uri? = null, summarize: Boolean = false, shared: Boolean = false, action: String? = null): Intent =
             Intent(context, AskActivity::class.java).putExtra(EXTRA_NOTE, note?.toString()).putExtra(EXTRA_SUMMARIZE, summarize).putExtra(EXTRA_SHARED, shared)
+                .putExtra(EXTRA_ACTION, action)
         /** kind is "rewrite", "checklist" or "summarize". */
         fun draftIntent(context: Context, kind: String, title: String, text: String): Intent =
             Intent(context, AskActivity::class.java).putExtra(EXTRA_KIND, kind).putExtra(EXTRA_TITLE, title).putExtra(EXTRA_TEXT, text)
@@ -134,9 +163,10 @@ class AskActivity : ThemedComponentActivity() {
         val shared = intent.getBooleanExtra(EXTRA_SHARED, false)
         val kind = intent.getStringExtra(EXTRA_KIND)
         val draft = kind?.let { AiNote("draft", intent.getStringExtra(EXTRA_TITLE).orEmpty(), intent.getStringExtra(EXTRA_TEXT).orEmpty()) }
+        val action = intent.getStringExtra(EXTRA_ACTION)?.takeIf { note != null && it in FILE_ACTION_KINDS }
         setContent {
             JotDropTheme {
-                AskScreen(note, shared, summarize, draft, kind, onClose = { finish() }, onDraftAnswer = { answer, replace ->
+                AskScreen(note, shared, summarize, draft, kind, action, onClose = { finish() }, onDraftAnswer = { answer, replace ->
                     setResult(RESULT_OK, Intent().putExtra(RESULT_TEXT, answer).putExtra(RESULT_REPLACE, replace))
                     finish()
                 })
@@ -149,7 +179,7 @@ private class Pending(val change: AiChange, val answer: CompletableDeferred<Bool
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AskScreen(target: Uri?, targetShared: Boolean, summarize: Boolean, draft: AiNote?, kind: String?, onClose: () -> Unit, onDraftAnswer: (String, Boolean) -> Unit) {
+private fun AskScreen(target: Uri?, targetShared: Boolean, summarize: Boolean, draft: AiNote?, kind: String?, action: String?, onClose: () -> Unit, onDraftAnswer: (String, Boolean) -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var settings by remember { mutableStateOf(AiSecretStore(context).load()) }
@@ -157,7 +187,9 @@ private fun AskScreen(target: Uri?, targetShared: Boolean, summarize: Boolean, d
     var loaded by remember { mutableStateOf(false) }
     // Done when the notes are read: the screen can be used before that, and a request waits for it.
     val reading = remember { CompletableDeferred<Unit>() }
-    var request by remember { mutableStateOf("") }
+    // The receipt's title is asked for in the phone's language; the request of a file action is fixed.
+    val language = Locale.getDefault().getDisplayLanguage(Locale.ENGLISH)
+    var request by remember { mutableStateOf(when (action) { null -> ""; "receipt" -> AiReceipt.request(language).second; else -> AiParts.fileRequest(action) }) }
     var excluded by remember { mutableStateOf(setOf<String>()) }
     var goesOpen by remember { mutableStateOf(false) }
     var job by remember { mutableStateOf<Job?>(null) }
@@ -169,28 +201,80 @@ private fun AskScreen(target: Uri?, targetShared: Boolean, summarize: Boolean, d
     var stopped by remember { mutableStateOf(false) }
     var missing by remember { mutableStateOf(false) }
     var listed by remember { mutableStateOf<AiPlan?>(null) }
+    // Version 2: the card's files (listed at once, read only when one goes) and the ticked ones, by name.
+    var files by remember { mutableStateOf<List<AiFileRef>>(emptyList()) }
+    var filesOn by remember { mutableStateOf(setOf<String>()) }
+    // The card's note has a live list link while shared notes are kept out: then its files stay home too.
+    var keptOut by remember { mutableStateOf(false) }
+    var targetTitle by remember { mutableStateOf("") }
+    var targetLabels by remember { mutableStateOf<List<String>>(emptyList()) }
+    var preparing by remember { mutableStateOf<Int?>(null) }
+    var chooseFile by remember { mutableStateOf(false) }
+    var receipt by remember { mutableStateOf<AiReceiptData?>(null) }
+    var receiptBefore by remember { mutableStateOf("") }
+    var receiptBusy by remember { mutableStateOf(false) }
+    var receiptSaid by remember { mutableStateOf<String?>(null) }
     val provider = aiProviderName(context, settings.provider)
-    val model = settings.model.ifEmpty { AiProviders.SPECS[settings.provider]?.defaultModel.orEmpty() }
+    // OpenAI writes out a recording with its own model, which the line names.
+    val model = if (action == "transcribe" && settings.provider == "openai") AiProviders.TRANSCRIBE_MODEL
+        else settings.model.ifEmpty { AiProviders.SPECS[settings.provider]?.defaultModel.orEmpty() }
 
-    // A fixed request (card summary or editor button) cannot be edited or dictated, and has no list of notes to untick.
-    val fixed = summarize || draft != null
+    // A fixed request (card summary, file action or editor button) cannot be edited or dictated, and has no list of notes to untick.
+    val fixed = summarize || draft != null || action != null
 
     // What goes along, decided from the notes as they are now: the list on screen and the request use the same plan.
     fun plan(text: String, unticked: Set<String>): AiPlan = AiAsk.plan(executor.notes, text, unticked,
         pinned = target?.let(executor::idOf), target = target != null, summarize = summarize, includeShared = settings.includeShared)
 
+    // Why a file cannot go with this service, in words, or null. The size is known before reading; a photo is made small first.
+    fun fileProblem(file: AiFileRef): String? {
+        val use = if (action == "transcribe") "transcribe" else "ask"
+        val field = if (file.kind == "audio" && use == "transcribe") "transcribe" else file.kind
+        if (AiParts.capabilities(settings.provider, null).of(field) == false) return AiParts.explain(settings.provider, file.kind, use)
+        val limit = AiParts.LIMITS.getValue(file.kind)
+        if (file.kind != "image" && file.size > limit) return context.getString(R.string.ai_file_too_large, (limit / (1024 * 1024)).toInt())
+        return null
+    }
+
     fun send() {
         val text = request.trim()
         if (text.isEmpty() || job != null) return
+        val sending = files.filter { it.name in filesOn && fileProblem(it) == null }
+        if (action != null && (keptOut || sending.isEmpty())) { chooseFile = !keptOut; return }
+        chooseFile = false
         asked = text
         report = null
         savedNote = false
         addedBelow = false
         stopped = false
         missing = false
+        receipt = null
+        receiptSaid = null
         val unticked = excluded
         job = scope.launch {
             try {
+                // The ticked files are read only now. One that cannot be read stops everything before anything goes out.
+                val parts = if (sending.isEmpty()) emptyList() else try {
+                    preparing = if (sending.any { it.kind == "image" }) R.string.ai_file_making_small else R.string.ai_file_getting_ready
+                    sending.map { AiFiles.part(context, it) }
+                } catch (problem: AiError) {
+                    report = AiReport(text).apply { stop = "error"; error = problem }
+                    return@launch
+                } finally { preparing = null }
+                if (action != null) {
+                    // One request without tools: text on a photo or a receipt can never make or change a note.
+                    val before = if (action == "receipt") withContext(Dispatchers.IO) { Storage.readNote(context, target!!).getOrNull() } else null
+                    val done = AiAssistant.once(text, parts, provider = { AiProviders.create(settings.config(), AiHttp) }, secrets = listOf(settings.key)) { ai, time ->
+                        when (action) {
+                            "transcribe" -> ai.transcribe(parts.first(), Locale.getDefault().toLanguageTag(), time).answer()
+                            "photo" -> ai.complete(AiParts.PHOTO_SYSTEM, listOf(AiMessage.User(text, parts)), emptyList(), time)
+                            else -> ai.complete(AiReceipt.request(language).first, listOf(AiMessage.User(text, parts)), emptyList(), time)
+                        }
+                    }
+                    if (action == "receipt" && done.stop == "done" && before != null) { receipt = AiReceipt.parse(done.answer); receiptBefore = before }
+                    report = done
+                    return@launch
+                }
                 // An editor button sends only the draft; anything else waits until the notes are read.
                 val (notes, chosen) = if (draft != null) listOf(draft) to AiContext.selectNotes(listOf(draft), "", pinned = listOf(draft.id)).notes
                 else {
@@ -202,7 +286,7 @@ private fun AskScreen(target: Uri?, targetShared: Boolean, summarize: Boolean, d
                 }
                 val (tools, prompt) = withContext(Dispatchers.IO) { AiAssets.get(context) }
                 val day = SimpleDateFormat("yyyy-MM-dd EEEE", Locale.US).format(Date())
-                val system = AiPrompt.system(prompt, Locale.getDefault().getDisplayLanguage(Locale.ENGLISH), day, TimeZone.getDefault().id, executor.labels)
+                val system = AiPrompt.system(prompt, language, day, TimeZone.getDefault().id, executor.labels)
                 report = AiAssistant.run(
                     request = text,
                     notes = notes,
@@ -216,11 +300,43 @@ private fun AskScreen(target: Uri?, targetShared: Boolean, summarize: Boolean, d
                     includeShared = settings.includeShared,
                     secrets = listOf(settings.key),
                     chosen = chosen,
+                    parts = parts,
                 )
             } catch (error: CancellationException) {
                 stopped = true
                 throw error
             } finally { job = null; pending = null }
+        }
+    }
+
+    // "Apply" on the receipt screen: only when the note still has the text the AI saw. Title and lines first, then
+    // the expiry date with its drawer and warning, exactly as the AI's set_expiry does it.
+    fun applyReceipt(title: String, drawer: String, until: String, lines: String) {
+        val uri = target ?: return
+        val day = PaperDrawer.validExpires(until)
+        if (day == null) { Toast.makeText(context, R.string.ai_receipt_no_until, Toast.LENGTH_LONG).show(); return }
+        receiptBusy = true
+        scope.launch {
+            try {
+                val id = requireNotNull(executor.idOf(uri))
+                val same = Storage.noteWriteMutex.withLock {
+                    withContext(Dispatchers.IO) {
+                        val now = Storage.readNote(context, uri).getOrThrow()
+                        if (now != receiptBefore) return@withContext false
+                        val next = AiReceipt.noteText(now, title, lines)
+                        if (next != now) Storage.updateNote(context, uri, next).getOrThrow()
+                        true
+                    }
+                }
+                if (!same) { receiptSaid = context.getString(R.string.ai_receipt_changed); return@launch }
+                executor.tools.getValue("set_expiry")(mapOf("id" to id, "date" to day, "drawer" to PaperDrawer.drawerName(drawer)))
+                val name = PaperDrawer.drawerName(drawer).let { if (it.isEmpty()) PaperDrawer.LABEL else "${PaperDrawer.LABEL} / $it" }
+                receiptSaid = context.getString(R.string.ai_receipt_done, name, LocalDate.parse(day).format(DateTimeFormatter.ofLocalizedDate(FormatStyle.LONG)))
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                Toast.makeText(context, R.string.ai_error_save, Toast.LENGTH_SHORT).show()
+            } finally { receiptBusy = false }
         }
     }
 
@@ -234,10 +350,20 @@ private fun AskScreen(target: Uri?, targetShared: Boolean, summarize: Boolean, d
             return@LaunchedEffect
         }
         val started = SystemClock.elapsedRealtime()
-        // A summary needs its own note only.
-        if (summarize && target != null) executor.loadOne(target, targetShared) else executor.load()
+        // A summary and a file action need their own note only.
+        if ((summarize || action != null) && target != null) executor.loadOne(target, targetShared) else executor.load()
         // Only counts and times, never note content: to see how long a big vault takes to read.
         Log.i("AskJotDrop", "Read ${executor.notes.size} notes in ${SystemClock.elapsedRealtime() - started} ms (listing ${executor.listMs} ms, ${executor.fromCache} from the cache)")
+        if (target != null && !summarize) {
+            val note = executor.idOf(target)?.let { id -> executor.notes.firstOrNull { it.id == id } }
+            targetTitle = note?.title.orEmpty()
+            targetLabels = note?.labels.orEmpty()
+            keptOut = note?.shared == true && !settings.includeShared
+            val own = if (keptOut) emptyList() else withContext(Dispatchers.IO) { Storage.readNote(context, target).getOrNull()?.let { AiFiles.of(context, it, null) }.orEmpty() }
+            files = if (action != null) own.filter { it.kind in FILE_ACTION_KINDS.getValue(action) } else own
+            // A file action sends one file: the first that can go is chosen.
+            if (action != null) files.firstOrNull { fileProblem(it) == null }?.let { filesOn = setOf(it.name) }
+        }
         loaded = true
         reading.complete(Unit)
         if (summarize) {
@@ -271,6 +397,7 @@ private fun AskScreen(target: Uri?, targetShared: Boolean, summarize: Boolean, d
         try { speech.launch(intent) } catch (_: Exception) { Toast.makeText(context, R.string.speech_unavailable, Toast.LENGTH_SHORT).show() }
     }
 
+    val sendingFiles = files.filter { it.name in filesOn && fileProblem(it) == null }
     Scaffold(topBar = {
         TopAppBar(title = { Text(stringResource(R.string.ai_title)) },
             navigationIcon = { IconButton(onClick = { job?.cancel(); onClose() }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.ai_back)) } })
@@ -294,7 +421,7 @@ private fun AskScreen(target: Uri?, targetShared: Boolean, summarize: Boolean, d
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (job == null) {
                         if (!fixed) OutlinedButton(onClick = { dictate() }) { Icon(Icons.Filled.Mic, contentDescription = null); Text(" " + stringResource(R.string.ai_dictate)) }
-                        Button(onClick = { send() }, enabled = request.isNotBlank()) { Text(stringResource(R.string.ai_send)) }
+                        Button(onClick = { send() }, enabled = request.isNotBlank() && (action == null || (loaded && !keptOut && files.isNotEmpty()))) { Text(stringResource(R.string.ai_send)) }
                     } else {
                         OutlinedButton(onClick = { job?.cancel() }) { Text(stringResource(R.string.ai_stop)) }
                     }
@@ -304,11 +431,23 @@ private fun AskScreen(target: Uri?, targetShared: Boolean, summarize: Boolean, d
             if (!loaded) item {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
                 Text(stringResource(R.string.ai_reading_notes), style = MaterialTheme.typography.bodySmall)
+            } else if (action != null && job == null && report == null) {
+                // A file action shows the files at once: the user sends the chosen one, or chooses another first.
+                item {
+                    Text(stringResource(when { keptOut -> R.string.ai_file_shared_off; files.isEmpty() -> R.string.ai_file_none; else -> R.string.ai_files_choose }),
+                        style = if (keptOut || files.isEmpty()) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.titleSmall)
+                }
+                items(files, key = { "f:" + it.name }) { file ->
+                    AiFileRow(file, on = file.name in filesOn, one = true, problem = fileProblem(file)) { filesOn = setOf(file.name); chooseFile = false }
+                }
+                if (sendingFiles.isNotEmpty()) item { Text(stringResource(R.string.ai_files_others), style = MaterialTheme.typography.bodySmall) }
+                if (chooseFile) item { Text(stringResource(R.string.ai_file_choose_first)) }
             } else if (!fixed && job == null && report == null) listed?.let { now ->
                 val ticked = now.shown.filter { it.id !in excluded }
                 item {
                     Text(
-                        (if (goesOpen) "▾ " else "▸ ") + stringResource(R.string.ai_what_goes, now.chosen.size),
+                        (if (goesOpen) "▾ " else "▸ ") + if (sendingFiles.isEmpty()) stringResource(R.string.ai_what_goes, now.chosen.size)
+                            else stringResource(R.string.ai_what_goes_files, now.chosen.size, sendingFiles.size),
                         style = MaterialTheme.typography.titleSmall,
                         modifier = Modifier.fillMaxWidth().clickable(role = Role.Button) { goesOpen = !goesOpen }.padding(vertical = 8.dp),
                     )
@@ -334,34 +473,84 @@ private fun AskScreen(target: Uri?, targetShared: Boolean, summarize: Boolean, d
                         }
                     }
                 }
+                // The note's own files, unticked: a file goes only when the user ticks it.
+                if (goesOpen && files.isNotEmpty()) {
+                    item { Text(stringResource(R.string.ai_files_ticked_only), style = MaterialTheme.typography.bodySmall) }
+                    items(files, key = { "f:" + it.name }) { file ->
+                        AiFileRow(file, on = file.name in filesOn, one = false, problem = fileProblem(file)) { on -> filesOn = if (on) filesOn + file.name else filesOn - file.name }
+                    }
+                    if (sendingFiles.isNotEmpty()) item { Text(stringResource(R.string.ai_files_others), style = MaterialTheme.typography.bodySmall) }
+                }
             }
             if (missing || (job == null && report == null && listed?.missing == true)) item { Text(stringResource(R.string.ai_note_missing)) }
             if (job != null) item {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
-                Text(if (loaded) stringResource(R.string.ai_working, provider) else stringResource(R.string.ai_reading_notes), style = MaterialTheme.typography.bodySmall)
+                Text(preparing?.let { stringResource(it) } ?: if (loaded) stringResource(R.string.ai_working, provider) else stringResource(R.string.ai_reading_notes), style = MaterialTheme.typography.bodySmall)
             }
             if (stopped) item { Text(stringResource(R.string.ai_stopped)) }
-            report?.let { done -> item { AiResult(done, asked, provider, model, executor, target, summarize, kind.takeIf { draft != null }, savedNote, addedBelow, onSaved = { savedNote = true }, onAddedBelow = { addedBelow = true }, onDraft = { replace -> onDraftAnswer(done.answer, replace) }) } }
+            val found = receipt
+            if (found != null && receiptSaid == null) item {
+                val drawers = (executor.labels.filter { PaperDrawer.drawerName(it).isNotEmpty() } + PaperDrawer.SUGGESTED_DRAWERS.map(PaperDrawer::drawerLabel)).distinctBy { it.lowercase() }
+                val current = targetLabels.firstOrNull { PaperDrawer.drawerName(it).isNotEmpty() }?.let { label -> drawers.firstOrNull { it.equals(label.trim(), true) } } ?: PaperDrawer.LABEL
+                ReceiptCard(found, AiAsk.shortTitle(targetTitle), current, drawers, receiptBusy, onApply = ::applyReceipt,
+                    onSkip = { receiptSaid = context.getString(R.string.ai_receipt_skipped) })
+            }
+            receiptSaid?.let { said -> item { Text(said) } }
+            report?.let { done -> item {
+                AiResult(done, asked, provider, model, executor, target, summarize, kind.takeIf { draft != null }, action, targetTitle, hideAnswer = found != null,
+                    savedNote, addedBelow, onSaved = { savedNote = true }, onAddedBelow = { addedBelow = true }, onDraft = { replace -> onDraftAnswer(done.answer, replace) })
+            } }
         }
     }
 
     pending?.let { waiting -> AiConfirmDialog(waiting.change, onAnswer = { waiting.answer.complete(it) }) }
 }
 
+/** A file of the note: a mark, the name, the kind in words and the size; one that cannot go says why and cannot be chosen. */
+@Composable
+private fun AiFileRow(file: AiFileRef, on: Boolean, one: Boolean, problem: String?, onChange: (Boolean) -> Unit) {
+    val context = LocalContext.current
+    val chosen = on && problem == null
+    val choose = when {
+        problem != null -> Modifier
+        one -> Modifier.selectable(selected = chosen, role = Role.RadioButton) { onChange(true) }
+        else -> Modifier.toggleable(value = chosen, role = Role.Checkbox, onValueChange = onChange)
+    }
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp).then(choose).padding(vertical = 4.dp)) {
+        if (one) RadioButton(selected = chosen, onClick = null, enabled = problem == null) else Checkbox(checked = chosen, onCheckedChange = null, enabled = problem == null)
+        Icon(when (file.kind) { "image" -> Icons.Filled.Image; "pdf" -> Icons.Filled.PictureAsPdf; else -> Icons.Filled.Mic }, contentDescription = null,
+            modifier = Modifier.padding(start = 8.dp).size(20.dp))
+        Column(Modifier.padding(start = 8.dp)) {
+            Text(file.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val kindWords = stringResource(when (file.kind) { "image" -> R.string.ai_file_photo; "pdf" -> R.string.ai_file_pdf; else -> R.string.ai_file_audio })
+            Text(if (file.size >= 0) "$kindWords · ${Formatter.formatShortFileSize(context, file.size)}" else kindWords, style = MaterialTheme.typography.bodySmall)
+            when {
+                problem != null -> Text(stringResource(R.string.ai_file_cannot, problem), style = MaterialTheme.typography.labelSmall)
+                !chosen -> Text(stringResource(R.string.ai_stays_home), style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun AiResult(
     report: AiReport, asked: String, provider: String, model: String, executor: AiExecutor, target: Uri?, summarize: Boolean,
-    draftKind: String?, savedNote: Boolean, addedBelow: Boolean, onSaved: () -> Unit, onAddedBelow: () -> Unit, onDraft: (Boolean) -> Unit,
+    draftKind: String?, action: String?, targetTitle: String, hideAnswer: Boolean,
+    savedNote: Boolean, addedBelow: Boolean, onSaved: () -> Unit, onAddedBelow: () -> Unit, onDraft: (Boolean) -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         when (report.stop) {
-            "error", "off", "timeout" -> Text(stringResource(R.string.ai_problem, aiErrorText(context, report.error?.code)), color = MaterialTheme.colorScheme.error)
+            "error", "off", "timeout" -> Text(stringResource(R.string.ai_problem, aiReportError(context, report.error)), color = MaterialTheme.colorScheme.error)
             "max_rounds" -> Text(stringResource(R.string.ai_problem, stringResource(R.string.ai_stop_max_rounds)), color = MaterialTheme.colorScheme.error)
             "refusal" -> Text(stringResource(R.string.ai_stop_refusal))
         }
-        if (report.answer.isNotBlank()) Card(Modifier.fillMaxWidth()) {
+        // An answer without words (a silent recording, a blank page) says so, as the web app does.
+        if (report.stop == "done" && report.answer.isBlank()) Text(stringResource(R.string.ai_no_answer))
+        // A receipt the app could read shows as the receipt screen, not as the AI's raw answer.
+        if (report.answer.isNotBlank() && !hideAnswer) Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(stringResource(R.string.ai_answer_label, provider, model), style = MaterialTheme.typography.labelMedium)
                 AiMarkdownText(report.answer)
@@ -374,31 +563,46 @@ private fun AiResult(
         }
         if (report.actions.any { it.tool !in setOf("search_notes", "read_note") }) {
             Text(stringResource(R.string.ai_actions), style = MaterialTheme.typography.titleSmall)
-            for (action in report.actions.filter { it.tool !in setOf("search_notes", "read_note") }) {
-                val status = stringResource(when (action.status) { "done" -> R.string.ai_action_done; "declined" -> R.string.ai_action_declined; "refused" -> R.string.ai_action_refused; else -> R.string.ai_action_failed })
-                Text("$status: ${aiToolText(context, action)}")
+            for (step in report.actions.filter { it.tool !in setOf("search_notes", "read_note") }) {
+                val status = stringResource(when (step.status) { "done" -> R.string.ai_action_done; "declined" -> R.string.ai_action_declined; "refused" -> R.string.ai_action_refused; else -> R.string.ai_action_failed })
+                Text("$status: ${aiToolText(context, step)}")
             }
         }
-        // Titles only, one short line each, as in the list of what goes along: never the note's text.
-        val names = report.sent.map { AiAsk.shortTitle(it.title).ifBlank { context.getString(R.string.ai_untitled) } }
-        Text(if (names.isEmpty()) stringResource(R.string.ai_sent_none, provider) else stringResource(R.string.ai_sent_notes, provider, names.joinToString(", ")), style = MaterialTheme.typography.bodySmall)
-        if (report.rounds > 0) Text(stringResource(R.string.ai_tokens, report.input, report.output), style = MaterialTheme.typography.bodySmall)
+        // Titles only, one short line each, as in the list of what goes along: never the note's text. Files by name.
+        val names = report.sent.map { AiAsk.shortTitle(it.title).ifBlank { context.getString(R.string.ai_untitled) } }.joinToString(", ")
+        val fileNames = report.files.joinToString(", ") { AiParts.label(it.name) }
+        Text(when {
+            report.stop == "off" || (report.error != null && report.rounds == 0) -> stringResource(R.string.ai_sent_nothing)
+            action == "transcribe" -> stringResource(R.string.ai_sent_recording, provider, fileNames)
+            names.isEmpty() && fileNames.isEmpty() -> stringResource(R.string.ai_sent_none, provider)
+            fileNames.isEmpty() -> stringResource(R.string.ai_sent_notes, provider, names)
+            names.isEmpty() -> stringResource(R.string.ai_sent_files, provider, fileNames)
+            else -> stringResource(R.string.ai_sent_notes_files, provider, names, fileNames)
+        }, style = MaterialTheme.typography.bodySmall)
+        // A recording written out by OpenAI is billed by its length, not in tokens.
+        if (report.rounds > 0) Text(report.seconds?.let { stringResource(R.string.ai_seconds, Math.round(it).toInt()) } ?: stringResource(R.string.ai_tokens, report.input, report.output), style = MaterialTheme.typography.bodySmall)
         // Back in the editor the answer is part of the draft; it is saved like any edit.
         if (draftKind != null && report.answer.isNotBlank()) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (draftKind != "summarize") Button(onClick = { onDraft(true) }) { Text(stringResource(R.string.ai_replace_text)) }
             OutlinedButton(onClick = { onDraft(false) }) { Text(stringResource(R.string.ai_add_below)) }
         }
-        if (report.answer.isNotBlank()) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (draftKind != null) Unit
-            else if (summarize && target != null) OutlinedButton(enabled = !addedBelow, onClick = {
+        if (report.answer.isNotBlank() && !hideAnswer) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // A summary or a file's text goes below its own note first.
+            if (draftKind == null && target != null && (summarize || action != null)) OutlinedButton(enabled = !addedBelow, onClick = {
                 scope.launch {
                     val ok = runCatching { Storage.noteWriteMutex.withLock { withContext(Dispatchers.IO) { Storage.updateNote(context, target, AiNoteEdits.appendedText(Storage.readNote(context, target).getOrThrow(), report.answer, null)).getOrThrow() } } }.isSuccess
                     if (ok) onAddedBelow() else Toast.makeText(context, R.string.ai_error_save, Toast.LENGTH_SHORT).show()
                 }
             }) { Text(stringResource(if (addedBelow) R.string.ai_added_below else R.string.ai_add_below)) }
-            else OutlinedButton(enabled = !savedNote, onClick = {
+            if (draftKind == null && !summarize) OutlinedButton(enabled = !savedNote, onClick = {
                 scope.launch {
-                    val title = context.getString(R.string.ai_saved_note_title, AiNoteEdits.oneLine(asked).take(60))
+                    val name = AiAsk.shortTitle(targetTitle).ifBlank { context.getString(R.string.ai_untitled) }
+                    val title = when (action) {
+                        "transcribe" -> context.getString(R.string.ai_title_transcribe, name)
+                        "photo" -> context.getString(R.string.ai_title_photo, name)
+                        "receipt" -> context.getString(R.string.ai_title_receipt, name)
+                        else -> context.getString(R.string.ai_saved_note_title, AiNoteEdits.oneLine(asked).take(60))
+                    }
                     val ok = runCatching { Storage.noteWriteMutex.withLock { withContext(Dispatchers.IO) { Storage.createNote(context, AiNoteEdits.newNoteBody(title, report.answer, null)).getOrThrow() } } }.isSuccess
                     if (ok) onSaved() else Toast.makeText(context, R.string.ai_error_save, Toast.LENGTH_SHORT).show()
                 }

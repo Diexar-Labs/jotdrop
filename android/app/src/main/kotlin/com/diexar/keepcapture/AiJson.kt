@@ -22,16 +22,50 @@ object AiJson {
     /** Returned by [parseOrNull] when the text is not JSON (JSON null is a real value). */
     val MISSING = Any()
 
-    fun stringify(value: Any?): String = StringBuilder().also { write(it, value) }.toString()
+    fun stringify(value: Any?): String = StringBuilder().also { write(it, value, null) }.toString()
 
-    private fun write(out: StringBuilder, value: Any?) {
+    /**
+     * The same JSON as [stringify], as a request body in pieces: each AiBase64 (a file) is its own piece, so its
+     * base64 is made only while the body is written. Without files the body is one piece, the text of stringify.
+     */
+    fun body(value: Any?): AiBody {
+        val pieces = mutableListOf<Any>()
+        val out = StringBuilder()
+        write(out, value, pieces)
+        if (out.isNotEmpty() || pieces.isEmpty()) pieces.add(out.toString())
+        return AiBody(pieces)
+    }
+
+    private val PLAIN_LIMIT = java.math.BigDecimal("1e21")
+
+    /**
+     * A JSON number as JavaScript's String() writes it for the numbers a receipt has: 499, not 499.0; 3.5; 12345678.5,
+     * not 1.23456785E7. Numbers of 1e21 and more JavaScript writes with an exponent; those come out with digits.
+     */
+    fun numberText(value: Number): String = when (value) {
+        is Long, is Int -> value.toString()
+        else -> value.toDouble().let { if (!it.isFinite()) "" else java.math.BigDecimal(it.toString()).stripTrailingZeros().let { d -> if (d.abs() < PLAIN_LIMIT) d.toPlainString() else d.toString() } }
+    }
+
+    private fun write(out: StringBuilder, value: Any?, pieces: MutableList<Any>?) {
         when (value) {
             null -> out.append("null")
+            is AiBase64 -> {
+                out.append('"')
+                if (pieces != null) {
+                    pieces.add(out.toString())
+                    out.setLength(0)
+                    pieces.add(value)
+                } else {
+                    out.append(value.prefix).append(java.util.Base64.getEncoder().encodeToString(value.bytes))
+                }
+                out.append('"')
+            }
             is String -> quote(out, value)
             is Boolean -> out.append(value)
             is Int, is Long -> out.append(value.toString())
             is Double -> if (value.isFinite() && value == Math.floor(value) && Math.abs(value) < 1e15) out.append(value.toLong()) else out.append(value)
-            is Float -> write(out, value.toDouble())
+            is Float -> write(out, value.toDouble(), pieces)
             is Map<*, *> -> {
                 out.append('{')
                 var first = true
@@ -40,13 +74,13 @@ object AiJson {
                     first = false
                     quote(out, key.toString())
                     out.append(':')
-                    write(out, item)
+                    write(out, item, pieces)
                 }
                 out.append('}')
             }
             is List<*> -> {
                 out.append('[')
-                value.forEachIndexed { index, item -> if (index > 0) out.append(','); write(out, item) }
+                value.forEachIndexed { index, item -> if (index > 0) out.append(','); write(out, item, pieces) }
                 out.append(']')
             }
             else -> quote(out, value.toString())

@@ -1,6 +1,6 @@
 # JotDrop Android Privacy Policy
 
-Last updated: November 11, 2026
+Last updated: November 12, 2026
 
 JotDrop (`com.diexar.keepcapture`) is a local-first Android notes app from Diexar Labs. Contact us at [eric@diexar.com](mailto:eric@diexar.com) about privacy questions.
 
@@ -26,10 +26,10 @@ You can create a free JotDrop Cloud account to sync your notes between devices, 
 
 ## Ask JotDrop: AI with your own key (optional)
 
-Ask JotDrop is an assistant you can give tasks to in your own words, typed or dictated. It is off until you choose an AI service in Settings and enter your own key: Anthropic (Claude), OpenAI, Google (Gemini), OpenRouter, or an https address of your own that speaks the OpenAI API, such as a server that runs Ollama. When you send a request, the app sends it straight from your phone to that service, together with the notes listed under "What goes along" and any note the AI reads while it answers, at most 20 notes or 30,000 characters at a time. You see that list before you send and can take notes off it. If you use "Rewrite with AI", "Make a checklist with AI" or "Summarize with AI" in the editor, only the text of that note is sent. Notes in shared groups and notes with a live list link stay out unless you switch them on. Nothing of this passes through our servers, and we never see your key.
+Ask JotDrop is an assistant you can give tasks to in your own words, typed or dictated. It is off until you choose an AI service in Settings and enter your own key: Anthropic (Claude), OpenAI, Google (Gemini), OpenRouter, or an https address of your own that speaks the OpenAI API, such as a server that runs Ollama. When you send a request, the app sends it straight from your phone to that service, together with the notes listed under "What goes along" and any note the AI reads while it answers, at most 20 notes or 30,000 characters at a time. You see that list before you send and can take notes off it. If you use "Rewrite with AI", "Make a checklist with AI" or "Summarize with AI" in the editor, only the text of that note is sent. Notes in shared groups and notes with a live list link stay out unless you switch them on. A photo, PDF or recording from a note goes along only when you pick it: you tick it in that list, or you choose Transcribe with AI, Read photo with AI or Receipt to Paper drawer in the note's menu, and the file shows by name before you send. The app makes a photo smaller on your phone first and sends it as a JPEG; a PDF or a recording goes as it is. OpenAI writes out a recording at its own address, with its own transcription model. On OpenRouter, a model that cannot read PDFs gets the text of the PDF instead, which OpenRouter makes with a conversion service it works with. A photo or recording can hold details of other people, so only send what you may share. Reading text from a photo with OCR, described above, is different: it stays on the phone and sends nothing to an AI service. Nothing of this passes through our servers, and we never see your key.
 
 - **Your key** is stored in JotDrop's private storage on this phone, encrypted with a key from the Android Keystore, and excluded from Android backups. It is not synced to your other devices. "Turn off and remove key" deletes it.
-- **The AI service** handles what you send under your own agreement with it; we are not part of that and do not process it for you. Some services may use what you send to improve their products, Google for example on the free tier of the Gemini API outside the EEA, Switzerland and the UK, so read the terms of the service you pick.
+- **The AI service** handles what you send under your own agreement with it; we are not part of that and do not process it for you. Some services may use what you send, files included, to improve their products, Google for example on the free tier of the Gemini API outside the EEA, Switzerland and the UK, so read the terms of the service you pick.
 - **Changes to your notes** happen only on your phone. A new note is made at once; a change to a note you already have, a label, a reminder or an expiry date waits until you say yes.
 - **Dictating** a request uses the speech recognition app on your phone, as described under Speech recognition below.
 - **Reporting an answer** opens your mail app with an email to hello@jotdrop.net that holds the question and the answer. We use it only to look into the report and reply.
@@ -46,7 +46,7 @@ Starting with Android 0.28.9, JotDrop enforces HTTPS for preview requests, inclu
 
 ## Speech recognition
 
-Recording a voice memo stores audio in your vault without uploading it through JotDrop. Separately, if you tap speech-to-text, JotDrop opens the recognition app installed on your device. That app, often provided by Google, captures your speech directly and may process audio online under its own privacy policy. Speech-to-text is optional; JotDrop does not send audio to that app or receive an audio copy from it, only the recognized text you choose to put in your note.
+Recording a voice memo stores audio in your vault without uploading it through JotDrop. If you choose Transcribe with AI on a note, the app sends that recording straight to the AI service you chose, as described under Ask JotDrop above. Separately, if you tap speech-to-text, JotDrop opens the recognition app installed on your device. That app, often provided by Google, captures your speech directly and may process audio online under its own privacy policy. Speech-to-text is optional; JotDrop does not send audio to that app or receive an audio copy from it, only the recognized text you choose to put in your note.
 
 ## Device access and backups
 
