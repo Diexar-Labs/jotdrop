@@ -398,6 +398,41 @@ object Storage {
     }.getOrNull() ?: -1L
 
     /**
+     * The bytes of an attachment, for a file the user pointed at in Ask JotDrop. Larger than [max] is an error
+     * before the file is opened when the size is known, and while reading when it is not; never cut short.
+     */
+    fun readAttachmentBytes(context: Context, uri: Uri, max: Long): Result<ByteArray> = runCatching {
+        val size = attachmentSize(uri).takeIf { it >= 0 } ?: fileSize(context, uri)
+        if (size > max) throw FileTooLargeException(size, max)
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            if (size >= 0) {
+                val bytes = ByteArray(size.toInt())
+                var at = 0
+                while (at < bytes.size) {
+                    val count = input.read(bytes, at, bytes.size - at)
+                    if (count < 0) throw java.io.IOException("The file is shorter than its size.")
+                    at += count
+                }
+                if (input.read() >= 0) throw java.io.IOException("The file is longer than its size.")
+                bytes
+            } else {
+                val output = java.io.ByteArrayOutputStream()
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    val count = input.read(buffer, 0, minOf(buffer.size.toLong(), max + 1 - output.size()).toInt().coerceAtLeast(1))
+                    if (count < 0) break
+                    output.write(buffer, 0, count)
+                    if (output.size() > max) throw FileTooLargeException(-1, max)
+                }
+                output.toByteArray()
+            }
+        } ?: throw java.io.FileNotFoundException("The file cannot be opened.")
+    }
+
+    /** A file over the limit for its kind; size is -1 when the storage did not say. */
+    class FileTooLargeException(val size: Long, val max: Long) : java.io.IOException("The file is larger than $max bytes.")
+
+    /**
      * The original name, safe for a vault path and an `![[embed]]`: no folders, no characters that end a wiki link,
      * no leading dot (the cloud leaves hidden files alone). Same as `cleanFileName` in the plugin (src/fileKinds.ts).
      */
@@ -556,8 +591,9 @@ object Storage {
     fun listNotes(context: Context): Result<List<NoteSummary>> = listNotesFolder(context, attachments = true).map { it.notes }
 
     /**
-     * Ask JotDrop: Notes and Archive in one pass, without attachments (a request never sends a picture). 10 Nov 2026:
-     * listing both the usual way took ~2.5 s for 496 notes on Eric's phone.
+     * Ask JotDrop: Notes and Archive in one pass, without attachments. A file goes along only when the user points at
+     * it, and is read only then (AiFiles, readAttachmentBytes). 10 Nov 2026: listing both the usual way took ~2.5 s
+     * for 496 notes on Eric's phone.
      */
     fun listNotesForAsk(context: Context): Result<List<NoteSummary>> = listNotesFolder(context, attachments = false).map { listing ->
         val archive = listing.dirs["Archive"]?.let { buildNoteSummaries(context, noteFiles(context, listing.vaultUri, it), null) }.orEmpty()

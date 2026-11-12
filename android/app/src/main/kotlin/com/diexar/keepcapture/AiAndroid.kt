@@ -123,10 +123,12 @@ object AiHttp : AiFetcher {
                 connection.readTimeout = timeoutMs.coerceIn(1, Int.MAX_VALUE.toLong()).toInt()
                 connection.requestMethod = request.method
                 for ((name, value) in request.headers) connection.setRequestProperty(name, value)
-                request.body?.toByteArray(Charsets.UTF_8)?.let { bytes ->
+                // The body in pieces with a fixed length (not chunked: an own address does not always take that);
+                // a file's base64 is made while it is written, so the file is in memory once.
+                request.body?.let { body ->
                     connection.doOutput = true
-                    connection.setFixedLengthStreamingMode(bytes.size)
-                    connection.outputStream.use { it.write(bytes) }
+                    connection.setFixedLengthStreamingMode(body.length)
+                    connection.outputStream.use { body.writeTo(it) }
                 }
                 val status = connection.responseCode
                 val stream = if (status in 200..299) connection.inputStream else connection.errorStream
@@ -149,6 +151,98 @@ object AiHttp : AiFetcher {
                 connection.disconnect()
             }
         } } finally { watcher.cancel() }
+    }
+}
+
+/** A file of a note that can go along to the AI service: kind and type from AiParts.fileKind, size -1 when not known. */
+data class AiFileRef(val name: String, val kind: String, val mime: String, val uri: Uri, val size: Long)
+
+/**
+ * Ask JotDrop version 2: the files of a note, read only when the user points at one. A recording or PDF goes as it
+ * is, within the limit of its kind; a photo is made small first (long side at most 2048 pixels, JPEG on white).
+ * No log lines with file names or contents.
+ */
+object AiFiles {
+    private const val MIB = 1024L * 1024L
+
+    /** The files the note embeds that can go along; a drawing, another note, or a file that is gone falls away. */
+    fun of(context: Context, noteText: String, spaceId: String?): List<AiFileRef> =
+        Storage.findEmbeddedAttachmentBasenames(noteText).distinct().mapNotNull { name ->
+            val (kind, mime) = AiParts.fileKind(name) ?: return@mapNotNull null
+            val uri = Storage.findAttachmentUri(context, name, spaceId) ?: return@mapNotNull null
+            AiFileRef(name, kind, mime, uri, Storage.attachmentSize(uri).takeIf { it >= 0 } ?: Storage.fileSize(context, uri))
+        }
+
+    /** The file as a part for the request. Throws AiError: too_large, or bad_request when it cannot be read. */
+    suspend fun part(context: Context, ref: AiFileRef): AiPart = withContext(Dispatchers.IO) {
+        if (ref.kind == "image") return@withContext AiPart("image", "image/jpeg", ref.name.substringBeforeLast('.') + ".jpg", photo(context, ref.uri))
+        val limit = AiParts.LIMITS.getValue(ref.kind)
+        val bytes = Storage.readAttachmentBytes(context, ref.uri, limit).getOrElse { error ->
+            if (error is Storage.FileTooLargeException) throw AiError("too_large", "${AiParts.label(ref.name)} is larger than ${limit / MIB} MiB.")
+            throw AiError("bad_request", "${AiParts.label(ref.name)} could not be read.")
+        }
+        AiPart(ref.kind, ref.mime, ref.name, bytes)
+    }
+
+    private const val LONG_SIDE = 2048
+
+    /**
+     * A photo made small, as JPEG bytes: decoded at a power of two that keeps the long side at 2048 or more, turned
+     * the way its EXIF says, drawn on white (JPEG has no transparency) at AiParts.photoSize, then quality 85, 70 or
+     * 50 until it is at most 4 MiB.
+     */
+    fun photo(context: Context, uri: Uri): ByteArray {
+        val resolver = context.contentResolver
+        val unreadable = AiError("bad_request", "Android cannot read this photo.")
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        resolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, bounds) }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw unreadable
+        var sample = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= LONG_SIDE) sample *= 2
+        val decoded = try {
+            resolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }) }
+        } catch (_: OutOfMemoryError) { null } ?: throw unreadable
+        val orientation = runCatching {
+            resolver.openInputStream(uri)?.use { android.media.ExifInterface(it).getAttributeInt(android.media.ExifInterface.TAG_ORIENTATION, android.media.ExifInterface.ORIENTATION_NORMAL) }
+        }.getOrNull() ?: android.media.ExifInterface.ORIENTATION_NORMAL
+        val turned = try {
+            turn(decoded, orientation)
+        } catch (error: OutOfMemoryError) { decoded.recycle(); throw unreadable }
+        val (width, height) = AiParts.photoSize(turned.width, turned.height)
+        val small = try {
+            android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888).also { out ->
+                android.graphics.Canvas(out).apply {
+                    drawColor(android.graphics.Color.WHITE)
+                    drawBitmap(turned, null, android.graphics.Rect(0, 0, width, height), android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG))
+                }
+            }
+        } catch (_: OutOfMemoryError) { throw unreadable } finally { turned.recycle() }
+        try {
+            val limit = AiParts.LIMITS.getValue("image")
+            for (quality in listOf(85, 70, 50)) {
+                val bytes = ByteArrayOutputStream().also { small.compress(android.graphics.Bitmap.CompressFormat.JPEG, quality, it) }.toByteArray()
+                if (bytes.size <= limit) return bytes
+            }
+        } finally { small.recycle() }
+        throw AiError("too_large", "This photo is larger than 4 MiB, even made small.")
+    }
+
+    // The EXIF orientations as a turn and a mirror; the original bitmap is given back when nothing changes.
+    private fun turn(bitmap: android.graphics.Bitmap, orientation: Int): android.graphics.Bitmap {
+        val matrix = android.graphics.Matrix()
+        when (orientation) {
+            android.media.ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> matrix.setScale(-1f, 1f)
+            android.media.ExifInterface.ORIENTATION_ROTATE_180 -> matrix.setRotate(180f)
+            android.media.ExifInterface.ORIENTATION_FLIP_VERTICAL -> matrix.setScale(1f, -1f)
+            android.media.ExifInterface.ORIENTATION_TRANSPOSE -> { matrix.setRotate(90f); matrix.postScale(-1f, 1f) }
+            android.media.ExifInterface.ORIENTATION_ROTATE_90 -> matrix.setRotate(90f)
+            android.media.ExifInterface.ORIENTATION_TRANSVERSE -> { matrix.setRotate(-90f); matrix.postScale(-1f, 1f) }
+            android.media.ExifInterface.ORIENTATION_ROTATE_270 -> matrix.setRotate(-90f)
+            else -> return bitmap
+        }
+        val turned = android.graphics.Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+        if (turned !== bitmap) bitmap.recycle()
+        return turned
     }
 }
 

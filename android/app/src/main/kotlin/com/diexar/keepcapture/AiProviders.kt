@@ -1,21 +1,96 @@
 package com.diexar.keepcapture
 
+import java.io.ByteArrayOutputStream
+import java.io.OutputStream
 import java.net.URI
+import java.nio.ByteBuffer
+import java.security.SecureRandom
+import java.util.Base64
 
 /**
  * The AI services Ask JotDrop talks to, straight from this phone with the user's own key; never through our
- * server. The same request and answer forms as cloud/shared/ai/providers.mjs (checked against ai-vectors.json):
- * Anthropic's Messages API, OpenAI's Chat Completions (also OpenRouter and any OpenAI-compatible address) and
- * Gemini's generateContent. No streaming in version 1.
+ * server. The same request and answer forms as cloud/shared/ai/providers.mjs (checked against ai-vectors.json and
+ * ai-vectors-v2.json): Anthropic's Messages API, OpenAI's Chat Completions (also OpenRouter and any
+ * OpenAI-compatible address) and Gemini's generateContent. No streaming. Version 2: files the user points at go
+ * along with the first message, and a recording can be written out (transcribeRequest).
  */
 data class AiSpec(
     val id: String, val name: String, val form: String, val needsKey: Boolean, val base: String?, val defaultModel: String?,
     val headers: Map<String, String> = emptyMap(),
 )
 
-data class AiConfig(val provider: String, val key: String = "", val model: String = "", val baseUrl: String = "")
+/**
+ * inputs: the model's input list (OpenRouter's architecture.input_modalities), for the vectors only. The app does
+ * not store it and gives none, like the web app: on OpenRouter photos and recordings are then "unknown: try it".
+ */
+data class AiConfig(val provider: String, val key: String = "", val model: String = "", val baseUrl: String = "", val inputs: List<String>? = null)
 
-data class AiRequest(val url: String, val method: String, val headers: Map<String, String>, val body: String?)
+/** Bytes that go out as base64, with an optional text in front ("data:image/jpeg;base64,"). The text is ASCII. */
+class AiBase64(val bytes: ByteArray, val prefix: String = "") {
+    val length: Long get() = prefix.length + (bytes.size + 2L) / 3 * 4
+}
+
+/**
+ * A request body in pieces (String, ByteArray or AiBase64), written straight to the connection: base64 is made in
+ * blocks while it is written, so a file is in memory once. Without files a body is one piece of text.
+ */
+class AiBody(val pieces: List<Any>) {
+    init { require(pieces.all { it is String || it is ByteArray || it is AiBase64 }) { "A body piece is text, bytes or base64." } }
+
+    val length: Long = pieces.sumOf { piece ->
+        when (piece) { is String -> utf8Length(piece); is ByteArray -> piece.size.toLong(); else -> (piece as AiBase64).length }
+    }
+
+    fun writeTo(out: OutputStream) {
+        for (piece in pieces) when (piece) {
+            is String -> out.write(piece.toByteArray(Charsets.UTF_8))
+            is ByteArray -> out.write(piece)
+            is AiBase64 -> {
+                out.write(piece.prefix.toByteArray(Charsets.US_ASCII))
+                val encoder = Base64.getEncoder()
+                var at = 0
+                while (at < piece.bytes.size) {
+                    val count = minOf(BLOCK, piece.bytes.size - at)
+                    val encoded = encoder.encode(ByteBuffer.wrap(piece.bytes, at, count))
+                    out.write(encoded.array(), encoded.arrayOffset(), encoded.remaining())
+                    at += count
+                }
+            }
+        }
+    }
+
+    /** The whole body at once: for the check and for small bodies only. */
+    fun bytes(): ByteArray = ByteArrayOutputStream(length.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()).also(::writeTo).toByteArray()
+
+    fun text(): String = String(bytes(), Charsets.UTF_8)
+
+    companion object {
+        // 48 KiB of input, a multiple of 3, so the blocks join without padding in between.
+        private const val BLOCK = 48 * 1024
+
+        fun text(value: String) = AiBody(listOf(value))
+
+        private fun utf8Length(text: String): Long {
+            var count = 0L
+            var i = 0
+            while (i < text.length) {
+                val c = text[i]
+                count += when {
+                    c.code < 0x80 -> 1
+                    c.code < 0x800 -> 2
+                    Character.isHighSurrogate(c) && i + 1 < text.length && Character.isLowSurrogate(text[i + 1]) -> { i++; 4 }
+                    // A lone surrogate: Java's UTF-8 encoder writes "?".
+                    Character.isSurrogate(c) -> 1
+                    else -> 3
+                }
+                i++
+            }
+            return count
+        }
+    }
+}
+
+data class AiRequest(val url: String, val method: String, val headers: Map<String, String>, val body: AiBody?)
 
 data class AiHttpResponse(val status: Int, val text: String) { val ok get() = status in 200..299 }
 
@@ -25,13 +100,20 @@ data class AiToolResult(val id: String, val name: String, val content: String, v
 
 /** A message in JotDrop's own form, the same for every provider. raw: the provider's own content, sent back as it came. */
 sealed class AiMessage {
-    data class User(val text: String) : AiMessage()
+    /** parts: files the user pointed at; without them the request is byte for byte the one of version 1. */
+    data class User(val text: String, val parts: List<AiPart> = emptyList()) : AiMessage()
     data class Assistant(val text: String, val toolCalls: List<AiToolCall>, val raw: Any? = null) : AiMessage()
     data class Tool(val results: List<AiToolResult>) : AiMessage()
 }
 
-/** One round's answer. stop: end, tool, length or refusal. */
-data class AiAnswer(val text: String, val toolCalls: List<AiToolCall>, val stop: String, val input: Long, val output: Long, val raw: Any?)
+/** One round's answer. stop: end, tool, length or refusal. seconds: a written-out recording billed by its length. */
+data class AiAnswer(val text: String, val toolCalls: List<AiToolCall>, val stop: String, val input: Long, val output: Long, val raw: Any?, val seconds: Double? = null)
+
+/** A recording written out: the text, and tokens or (OpenAI) seconds. */
+data class AiTranscript(val text: String, val input: Long, val output: Long, val seconds: Double? = null) {
+    /** In the form of an answer, for AiAssistant.once. */
+    fun answer() = AiAnswer(text, emptyList(), "end", input, output, null, seconds)
+}
 
 data class AiModel(val id: String, val name: String, val tools: Boolean?, val price: Double = 0.0)
 
@@ -49,7 +131,10 @@ fun interface AiFetcher {
 interface AiProvider {
     val id: String
     val model: String
+    /** What it can read; null for a provider that does not say (a test): then only the limits are checked. */
+    val capabilities: AiCaps? get() = null
     suspend fun complete(system: String, messages: List<AiMessage>, tools: List<AiTool>, timeoutMs: Long): AiAnswer
+    suspend fun transcribe(audio: AiPart, language: String?, timeoutMs: Long): AiTranscript = throw AiError("unsupported_input", "This AI service cannot write out recordings.")
 }
 
 object AiProviders {
@@ -114,9 +199,37 @@ object AiProviders {
 
     private fun callJson(call: AiToolCall) = call.input ?: emptyMap<String, Any?>()
 
+    // Version 2: files first, the text last (Anthropic advises it, and it does no harm elsewhere).
+    private fun hasParts(message: AiMessage) = message is AiMessage.User && message.parts.isNotEmpty()
+    private fun dataUrl(part: AiPart) = AiBase64(part.bytes, "data:${part.mime};base64,")
+    private val FILE_NAME_MARKS = Regex("[\\x00-\\x1f\\x7f\"\\\\]+")
+    private fun fileName(part: AiPart) = FILE_NAME_MARKS.replace(part.name, " ").trim().take(100).ifEmpty { "document.pdf" }
+    private val AUDIO_FORMAT = mapOf("audio/mp4" to "m4a", "audio/m4a" to "m4a", "audio/x-m4a" to "m4a", "audio/aac" to "aac", "audio/webm" to "webm", "audio/ogg" to "ogg", "audio/mpeg" to "mp3", "audio/wav" to "wav", "audio/x-wav" to "wav")
+    // Gemini's lists (11 Nov 2026): no GIF among the pictures; recordings as audio/m4a, not audio/mp4.
+    private val GEMINI_IMAGES = setOf("image/jpeg", "image/png", "image/webp")
+    private val GEMINI_AUDIO = mapOf("audio/mp4" to "audio/m4a", "audio/x-m4a" to "audio/m4a", "audio/x-wav" to "audio/wav")
+
+    private fun anthropicPart(part: AiPart): Map<String, Any?> = when (part.kind) {
+        "image" -> linkedMapOf("type" to "image", "source" to linkedMapOf("type" to "base64", "media_type" to part.mime, "data" to AiBase64(part.bytes)))
+        "pdf" -> linkedMapOf("type" to "document", "source" to linkedMapOf("type" to "base64", "media_type" to "application/pdf", "data" to AiBase64(part.bytes)))
+        else -> throw AiError("unsupported_input", AiParts.explain("anthropic", part.kind))
+    }
+
+    private fun openAiPart(part: AiPart): Map<String, Any?> = when (part.kind) {
+        "image" -> linkedMapOf("type" to "image_url", "image_url" to linkedMapOf("url" to dataUrl(part)))
+        "pdf" -> linkedMapOf("type" to "file", "file" to linkedMapOf("filename" to fileName(part), "file_data" to dataUrl(part)))
+        else -> linkedMapOf("type" to "input_audio", "input_audio" to linkedMapOf("data" to AiBase64(part.bytes), "format" to AUDIO_FORMAT[part.mime]))
+    }
+
+    private fun geminiPart(part: AiPart): Map<String, Any?> {
+        if (part.kind == "image" && part.mime !in GEMINI_IMAGES) throw AiError("unsupported_input", "Gemini cannot read GIF pictures. Use a JPEG, PNG or WebP picture.")
+        return linkedMapOf("inlineData" to linkedMapOf("mimeType" to (GEMINI_AUDIO[part.mime] ?: part.mime), "data" to AiBase64(part.bytes)))
+    }
+
     private fun anthropicMessages(messages: List<AiMessage>): List<Any?> = messages.map { message ->
         when (message) {
-            is AiMessage.User -> linkedMapOf("role" to "user", "content" to message.text)
+            is AiMessage.User -> if (hasParts(message)) linkedMapOf("role" to "user", "content" to message.parts.map(::anthropicPart) + linkedMapOf("type" to "text", "text" to message.text))
+                else linkedMapOf("role" to "user", "content" to message.text)
             is AiMessage.Tool -> linkedMapOf("role" to "user", "content" to message.results.map { r ->
                 linkedMapOf<String, Any?>("type" to "tool_result", "tool_use_id" to r.id, "content" to r.content).also { if (r.isError) it["is_error"] = true }
             })
@@ -129,7 +242,8 @@ object AiProviders {
     private fun openAiMessages(system: String, messages: List<AiMessage>): List<Any?> =
         listOf(linkedMapOf("role" to "system", "content" to system)) + messages.flatMap { message ->
             when (message) {
-                is AiMessage.User -> listOf(linkedMapOf("role" to "user", "content" to message.text))
+                is AiMessage.User -> listOf(linkedMapOf("role" to "user", "content" to
+                    if (hasParts(message)) message.parts.map(::openAiPart) + linkedMapOf("type" to "text", "text" to message.text) else message.text))
                 is AiMessage.Tool -> message.results.map { r -> linkedMapOf("role" to "tool", "tool_call_id" to r.id, "content" to r.content) }
                 is AiMessage.Assistant -> {
                     val raw = message.raw.obj()
@@ -147,7 +261,7 @@ object AiProviders {
 
     private fun geminiContents(messages: List<AiMessage>): List<Any?> = messages.map { message ->
         when (message) {
-            is AiMessage.User -> linkedMapOf("role" to "user", "parts" to listOf(linkedMapOf("text" to message.text)))
+            is AiMessage.User -> linkedMapOf("role" to "user", "parts" to message.parts.map(::geminiPart) + linkedMapOf("text" to message.text))
             is AiMessage.Tool -> linkedMapOf("role" to "user", "parts" to message.results.map { r ->
                 val response = LinkedHashMap<String, Any?>()
                 if (isGeminiOwnId(r.id)) response["id"] = r.id
@@ -178,6 +292,8 @@ object AiProviders {
     fun buildRequest(config: AiConfig, system: String, messages: List<AiMessage>, tools: List<AiTool>): AiRequest {
         val target = resolve(config)
         val model = target.model!!
+        val parts = messages.filterIsInstance<AiMessage.User>().flatMap { it.parts }
+        checkFiles(target, config, parts, "ask")
         val body = LinkedHashMap<String, Any?>()
         val url = when (target.spec.form) {
             "anthropic" -> {
@@ -194,10 +310,83 @@ object AiProviders {
             else -> {
                 body["model"] = model; body["messages"] = openAiMessages(system, messages)
                 if (tools.isNotEmpty()) body["tools"] = tools.map { linkedMapOf("type" to "function", "function" to linkedMapOf("name" to it.name, "description" to it.description, "parameters" to it.inputSchema)) }
+                // Without file input of its own, OpenRouter turns a PDF into text; its default for that is the paid
+                // OCR (read 11 Nov 2026). JotDrop asks for the free conversion; a model that reads files gets the PDF.
+                if (target.spec.id == "openrouter" && parts.any { it.kind == "pdf" } && config.inputs?.contains("file") != true)
+                    body["plugins"] = listOf(linkedMapOf("id" to "file-parser", "pdf" to linkedMapOf("engine" to "cloudflare-ai")))
                 "${target.base}/chat/completions"
             }
         }
-        return AiRequest(url, "POST", headersFor(target, true), AiJson.stringify(body))
+        return AiRequest(url, "POST", headersFor(target, true), AiJson.body(body))
+    }
+
+    private fun capsFor(target: Target, config: AiConfig) = AiParts.capabilities(target.spec.id, config.inputs)
+
+    // What cannot go stops here, before anything goes out: a kind the service cannot read, then the limits.
+    private fun checkFiles(target: Target, config: AiConfig, parts: List<AiPart>, use: String) {
+        if (parts.isEmpty()) return
+        val caps = capsFor(target, config)
+        for (part in parts) {
+            val field = if (part.kind == "audio" && use == "transcribe") "transcribe" else part.kind
+            if (caps.of(field) == false) throw AiError("unsupported_input", AiParts.explain(target.spec.id, part.kind, use))
+        }
+        AiParts.checkParts(parts, if (use == "transcribe") AiCaps(null, null, caps.transcribe, null) else caps)
+    }
+
+    // Writing out a recording (version 2). OpenAI has its own address and model for it (read 11 Nov 2026); Gemini
+    // and OpenRouter get the recording with this instruction and no tools.
+    const val TRANSCRIBE_MODEL = "gpt-transcribe"
+    const val TRANSCRIBE_PROMPT = "Write out this recording word for word, in the language that is spoken. Return only the text."
+    private val OPENAI_AUDIO = mapOf("audio/mp4" to "m4a", "audio/m4a" to "m4a", "audio/x-m4a" to "m4a", "audio/webm" to "webm", "audio/mpeg" to "mp3", "audio/wav" to "wav", "audio/x-wav" to "wav")
+    private val LANGUAGE = Regex("(?i)^([a-z]{2})(?:[-_]|$)")
+    private val random = SecureRandom()
+
+    private fun freshBoundary(): String = "jotdrop-" + ByteArray(16).also(random::nextBytes).joinToString("") { "%02x".format(it.toInt() and 0xff) }
+
+    /**
+     * The HTTP request that writes out a recording. For OpenAI multipart/form-data in three pieces: the head, the
+     * recording's own bytes (no copy) and the tail. language: the app's language as a hint ("nl" or "nl-NL"), left
+     * out when it is not a two-letter code.
+     */
+    fun transcribeRequest(config: AiConfig, audio: AiPart, language: String?, boundary: String? = null): AiRequest {
+        val target = resolve(config)
+        val model = target.model!!
+        val id = target.spec.id
+        if (audio.kind != "audio") throw AiError("unsupported_input", "Only a recording can be written out.")
+        checkFiles(target, config, listOf(audio), "transcribe")
+        if (id == "openai") {
+            val ext = OPENAI_AUDIO[audio.mime] ?: throw AiError("unsupported_input", "OpenAI cannot write out ${AUDIO_FORMAT[audio.mime] ?: "these"} recordings. Gemini can.")
+            val code = LANGUAGE.find(language?.trim().orEmpty())?.groupValues?.get(1)?.lowercase()
+            val mark = boundary ?: freshBoundary()
+            val fields = listOf("model" to TRANSCRIBE_MODEL) + (if (code != null) listOf("languages[]" to code) else emptyList())
+            val head = fields.joinToString("") { (name, value) -> "--$mark\r\nContent-Disposition: form-data; name=\"$name\"\r\n\r\n$value\r\n" } +
+                "--$mark\r\nContent-Disposition: form-data; name=\"file\"; filename=\"recording.$ext\"\r\nContent-Type: ${audio.mime}\r\n\r\n"
+            val headers = LinkedHashMap(headersFor(target, false)).apply { put("Content-Type", "multipart/form-data; boundary=$mark") }
+            return AiRequest("${target.base}/audio/transcriptions", "POST", headers, AiBody(listOf(head, audio.bytes, "\r\n--$mark--\r\n")))
+        }
+        if (target.spec.form == "gemini") {
+            val body = linkedMapOf("contents" to listOf(linkedMapOf("role" to "user", "parts" to listOf(geminiPart(audio), linkedMapOf("text" to TRANSCRIBE_PROMPT)))))
+            return AiRequest("${target.base}/models/${encodeSegment(model.removePrefix("models/"))}:generateContent", "POST", headersFor(target, true), AiJson.body(body))
+        }
+        if (id == "openrouter") {
+            val body = linkedMapOf("model" to model, "messages" to listOf(linkedMapOf("role" to "user", "content" to listOf(openAiPart(audio), linkedMapOf("type" to "text", "text" to TRANSCRIBE_PROMPT)))))
+            return AiRequest("${target.base}/chat/completions", "POST", headersFor(target, true), AiJson.body(body))
+        }
+        throw AiError("unsupported_input", AiParts.explain(id, "audio", "transcribe"))
+    }
+
+    /** A transcription answer: the text, and tokens or seconds. A refused recording is AiError("refusal"). */
+    fun parseTranscription(provider: String, json: Any?): AiTranscript {
+        if (provider == "openai") {
+            val root = json.obj()
+            val text = root?.get("text") as? String ?: throw AiError("bad_response")
+            val usage = root.child("usage")
+            return if (usage.str("type") == "duration") AiTranscript(text.trim(), 0, 0, (usage?.get("seconds") as? Number)?.toDouble()?.takeIf { !it.isNaN() } ?: 0.0)
+                else AiTranscript(text.trim(), usage.num("input_tokens") ?: 0, usage.num("output_tokens") ?: 0)
+        }
+        val answer = parseResponse(provider, json)
+        if (answer.stop == "refusal") throw AiError("refusal")
+        return AiTranscript(answer.text.trim(), answer.input, answer.output)
     }
 
     /** The request for the provider's model list. */
@@ -339,13 +528,29 @@ object AiProviders {
     fun create(config: AiConfig, fetcher: AiFetcher): AiProvider {
         val target = resolve(config)
         val secrets = listOf(target.key)
+        val caps = capsFor(target, config)
         return object : AiProvider {
             override val id = config.provider
             override val model = target.model!!
-            override suspend fun complete(system: String, messages: List<AiMessage>, tools: List<AiTool>, timeoutMs: Long): AiAnswer =
-                parseResponse(config.provider, send(fetcher, buildRequest(config, system, messages, tools), timeoutMs, secrets))
+            override val capabilities = caps
+            override suspend fun complete(system: String, messages: List<AiMessage>, tools: List<AiTool>, timeoutMs: Long): AiAnswer {
+                val request = buildRequest(config, system, messages, tools)
+                try {
+                    return parseResponse(config.provider, send(fetcher, request, timeoutMs, secrets))
+                } catch (error: AiError) {
+                    // A service that may or may not read a kind of file (an own address, an OpenRouter model not in
+                    // the list) says no with a plain 400, or with a 404 that names the input: tell the user what it is.
+                    val unknown = messages.filterIsInstance<AiMessage.User>().flatMap { it.parts }.any { it.kind in AiParts.KINDS && caps.of(it.kind) == null }
+                    if (unknown && (error.code == "bad_request" || (error.code == "model" && NAMES_INPUT.containsMatchIn(error.detail)))) throw AiError("unsupported_input", error.detail, error.status)
+                    throw error
+                }
+            }
+            override suspend fun transcribe(audio: AiPart, language: String?, timeoutMs: Long): AiTranscript =
+                parseTranscription(config.provider, send(fetcher, transcribeRequest(config, audio, language), timeoutMs, secrets))
         }
     }
+
+    private val NAMES_INPUT = Regex("(?i)support|image|audio|file|pdf|vision|modalit|input")
 
     /** The provider's models, for Settings. */
     suspend fun listModels(config: AiConfig, fetcher: AiFetcher, timeoutMs: Long = 20000): List<AiModel> =
