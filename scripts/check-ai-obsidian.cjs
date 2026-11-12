@@ -72,8 +72,9 @@ function fakeVault(TFile, initial) {
 (async () => {
   const result = await esbuild.build({
     stdin: {
-      contents: `export { AI_PROVIDER_IDS, AiSettingsStore, aiExecutor, aiLabels, aiSettings, aiTitle, collectAiNotes, draftAnswer } from "./src/ai.ts";
+      contents: `export { AI_PROVIDER_IDS, AiSettingsStore, FILE_ACTIONS, aiExecutor, aiFileKinds, aiFileNames, aiLabels, aiSettings, aiTitle, applyReceipt, collectAiFiles, collectAiNotes, draftAnswer, readAiPart } from "./src/ai.ts";
         export { runAssistant } from "./cloud/shared/ai/assistant.mjs";
+        export { createProvider } from "./cloud/shared/ai/providers.mjs";
         export { TFile } from "obsidian";`,
       resolveDir: ROOT,
     },
@@ -89,7 +90,7 @@ function fakeVault(TFile, initial) {
   });
   const loaded = { exports: {} };
   new Function("module", "exports", "require", result.outputFiles[0].text)(loaded, loaded.exports, require);
-  const { AI_PROVIDER_IDS, AiSettingsStore, aiExecutor, aiLabels, aiSettings, aiTitle, collectAiNotes, draftAnswer, runAssistant, TFile } = loaded.exports;
+  const { AI_PROVIDER_IDS, AiSettingsStore, FILE_ACTIONS, aiExecutor, aiFileKinds, aiFileNames, aiLabels, aiSettings, aiTitle, applyReceipt, collectAiFiles, collectAiNotes, createProvider, draftAnswer, readAiPart, runAssistant, TFile } = loaded.exports;
 
   // Settings: only known fields, a key only where one is used, an address only for an own address.
   assert.deepEqual([...AI_PROVIDER_IDS], ["ollama", "anthropic", "openai", "gemini", "openrouter", "custom"]);
@@ -234,6 +235,157 @@ function fakeVault(TFile, initial) {
   assert.deepEqual(report.usage, { input: 320, output: 42 });
   assert.deepEqual(report.sources.map((s) => s.id), ["JotDrop/Wifi.md"]);
 
+  // ---- Version 2 (Hand-off/ontwerp-ask-jotdrop-v2.md, phase 4): files of a note go along only when ticked. ----
+
+  // Which files a note has: both link forms, once each, in the note's order; not web addresses, notes or drawings.
+  const linked = "---\ncolor: \"red\"\n---\n# Trip\n\n![[memo.webm]] ![[Receipt photo.JPG|300]] ![[report.pdf#page=2]]\n"
+    + "[Voice memo](../attachments/voice-1.webm) ![](attachments/scan%20one.png) ![[memo.webm]]\n"
+    + "![[Other note]] ![[sketch.excalidraw]] ![[clip.mp4]] [site](https://example.com/file.pdf) ![[notes.txt]]\n";
+  assert.deepEqual(aiFileNames(linked), ["memo.webm", "Receipt photo.JPG", "report.pdf", "voice-1.webm", "scan one.png"]);
+  assert.deepEqual([...aiFileKinds(linked)].sort(), ["audio", "image", "pdf"]);
+  assert.deepEqual([...aiFileKinds("# Plain\n\nNo files here, only [a link](https://example.com/x.jpg).\n")], [], "a card without files gets no file actions");
+  assert.deepEqual(aiFileNames("---\nphoto: \"![[front.jpg]]\"\n---\n# x\n"), [], "front matter is not the note's text");
+  assert.deepEqual(JSON.parse(JSON.stringify(FILE_ACTIONS)), { transcribe: ["audio"], photo: ["image"], receipt: ["image", "pdf"] });
+
+  // The files on this device, found the way the card finds them (resolveAssetCandidates, the adapter for .attachments).
+  const blobs = new Map([
+    ["JotDrop/.attachments/memo.webm", Uint8Array.from([26, 69, 223, 163, 1, 2, 3])],
+    ["JotDrop/.attachments/Receipt photo.JPG", Uint8Array.from([255, 216, 255, 224, 9, 9])],
+    ["JotDrop/.attachments/report.pdf", Buffer.from("%PDF-1.7 fake")],
+    ["JotDrop/.attachments/big.pdf", new Uint8Array(12 * 1024 * 1024 + 1)],
+  ]);
+  const reads = [];
+  app.vault.adapter = {
+    stat: async (p) => (blobs.has(p) ? { type: "file", size: blobs.get(p).length } : null),
+    readBinary: async (p) => { reads.push(p); const b = blobs.get(p); return b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength); },
+  };
+  plugin.resolveAssetCandidates = (note, name) => [{ vaultPath: `JotDrop/.attachments/${name}`, file: null }, { vaultPath: `JotDrop/Elsewhere/${name}`, file: null }];
+  const tripFile = Object.assign(new TFile(), { path: "JotDrop/Trip.md", basename: "Trip", extension: "md" });
+  const found = await collectAiFiles(plugin, tripFile, linked);
+  assert.deepEqual(found.map((f) => `${f.name}|${f.kind}|${f.mime}|${f.bytes}`), [
+    "memo.webm|audio|audio/webm|7", "Receipt photo.JPG|image|image/jpeg|6", "report.pdf|pdf|application/pdf|13",
+  ], "a link to a file that is not on this device is left out");
+  assert.deepEqual(reads, [], "finding files reads none of them");
+
+  // Reading: as plain base64 with its type; a photo goes through the shrinker and becomes a JPEG; too large is never read.
+  const memo = await readAiPart(plugin, found[0]);
+  assert.deepEqual(memo, { kind: "audio", mime: "audio/webm", name: "memo.webm", data: Buffer.from(blobs.get("JotDrop/.attachments/memo.webm")).toString("base64") });
+  const shrunk = [];
+  const photo = await readAiPart(plugin, found[1], async (bytes, mime) => { shrunk.push([bytes.length, mime]); return Uint8Array.from([1, 2, 3, 4]); });
+  assert.deepEqual(shrunk, [[6, "image/jpeg"]]);
+  assert.deepEqual(photo, { kind: "image", mime: "image/jpeg", name: "Receipt photo.jpg", data: "AQIDBA==" });
+  reads.length = 0;
+  await assert.rejects(readAiPart(plugin, { id: "x", name: "big.pdf", kind: "pdf", mime: "application/pdf", bytes: 12 * 1024 * 1024 + 1, vaultPath: "JotDrop/.attachments/big.pdf" }), /larger than 12 MiB/);
+  assert.deepEqual(reads, [], "a file over the limit is not read for nothing");
+
+  // A question with a ticked photo, through the real assistant and a fake Gemini: the photo goes once, in the first message.
+  const geminiCalls = [];
+  const geminiFetch = async (url, init) => {
+    geminiCalls.push({ url, init });
+    return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "It says: milk, bread." }] }, finishReason: "STOP" }], usageMetadata: { promptTokenCount: 300, candidatesTokenCount: 8 } }), { status: 200 });
+  };
+  const gemini = { provider: "gemini", key: "test-key-not-real-1234", model: "gemini-3.5-flash-lite", baseUrl: "" };
+  const withPhoto = await runAssistant({
+    request: "What does the photo say?", notes: fresh.notes, labels: [], pinned: ["JotDrop/Wifi.md"], includeShared: false,
+    settings: { language: "en", date: "Thursday 12 November 2026, 17:00", timeZone: "Europe/Madrid" }, config: gemini, fetcher: geminiFetch,
+    executor: {}, confirm: async () => false, parts: [photo],
+  });
+  assert.equal(withPhoto.stop, "done");
+  assert.deepEqual(withPhoto.files, [{ name: "Receipt photo.jpg", kind: "image", bytes: 4 }], "the report names the file, not its content");
+  assert.equal(geminiCalls.length, 1);
+  assert.match(geminiCalls[0].url, /^https:\/\/generativelanguage\.googleapis\.com\/v1beta\/models\/gemini-3\.5-flash-lite:generateContent$/, "only the chosen service, never JotDrop");
+  const geminiBody = JSON.parse(geminiCalls[0].init.body);
+  assert.deepEqual(geminiBody.contents[0].parts[0], { inlineData: { mimeType: "image/jpeg", data: "AQIDBA==" } }, "files first, the text last");
+  assert.doesNotMatch(geminiCalls[0].init.body, /test-key-not-real/, "the key goes in a header, never in the body");
+  // A plain question about the same note sends no file bytes: unticked files stay home.
+  geminiCalls.length = 0;
+  await runAssistant({
+    request: "What does the photo say?", notes: fresh.notes, labels: [], pinned: ["JotDrop/Wifi.md"], includeShared: false,
+    settings: { language: "en", date: "x", timeZone: "UTC" }, config: gemini, fetcher: geminiFetch, executor: {}, confirm: async () => false,
+  });
+  assert.doesNotMatch(geminiCalls[0].init.body, /inlineData|AQIDBA/, "without a ticked file nothing but text goes");
+  // Claude cannot listen: a recording stops before anything goes out.
+  const noSound = await runAssistant({
+    request: "Summarize", notes: [], labels: [], config: { provider: "anthropic", key: "sk-ant-test-not-real", model: "", baseUrl: "" },
+    fetcher: async () => { throw new Error("nothing may go out"); }, parts: [memo],
+  });
+  assert.equal(noSound.stop, "error");
+  assert.equal(noSound.error.code, "unsupported_input");
+
+  // Writing out a recording with OpenAI: multipart as bytes, built by the shared core, through the plugin's fetcher.
+  const sent = [];
+  const transcribed = await createProvider({ provider: "openai", key: "sk-test-not-real-123456", model: "", baseUrl: "" }, async (url, init) => {
+    sent.push({ url, init });
+    return new Response(JSON.stringify({ text: " Hallo, dit is een test. ", usage: { type: "duration", seconds: 4 } }), { status: 200 });
+  }).transcribe({ audio: memo, language: "nl" });
+  assert.deepEqual(transcribed, { text: "Hallo, dit is een test.", usage: { input: 0, output: 0, seconds: 4 } });
+  assert.equal(sent[0].url, "https://api.openai.com/v1/audio/transcriptions");
+  assert.ok(sent[0].init.body instanceof Uint8Array, "the body is bytes");
+  assert.match(sent[0].init.headers["Content-Type"], /^multipart\/form-data; boundary=jotdrop-[0-9a-f]{32}$/);
+  const multipartText = Buffer.from(sent[0].init.body).toString("latin1");
+  assert.match(multipartText, /name="model"\r\n\r\ngpt-transcribe\r\n/);
+  assert.match(multipartText, /name="languages\[\]"\r\n\r\nnl\r\n/);
+  assert.ok(Buffer.from(sent[0].init.body).includes(Buffer.from(blobs.get("JotDrop/.attachments/memo.webm"))), "the recording's bytes are in the body unchanged");
+
+  // The plugin's own fetcher hands those bytes to Obsidian's requestUrl unchanged, with the multipart type; the
+  // answer comes back as a Response. A stand-in obsidian module records the call; nothing goes out.
+  const fetchBuild = await esbuild.build({
+    stdin: { contents: `export { cloudFetch } from "./src/cloud.ts";`, resolveDir: ROOT },
+    bundle: true, platform: "node", format: "cjs", write: false, logLevel: "error",
+    plugins: [{
+      name: "obsidian-request",
+      setup(build) {
+        build.onResolve({ filter: /^obsidian$/ }, () => ({ path: "obsidian", namespace: "obsidian-request" }));
+        build.onLoad({ filter: /.*/, namespace: "obsidian-request" }, () => ({
+          loader: "js",
+          contents: `
+            const names = ["App", "ButtonComponent", "DropdownComponent", "FileSystemAdapter", "ItemView", "Menu", "Modal", "Notice", "Plugin", "PluginSettingTab", "Setting", "SuggestModal", "TAbstractFile", "TFile", "TFolder", "WorkspaceLeaf"];
+            for (const name of names) exports[name] = class {};
+            exports.Platform = {};
+            exports.addIcon = () => {};
+            exports.setIcon = () => {};
+            exports.getLanguage = () => "en";
+            exports.normalizePath = (p) => p;
+            exports.requestUrl = async (options) => {
+              globalThis.__requestUrlCalls.push(options);
+              return { status: 200, headers: { "content-type": "application/json" }, arrayBuffer: new TextEncoder().encode(JSON.stringify({ text: "ok" })).buffer };
+            };`,
+        }));
+      },
+    }],
+  });
+  globalThis.__requestUrlCalls = [];
+  const fetchModule = { exports: {} };
+  new Function("module", "exports", "require", fetchBuild.outputFiles[0].text)(fetchModule, fetchModule.exports, require);
+  const multipartRequest = sent[0];
+  const viaPlugin = await fetchModule.exports.cloudFetch(multipartRequest.url, { method: "POST", headers: multipartRequest.init.headers, body: multipartRequest.init.body.subarray(0) });
+  const handed = globalThis.__requestUrlCalls[0];
+  assert.equal(handed.url, "https://api.openai.com/v1/audio/transcriptions");
+  assert.equal(handed.contentType, multipartRequest.init.headers["Content-Type"], "requestUrl gets the multipart type");
+  assert.ok(handed.body instanceof ArrayBuffer, "requestUrl gets an ArrayBuffer");
+  assert.ok(Buffer.from(handed.body).equals(Buffer.from(multipartRequest.init.body)), "byte for byte the body the core built");
+  // A part of a larger buffer (subarray) must not drag the rest of that buffer along.
+  await fetchModule.exports.cloudFetch("https://example.invalid/", { method: "POST", headers: {}, body: Uint8Array.from([9, 1, 2, 3, 9]).subarray(1, 4) });
+  assert.deepEqual([...new Uint8Array(globalThis.__requestUrlCalls[1].body)], [1, 2, 3]);
+  assert.deepEqual(await viaPlugin.json(), { text: "ok" });
+
+  // The receipt screen's Apply: title, lines below the note and the expiry date with its drawer and warning, in one go.
+  files.set("JotDrop/Kettle.md", Object.assign(new TFile(), { path: "JotDrop/Kettle.md", name: "Kettle.md", basename: "Kettle", extension: "md", stat: { mtime: 1 }, text: "---\njotdrop_labels: [\"Home\"]\n---\n# Scan\n\n![[Receipt photo.JPG]]\n" }));
+  const kettle = files.get("JotDrop/Kettle.md");
+  const kettleBefore = kettle.text;
+  await assert.rejects(applyReceipt(plugin, kettle.path, kettleBefore, { title: "Kettle", lines: "Shop: Hema", expires: "2026-13-40", drawer: "" }), /valid date/);
+  assert.equal(kettle.text, kettleBefore, "a bad date changes nothing");
+  await assert.rejects(applyReceipt(plugin, kettle.path, kettleBefore + "x", { title: "", lines: "", expires: "2028-11-12", drawer: "" }), /changed while Ask JotDrop worked/);
+  assert.equal(kettle.text, kettleBefore);
+  await applyReceipt(plugin, kettle.path, kettleBefore, { title: " Kettle\nfrom Hema ", lines: "Shop: Hema\nAmount: 24.99 EUR\nBought: 2026-11-12", expires: "2028-11-12", drawer: "Home" });
+  const kettleFront = app.metadataCache.getFileCache(kettle).frontmatter;
+  assert.match(kettle.text, /\n# Kettle from Hema\n\n!\[\[Receipt photo\.JPG\]\]\n\nShop: Hema\nAmount: 24\.99 EUR\nBought: 2026-11-12\n$/);
+  assert.equal(kettleFront.expires, "2028-11-12");
+  assert.deepEqual(kettleFront.jotdrop_labels, ["Home", "Paper drawer/Home"], "the drawer's label joins the note's labels");
+  assert.equal(kettleFront.reminder, "2028-11-05T09:00", "the usual warning a week before");
+  await assert.rejects(applyReceipt(plugin, "JotDrop/Shared/g1/Group.md", files.get("JotDrop/Shared/g1/Group.md").text, { title: "", lines: "", expires: "2028-11-12", drawer: "" }), /personal/);
+  await assert.rejects(applyReceipt(plugin, "JotDrop/Nope.md", "", { title: "", lines: "", expires: "2028-11-12", drawer: "" }), /gone/);
+
   // Wiring and rules, read from the source.
   const code = (file) => source(file).replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
   const ask = code("src/askJotDrop.ts"), ai = code("src/ai.ts"), view = source("src/view.ts"), edit = source("src/edit.ts"), main = source("src/main.ts"), settings = source("src/settings.ts"), i18n = source("src/i18n.ts");
@@ -257,6 +409,19 @@ function fakeVault(TFile, initial) {
   for (const key of ["action_ask_jotdrop", "action_ask_about_note", "action_ai_summarize", "action_ai_rewrite", "action_ai_checklist", "cmd_ask_jotdrop", "notice_ai_write_first", "notice_ai_save_to_keep"]) {
     assert.equal(i18n.split(`  ${key}: `).length, 3, `${key} in English and Dutch`);
   }
+  // Version 2 wiring: the three card actions, files only through the vault and cloudFetch, fixed actions without tools.
+  assert.match(view, /aiFileKinds\(content\)/, "file actions only on a card with such a file");
+  assert.match(view, /kinds\.has\("audio"\)[^\n]*t\("action_ai_transcribe"\)[^\n]*openAsk\(\{ file, action: "transcribe" \}\)/);
+  assert.match(view, /kinds\.has\("image"\)[^\n]*t\("action_ai_read_photo"\)[^\n]*openAsk\(\{ file, action: "photo" \}\)/);
+  assert.match(view, /\(kinds\.has\("image"\) \|\| kinds\.has\("pdf"\)\) && !groupNote\?\.frozen && !groupNote\?\.gone\)[\s\S]{0,200}t\("action_ai_receipt"\)[^\n]*action: "receipt"/, "no receipt in a read-only group");
+  assert.match(ask, /createProvider\(\{ provider, key, model, baseUrl \}, cloudFetch\)/, "a fixed action also goes through cloudFetch");
+  assert.equal((ask.match(/tools: \[\]/g) ?? []).length, 2, "reading a photo and a receipt go without tools");
+  assert.match(ask, /readAiPart\(this\.plugin, one\)/, "files are read only when sending");
+  assert.match(ask, /this\.filesOn\.has\(one\.id\) && !this\.fileProblem\(one\)/, "only ticked files that can go");
+  assert.match(ask, /aria-pressed/, "the pressed keep button says so, not only by colour");
+  assert.match(ask, /other people's details/, "the line about other people's details on a photo or recording");
+  assert.doesNotMatch(ai, /\bfetch\(|requestUrl\(/, "reading a file never goes out");
+  for (const key of ["action_ai_transcribe", "action_ai_read_photo", "action_ai_receipt"]) assert.equal(i18n.split(`  ${key}: `).length, 3, `${key} in English and Dutch`);
   assert.match(ask, /Report/, "a report button on every answer");
   assert.match(ask, /Check it before you rely on it/, "the answer is marked as AI");
   assert.match(source("README.md"), /Ask JotDrop/, "the README tells about the network use");

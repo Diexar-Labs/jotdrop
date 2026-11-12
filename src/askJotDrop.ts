@@ -6,8 +6,15 @@ import { type App, Modal, Notice, Setting, TFile, getLanguage, setIcon } from "o
 import type JotDropPlugin from "./main";
 import { cloudFetch } from "./cloud";
 import { createNoteInFolder } from "./capture";
-import { AI_OFF, AI_PROVIDER_IDS, type AiConfig, type AiNote, aiExecutor, aiLabels, aiSettings, aiToday, collectAiNotes } from "./ai";
-import { AiError, type AiAction, type AiChange, type AiReport, PROVIDERS, appendedText, createProvider, describeChange, editorRequest, foldUnchanged, modelGroups, newNoteText, parseMarkdown, pickDefaultModel, runAssistant, selectNotes } from "./aiShared";
+import { FILE_KIND_ICON, formatFileSize } from "./fileKinds";
+import { readMeta } from "./metadata";
+import { PAPER_DRAWER, SUGGESTED_DRAWERS, drawerName, validExpires } from "../cloud/shared/paper.mjs";
+import { AI_OFF, AI_PROVIDER_IDS, type AiConfig, type AiFile, type AiNote, FILE_ACTIONS, type FileAction, aiExecutor, aiLabels, aiSettings, aiTitle, aiToday, applyReceipt, collectAiFiles, collectAiNotes, readAiPart } from "./ai";
+import {
+  AiError, type AiAction, type AiChange, type AiPart, type AiReceipt, type AiReport, FILE_TIMEOUT_MS, KEEP_YEARS, LIMITS, PHOTO_SYSTEM, PROVIDERS, TRANSCRIBE_MODEL,
+  appendedText, capabilities, createProvider, decodedLength, describeChange, editorRequest, explain, fileRequest, foldUnchanged, keepUntil, modelGroups, newNoteText,
+  parseMarkdown, parseReceipt, pickDefaultModel, receiptLines, receiptRequest, runAssistant, selectNotes,
+} from "./aiShared";
 
 type Spec = { name: string; needsKey: boolean; defaultModel: string | null };
 const spec = (id: string): Spec | undefined => (PROVIDERS as Record<string, Spec>)[id];
@@ -41,11 +48,17 @@ function providerNote(provider: string): string {
 /** Ollama, or an own address on this computer (LM Studio and the like): nothing leaves the computer. */
 const onThisComputer = (config: AiConfig): boolean => config.provider === "ollama" || (config.provider === "custom" && /^http:\/\/(localhost|127\.\d+\.\d+\.\d+|\[::1\])(:|\/|$)/i.test(config.baseUrl));
 
-const via = (config: AiConfig): string => {
+// OpenAI writes out a recording with its own model, which the lines name.
+const modelFor = (config: AiConfig, action?: FileAction): string =>
+  action === "transcribe" && config.provider === "openai" ? TRANSCRIBE_MODEL : config.model || spec(config.provider)?.defaultModel || "";
+
+const FILE_WORDS: Record<string, string> = { image: "Photo", pdf: "PDF", audio: "Recording" };
+
+const via = (config: AiConfig, action?: FileAction, files = false): string => {
   const service = spec(config.provider);
   if (!service) return "";
-  const model = config.model || service.defaultModel || "no model chosen";
-  if (onThisComputer(config)) return `Goes to ${config.provider === "ollama" ? "Ollama" : config.baseUrl} on this device, model ${model}. Your request and notes stay on this device.`;
+  const model = modelFor(config, action) || "no model chosen";
+  if (onThisComputer(config)) return `Goes to ${config.provider === "ollama" ? "Ollama" : config.baseUrl} on this device, model ${model}. Your request${files ? ", notes and files" : " and notes"} stay on this device.`;
   if (config.provider === "custom") return `Goes straight to ${config.baseUrl}, model ${model}. Nothing goes to JotDrop.`;
   return `Goes straight to ${service.name}, model ${model}. Nothing goes to JotDrop.`;
 };
@@ -63,6 +76,11 @@ export type AskOptions = {
   summarize?: boolean;
   /** The editor's draft: only the draft goes, nothing is changed; the answer waits for Replace or Add below. */
   editor?: { title: string; text: string; kind: "rewrite" | "checklist" | "summarize"; use: (answer: string, replace: boolean) => void };
+  /**
+   * Version 2, with a file: one of the note's files goes, no notes, a fixed request and no tools. transcribe writes
+   * out a recording, photo reads the text on a photo, receipt reads a receipt for the Paper drawer.
+   */
+  action?: FileAction;
   /** How the board opens a note (open_note, sources, a new note). */
   openNote: (file: TFile) => void;
 };
@@ -110,10 +128,17 @@ export class AskJotDropModal extends Modal {
   private toOpen?: TFile;
   private last?: { report: Report; request: string; model: string; provider: string };
   private goesTimer?: number;
+  // Version 2: the note's files (ticked ones go along), the labels for the receipt screen, and whether the note is shared.
+  private files: AiFile[] = [];
+  private filesOn = new Set<string>();
+  private labels: string[] = [];
+  private targetShared = false;
+  private receipt?: { receipt: AiReceipt; before: string; path: string };
+  private groupName = `jotdrop-ai-file-${Math.random().toString(36).slice(2)}`;
   private el!: {
-    off: HTMLElement; via: HTMLElement; request: HTMLTextAreaElement; goes: HTMLDetailsElement; goesSummary: HTMLElement; goesList: HTMLElement;
+    off: HTMLElement; via: HTMLElement; request: HTMLTextAreaElement; goes: HTMLDetailsElement; goesSummary: HTMLElement; goesList: HTMLElement; goesFiles: HTMLElement;
     send: HTMLButtonElement; stop: HTMLButtonElement; status: HTMLElement; confirm: HTMLElement; confirmTitle: HTMLElement; confirmBody: HTMLElement;
-    apply: HTMLButtonElement; result: HTMLElement; badge: HTMLElement; answer: HTMLElement; sources: HTMLElement; actions: HTMLElement; also: HTMLElement;
+    apply: HTMLButtonElement; receipt: HTMLElement; result: HTMLElement; badge: HTMLElement; answer: HTMLElement; sources: HTMLElement; actions: HTMLElement; also: HTMLElement;
     usage: HTMLElement; useButtons: HTMLElement; reportBox: HTMLElement;
   };
 
@@ -121,32 +146,69 @@ export class AskJotDropModal extends Modal {
     super(app);
   }
 
+  /** The language for a hint to the service: Obsidian's own, else the system's. */
+  private language(): string {
+    return getLanguage() || navigator.language || "en";
+  }
+
   async onOpen(): Promise<void> {
     this.modalEl.addClass("jotdrop-ai-modal");
     this.titleEl.setText("Ask JotDrop");
     this.config = await this.plugin.aiStore.load();
-    const { editor, file, summarize } = this.options;
-    if (editor) this.notes = [{ id: "draft", title: editor.title || "Untitled", text: editor.text, labels: [], updatedAt: "", shared: false }];
-    else {
+    const { editor, file, summarize, action } = this.options;
+    if (editor) {
+      this.notes = [{ id: "draft", title: editor.title || "Untitled", text: editor.text, labels: [], updatedAt: "", shared: false }];
+      this.labels = aiLabels(this.plugin, this.notes);
+    } else {
       ({ notes: this.notes, texts: this.texts } = await collectAiNotes(this.plugin));
+      this.labels = aiLabels(this.plugin, this.notes);
+      this.targetShared = Boolean(file && this.notes.find((note) => note.id === file.path)?.shared);
       if (file && summarize) this.notes = this.notes.filter((note) => note.id === file.path);
+      // Asking about a note lists its files unticked; a file action sends one of them and no notes. A shared note's
+      // files stay home like the note itself, unless the user allows shared notes.
+      if (file && !summarize) {
+        const own = this.targetShared && !this.config.includeShared ? [] : await collectAiFiles(this.plugin, file, this.texts.get(file.path) ?? await this.app.vault.cachedRead(file));
+        if (action) {
+          this.notes = [];
+          this.files = own.filter((one) => (FILE_ACTIONS[action] as readonly string[]).includes(one.kind));
+          const first = this.files.find((one) => !this.fileProblem(one));
+          if (first) this.filesOn.add(first.id);
+        } else this.files = own;
+      }
     }
-    this.pinned = editor ? ["draft"] : file ? [file.path] : [];
+    this.pinned = editor ? ["draft"] : file && !action ? [file.path] : [];
     this.build();
-    const request = editor ? editorRequest(editor.kind, editor.title || "Untitled") : summarize ? editorRequest("summarize", this.notes[0]?.title ?? file?.basename ?? "") : "";
+    const request = editor ? editorRequest(editor.kind, editor.title || "Untitled")
+      : summarize ? editorRequest("summarize", this.notes[0]?.title ?? file?.basename ?? "")
+      : action === "receipt" ? receiptRequest(this.language()).text
+      : action ? fileRequest(action) : "";
     this.el.request.value = request;
-    this.el.request.readOnly = Boolean(editor || summarize);
+    this.el.request.readOnly = Boolean(editor || summarize || action);
+    // A file action shows the file at once: the user sends it, or chooses another one first.
+    this.el.goes.open = Boolean(action);
     this.renderGoes();
     const off = this.offReason();
     if (off) return;
-    if (request) void this.send();
+    if (request && !action) void this.send();
+    else if (action) this.el.send.focus();
     else this.el.request.focus();
+  }
+
+  /** Why a file cannot go with this service, in words, or "". The limits before reading; a photo is made small first. */
+  private fileProblem(file: AiFile): string {
+    const use = this.options.action === "transcribe" ? "transcribe" : "ask";
+    const caps = capabilities(this.config.provider, { id: this.config.model || spec(this.config.provider)?.defaultModel || "" });
+    if (caps[file.kind === "audio" && use === "transcribe" ? "transcribe" : file.kind] === false) return explain(this.config.provider, file.kind, use);
+    if (file.kind !== "image" && file.bytes > LIMITS[file.kind]) return `Larger than ${Math.round(LIMITS[file.kind] / 1048576)} MiB, too large to send.`;
+    return "";
   }
 
   private offReason(): string {
     if (!this.config.provider) return "Ask JotDrop is off. Choose an AI service, and add your own key, in the JotDrop settings.";
-    if (this.options.file && !this.options.editor && !this.config.includeShared && this.notes.find((note) => note.id === this.options.file?.path)?.shared) {
-      return "This note is in a shared group or has a list link. Ask JotDrop keeps those out, unless you switch on \"Also use notes from shared groups and list links\" in its settings.";
+    if (this.options.file && !this.options.editor && !this.config.includeShared && this.targetShared) {
+      return this.options.action
+        ? "This note is in a shared group or has a list link. Ask JotDrop keeps those notes and their files out, unless you switch on \"Also use notes from shared groups and list links\" in its settings."
+        : "This note is in a shared group or has a list link. Ask JotDrop keeps those out, unless you switch on \"Also use notes from shared groups and list links\" in its settings.";
     }
     if (this.options.summarize && !this.notes.length) return "This note cannot go to Ask JotDrop.";
     return "";
@@ -161,7 +223,7 @@ export class AskJotDropModal extends Modal {
     if (!this.config.provider) offEl.createEl("button", { text: "Open settings", cls: "mod-cta" }).addEventListener("click", () => { this.close(); openSettings(this.app, this.plugin.manifest.id); });
     offEl.toggle(Boolean(off));
 
-    const viaEl = root.createEl("p", { cls: "jotdrop-ai-via", text: off ? "" : via(this.config) });
+    const viaEl = root.createEl("p", { cls: "jotdrop-ai-via", text: off ? "" : via(this.config, this.options.action, this.files.length > 0) });
     const form = root.createDiv({ cls: "jotdrop-ai-ask" });
     form.toggle(!off);
     const request = form.createEl("textarea", { cls: "jotdrop-ai-request", attr: { rows: "3", placeholder: "Ask about your notes, or tell JotDrop what to do. For example: put milk and bread on the shopping list.", "aria-label": "Your request" } });
@@ -170,8 +232,15 @@ export class AskJotDropModal extends Modal {
 
     const goes = form.createEl("details", { cls: "jotdrop-ai-goes" });
     const goesSummary = goes.createEl("summary");
-    goes.createEl("p", { cls: "setting-item-description", text: "These notes go along with your question. Clear a note to keep it out. While answering, the AI can search and read more notes; you see which ones afterwards." });
+    goes.createEl("p", {
+      cls: "setting-item-description",
+      text: this.options.action
+        ? "Only the chosen file goes, with the fixed request above. No notes go along, and the AI cannot change anything."
+        : `These notes go along with your question. Clear a note to keep it out. While answering, the AI can search and read more notes; you see which ones afterwards.${this.files.length ? " A file of the note goes only when you tick it." : ""}`,
+    });
     const goesList = goes.createEl("ul", { cls: "jotdrop-ai-goes-list" });
+    const goesFiles = goes.createEl("p", { cls: "setting-item-description", text: "The ticked file goes to the AI service as it is; a photo is made smaller first. A photo or recording can hold other people's details, so only send what you may share." });
+    goesFiles.hide();
     goes.toggle(!this.options.editor);
 
     const buttons = form.createDiv({ cls: "jotdrop-ai-buttons" });
@@ -191,6 +260,9 @@ export class AskJotDropModal extends Modal {
     apply.addEventListener("click", () => this.confirming?.(true));
     confirmButtons.createEl("button", { text: "Do not change" }).addEventListener("click", () => this.confirming?.(false));
 
+    const receipt = root.createDiv({ cls: "jotdrop-ai-confirm jotdrop-ai-receipt" });
+    receipt.hide();
+
     const result = root.createDiv({ cls: "jotdrop-ai-result" });
     result.hide();
     const badge = result.createEl("p", { cls: "jotdrop-ai-badge" });
@@ -203,7 +275,7 @@ export class AskJotDropModal extends Modal {
     const reportBox = result.createDiv({ cls: "jotdrop-ai-report" });
     reportBox.hide();
 
-    this.el = { off: offEl, via: viaEl, request, goes, goesSummary, goesList, send, stop, status, confirm, confirmTitle, confirmBody, apply, result, badge, answer, sources, actions, also, usage, useButtons, reportBox };
+    this.el = { off: offEl, via: viaEl, request, goes, goesSummary, goesList, goesFiles, send, stop, status, confirm, confirmTitle, confirmBody, apply, receipt, result, badge, answer, sources, actions, also, usage, useButtons, reportBox };
   }
 
   // The list is what really goes: the same choice the assistant makes, minus the notes the user cleared.
@@ -224,7 +296,31 @@ export class AskJotDropModal extends Modal {
     };
     for (const note of picked) row(note, true);
     for (const note of kept) row(note, false);
-    this.el.goesSummary.setText(picked.length ? `What goes along: ${picked.length} ${picked.length === 1 ? "note" : "notes"}` : "What goes along: your question, no notes yet");
+    // A file row: a mark, the name, the kind in words and the size; one that cannot go says why and cannot be ticked.
+    // A file action sends one file, so there the rows are a choice of one.
+    const one = Boolean(this.options.action);
+    for (const file of this.files) {
+      const label = this.el.goesList.createEl("li").createEl("label", { cls: "jotdrop-ai-file" });
+      // A name of this window's own: radio buttons with one name form one group across the whole page.
+      const box = label.createEl("input", { attr: { type: one ? "radio" : "checkbox", name: this.groupName } });
+      const problem = this.fileProblem(file);
+      box.disabled = Boolean(problem);
+      box.checked = !problem && this.filesOn.has(file.id);
+      box.addEventListener("change", () => {
+        if (one) this.filesOn = new Set([file.id]);
+        else if (box.checked) this.filesOn.add(file.id);
+        else this.filesOn.delete(file.id);
+        this.renderGoes();
+      });
+      setIcon(label.createSpan({ cls: "jotdrop-ai-file-icon", attr: { "aria-hidden": "true" } }), FILE_KIND_ICON[file.kind]);
+      label.appendText(` ${file.name} · ${FILE_WORDS[file.kind]} · ${formatFileSize(file.bytes)}${problem ? ` (cannot go: ${problem})` : box.checked ? "" : " (stays home)"}`);
+    }
+    const sending = this.files.filter((file) => this.filesOn.has(file.id) && !this.fileProblem(file));
+    this.el.goesFiles.toggle(sending.length > 0);
+    this.el.via.setText(this.offReason() ? "" : via(this.config, this.options.action, sending.length > 0));
+    const noteWords = picked.length ? `${picked.length} ${picked.length === 1 ? "note" : "notes"}` : "";
+    const fileWords = sending.length ? `${sending.length} ${sending.length === 1 ? "file" : "files"}` : "";
+    this.el.goesSummary.setText(noteWords || fileWords ? `What goes along: ${[noteWords, fileWords].filter(Boolean).join(" and ")}` : one ? "What goes along: no file yet" : "What goes along: your question, no notes yet");
   }
 
   private confirmChange(change: Change): Promise<boolean> {
@@ -257,42 +353,95 @@ export class AskJotDropModal extends Modal {
   private setBusy(busy: boolean): void {
     this.el.send.disabled = busy;
     this.el.stop.toggle(busy);
-    this.el.request.readOnly = busy || Boolean(this.options.editor || this.options.summarize);
+    this.el.request.readOnly = busy || Boolean(this.options.editor || this.options.summarize || this.options.action);
   }
 
   private resetResult(): void {
     this.last = undefined;
     this.toOpen = undefined;
+    this.receipt = undefined;
     this.el.result.hide();
     this.el.reportBox.hide();
     this.el.confirm.hide();
+    this.el.receipt.hide();
     this.el.status.setText("");
-    for (const el of [this.el.answer, this.el.sources, this.el.actions, this.el.useButtons, this.el.reportBox]) el.empty();
+    for (const el of [this.el.answer, this.el.sources, this.el.actions, this.el.useButtons, this.el.reportBox, this.el.receipt]) el.empty();
+  }
+
+  // Writing out a recording, reading a photo and reading a receipt are one request each, without tools, with the
+  // longer AI time of files. The result takes the form of the assistant's report, so the answer, the report and the
+  // "sent" line work the same.
+  private async once(request: string, parts: AiPart[], run: (ai: ReturnType<typeof createProvider>, signal: AbortSignal) => Promise<{ text?: string; usage?: { input?: number; output?: number; seconds?: number }; stop?: string }>, signal: AbortSignal): Promise<Report> {
+    const report: Report = { answer: "", sent: [], sources: [], actions: [], files: parts.map((part) => ({ name: part.name, kind: part.kind, bytes: decodedLength(part.data) })), rounds: 1, usage: { input: 0, output: 0 }, stop: "done" };
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(new DOMException("The AI service took too long.", "TimeoutError")), FILE_TIMEOUT_MS);
+    const passOn = () => controller.abort(signal.reason);
+    signal.addEventListener("abort", passOn, { once: true });
+    try {
+      const { provider, key, model, baseUrl } = this.config;
+      const answer = await run(createProvider({ provider, key, model, baseUrl }, cloudFetch), controller.signal);
+      report.answer = answer.text ?? "";
+      report.usage = { input: answer.usage?.input ?? 0, output: answer.usage?.output ?? 0, ...(answer.usage?.seconds ? { seconds: answer.usage.seconds } : {}) };
+      if (answer.stop === "refusal") report.stop = "refusal";
+    } catch (error) {
+      const known = error instanceof AiError ? error as AiError & { code: string; detail: string; status: number } : new AiError("bad_response", String((error as Error)?.message ?? "")) as AiError & { code: string; detail: string; status: number };
+      // JotDrop's own check stops a file before anything goes out.
+      if (!known.status && ["unsupported_input", "too_large", "bad_request"].includes(known.code)) report.rounds = 0;
+      report.stop = known.code === "timeout" || known.code === "cancelled" ? known.code : known.code === "refusal" ? "refusal" : ["no_key", "no_model", "no_provider", "bad_address"].includes(known.code) ? "off" : "error";
+      if (report.stop !== "refusal") report.error = { code: known.code, message: known.message, detail: known.detail };
+    } finally {
+      window.clearTimeout(timer);
+      signal.removeEventListener("abort", passOn);
+    }
+    return report;
   }
 
   private async send(): Promise<void> {
     const request = this.el.request.value.trim();
     if (!request || this.controller || this.offReason()) return;
-    const { editor } = this.options;
+    const { editor, action, file } = this.options;
     const notes = this.notes.filter((note) => !this.excluded.has(note.id));
     const first = new Set(this.pick(request).notes.map((note) => note.id));
     const before = new Map([...this.texts].filter(([id]) => notes.some((note) => note.id === id)));
+    const chosen = this.files.filter((one) => this.filesOn.has(one.id) && !this.fileProblem(one));
+    if (action && !chosen.length) { this.el.status.setText(this.files.length ? "Choose a file first." : "This note has no such file on this device."); return; }
     this.controller = new AbortController();
+    const signal = this.controller.signal;
     this.resetResult();
     this.setBusy(true);
     const name = spec(this.config.provider)?.name ?? "the AI service";
-    this.el.status.setText(`Asking ${name}...`);
     try {
-      const report = await runAssistant({
-        request, notes, labels: aiLabels(this.plugin, this.notes), pinned: this.pinned, includeShared: this.config.includeShared,
-        settings: { language: getLanguage() || "en", date: aiToday(), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
-        config: { provider: this.config.provider, key: this.config.key, model: this.config.model, baseUrl: this.config.baseUrl },
-        fetcher: cloudFetch,
-        executor: editor ? {} : aiExecutor(this.plugin, before, (file) => { this.toOpen = file; }),
-        confirm: editor ? async () => false : (change: Change) => this.confirmChange(change),
-        signal: this.controller.signal,
-      });
+      // The note as it is now: the receipt screen changes it only when nothing changed meanwhile.
+      const target = action === "receipt" && file ? await this.app.vault.read(file) : "";
+      let parts: AiPart[] = [];
+      if (chosen.length) {
+        this.el.status.setText(chosen.some((one) => one.kind === "image") ? "Making the photo smaller on this device..." : "Getting the file ready...");
+        parts = await Promise.all(chosen.map((one) => readAiPart(this.plugin, one)));
+        signal.throwIfAborted();
+      }
+      this.el.status.setText(`Asking ${name}...`);
+      let report: Report;
+      if (action === "transcribe") {
+        report = await this.once(request, parts, (ai, s) => ai.transcribe({ audio: parts[0], language: this.language(), signal: s }), signal);
+      } else if (action === "receipt") {
+        const { system, text } = receiptRequest(this.language());
+        report = await this.once(request, parts, (ai, s) => ai.complete({ system, messages: [{ role: "user", text, parts }], tools: [], signal: s }), signal);
+      } else if (action === "photo") {
+        // A fixed action has no tools: text on a photo can never make or change a note.
+        report = await this.once(request, parts, (ai, s) => ai.complete({ system: PHOTO_SYSTEM, messages: [{ role: "user", text: request, parts }], tools: [], signal: s }), signal);
+      } else {
+        report = await runAssistant({
+          request, notes, labels: this.labels, pinned: this.pinned, includeShared: this.config.includeShared,
+          settings: { language: getLanguage() || "en", date: aiToday(), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+          config: { provider: this.config.provider, key: this.config.key, model: this.config.model, baseUrl: this.config.baseUrl },
+          fetcher: cloudFetch,
+          executor: editor ? {} : aiExecutor(this.plugin, before, (opened) => { this.toOpen = opened; }),
+          confirm: editor ? async () => false : (change: Change) => this.confirmChange(change),
+          signal, parts,
+        });
+      }
       this.showReport(report, request, first);
+      if (action === "receipt" && file && report.stop === "done") this.showReceipt(parseReceipt(report.answer), target, file);
     } catch (error) {
       this.el.status.setText(aiErrorText(error, this.config.provider));
     } finally {
@@ -335,7 +484,7 @@ export class AskJotDropModal extends Modal {
   private showReport(report: Report, request: string, first: Set<string>): void {
     const service = spec(this.config.provider);
     const name = this.config.provider === "custom" ? this.config.baseUrl : service?.name ?? "";
-    const model = this.config.model || service?.defaultModel || "";
+    const model = modelFor(this.config, this.options.action);
     this.last = { report, request, model, provider: name };
     const stops: Record<string, string> = {
       refusal: "The AI service declined to answer this.",
@@ -359,23 +508,109 @@ export class AskJotDropModal extends Modal {
       }
     }
     const also = report.sent.filter((note) => !first.has(note.id));
-    this.el.also.setText(report.stop === "off" ? "Nothing was sent." : `${report.error ? "Tried to send" : "Sent"} to ${name}: your question${first.size ? ` and ${first.size} ${first.size === 1 ? "note" : "notes"}` : ""}${also.length ? `. While answering it also read: ${also.map((note) => `"${note.title}"`).join(", ")}` : ""}.`);
+    // In words what went: the question (a recording goes on its own), the notes, and each file by name.
+    const went = [...(this.options.action === "transcribe" ? [] : ["your question"]), ...(first.size ? [`${first.size} ${first.size === 1 ? "note" : "notes"}`] : []),
+      ...(report.files ?? []).map((file) => `the ${FILE_WORDS[file.kind]?.toLowerCase() ?? "file"} "${file.name}"`)];
+    const wentText = went.length > 1 ? `${went.slice(0, -1).join(", ")} and ${went[went.length - 1]}` : went[0];
+    this.el.also.setText(report.stop === "off" || (report.error && report.rounds === 0) ? "Nothing was sent." : `${report.error ? "Tried to send" : "Sent"} to ${name}: ${wentText}${also.length ? `. While answering it also read: ${also.map((note) => `"${note.title}"`).join(", ")}` : ""}.`);
+    const counted = report.usage.seconds ? `Recording: ${Math.round(report.usage.seconds)} seconds` : `Tokens: ${report.usage.input} in, ${report.usage.output} out`;
     this.el.usage.setText(onThisComputer(this.config)
-      ? `Tokens: ${report.usage.input} in, ${report.usage.output} out, on this device.`
-      : `Tokens: ${report.usage.input} in, ${report.usage.output} out. ${name} bills these to your account.`);
+      ? `${counted}, on this device.`
+      : `${counted}. ${name} bills these to your account.`);
 
     const answered = Boolean(report.answer.trim());
     if (!answered) return;
     const buttons = this.el.useButtons;
     if (editor && editor.kind !== "summarize") buttons.createEl("button", { text: "Replace the text", cls: "mod-cta" }).addEventListener("click", () => { editor.use(report.answer, true); this.close(); });
     if (editor) buttons.createEl("button", { text: "Add below" }).addEventListener("click", () => { editor.use(report.answer, false); this.close(); });
-    if (!editor && this.options.summarize) {
+    if (!editor && (this.options.summarize || this.options.action)) {
       const below = buttons.createEl("button", { text: "Add below the note", cls: "mod-cta" });
       below.addEventListener("click", () => void this.addBelow(below));
     }
     const save = buttons.createEl("button", { text: "Save as a new note" });
     save.addEventListener("click", () => void this.saveAnswer(save));
     buttons.createEl("button", { text: "Report" }).addEventListener("click", () => this.toggleReport());
+  }
+
+  /**
+   * "Receipt to Paper drawer": the AI's fields in one screen to check and change. Nothing is saved before Apply, and
+   * the AI's answer is only data here: parseReceipt checked every field and the app works out the date itself.
+   * Nothing usable in the answer: it stays as plain text with the usual buttons.
+   */
+  private showReceipt(receipt: AiReceipt | null, before: string, file: TFile): void {
+    if (!receipt) return;
+    this.receipt = { receipt, before, path: file.path };
+    this.el.answer.empty();
+    this.el.useButtons.empty();
+    const box = this.el.receipt;
+    box.empty();
+    box.createEl("h3", { text: "Receipt to Paper drawer" });
+    box.createEl("p", { cls: "setting-item-description", text: "What the AI read from the receipt. Change what is wrong; nothing is saved until you select Apply." });
+    const field = (label: string, make: (row: HTMLElement) => HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement) => {
+      const row = box.createDiv({ cls: "jotdrop-ai-receipt-row" });
+      const id = `jotdrop-ai-receipt-${label.toLowerCase().replace(/[^a-z]+/g, "-")}`;
+      row.createEl("label", { text: label, attr: { for: id } });
+      const input = make(row);
+      input.id = id;
+      return input;
+    };
+    const current = readMeta(this.app, file);
+    const name = field("Title", (row) => row.createEl("input", { attr: { type: "text", maxlength: "120", autocomplete: "off", placeholder: aiTitle(before, file.basename) || "Title" } })) as HTMLInputElement;
+    name.value = receipt.title ?? "";
+    const drawer = field("Drawer", (row) => row.createEl("select", { cls: "dropdown" })) as HTMLSelectElement;
+    drawer.createEl("option", { text: PAPER_DRAWER, value: "" });
+    const drawers = this.labels.map((label) => drawerName(label)).filter(Boolean);
+    for (const one of [...new Set([...drawers, ...SUGGESTED_DRAWERS])]) drawer.createEl("option", { text: `${PAPER_DRAWER} / ${one}`, value: one });
+    drawer.value = current.labels.map((label) => drawerName(label)).find(Boolean) ?? "";
+    const bought = field("Day of purchase", (row) => row.createEl("input", { attr: { type: "date" } })) as HTMLInputElement;
+    bought.value = receipt.bought ?? "";
+    const keep = box.createEl("fieldset", { cls: "jotdrop-ai-receipt-keep" });
+    keep.createEl("legend", { text: "Keep it for" });
+    const years = keep.createDiv({ cls: "jotdrop-ai-buttons" });
+    const yearsNote = keep.createEl("p", { cls: "setting-item-description", text: "Fill in the day of purchase to use these." });
+    const until = field("Keep until", (row) => row.createEl("input", { attr: { type: "date" } })) as HTMLInputElement;
+    until.value = receipt.warrantyUntil ?? keepUntil(receipt.bought, 2);
+    const lines = field("Added below the note", (row) => row.createEl("textarea", { attr: { rows: "3", maxlength: "400" } })) as HTMLTextAreaElement;
+    lines.value = receiptLines(receipt);
+    // The keep buttons count from the day of purchase; the pressed one carries a ✓, not only a colour.
+    const renderYears = () => {
+      years.empty();
+      const choice = (text: string, date: string) => {
+        const pressed = Boolean(date) && date === until.value;
+        const button = years.createEl("button", { text: `${pressed ? "✓ " : ""}${text}`, attr: { type: "button", "aria-pressed": String(pressed) } });
+        button.disabled = !date;
+        button.addEventListener("click", () => { until.value = date; renderYears(); });
+      };
+      for (const count of KEEP_YEARS) choice(`${count} ${count === 1 ? "year" : "years"}`, keepUntil(bought.value, count));
+      if (receipt.warrantyUntil) choice("Date on the receipt", receipt.warrantyUntil);
+      yearsNote.toggle(!bought.value);
+    };
+    for (const input of [bought, until]) input.addEventListener("input", renderYears);
+    renderYears();
+    const buttons = box.createDiv({ cls: "jotdrop-ai-buttons" });
+    const apply = buttons.createEl("button", { text: "Apply", cls: "mod-cta" });
+    apply.addEventListener("click", async () => {
+      try {
+        if (!this.receipt) return;
+        if (!validExpires(until.value)) throw new Error("Choose how long to keep it, or fill in a date.");
+        await applyReceipt(this.plugin, this.receipt.path, this.receipt.before, { title: name.value, lines: lines.value, expires: until.value, drawer: drawer.value });
+        box.hide();
+        this.receipt = undefined;
+        this.el.status.setText(`Done: in the ${drawer.value ? `${PAPER_DRAWER} / ${drawer.value}` : PAPER_DRAWER}, kept until ${until.value}.`);
+        this.plugin.refreshViews();
+      } catch (error) { this.el.status.setText(aiErrorText(error, this.config.provider)); }
+    });
+    buttons.createEl("button", { text: "Do not change" }).addEventListener("click", () => {
+      box.hide();
+      this.receipt = undefined;
+      this.el.status.setText("Not changed: the note stays as it was.");
+    });
+    // The report stays: what went out and what it cost.
+    const reportButton = this.el.useButtons.createEl("button", { text: "Report" });
+    reportButton.addEventListener("click", () => this.toggleReport());
+    box.show();
+    this.el.status.setText("Check what the AI read. Nothing is saved until you select Apply.");
+    name.focus();
   }
 
   private async addBelow(button: HTMLButtonElement): Promise<void> {
@@ -392,9 +627,11 @@ export class AskJotDropModal extends Modal {
   private async saveAnswer(button: HTMLButtonElement): Promise<void> {
     try {
       if (!this.last) return;
-      const target = this.options.editor?.title || (this.options.file ? this.titleOf(this.options.file.path) : "");
-      const kind = this.options.editor?.kind ?? (this.options.summarize ? "summarize" : "ask");
-      const title = kind === "summarize" && target ? `Summary of ${target}` : this.last.request.split("\n")[0].slice(0, 80);
+      const file = this.options.file;
+      const target = this.options.editor?.title || (file ? (this.texts.has(file.path) ? aiTitle(this.texts.get(file.path) ?? "", file.basename) : this.titleOf(file.path)) : "");
+      const kind = this.options.editor?.kind ?? (this.options.summarize ? "summarize" : this.options.action ?? "ask");
+      const titles: Record<string, string> = { summarize: "Summary of", transcribe: "Recording in", photo: "Text from the photo in", receipt: "Receipt in" };
+      const title = titles[kind] && target ? `${titles[kind]} ${target}` : this.last.request.split("\n")[0].slice(0, 80);
       await createNoteInFolder(this.app, this.plugin.settings.notesFolder, newNoteText({ title, text: this.last.report.answer }));
       this.el.status.setText(`Saved as the note "${title}".`);
       button.remove();
