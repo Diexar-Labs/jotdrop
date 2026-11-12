@@ -271,6 +271,17 @@ export function modelsRequest(config) {
   return { url: `${base}${path}`, method: 'GET', headers: headersFor(target, false) };
 }
 
+/**
+ * The request that checks the key on its own, or null when the model list already does. OpenRouter lists its models
+ * to anyone, a wrong key included, so there "Test and load models" said "Connected" for nothing (12 Nov 2026):
+ * GET /key is the address that answers 401 to a wrong key.
+ */
+export function keyRequest(config) {
+  const target = resolve(config, false);
+  if (target.id !== 'openrouter') return null;
+  return { url: `${target.base}/key`, method: 'GET', headers: headersFor(target, false) };
+}
+
 const plainObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 const REFUSED = new Set(['SAFETY', 'PROHIBITED_CONTENT', 'BLOCKLIST', 'SPII', 'RECITATION', 'IMAGE_SAFETY']);
 
@@ -384,6 +395,8 @@ export function createProvider(config, fetcher = (url, init) => globalThis.fetch
       return parseTranscription(target.id, await send(transcribeRequest(config, { audio, language }), signal));
     },
     async listModels({ signal } = {}) {
+      const check = keyRequest(config);
+      if (check) await send(check, signal);
       return parseModels(target.id, await send(modelsRequest(config), signal));
     },
   };

@@ -1,5 +1,12 @@
 {
   "about": "Ask JotDrop version 2: files (photo, PDF, recording) to the user's own AI service, transcription, receipts. Played by parts.test.mjs, providers-v2.test.mjs, receipt.test.mjs and assistant-v2.test.mjs, and later by android/checks/AiCheck.kt. Version 1 stays in ai-vectors.json, unchanged. Keys are fake. A part with 'size' instead of 'data' gets that many zero bytes as base64 ('A' characters), so the limits can be tested without megabytes in this file.",
+  "keyRequests": [
+    { "name": "openrouter: the key is checked at /key, because the model list is public", "config": { "provider": "openrouter", "key": "sk-or-v1-test-key-0003" }, "expect": { "url": "https://openrouter.ai/api/v1/key", "headers": { "Authorization": "Bearer sk-or-v1-test-key-0003", "HTTP-Referer": "https://jotdrop.net", "X-Title": "JotDrop" } } },
+    { "name": "anthropic: the model list already needs the key", "config": { "provider": "anthropic", "key": "sk-ant-api03-test-key-0001" }, "expect": null },
+    { "name": "openai", "config": { "provider": "openai", "key": "sk-proj-test-key-0002" }, "expect": null },
+    { "name": "gemini", "config": { "provider": "gemini", "key": "AIzaSyTestKey000000000000005" }, "expect": null },
+    { "name": "own address", "config": { "provider": "custom", "baseUrl": "https://ai.example.com/v1", "key": "own-key-0006" }, "expect": null }
+  ],
   "partRequests": [
     {
       "name": "anthropic: photo and PDF before the text",
