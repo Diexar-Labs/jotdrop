@@ -2197,6 +2197,8 @@ button.jotdrop-provider-github:not(.clickable-icon):hover { background: #32383f;
 
 /* Ask JotDrop: AI with your own key. Never color alone: added/removed lines carry + and -, problems say "Problem:". */
 .jotdrop-ai-modal { width: min(720px, 100%); }
+/* On mobile the modal content is a flex column: without this the receipt screen shrank to one field (12 Nov 2026). */
+.jotdrop-ai-modal .modal-content > * { flex-shrink: 0; }
 .jotdrop-ai-request { width: 100%; min-height: 4.5em; resize: vertical; }
 .jotdrop-ai-via, .jotdrop-ai-badge { color: var(--text-muted); font-size: var(--font-ui-small); }
 .jotdrop-ai-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0; }
@@ -2224,3 +2226,13 @@ button.jotdrop-provider-github:not(.clickable-icon):hover { background: #32383f;
 .jotdrop-ai-problem { font-weight: 600; }
 .jotdrop-ai-said { color: var(--text-muted); }
 .jotdrop-ai-models { margin-left: 8px; max-width: 100%; }
+/* Version 2: a file row has an icon and its kind in words; the receipt screen's pressed keep button carries a ✓. */
+.jotdrop-ai-file { overflow-wrap: anywhere; }
+.jotdrop-ai-file-icon { display: inline-flex; align-self: center; color: var(--text-muted); }
+.jotdrop-ai-file-icon svg { width: 1em; height: 1em; }
+.jotdrop-ai-receipt { max-height: none; }
+.jotdrop-ai-receipt-row { display: flex; flex-direction: column; gap: 2px; margin: 6px 0; }
+.jotdrop-ai-receipt-row input, .jotdrop-ai-receipt-row select, .jotdrop-ai-receipt-row textarea { width: 100%; }
+.jotdrop-ai-receipt-keep { border: none; padding: 0; margin: 6px 0; }
+.jotdrop-ai-receipt-keep legend { padding: 0; }
+.jotdrop-ai-receipt-keep button[aria-pressed="true"] { font-weight: 600; }

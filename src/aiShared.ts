@@ -4,15 +4,23 @@
 import { runAssistant as run } from "../cloud/shared/ai/assistant.mjs";
 import { selectNotes as select } from "../cloud/shared/ai/context.mjs";
 import { parseMarkdown as parse } from "../cloud/shared/ai/markdown.mjs";
+import * as parts from "../cloud/shared/ai/parts.mjs";
+import * as receipt from "../cloud/shared/ai/receipt.mjs";
 import { foldUnchanged as fold } from "../cloud/shared/diff.mjs";
 import * as web from "../cloud/web/ai-web.mjs";
-import { splitNote as split } from "../cloud/web/note.mjs";
-export { AiError, PROVIDERS, createProvider, pickDefaultModel } from "../cloud/shared/ai/providers.mjs";
+import { joinNote as join, splitNote as split } from "../cloud/web/note.mjs";
+export { AiError, PROVIDERS, TRANSCRIBE_MODEL, createProvider, pickDefaultModel } from "../cloud/shared/ai/providers.mjs";
+export { FILE_TIMEOUT_MS } from "../cloud/shared/ai/assistant.mjs";
+export { PHOTO_SYSTEM } from "../cloud/web/ai-web.mjs";
 
 export type AiAction = { tool: string; input?: Record<string, unknown> | null; status: string; reason?: string; result?: unknown };
+export type AiFileKind = "image" | "pdf" | "audio";
+/** A file that goes along (version 2): data is base64 without line breaks. */
+export type AiPart = { kind: AiFileKind; mime: string; name: string; data: string };
 export type AiReport = {
   answer: string; sent: Array<{ id: string; title: string }>; sources: Array<{ id: string; title: string }>; actions: AiAction[];
-  usage: { input: number; output: number }; stop: string; error?: { code: string; message: string; detail: string };
+  files?: Array<{ name: string; kind: string; bytes: number }>; rounds?: number;
+  usage: { input: number; output: number; seconds?: number }; stop: string; error?: { code: string; message: string; detail: string };
 };
 export type AiChange = { tool: string; input: Record<string, unknown>; note: { id: string; title: string; text: string; labels: string[] }; newLabels?: string[] };
 type Executor = Record<string, (input: never) => Promise<unknown>>;
@@ -23,8 +31,24 @@ export const runAssistant = run as unknown as (args: {
   settings: { language: string; date: string; timeZone: string };
   config: { provider: string; key: string; model: string; baseUrl: string };
   fetcher: (url: string, init?: RequestInit) => Promise<Response>;
-  executor: Executor; confirm: (change: AiChange) => Promise<boolean>; signal: AbortSignal;
+  executor: Executor; confirm: (change: AiChange) => Promise<boolean>; signal: AbortSignal; parts?: AiPart[];
 }) => Promise<AiReport>;
+export type AiCaps = { image: boolean | "unknown"; pdf: boolean | "unknown"; audio: boolean | "unknown"; transcribe: boolean | "unknown" };
+export const capabilities = parts.capabilities as unknown as (provider: string, model: string | { id: string; inputs?: string[] }) => AiCaps;
+export const explain = parts.explain as unknown as (provider: string, kind: string, use?: "ask" | "transcribe") => string;
+export const LIMITS = parts.LIMITS as { files: number; image: number; pdf: number; audio: number; total: number };
+export const decodedLength = parts.decodedLength as unknown as (data: string) => number;
+
+export type AiReceipt = { title?: string; shop?: string; amount?: string; currency?: string; bought?: string; warrantyUntil?: string };
+export const KEEP_YEARS = receipt.KEEP_YEARS as number[];
+export const receiptRequest = receipt.receiptRequest as unknown as (language: string) => { system: string; text: string };
+export const parseReceipt = receipt.parseReceipt as unknown as (answer: string) => AiReceipt | null;
+export const keepUntil = receipt.keepUntil as unknown as (bought: string | undefined, years: number) => string;
+export const receiptLines = web.receiptLines as unknown as (receipt: AiReceipt) => string;
+export const fileRequest = web.fileRequest as unknown as (kind: "photo" | "transcribe") => string;
+export const aiFileKind = web.aiFileKind as unknown as (path: string) => { kind: AiFileKind; mime: string } | null;
+export const plainBase64 = web.plainBase64 as unknown as (value: string) => string;
+export const joinNote = join as unknown as (parts: { front: string; title: string; body: string }) => string;
 export const selectNotes = select as unknown as (notes: NoteIn[], question: string, options: { includeShared: boolean; pinned: string[] }) => { notes: Array<{ id: string; title: string; truncated: boolean }> };
 export const parseMarkdown = parse as unknown as (text: string) => Array<{ kind: string; level: number; spans: Array<{ text: string; bold: boolean; italic: boolean; code: boolean }> }>;
 export const foldUnchanged = fold as unknown as (lines: Array<{ type: string; text: string; sign: string }>) => Array<{ type: string; text?: string; sign?: string; count?: number }>;

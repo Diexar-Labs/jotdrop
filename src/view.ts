@@ -40,6 +40,7 @@ import { ConflictReviewModal, NoteHistoryModal } from "./cloudReview";
 import { EndListLinkModal, NoteLinkModal } from "./noteLink";
 import { SharedGroupsModal } from "./cloud";
 import { AskJotDropModal, type AskOptions, addAskButton } from "./askJotDrop";
+import { aiFileKinds } from "./ai";
 import { betweenRank, rankForManualOrder, respaceRanks } from "./manualOrder";
 import { t } from "./i18n";
 
@@ -2551,6 +2552,13 @@ export class JotDropView extends ItemView {
       if (!this.showTrash && !this.plugin.excalidraw.isDrawingFile(file)) {
         menu.addItem((i) => i.setTitle(t("action_ask_about_note")).setIcon("sparkles").onClick(() => this.openAsk({ file })));
         menu.addItem((i) => i.setTitle(t("action_ai_summarize")).setIcon("sparkles").onClick(() => this.openAsk({ file, summarize: true })));
+        // Version 2: only on a card with such a file; a receipt changes the note, so not in a group that is read-only.
+        const kinds = aiFileKinds(content);
+        if (kinds.has("audio")) menu.addItem((i) => i.setTitle(t("action_ai_transcribe")).setIcon("audio-lines").onClick(() => this.openAsk({ file, action: "transcribe" })));
+        if (kinds.has("image")) menu.addItem((i) => i.setTitle(t("action_ai_read_photo")).setIcon("scan-text").onClick(() => this.openAsk({ file, action: "photo" })));
+        if ((kinds.has("image") || kinds.has("pdf")) && !groupNote?.frozen && !groupNote?.gone) {
+          menu.addItem((i) => i.setTitle(t("action_ai_receipt")).setIcon("receipt").onClick(() => this.openAsk({ file, action: "receipt" })));
+        }
       }
       // Attachments stay: the note in Trash still shows them and can come back.
       menu.addItem((i) =>

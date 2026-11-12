@@ -8,7 +8,8 @@ import type JotDropPlugin from "./main";
 import { CloudStore, type KeyValues, type Sealed, seal, unseal } from "./cloud";
 import { type ColorName, isColorName, readLabels, readMeta, updateMeta } from "./metadata";
 import { createNoteInFolder } from "./capture";
-import { PROVIDERS, appendedText, expiryChanges, newNoteText, replacedText, splitNote } from "./aiShared";
+import { bytesToBase64 } from "../cloud/shared/crypto.mjs";
+import { type AiFileKind, type AiPart, LIMITS, PROVIDERS, aiFileKind, appendedText, expiryChanges, joinNote, newNoteText, plainBase64, replacedText, splitNote } from "./aiShared";
 
 /** The services in the order the settings show them: a local model first, because nothing leaves the computer. */
 export const AI_PROVIDER_IDS = ["ollama", "anthropic", "openai", "gemini", "openrouter", "custom"] as const;
@@ -165,6 +166,125 @@ export function aiExecutor(plugin: JotDropPlugin, before: Map<string, string>, o
       return "The note opens for the user after this answer.";
     },
   };
+}
+
+// Version 2 (Hand-off/ontwerp-ask-jotdrop-v2.md, phase 4): the photos, PDFs and recordings a note links to, which
+// can go along to the AI service when the user ticks them. Nothing here goes out by itself.
+
+/** A file of a note that can go along: id and vaultPath are its place in the vault, bytes its size on this device. */
+export type AiFile = { id: string; name: string; kind: AiFileKind; mime: string; bytes: number; vaultPath: string };
+
+/** The fixed actions on a card, with the kinds of file each one takes. */
+export const FILE_ACTIONS = { transcribe: ["audio"], photo: ["image"], receipt: ["image", "pdf"] } as const;
+export type FileAction = keyof typeof FILE_ACTIONS;
+
+// Both link forms, like the web app: ![[name]] (with a size or a page after | or #) and [Voice memo](../attachments/…),
+// the way the web app links a recording. An embed with ![](…) is the second form with a "!".
+const FILE_LINK_RE = /!\[\[([^\]\n|]+)(?:\|[^\]\n]*)?\]\]|!?\[[^\]\n]*\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g;
+
+/** The names of the files a note's text links to that can go along, once each, in the note's own order. */
+export function aiFileNames(text: string): string[] {
+  const names: string[] = [];
+  for (const match of splitNote(text).body.matchAll(FILE_LINK_RE)) {
+    const target = (match[1] ?? match[2] ?? "").trim();
+    if (/^[a-z][a-z0-9+.-]*:/i.test(target)) continue; // a web address is not a file of this note
+    let name = (target.split("/").pop() ?? "").split("?")[0].split("#")[0].trim();
+    try { name = decodeURIComponent(name); } catch { /* a name with a lone % stays as typed */ }
+    if (name && aiFileKind(name) && !names.includes(name)) names.push(name);
+  }
+  return names;
+}
+
+/** The kinds of file a note links to, from its text only: enough to choose the card's menu items. */
+export function aiFileKinds(text: string): Set<AiFileKind> {
+  return new Set(aiFileNames(text).map((name) => aiFileKind(name)?.kind).filter((kind): kind is AiFileKind => Boolean(kind)));
+}
+
+/**
+ * The files of a note that are on this device, as the card finds them (plugin.resolveAssetCandidates: the hidden
+ * .attachments folder has no TFile, so the adapter answers). A link to a file that is not here is left out.
+ */
+export async function collectAiFiles(plugin: JotDropPlugin, note: TFile, text: string): Promise<AiFile[]> {
+  const adapter = plugin.app.vault.adapter;
+  const found: AiFile[] = [];
+  for (const name of aiFileNames(text)) {
+    const type = aiFileKind(name);
+    if (!type) continue;
+    for (const candidate of plugin.resolveAssetCandidates(note, name)) {
+      if (candidate.file?.extension === "md") continue;
+      const stat = candidate.file ? candidate.file.stat : await adapter.stat(candidate.vaultPath).catch(() => null);
+      if (!stat || ("type" in stat && stat.type !== "file")) continue;
+      if (!found.some((file) => file.vaultPath === candidate.vaultPath)) found.push({ id: candidate.vaultPath, name, ...type, bytes: stat.size, vaultPath: candidate.vaultPath });
+      break;
+    }
+  }
+  return found;
+}
+
+/**
+ * A photo as a JPEG of at most 2048 pixels on its long side: small, one type, the same on every service. Obsidian
+ * runs in a browser engine on desktop and mobile, so a canvas does it, as in the web app.
+ */
+export async function photoJpeg(bytes: Uint8Array, mime: string): Promise<Uint8Array> {
+  let bitmap: ImageBitmap;
+  try { bitmap = await createImageBitmap(new Blob([bytes as Uint8Array<ArrayBuffer>], { type: mime })); } catch { throw new Error("This photo cannot be read on this device."); }
+  const scale = Math.min(1, 2048 / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("This photo cannot be read on this device.");
+  // JPEG has no transparency: a see-through PNG gets a white background, not a black one.
+  context.fillStyle = "#fff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+  for (const quality of [0.85, 0.7, 0.5]) {
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
+    if (blob && blob.size <= LIMITS.image) return new Uint8Array(await blob.arrayBuffer());
+  }
+  throw new Error("This photo stays too large, even made smaller.");
+}
+
+/**
+ * A file as a part for the shared core, read from the vault on this device. A photo is made small first (shrink is
+ * photoJpeg; the check passes its own). The size is checked before reading, so a large file is never read for nothing.
+ */
+export async function readAiPart(plugin: JotDropPlugin, file: AiFile, shrink: (bytes: Uint8Array, mime: string) => Promise<Uint8Array> = photoJpeg): Promise<AiPart> {
+  if (file.kind !== "image" && file.bytes > LIMITS[file.kind]) throw new Error(`${file.name} is larger than ${Math.round(LIMITS[file.kind] / 1048576)} MiB.`);
+  const bytes = new Uint8Array(await plugin.app.vault.adapter.readBinary(file.vaultPath));
+  if (file.kind !== "image") return { kind: file.kind, mime: file.mime, name: file.name, data: plainBase64(bytesToBase64(bytes)) };
+  const photo = await shrink(bytes, file.mime);
+  return { kind: "image", mime: "image/jpeg", name: file.name.replace(/\.[^.]+$/, ".jpg"), data: plainBase64(bytesToBase64(photo)) };
+}
+
+/**
+ * "Receipt to Paper drawer": after Apply, in one go and with the same code as the tools, the new title (empty keeps
+ * the old), the lines below the note (as append_to_note), then the expiry date with its drawer and warning (as
+ * set_expiry). before is the text the AI saw: a note changed meanwhile is left alone. Throws on a bad date.
+ */
+export async function applyReceipt(plugin: JotDropPlugin, path: string, before: string, fields: { title: string; lines: string; expires: string; drawer: string }): Promise<void> {
+  const { app } = plugin;
+  const file = app.vault.getAbstractFileByPath(path);
+  if (!(file instanceof TFile)) throw new Error("This note is gone.");
+  if (await app.vault.read(file) !== before) throw new Error("This note changed while Ask JotDrop worked, so it was left as it is.");
+  if (plugin.cloud?.spaceOf(file.path)) throw new Error("Expiry dates are personal, and this note belongs to a shared group, so it was left as it is.");
+  const title = fields.title.replace(/[\r\n]+/g, " ").trim();
+  const lines = fields.lines.trim();
+  // The date first: a bad one changes nothing.
+  expiryChanges(before, fields.expires, fields.drawer || undefined);
+  if (title || lines) {
+    await app.vault.process(file, (text) => {
+      const named = title ? joinNote({ ...splitNote(text), title }) : text;
+      return lines ? appendedText(named, { text: lines }) : named;
+    });
+  }
+  const changes = expiryChanges(await app.vault.read(file), fields.expires, fields.drawer || undefined);
+  await updateMeta(app, file, {
+    expires: changes.expires,
+    labels: changes.jotdrop_labels,
+    ...(changes.reminder ? { reminder: changes.reminder, reminderRepeat: null, reminderUntil: null, reminderLimit: null } : {}),
+  });
 }
 
 /** Today in words for the system prompt, with the time. */
