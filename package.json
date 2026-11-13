@@ -58,6 +58,7 @@
     "check:cloud-ai": "python cloud/ai_browser_check.py",
     "check:cloud-ai-files": "python cloud/ai_files_browser_check.py",
     "check:cloud-ai-overview": "python cloud/ai_overview_browser_check.py",
+    "check:cloud-ai-key": "python cloud/ai_key_browser_check.py",
     "check:cloud-order": "python cloud/order_browser_check.py",
     "check:cloud-steady": "python cloud/steady_browser_check.py",
     "check:cloud-playful": "python cloud/playful_browser_check.py",

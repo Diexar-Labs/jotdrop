@@ -96,12 +96,18 @@ test('a change the user confirms is shown in words and lines, not only in color'
 
 test('settings keep only what the web app can use; the key is never trimmed into another value', () => {
   assert.deepEqual(Object.keys(WEB_PROVIDERS), ['ollama', 'anthropic', 'openai', 'gemini', 'openrouter']);
-  assert.deepEqual(aiSettings(undefined), { provider: '', key: '', model: '', includeShared: false });
-  assert.deepEqual(aiSettings({ provider: 'anthropic', key: ' sk-ant-abc ', model: ' claude-haiku-5-5 ', includeShared: 1, other: 'x' }), { provider: 'anthropic', key: 'sk-ant-abc', model: 'claude-haiku-5-5', includeShared: true });
+  assert.deepEqual(aiSettings(undefined), { provider: '', key: '', model: '', includeShared: false, synced: 0 });
+  assert.deepEqual(aiSettings({ provider: 'anthropic', key: ' sk-ant-abc ', model: ' claude-haiku-5-5 ', includeShared: 1, other: 'x' }), { provider: 'anthropic', key: 'sk-ant-abc', model: 'claude-haiku-5-5', includeShared: true, synced: 0 });
   // An own address is not allowed by the web app's CSP, so it does not come back from storage.
-  assert.deepEqual(aiSettings({ provider: 'custom', key: 'k', baseUrl: 'https://x' }), { provider: '', key: '', model: '', includeShared: false });
+  assert.deepEqual(aiSettings({ provider: 'custom', key: 'k', baseUrl: 'https://x' }), { provider: '', key: '', model: '', includeShared: false, synced: 0 });
   // Ollama needs no key; a key left from another provider is dropped.
-  assert.deepEqual(aiSettings({ provider: 'ollama', key: 'old', model: 'qwen3.5:9b' }), { provider: 'ollama', key: '', model: 'qwen3.5:9b', includeShared: false });
+  assert.deepEqual(aiSettings({ provider: 'ollama', key: 'old', model: 'qwen3.5:9b' }), { provider: 'ollama', key: '', model: 'qwen3.5:9b', includeShared: false, synced: 0 });
+  // "Use this key on all my devices": the time of the shared key this browser follows; anything else counts as 0.
+  assert.equal(aiSettings({ provider: 'openai', key: 'k', synced: 1763020800000 }).synced, 1763020800000);
+  for (const synced of [-1, 1.5, '1763020800000', true, null, Number.MAX_SAFE_INTEGER + 1]) assert.equal(aiSettings({ provider: 'openai', key: 'k', synced }).synced, 0, String(synced));
+  // Only with a key of a service: not without a provider, not with a local model.
+  assert.equal(aiSettings({ provider: 'custom', key: 'k', synced: 5 }).synced, 0);
+  assert.equal(aiSettings({ provider: 'ollama', model: 'm', synced: 5 }).synced, 0);
 });
 
 test('the editor buttons ask for the new text only, so it can replace or follow the draft', () => {

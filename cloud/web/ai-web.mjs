@@ -14,16 +14,23 @@ export const AI_STORE_PATH = 'local/ai.json';
 // a local model through Ollama is, first, because nothing leaves the computer.
 export const WEB_PROVIDERS = Object.fromEntries(['ollama', 'anthropic', 'openai', 'gemini', 'openrouter'].map((id) => [id, PROVIDERS[id]]));
 
-/** What is stored, cleaned: only known fields, a provider the web app can use, no key for a local model. */
+/**
+ * What is stored, cleaned: only known fields, a provider the web app can use, no key for a local model.
+ * `synced` is for "Use this key on all my devices": the server's time of the shared key this browser follows, 0 when
+ * its key is its own.
+ */
 export function aiSettings(stored) {
   const value = stored && typeof stored === 'object' ? stored : {};
   const provider = Object.hasOwn(WEB_PROVIDERS, value.provider) ? value.provider : '';
-  if (!provider) return { provider: '', key: '', model: '', includeShared: false };
+  const synced = Number.isSafeInteger(value.synced) && value.synced > 0 ? value.synced : 0;
+  if (!provider) return { provider: '', key: '', model: '', includeShared: false, synced: 0 };
   return {
     provider,
     key: WEB_PROVIDERS[provider].needsKey ? String(value.key ?? '').trim() : '',
     model: String(value.model ?? '').trim(),
     includeShared: Boolean(value.includeShared),
+    // A local model has no key, so there is nothing to follow.
+    synced: WEB_PROVIDERS[provider].needsKey ? synced : 0,
   };
 }
 

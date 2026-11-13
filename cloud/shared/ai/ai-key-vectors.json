@@ -1,0 +1,590 @@
+{
+  "about": "Ask JotDrop, the key on all your devices: blobs every app must open or refuse the same way, and what a device does with what the server answers. All keys are fake.",
+  "aad": "jotdrop:ai-key:v1:<vaultId>",
+  "vaultKey": "HyYtNDtCSVBXXmVsc3qBiI-WnaSrsrnAx87V3OPq8fg",
+  "vaultId": "0b0f6f0e-3c56-4d0a-9d55-7a1c3a5e9f10",
+  "opens": [
+    {
+      "name": "a Claude key, padded to 1024 bytes",
+      "sealed": "{\"v\":1,\"iv\":\"XWRrcnmAh46VnKOq\",\"ciphertext\":\"h_qzoAU0rOBKNxbUQQXFy9fdA8T7AZ_pQ1q_EzIaM6jEJIzrM5zSvzkY01nox4IJ04IG9J3ta1cTvtRRscf52Z2hPMrfWGUVqz5fr3ImTOs13I-AKkeQtcIhBxFhz7glEtK-9y-84veXwwlt6fjk2fNy1uWRBb031f81c--7PBsWeAQYwCoClWf301B13D64IHewRf-r33f-9WRiNKQHRDBHy-IoxNPpnknsmV3zIWFGzHYV9_mHRD2Fm3zMGzr3HvqT_4i8LJiPk8NXKGFgSzdI1KDHv9iP9NRZeo4tvqojbuU9LP_yiG83VHcYdk8tbsWnKN1UsBVXQ-Jw34R9kiBTQOuZXC0D006l4vkfkfKMBaP5od3Bbo-RHIpjSnUvJmJ8UI3ySRNac_jgtwidNKkO8QwWgYuhntlx59mLRm7RqI2M0Bn16LrHR9tYHSDxoPR6AA3oTurAOvN0O2vsRxTuvdZ34NpomyVu4khZRgHYhFwk-qCpTzx0H2CSv3s0UFNFwbrCJhfuW_lZIK3hblb1KuKlqmfH4MYHCDGeJtLJgZUaKX_GVS-HUlmu2dc_ZtxplrIe8TpwIffiH-ER6kz_jfu0_G5CtX4sD0mk2ePHNW09wWmzCg53-m6DvLcrjLeQhAKo80ux-LXS4-XTa02KxgQ5X9DplSZ8-jpUf4uhLJ7UwfIHsB3yVblPGsRUzWJEJqntsxeHZ-UhrGAtVEdi7H8py4qIoRHOkGMV6e3mwPVNsyMZB-EPK-giSVeX0GJwRSdBouxEUhxSER4ZEbR0astmIR7JVt7T0i5tNbxjvq40QJSnOMcB04odV6V78cXB-YKckXk9hegLjtovkumfeoyKag8XzwNqD_Rk2EjelOB3_82rlg-7MkeDNNaR6vofZstoxVzfgdo4_SuMa7IrunZZILwRgNxJx6TzWVVrgNJfo7Q-RQidoFG9KFj7ZEXobZWo0VqoeRfSqbHoEGfcLTXkk9EM90laQ8K3EDRXOnNNjKixRsOyye2YpYvbT-YIi1AGT3dtm-v8JwwndYfTSdMt8nscN-EJ6P2oNOvlzjPuFxcrjk5P6njSjDhO56OkywfMk123J24J5FoZ4_VQJ8nN-28DPe8WaSQ2wsldGoZMiXNQguYGJ86N-hA0eVOTSNAio0MZyhE0L3DoAg-SSkbMfj9dfwRcTFu30ZQbjlRBVFpKbcjaOgJVVgfYuB1OXzAS0fygoRG-4GRMn8Dxxil6SJtQiO_peT4lLwosHGghZ2KtbqFVub8zWsauQx8vmFwB-s3NKAeJnzgr1pSIorzbLkqaGdrMVczs6HcOXHVgX0fvFLaVQ3USNP7oLU_AYtH1JYqwoKSvifBMJx-VxRxDzmdAJosFq-GZkqM\"}",
+      "config": {
+        "provider": "anthropic",
+        "key": "sk-ant-test-NOT-A-REAL-KEY-0123456789",
+        "model": "claude-haiku-5-5",
+        "baseUrl": ""
+      }
+    },
+    {
+      "name": "an own https address with a key",
+      "sealed": "{\"v\":1,\"iv\":\"fIOKkZifpq20u8LJ\",\"ciphertext\":\"0_jtHWmgKIUHjaLJKFd_UOuw8sx8WV80q3HI_uyvV4ve9Rq1EQfaQjp1xb7fZahNBUehNaTnpm_7pfcwY9FHQwi4jA9l33iZNo_R3rlI_U5W1GNG5PUVuN7hDKWSRrMDr0ZiPowgpjT9J18ECu7a9WkIix7aXQgpZdKE-PF5Txh3fLh2JJEMjiD_vPU2igzRX78j-s0DpJBd_yV4-8zYBsPGD1C0YL62XiIOFPJ2wEykUhNwGiDy12rHY1yyduhZsk-W4WxfqAcSFM_yuLm1I215GJlnNuNld10AymsdzYVS-FReiuDQALiFdcLAegYBGYhxh3gax-l_tTjARpwcPTaZ5Pb9BRGVlvRzHn3he78vQQGFUrFEWo6as5n_LepYyTp0JYr1EQZkfdk_EXvSXeqeUE9BXs_KFxtYK3iK6VQRip-9bB6AbAwZ1HOlgHw9tUT4O604na4nIcsp3aHp0iVpwCNm9SbSObPikQWPYlO8-7agnrG2alTMLMDwKsp5jEce4-tc3K-qGlbcVlIJDdBrCgxaCyHcYyXeJ6ggBG_D8wnlyxHXU9H5B649fz6ZkQMfKMqWz9zO0WmI0fyXgZ3xzvp3redPLaw3r3FjM_F0McY0Yr89MJPAG1ziCsTTld8Z8PuIxfpj1M4SIPFLPz6sAQAccUIrrFclQTK8EBlcBZAp4tqMc_MSpmns4n8exlSzESuLM3PS8SC1xlJ-P36TiJwmwHr-8n45RZSHZIn4KqRBbk1IqmeNeTkyHbfZBT-Lg7cWRkacFOQ82wgQ_jrqYuJy3kpJudeiD0Qv0xa7dLBg7Aau_m8dbOuolnhA0BmZLl-WNXHO0lNOLeerNAu6wrm4Nk04a0yxbzJNiU-NRshR_65HXOyycxB1vyWPR1u_iSxTuMPzXuApOWlX2rxn82knE0v1IjSd1pEDEL_UbffnG-nZA_813YCQkGcbR8xkFLsyKZUW6PU8QEuClCl9zQrf9IuAXcvG_wyJIrSJFj9Um7dHzE47V4qQnwP8Ir8LRBc48-dHbEiE3dvar60GaD3-rolPaQn26waIREb-hJE5-v3obR-GFkJOp0WQYnSocz6cuClgRhAGXNpllUdp0vlUekGGsKSmMyDxj1lfAhxKyTUapUSx1NoLpSlr2zYa22drlk_FIkwkQe49Ki01uQ0t1PcuSpMmlLOlI-aBp2D8tSym_zAM7N528rS9FmIUUCb02loUEex1uQ4z1KGZNmDpLW4ySDDvrLeKwWNB6dzOcO_Xu2evVenaqivA3afZpP3PZeAlwpK_0yU_C0jAcRjttIWlefYdy8RTz56DEsDFcAziWRNnhdc7_RlZGjTUXATD4e3jhkIvBQ6JrAZuhA9z9-wFP7koLYTuuFs\"}",
+      "config": {
+        "provider": "custom",
+        "key": "test-own-address-NOT-A-REAL-KEY",
+        "model": "my-model",
+        "baseUrl": "https://ai.example.test/v1"
+      }
+    },
+    {
+      "name": "a key with a letter outside ASCII and no model",
+      "sealed": "{\"v\":1,\"iv\":\"m6KpsLe-xczT2uHo\",\"ciphertext\":\"HcQNgE1sWxqNO72gt5tBKQG8o-J6qRMJaz3GnyRuNLCFKPfQIJ4ZEw0u1i3WQ6AKwxkrQzkl0guWDpfQ6eW4b58shF3hGt94ukYP4-wT_r_thHVnuJEn7XqwWrvNpNJqQrHUa93WYvdrFWBQ6ZAYlHX-q_Pk9ebEnghXtLlGYs0-pP4QfhSSSF0c5QYRHZb4BltFOtae6zkgzn1Ni9WW8-QmvRl0J1YHdM6DdSACxRekOeK8JVHMAfNaaeTwInqlxs3S8NScrF063395FuycDgD0mfaS3sJYMMd6uRzxN1w8pRyOnh1wJAlQRPq-eRgIECPdWVR7whcXygRKcq6IFe2iBscMf7pVi82rKhS8OliCtrP8jjBR6PbvWDPNvtxBIijTrddAQINg9Emp26hwWs4hBzcu3laVM7wBjUQEtg-bKnPSbLbJ9bOOumZHTQL6v9xkxHeC_oUTasIw1cRgc36llLouF1npk1dbndl40RvjRaGq4tr4aDUm_ui0VGcejDIG8JLwCveF5ANve4FA2lwrBcZD0f0d1863nWYdn5IKudmMcZONCxjmsLPJmzqt9Xz2-A4uxQNgXK2I8gfpxXj1WPd7nsYey13VCVVDet8iu9jt4CIHIkejAaqZR2g584qShIhlrjI3bBYz4gWeOFV8Y42xJ7qT0tU87CX1YNIDFpaK1SKlQQ0AErhty6Eqc-jszVJDMaWFmoJWjBBiURS-OUV9sbMK-MWuvFgNcYDBJjuTyWPOxcMtc_dMX9LxbhZ5ur5RwjCKxSRvNZa-7aQ9w7moZFVfvcC-P5sFBI-T7JXHgygrEkLqpnGkTe5zwFIaRZb0yvVn-V83mQXTlhfb4Z4d8Ou2p02fBMYui6wqxmIKGPpC42_LCPkg9NDZfsl0zbmgNu9S6D0336e2o9oa0b1UheA8hZzXd8lQprNwdu_cRoNgtznYsP3LkwuKY_0p4xkDA1VQj3hZzdPwbS1EWAuZaktfqLHux5jg2d3L06v1fSxWXSR7udXddSNp2ujwk7XERjCsYx81EnUOQpuXFkTmvOIGr-cx8ItNf1mBGc1KPnDXdUs_KljA7r7ZsBY5Ex6U4CUNf5WldrlFZx9XlmademrRn90T6-yj67Du1BtNkcgRPYEzMXU5t3lKvt1t4K4jSToJToXz_tTr5NSNdVbbbf1qLKAyA8XF-WBetRj9rhksi8KVSToyM5tA5caBfMGOOP050kaskbZsO4MN_Zdbxofm7u-sOWe6jOonmEwVjw_-vI5W3pGki5iBmTNcMNECp1QX63MJjgAqtaRaA6yrW4PGJxeEio9US9OtXK-Y5n19zD46coGjfcSSlF8AshQJA7pY2OPWVI5uAuNcAto6yJKCRB65dRSPs1o\"}",
+      "config": {
+        "provider": "openrouter",
+        "key": "sk-or-test-NOT-A-REAL-KEY-é",
+        "model": "",
+        "baseUrl": ""
+      }
+    },
+    {
+      "name": "without padding and with a field a later version added",
+      "sealed": "{\"v\":1,\"iv\":\"usHIz9bd5Ovy-QAH\",\"ciphertext\":\"T1xyB-QNFqMfdjk-BX0mVe9dkxG71aESSCH1WDDLwsJCrWzP6o_4-9Y81_FjHXxS141877pyRGTsFceNk6jIpNrn1DZ61iALngLRUyhLMsG_ULjaYYE0sN9vkGd_v3gkp-MIEm-xNeXEDx9ouCwiwTRHTCijuFRHMaNsemwLrSo8eIuFeZrpby0J3AH0lb_TpQ\"}",
+      "config": {
+        "provider": "anthropic",
+        "key": "sk-ant-test-NOT-A-REAL-KEY-0123456789",
+        "model": "claude-haiku-5-5",
+        "baseUrl": ""
+      }
+    }
+  ],
+  "refuses": [
+    {
+      "name": "sealed for another workspace (the AAD does not match)",
+      "sealed": "{\"v\":1,\"iv\":\"2eDn7vX8AwoRGB8m\",\"ciphertext\":\"gvmEBmT6pMfqCtLeg7uwA0bY0sfn7WtuoI86z0it6OHtrcBa1obVnoKKPOpdK6bo2K1P8gtCqlZMT4D8NoGcqRLp6SiRTUV5weR8oJi5nfiGfiqkbODmpDa6nYfMm7SdI78QiP_65_F-VnKJ7CjU3qMJkpBeDxHDX3Wo0VYpi-cBiBLZYt9RKjca2Zeor-eMSq1a45fueru9LQoLrVzz7QoYS116hnaDmwHxOVR8SQy0YzDWmdz59lkSNkAuPWiJFeu0A6CBIbXrN67lC0p81OmWypEpZXWEFRBTAiqajrpVPHuPfoBEDiOIYdnocoweNrHbp2qYcHHTIxaJz1cMJvjb1uaGBst3D6vgwRlMC3LqJ_Rm6eQDNEAZRlkkUATOBAvyEu2Yn9LXR2DllAUHReWj1iRZYgU-VUKt1XEjjgxzbzmxss72QkNWTH8vXKAGLHertC45oxWvyT-ryMb8Veqbg4-36cCdQnRpymW5knyLGQgHPtf0xsWUAKBZBIsuhfhxRw9gypc5w1MQiVrzBzSkOTF2ujcqzg2viPdXusM51Ma1RQ_13SAdJPZKw-SpYL5AxJl8Jdp2GNTKkeIq0TXcYPM_e2LgyM3O9XKoORpw_diOExv2NL_tKGSV_Q5w_FeQ8tys3J9yPB2Ec2F0qjFmbJgLqqGWx_0vpmFU--01nWBYAaZnu6k5-74D2E6d-k-HDuF1e_hdWrryh6M3yovftfn__yz1YWEYRbya8XpaLuuMXqtunyCHVo0Gz5hHDEjzfqhUbLe4eVnfGgnC4qS1ZQ4KH65KHAI6QhfKIIyP5eRdEX5zINwBM2COsoEC1kpCiBd4psXwEN_2WNPyVw_9Twjgm8QTzMLkyROG2prwe6jM0YS5Gy71mufgqLbvRW8DA0VcGCKfYdslsvzOcRB1-TdMh-cEiKzk_qTaUytuRNUJsJ5CiHGbK1cKQxt9sKhERMPX-xQLR6q7rUnIuFpqJrPG5F7iSaqTvBCeRHM2X4DyE5hwoyUH7spq-F08bAuur1ERUF4jUyaCyhI-kULMgTDDkZNWeg9qfyjNFbYoig95xHrL2u_Sju7zMXOT9E4wHQgc9XTtKFjJ0U4UrtFxJkYaA9qs3kpYjkoWs8X3jpn9bRHEcABU1vOeO8hyrcfqKfLTnt2hwW0FYlrXYRnk9HqoRhvtqWt-rrwcTnUbnGiTEgyIiQ888AFgJ5J_wEs32btrjkEEW_hECL9bK12rBn7E22-oBPmx8zoQ_-im1Ov7YdV52WoFRRaemrPoSgS-6ogHkvRbX7jOZgyXoVJji9ln6zLRMgZDt977qv6fdIIVzmR7DdMOVvXX3yB-RCwn0xgmFRoIdRV-OFeorNXgTKobQovmc7WZd2-M-tk\"}"
+    },
+    {
+      "name": "sealed with another key",
+      "sealed": "{\"v\":1,\"iv\":\"-P8GDRQbIikwNz5F\",\"ciphertext\":\"wHwBV9H2HyWWtGi9C_nvFbE7CH6yHh42F8nuXiBq-uzdbiND--k8G4Hg_ADD7iBX1zGYlcUDKb3rZwxg3jN7dou4dReSl6WV7CZncIF00sAIWgiTZ9PsAfQ2hFEGtuyuF5FoXbJAa_0b9GZNshNyUtKEzm_IbEUg8qFW4aI2AYVm8SfO15w2OV58kpaK355j_1WiAubcatn0I44-vw_iCfxRviG6Hbzz-OQpDLUUpBcZq7fwMcNH73ga4h5k1quLw85zOopRCK3Kh-6Q6uRd8octKD3dyD_1EaHeEgYBdMfnUcU30HFYS0aVl7UaFT5yNuxo2va513qQrWLLv0WQpUGgwlajOOrKsMZjtIEAwST51RXbXtaaeIoK2r3Va62yPQUbnGyL2rbpgQQSk65HoP_9LecpuLSY_FKdeaQd9XsK-3AvbLTSLE-zoFSnom9BLFC0QyHXmWkSmp5inRPHwfbaqiqqBoUR0haQpzvUaU2_n5nsDjj-sdw7SgSz_f6sbvC15HPku8vBnr3H8fhpzjOmREWlBhyWI2_PDyiuNQK799zzzWpF5Zhj8NjoUaKZscCEaFG2JUCVhqRyMBYVQdQuBxzC7i3ixMiBcsn29dxFJMOMuP0tKGAG5FUVrR0rKhTksmlgCUOexyyVIVRmT9k32I_-XZe2GB_sBHPj3TH2lXsBBhFEsG55hdmuBGVSViHpbf-fTUJg6Ydv_BkjIw55QDAshNvCm4_iIAPvBRXZPxPQRG7cqgaPOrNhVFnowwsoGkZDTxIpL3L0fozSifDb8Qb8q9VXIK7WFHC1aRbbsqmyUt3O6imcUm-ZECyk3qMDIsh7aeMplv6UbVAY3vTeoOHClAvjyNKc333GTlvtYqt8051zpdhBW5F5SbhvsPKBvX1RIezaroWfbZBaq1zccp7oM54sI4JmpRMatzZb7cbZgTqSITT1mwKY9z0bvPL4noeSVlNGEnbuGrawVOAwWgh6w1O3yMjQx7D4M3svsjDcM1FsdzW5NV88cVOdt0QW30kzFmRpoyqzmEu6WFO0d22JX_nCvefUb4T4ki0aya0F2EgUkq5yUjDaOfFFgZSkpujlMqKqwW2rfj5VwsK7Jiv0BD8fyQbnWPsILvUerAiVxgewkdcTtkIaNgt1_2HeKtFtoL4Tge7zaRJ9MRCVjEAQX9tqgFEV03TiqPVOFVoumw057H0N8QXJiZIHFDiFQVCp_77K8XYFE_EtXB54aeAOTdwKDGryDyiFCX5IrY5bjjBeunSHN5bIbwo7ppzaS_zPPA5QkyB-foen4xdywSE15sX0P6i9PHI5QmR1wJ4eka3nEt6JKza04NxsumLyCV3GM84gvy8-4cRx1h4Q2dLDQygwam9jWlsmjNE\"}"
+    },
+    {
+      "name": "a note envelope of the same workspace (another purpose in the AAD)",
+      "sealed": "{\"v\":1,\"iv\":\"Fx4lLDM6QUhPVl1k\",\"ciphertext\":\"dHmXrrExSuVviAEv_HXdy9wb2EORH9S2qdi84UYKUDtEq8kYVHAZ2OwErihoOJKh1edj5UbvKk-2tuokN4rTRP4VetgJABlLz_hsPhDkxPeVgrZINoM2H1dhqJKibMDxWp8Md8M4ZtjIyJQ4pc8RxHJnAAgSiggZeHhsRg11NC1O1Bct0N4oKjQzPqc9nDPN5jbk_NK5-GD1orgVd2yj7L_gU9DQqN3cBg1B9Y6_r7dEyzkz_DeOPFqsSVfxVb5A4-2qDufzpQt_TS7T1qk3BPsdAkzu_-YcUnD-WLCqR6pTWgBkMkQn_0sB90Xip3lrvpwxV2xHs5ICunqTap1uM2hZVd5AKsDJNF89S4nILFWSYxtXx-L1dj4gdAyi6-B2cQabSOB9c6PINdRuWpbPeziwMzgApQMo2_cbJoWysME-npWCMjg5aDbHpuppLtrqOearaidKoeaHz0_H2RAIeVrwH8NHB4o6k_7CxOicxV1N3qihP4A4k4i-iHSjd4kJbjykM0BbAN0-f0D1PKvksCGHjF7ThMfpm3qI7sVABKfE01Zfk7fDbgzqH8JDl8aUh_G-ThXBITAfYzPHcX_9JqE_cKtfjVQb9y3FukzLkfPMLpF9P7VVwfRWs4QKMcG8Rba3EH9mjAodlccKA6a44CRdI-b4WTVsmrtm5nBTxtQDG6fQI_vW4-QEenu8BR2qKgA_gWN0yG9mTP7a2_5dbLHIbUz92KFNzoh3u-2Me_Aa97bG1kXZiXXlLxEeW2f7hrnDrlKyj5g_a0vVMaYnFmZOTse755CIVBbNsJktJaLDWf7LqTVuOOVBTq-iGbf3elx6cm4R6H5pIn-Qx1MNDBuBZrXc2HFVN7Qs4sWxTpriSDNq108VQX64iuON8BlT7uNYvjafHTl6d8tGX22il2kJkcANM8ssfF58tOOmFnUudBMs47vTJoAMaHbb1xhiwVa6HJCi0M0W9atj0QHUlGBmxTgAlXkDkMIbsYY8I7PfebP8RXItUppsoWt_-siZrnpwWbGvQTOwWsFe9sW0uszmZLLCT-hLiBrmDokd4OfOBMtS8_bbB3z2aLOQzqUykypxjWp_XfNS_Lk7vkBZnoITGseYN3FRN8Q6i8vIDMphInLrEVKu361ITu9pSACslhYN_I63OCV49PiBrBLetDMh9lNS8F4IpTluXOdA2lENHvY1Ku9nA61RTGuOqp_3Z7VWTz2KI8zaFxADDhcglIFSzFQmpEkNhoHr_G8F4ieS9TJx374V644_uSrePTC9I_JltE_9iYf1QtqmrBEDZbX6e3BBvxe2Q25bMOKPKIl0oA-PdAJGv910kd_D5Lmhwk0bn3qip1kOhxkGCma6aBgm6Re2qmUhp1JGsswVPG8\"}"
+    },
+    {
+      "name": "space preferences of the same workspace",
+      "sealed": "{\"v\":1,\"iv\":\"Nj1ES1JZYGdudXyD\",\"ciphertext\":\"ymjWMBVJOclG0vT7JCsDstnczG-CUuQX6rwrQGT9iJOD7V7N-ox0zTZStEgZIM4moXU6ruZlGgf1QXSBqxZka18iLN2fkdpoBqKJukxlaXHosA_Ws0bmEBBYPKPAKujHGeI3DQQ-IC1Y9P_ctF1kEPFeifD6Ya6gFNHcJqU3qvfhP30XU0lr9ZyjzYjco4eM4FyjSeGAGpiw_TYQSCdyqFNImUE4PAzK_LBtqLbgH7GES767mEgGfgbdYgHQBt-gZZ0yugXUSqcJvWZ7QJBiya9A8xs4sF8EZX4t-zER6Jlq2AHodYdw0Tny2emyVqYT47UBEOSMCKH_ZT--3DZ_jGudpAo788tPUNzwqaAkXPgyGL0ZwtK0ZXazag02GNI8TlDJXqiUhzMdwRwn4tgsPHUFWt6P_gfDYB8h2_XX74C-TEbST37ffCIDBxwsCaooP3pEf8w7q1aGUmrjIDXheqPVzVQpInM_jz_OB1GuT5aQsuWvrnv4cpXuqp2CrpE6L2VTWjjtoqjd3a6Uhv6k9dgPm_iQpC0uTVbu5alpIuL9rhH2fFG9_hFkxPhoA-ypgZ5kBIIb0PTE2o8EI1y4SqN6MnDNgx3ODN67G18Ex8CZsT688lkzO8qX4bMvpxLcrM8qY5UAQy8hf6imS9zVXSotcFYNFq7msiKUiMq3nMEs8frO6XTFQpsbizNq0bE4RYSA9S-CYlQActePIYZlWRc4uZGeDihnzIzhjMe31WRtcn8ONeS6PXMxhmb8D-m7N9PR988gbtexnHQe77Psxgv8CMeECGQM9Phxg2gRq_pbN5Cz8OaAMiAX3v29qaWHrB3T0N57LYOWKZ4l5OyafazXdQ3pOIL32rANg5ATK8gS1zHA8gfcOtPYMG6tsFuofBALiOIcaFmUZIY-DmMQkwqiWCeopqfFYOa0B9pgCBzrPaqRwt-mTk5fQzoqzOHyWw5Z01CCqg-aKw0GlkLwZWlgW8Pl_oRtFi52BdxwtyMtWiVuZVY7IUQbIiG37TCX-sSc6_XxoyFdzmSjDNFj4jR2V-I2gF-ZMCx8Tu2KeSQ5usn0G6cp4nNzUOmf8y2MvpzeUVNEFnCsEe7B_-hdYBJxkT7rjUZH-VveWCj4nTBfzc65rNzgzq-YV1vvyVJ92hcz7roEOLOJ8pKHAj8nJZwgi1sG5t2X0Sy7--IOD4xeDbzZ4kvNW6PrWR7Tg5tDn25kwKYInA_QJ6ajmFYDMW2-yDtjS87HEkyM33F6ENVsisObZ-m9KdglCk0z2zLbddfwOlJTektch7NsxQyOgXECudC-x_1ws0zhui47NhjxBlDd1E0gl47iAZ-Pdrw5oF-SA3dbLGiMT1rr6DFsKVD8wKK7bFQvjc3oGbwmjeM\"}"
+    },
+    {
+      "name": "one bit of the ciphertext changed",
+      "sealed": "{\"v\":1,\"iv\":\"XWRrcnmAh46VnKOq\",\"ciphertext\":\"h_qzoAU0rOBKNxbUQQXFy9fdA8T7AZ_pQ1q_EzIaM6jEJIzrM5zSvzgY01nox4IJ04IG9J3ta1cTvtRRscf52Z2hPMrfWGUVqz5fr3ImTOs13I-AKkeQtcIhBxFhz7glEtK-9y-84veXwwlt6fjk2fNy1uWRBb031f81c--7PBsWeAQYwCoClWf301B13D64IHewRf-r33f-9WRiNKQHRDBHy-IoxNPpnknsmV3zIWFGzHYV9_mHRD2Fm3zMGzr3HvqT_4i8LJiPk8NXKGFgSzdI1KDHv9iP9NRZeo4tvqojbuU9LP_yiG83VHcYdk8tbsWnKN1UsBVXQ-Jw34R9kiBTQOuZXC0D006l4vkfkfKMBaP5od3Bbo-RHIpjSnUvJmJ8UI3ySRNac_jgtwidNKkO8QwWgYuhntlx59mLRm7RqI2M0Bn16LrHR9tYHSDxoPR6AA3oTurAOvN0O2vsRxTuvdZ34NpomyVu4khZRgHYhFwk-qCpTzx0H2CSv3s0UFNFwbrCJhfuW_lZIK3hblb1KuKlqmfH4MYHCDGeJtLJgZUaKX_GVS-HUlmu2dc_ZtxplrIe8TpwIffiH-ER6kz_jfu0_G5CtX4sD0mk2ePHNW09wWmzCg53-m6DvLcrjLeQhAKo80ux-LXS4-XTa02KxgQ5X9DplSZ8-jpUf4uhLJ7UwfIHsB3yVblPGsRUzWJEJqntsxeHZ-UhrGAtVEdi7H8py4qIoRHOkGMV6e3mwPVNsyMZB-EPK-giSVeX0GJwRSdBouxEUhxSER4ZEbR0astmIR7JVt7T0i5tNbxjvq40QJSnOMcB04odV6V78cXB-YKckXk9hegLjtovkumfeoyKag8XzwNqD_Rk2EjelOB3_82rlg-7MkeDNNaR6vofZstoxVzfgdo4_SuMa7IrunZZILwRgNxJx6TzWVVrgNJfo7Q-RQidoFG9KFj7ZEXobZWo0VqoeRfSqbHoEGfcLTXkk9EM90laQ8K3EDRXOnNNjKixRsOyye2YpYvbT-YIi1AGT3dtm-v8JwwndYfTSdMt8nscN-EJ6P2oNOvlzjPuFxcrjk5P6njSjDhO56OkywfMk123J24J5FoZ4_VQJ8nN-28DPe8WaSQ2wsldGoZMiXNQguYGJ86N-hA0eVOTSNAio0MZyhE0L3DoAg-SSkbMfj9dfwRcTFu30ZQbjlRBVFpKbcjaOgJVVgfYuB1OXzAS0fygoRG-4GRMn8Dxxil6SJtQiO_peT4lLwosHGghZ2KtbqFVub8zWsauQx8vmFwB-s3NKAeJnzgr1pSIorzbLkqaGdrMVczs6HcOXHVgX0fvFLaVQ3USNP7oLU_AYtH1JYqwoKSvifBMJx-VxRxDzmdAJosFq-GZkqM\"}"
+    },
+    {
+      "name": "a later format this app does not know",
+      "sealed": "{\"v\":1,\"iv\":\"VVxjanF4f4aNlJui\",\"ciphertext\":\"dRBmnc7E5z5zybvc7g28hO26DmC3rbCIdusiXiMr5jxN-k4dqA73oKXNhi6UDOTaodLUQb2fx_-sgnrC0WFIJYawrpKXfVXMahGUzgTyP-cAzEmJgcIRepn6Fc4Dgl-HIp_sRXl7VQi-OBaXabxP_Ki3xoxADSLnqrzulyHiTN2hIDHtIMACSZVoxHZlL2Cg5e1HIiNvfLNIsgcj9uwg1ihyqQL6K3HJ3alOSPqPzFsHx9E715Bijv8YgPPPfAEB3NmloXdTd_3JgA-bmkpqxCDYC0TNWI8m8A13NfqYZwf3Wlq9Y5e2upBZVpzLeeDeDsvdxdLtU20TVyiMfbI3muAozXCwyksN0PI5pVwAP9_sedD708pHW-SZLxOoBHMw6TE-eAFQu2VuNH-C2Q0E2BgYUBtoqQXCGD1lp34-YlNOMvc6CJb3PYLhwky1JdmB8Cv9FpmDiYmaU6YAW_HTDg-1q1CzsYlHRgv50ihZv4POvCqWegNYW-DekQpTAVG42DQJRHuUngGrp5TmubA06AC--f6zL64WtlygGbYX6xYLfSlWY5AxyO3jZNGaL-Rdf0l2iK0pUzYJTnq1fz794A4IwBnYXygiLg2jV_11LY6hLfDiAiNY1gzQQe3A0nLafhEV5jjYIbGp4EisnrWf88_LoWwYmB6FXWkmqmTEkM8y387bl7QomWk0vmijnGqluMrIqnh1XzB6jSTxiXVITTNYknGGhUjfFT0KUEJn0StCNKaHg5t1OfFGrhYR3yVu9ZOFowhwT_4KWCLSnONil8R6Hr0Nrpd2PiKXwuk9BlSa0VuUFaZtFEpgivRa7uLbtr7WtYWjeRt-lJmnFSoqn3ImISU5D5Z3_UwRiZdXREb9lOTWnnfkBZiPnS6wanXDJvBNTJTaMbNvzM8pULgmJitAvJT5PLTJ5E9SkD30NWRG76kz0dSi3cQ5xOgndhPbvb8n4PhFd3sCxQdupwnc_tDc69J7_hdDw0qdbcf0SVMiKIAvcpISsKO96bW8I1L-2LuA9YoP4Q_4k-zr5nMfX07TC-XzcxW6J8N11Eeq58iIvYdXO8x9_who6veP0kkXRJ_xSfoaeU47tRg10dJvRyaD9VyIwpfuSOeOXdJxu7mLZmBH4Hy3Zgrw_yYMST5_M3rjcb_zPJ6upPD6ONP_eiXICPVv_wLVtkO2jsaxWaUIwWTgdne6_JSLd95-Oj7HOny6PCni5htt8Kv_FUk6_EzpJJOS0r9BytQMYlRIQTTE5wyrKtddjTSjyF9GiU-jnYdK29MDiHFTtD9Ara55gDTymSr4tsRdRF4pmmUjJEyu5ehizkvS-pzXycdT9PffYMubuRebFmActJvo6IGmrEdluY4PbOWRp8KwSg_FaMg\"}"
+    },
+    {
+      "name": "a local model, which has no key to share",
+      "sealed": "{\"v\":1,\"iv\":\"dHuCiZCXnqWss7rB\",\"ciphertext\":\"qrPJpinJH5hqwLyxso5cDAKZzhjcivaNoDFP2Ao-AsRtyG6xLIcK_8uhyqerM8aJCgNh6s6Ap3H1C1_roz86sPFIYgHtL4Jsm8_zyP8iI3RXk5Mn48JU8H_wvy1EAeU0VlmTGvvrEjoiD963Qv38CbW1QbiC4l5gCCXJdsDFlblwOy4p4K3CygbbsFFi6XHPULeJrr2C5saQlI-FsxLxOLeJS1Huuqwaxr2KC9lOz804iAE_dbKq8uZxTH42eZMQBcF6QnTrD9G--otmfWazqRMluv02wd7OlfjfEZgDejgiqUunF9pj31xv2WWGlqT1xkUcx2ht7xzsZyNMuAUhfWGY9HRNtcs3iF2hHSew5dkzlfR8yas_WEVHwtw1U_otdnsHg05ukhgQFuw2p_PYuTuZjBwGJHJNlbjjMo0efkf9YfGfIW-SizNZvoN_D4vQI5s7AXMeo_YgCH8A-Rmtn8dxUAeXLMroG4fr8N7hmiD43PQTQGD9u2nh2sXDsZA5gErwr4FmJG3rmd1cFlzRxc6Pe60pB6etpiQirJuZb_XlmU05JF7zsM-_wcE6ZoSMAg0JTGXIeJAt3yiv4hTy-3YS9VMaxA_pN7ioqlQaRKe9ZGtzN3vC98-OcE8xXrwJ1nn4oIfZapOeN7M-uUvGuptPOw0Xv6aAS_idBOnfXmc0Per8-e0eslKwucaou6E67upcwTBSpL5c34OAl1j5xmR0L-uQDgyjgAyO_40zHPJU94op6xKB1EHeWQw1NUo9_GJDeTudfWOlljhmytluiq2xwJeHrhdoVjluhoc9H4GXV1MuO9CUbFbpW-56INMOXGxuIoZyO2GgzvtaJKEaKhV3ZETKm2XF9whtcUYuvI0Wpt1Pmw4-BX1pEJYQMOR0aWguDkN7T2ogPW6sxqInvaTfE9wrJsZLkB0vo_ALprlKmZxwZE_ff6_N1DI-KlPdg9y1vPrg1pPJ7WuILmKUyuk_wGOqxtsL-GulAZLOkAOfffjMhuWx8pVQG0sRfeb7XyJln0xe7cAE22O1ZqwpUGHcR5E45l-6C0nQMeYIBSnNcWI-kAraao3fLgL3k98vWk37a7CsJwIcv1i_gi2pU5e6-fSR0Ab1r1JeXIyUwxCBt_6i9ht8AHt-YNE2q0XIk-wCVT9kQxIlFDwa79WNEuQRuznMTS_rddFoS2MKBzq9pJyWbBXps9GHijcy-WxfN0zfayujxFeq6XKkKBP2XIfbEQ3S_PiisjSxWYR3N7HaQ_d-6yK5AkU90HZea7eu2CJSy3pJbLSXZftbDGGFoOvfkWUbDOa96tOkiNwwcnkklv-ubTyLsYaUAPmPy3nGXBJ70gVTZIXuSIjOyn0me5RUj9nBDKC7tKoLwCxzhL4\"}"
+    },
+    {
+      "name": "an unknown service",
+      "sealed": "{\"v\":1,\"iv\":\"k5qhqK-2vcTL0tng\",\"ciphertext\":\"9zGuAdI2lVGoWKkV6JyQ77ZDVyJgRvqvnQc0VOxpquepRmgHmSqSt8CqM7P5XQFLFSI8Psqt9sKmm9xEjcmfb3ZJXNlorF7hunakPMtSFJwW9b8_b8qx4uIagFgB8yiZnPJ4KZS1IysfviT4IN46HJb4ndpG-aI9tBXFoU_5FziUbYsjSTossBjlYsQcZltAr-EhLfXIfNfSQg8NsQodixCk_HTLahrf-0O60D_31WNgEI_7yR1UsGNkYeU1UDeRElUZ3WQnL7s2gYNylQ60vH1_7G-Ij5bP52Bq_YFUSznl85qvbsddmEnXmr-FIdFcStU__5CCNFiuxzXfIMJ_6Qy0re0EOYRX5YLbjeucx_NPrFNSKAr7_IfEYqpL4q1MkO19Hugee8w1ughyiimSiPymtsWCfY7fzFKohShuxkGXeMKhFnr5LrB2hKCIfgN5lIdnbF_fHiL2PkFwgiFIKm62QjZXeoOfYcjABqAGGGSrwc8iIkY-tCCMC1cclIKUGWfyqOa6P8CyHiOLlO6SOammIw-Oe8_i999EkBG9Dorxe-VwuvWROeOMtP7nHSkn1tZvzTs3pktxAFTPgb2Qb02tanT2Ctptc501zgpt-Gpnzis6JrHRAM_Va53mRcJ3lZXbVMlvcDgGACLQ3aapmezBVKyEE7o3IcMLthO2ROWLVw2iuZpwN6cGPsOXxaZ1HEDcYwJNvw9SYI27ElPbqoa8IgXDyU0jl1sUTgNV_7ae3I8NiWNwowHoTIo2tskH6OH1XIPq-TtmS906giAArsUezlgarziA4z1Sqq9kvI_aYiaIK_doqag30u8n-dAkKIkkS39tIq-QfHuY9mDQ5hyDib26Ebj_oxQ6eeUdXy_QSREW0hoWxPos4J-R4tpugM9vJKLak2DwB45lnA-BWmv2ZpdYuc8nCS4_PZDTnn-yZdbWr2JFWB8zR19J70Zh3_vO59p0mhc1z1n29XrrrygGlo-0MKl2_Jw_Halgki4Ix7LhzTE0kVRvhKyLCXnvo3vRS-cAGW-YjRBeKeETSTi2e8qaBlWtoPRW70oybOkQoNIl_o3ei6VnDmO-KFT9qEHRckvujHw3eoZKdpbvWSjmc9vgr3nNZ8FE8zggSGMuOjyG7U_7rNjamt1CCvqCU-MjUpEkrqprjv473SndKoKSOyOSlln6z_P_bxHm4HYw6v0UHZJI8y8iLfETFU_17nZXrX3nGsYugsBRiqJLh3UHI9ppOZOfETZvZU22f07MvyOaJpMYUw20gyw_q3roO4TbkB3IfdgdKpuI6qdTi4APsEfdBKljO_pP3A3WqvnQdqJP_50TjkAfTTaq-GeVki26ZcCQtz-Ty8bJwwMP0E5iqGkwdwrhvlvOpcUzr_o\"}"
+    },
+    {
+      "name": "an own address without https",
+      "sealed": "{\"v\":1,\"iv\":\"srnAx87V3OPq8fj_\",\"ciphertext\":\"fdzsLSYWlzyJTgsGelLvMsaphqHiFSsZoUpya3RPDvv2pbfWyBODxoj4hz97HyEXl5jbbpVaCkQ0aWUiEJuBc8MwYnSAq9oEeeXykFe6L54qu7YrZ08g8uFREWxKM-epIYpuhCrZsL6M-icD_x9oygI98V_mRmwCdpBfamQTyzo1-0R0TojyIoJVsTIJRRzVqj62dX6iUxug1UZAWzY9OH1-xYGC6-k-SCmhWIBgADnluiFBhb4kvKEETe2LrDq4AGOEfEFMIDW7qcZRi5Bx8rgp_dLBR4CfjKdMmvnJplpcdl21SqzeKfOOwgBtWRZDz4lyuZNBr__y_YzVGtqsRVYZ_snTJem1QJbRIfFWo2f93o4CpxusDqE9CxxmkMdI9_HjKm_jpa0cmG2EBYJJq3gHZWIkSGfm0u5WfwzfVl6SxcKT9oicapsiM4dVMBz2M6-q_0-RHOtaIwLH3SxFFpQHfkLLph4Ys5WRXGysdy0ZIJxq7_OFTxOFjuDZJidEUmam_VfZB4XvDN9X67KtSRMzuxGjKxnpiBRbx46i4x34uDRxMmswlww70NUErL814eeN_IxcNBezYiMrQL_w76MAX1319W-kA9Y3L0yJseL2xJwrmrGIGen_T8yIvdxM3lIP8gEqEadvntf8bUIGVrGpz1KlU5WkmXHJw-rSrX4cTKxLJUsOxncPbzi33iiOfRAv1qG_glZDDc8hPsr-nSTzuxPCBQNcurKXRlas9m-sppx19tssdYBxgGLBi6GAeLTZeU2rx-XBL0rY_DfBVakOfPf2j2-J7BS8ifbCapTMsCthRJkTmnVlTOD3-I7i9TDYOcs8EePAOcEXe8ofiObPEVx1QndNwTMQixuSCkQjEvhESIjH1ItrxrlK2zSd3LUmoot5Kof2HI15Uui9Fw1hQ2NPctoBo6on3nrIS7hkmf4zMWa34OTCCduJyg9yLR_izccxJteSjkad7fZT55eJns_QM34np-mV3uXWBjNu7u33CCEjexyy4PP4qQOVc3p_VFyR0ljqh24q3sNMlWjUSR3RaoYMI5nf1tCm50YrLWfg9AsiPBKYfoTzmAogBX4-5-YKnhAjYtohh0w8bpmov-O92jjllN3IMxH8MoOR7H7lUA2YEKuYIYTo0rvZLgI8WG4dPe7JxnXJgHPAgIILoW6SLnSy35hS9Uil1Grm5t0E8Nr5oxhwrZd6j0i_GnFLYCIs69hO8lGtunenPbeQc7955erI_t_FNbgw34HDKzEumGtguhziT0_8vaW4QRlmsRHceRpLQOSE-Ew3Q1AvgwrXNTtwVWwSFjiz9fudaH5MiyGBvBL0eWEKpQjSyoaEKSro3FvW_cRgFdkSzg1KgSWI5hCCkU6kMQDO0WU\"}"
+    },
+    {
+      "name": "an own address with a name and password in it",
+      "sealed": "{\"v\":1,\"iv\":\"0djf5u30-wIJEBce\",\"ciphertext\":\"f6m98coK6wb8h7adwBDrHpF6KBNpRqrysXsql_HkBgAphKnbIfsgZZu5gAOOWOdm7DkysTjT0xxdIjb5gKObfEflL8vI5NHIicl1UumIkIcLTECxitcc4npatInbqWhzIsTPTFPs4UxWhxANyuROnRNlYE9tHRg0bTfUIaQ-9RDXtD1kC9vswhZPAqcdnsr8uy_xtlc8KkBfEuZpW5psbRLjQdBTBAnMzryPR5sKryPuwrx0QT8BR4dCyz_WQvEAupSOKC326AizV6KBgoQzU-5ffAYEm6Nd3kde2hg1LzE50aEJhIBfX4j6k0ZSRDUNAVGOMvdTS_tmiLIYJ-xCF_V3X44L_e9RuODtfgsgLHThyi-jOG2urGuY7sMVMMmcvrBKRkA0EBaClTVLywfLLOgdsbrjg8yOautnNRUwmbKJb_PBSggnzrQ1zWmTd52M1RQvTo_fo2fqgcir3LImHt435dvvHPIcMd1nqK2ZSu7pRdl_uUTQ-WFM9YO2Wwrs_E9KI7_6uqem6e38zB7wglu0kE8NNbYVv8yQs20Jmt9m6WnC_86LgB2Ki7jTLCKPRl2bKeXdpC7aVONsqklbuniG43q6dwYkwqmFNSaX8LMS6gzAvgnYrrzKCHbirTxDsDTJCDNNv1cOKLzYXuLeoCTDhRjLxIMT8EB12UpCyxqITCZmzeRbXtzTwzUvu9po5LrXbchxRePDR8XKNjGFsjeIxwbxEveNrx_9PZIFPgGW_PAax8sZKF-aA2BBd1bztGCkir7fdKslYP2TSaZvdh02vs32xbyDMlYG2ofo88RusF9KPnz-nHxIzSmwt3FMKKIrgGOM9PdV2X2NCJCQF3592x_7bQIicuqErtWKG9_-35rJ4nZlrBEY1_O5Kjn3HEUR4ytZCkzcSryn08yVgu6KI7eWn2MysI5lox1TVRTtTWGhr879ybqWn0hLKhqpNbXzZxsALIfaIBoEiOWPPD67-b6miCziw01p3H4w9SN0B3aOyqoo1kLCA0wxueiU7_n2gzEqyKJLmmIWWNeMkVg0Q-KdYCe9Vjj0Ckag9VqKels6FqP160cUNKBmaZvxblVL-1xXTzDilzsb60NtX97OZlkZYXxvSBhK6aSYGSzo64v0fnH-kwqI_DPqDd2Jh0hGo6nLvq-mj024EOEVKpv2ZxqskczbtOuLRs6tqMKIOJGInsqQ7mJGNY4U6qY22qU-i6G6_8DylbpaOHyHZ-5BYGx0Z34HA7lhNN9HHQQXemNqP9vIjd9M64yLws7RupZ21s_bik888yuTCNHZqbCS7FaOziPnifKM-7n3A7rxnYpVU33GJDXpRccZNjIxYE1uO6g85gbdmNqnOtPeFs4xBzy1R__0WNVRdLJLfPw\"}"
+    },
+    {
+      "name": "a fixed service with an address of its own",
+      "sealed": "{\"v\":1,\"iv\":\"8Pf-BQwTGiEoLzY9\",\"ciphertext\":\"kYWGgf6F68Y1Rcm1VPobux2Tx41IKhZpvJKD8dO-xFhYt9vJdSIhbvz2EdczMdN8jYls5Gw9zCv3lkwQosUaGaOPEJRu_fkBbgkNzFie6umOEnwYaggGxGky-sIlIE4hhv0knGBW0HIfD96SQ6gpASosM5KuWCzv8JdIuaJ2tr_k6m9b1SUN3nhxsfiKfJzCI9_bv5rrgcXhmqLN3Sq0wD-wWASCFfNPB30uztP2c3HA9Cyn_GtLC-8MpZL6TEavNyragPIqN1MADO4mX3ZWXpUlIoxV5PjydzLbOzWjaPasb6giXGBE0wiz5mQYquXRc0LNf2FE0mwmDa8NyhM3BDf2ushGhKY9YgOZZVC8L-d1dTN-2BTJiqdKM0xVB8m8Y-VFdKuFrk42i-lc143HHRY6FF1t26E5hHLBxaKX5oSoIxA4WC3E--akOChJAsn7CIYaWvUX25OnypQkDYCjcFR4vbvMytp8cWI0Wnor37FLtAnu-b3V1OaAHU7GKFAWBRw0EzpcNxMmccvI-Atw5E9GMz2NzgP7eZ5wRN9-1kCoelvcI9AIQWSmZucqgrU05Sv4ZtvNNCaZBa8Rmq6GXQjf7A-sRGjaSuq3XXzpLSdwmdRZtXAF5xfBeEHx6yWT5czMX2-jSCOnXDz7K33QxV6FdR8JRCOGBVz4yVhj7yJ68shfWYO-9DnP2-3apX5YAbdJG6WcixfQbbPEI8KJJYGp0-JcZ2KSNGnsLQGcQM-2FPWYPsUTo1sZXLxf9dacXM1cAqpFDIRxlDwEIxf8LcNVdw582uTwk0JICyjrp_hc-GPwe6FHM9zR4HApP1OL8SfzLHDDFJ9ZsHGpjW8JNC17HvTzDgeyuvPUz3ZdTAsvsZs_bpKgGNrZ7eivn6ADft1-16dakX1kwWfqCGQVVH-JfrJhNEuJpzH1cQ_19Ta22C59SGTn81k_FXsPtECPmoVNTIhEV1mVEPbZiwyASTT6DppvnVk6yvZjeUkqSUIYmHk2BG9DntSQNOCiUnuhW-V5xSZW8VexXIGl-qL1PuhOwsh_WnTk4WDKWkfdwVd5D1g-mAXY2oYGGivBSXlA2g55mC7vX-0oqKmJCmTgmAWT8KdF7MyF-U1Uf40UjgixStDtYsJ44V6LHPK-LgEce-ABuilGHkrx8aqbkyaaxMaCVbmfSqsKmOONHpUX1zTGuKx3_xFmRKvGWvu5QX3ogMcwYdruOOLiPbrSy_ZMVDzHxNUb9uAOejuXtqgT12XQMmNsLoEkmRsOmOZE66zlQETObf61wurVdKevfDHwTxs9uZcbjBtokSd9vhgb2SEtRnxROq4sm3JMs5dlzqShriQUNGliieB6kEPqL6OyfxWuCYiZNabVBzRmHuc48Nk\"}"
+    },
+    {
+      "name": "no key",
+      "sealed": "{\"v\":1,\"iv\":\"DxYdJCsyOUBHTlVc\",\"ciphertext\":\"oD6W2141NG_lIiuQmg3a1svDR0WEWDFizUcZCj-PxYHIkSN6Vh3cZp3pUhHshyGup7x5Plf2SKsYxq__m7Hh5tMP_kOhEAco3AhqxYQDGLdL8ZMX9cj3XuX53r6T-QHY6oFy_CAYUq7Z7lExPmt2go8FCaidQMmwSh8p_mwOXFCICnKzv-VpjObvqaZTZpWpUxcuY7Mj-gthVFAff57iW1xypIKPbZRZ1O-0CsZWmP0bPFbeNqCCykgvjBKee522j7FyDRCs7hAjIBPEcZ8TZNXGZlrSIEnugFvVqIMW6LJ6r9VTKtw0uDPpX3AdtYqKVIn9WMr6xl9OtFkphcjTwtczvK6N4_uVeztOZlGVY7NZxju6F8BLfw830z3o9vdxjtIxwlwTNQiCIImUDIcsN-hkGVkYKjol7YSSeTPNWYjH2hUW_5z0uTxlXwDiTuSeqSGIrM_tjgki2MzwZY3RGRsOpN3s6x7RnTX4gCdyoGXZI2-y5Mt8GK0sGR8jd3sDELslllm4UMaYLNk8doMEC4bsDF1nK4oeju83Z4G4GHZL70RZtIaDu6N4vVt6S4UM62l_oqY9fq4MshYgV3epyGl5MAAfRu5lP5vs1reNpI4H1oWzqTuOWoDqB6FAnUH4SanBI5Zz8MqhlQR8ezRYxD215i3L0Uq8C9NXVJ7EaOFR_bGdjAZyP99IYlHBMi0yIpMtonqZsXKotfC3quuCsDAkpOkjBs0tJkmXlL7A1Oh4hT9HBFA8ERs_1PVEwqR_S4-Ku9GEuNvFLSM8Ry1AEO0gL0FZ8E6sOAp7Je26sb9-ZzFILBDubrz2_874DkQ2BySlh2ahyrQwDeX1LHnkwKdDIWVMdiY_w_1kE64Tj8UV16as7uDnBFO6ELPHaP3vpybx2BpbRxOoIjJ_5vrAy3JSUOffarRXWEv3YxuROlueHq5PrQah5Y0GRul0fgGyYNXV3h5jeHnkP7M_zTVYvbdHsIAP19SEZpmstDpRLznVEtmcRmBeDPYu75fwlDwlLKGedHrCLk-SEckQTL9oczov7dq062_GSpX05OVfrD_rEbIpAdQ8MBU4PgYIh5Kdr3Q1XixGjugcj787ttrKBbZ4mTilrheMX9nmx5TFqadJTcGeMJ00sHsUZbUqe2-a_udIMyiT_sfrjung0Rla_2fWT8Dyjc8Par9HmUlZCdovumy5lfWIg20cJxnfjQJCOsO1QPzl-I34-d_ny_By_fcnpkmMVza2bNsLOpEm5Wg0cNoSh2ozq9yTPidLQvLaVg2UKnuZzT3nccKWPy87g5_bF1tcL3ndFmhU95rub_TaKTdJZXTmthkS-SrOQjQFeFLOVE5lCG8bmbg5_V4JBzuq2a2kHs54qNiypxQnTTs\"}"
+    },
+    {
+      "name": "a key with a line break",
+      "sealed": "{\"v\":1,\"iv\":\"LjU8Q0pRWF9mbXR7\",\"ciphertext\":\"ev-wWz167tVPDjF1zxjdrXzGEgfcv3kh9E3qZKOZgb5cyuscYDirzo-5Sg0Lh-7tEdgRItz_2Me1m4OPdzYXqfOSJNQf89_v-BQGAaJtl0WhEpXChf1jvNEvsejwZ64caJDu5BC0c2NNi90m22gbBNajdNy7OZhTcdQe8JisDpR01RtR-45FIFVthqNyzCL9DGkXUVTAAah5g71G0pz4etJhrve7nxbvpseM8B7IHhWd9Aajah1QXZlPlCi0lr7hQplFI8bLGQGtsjq2zuHrzI0C-chMyjUb9bSaibQP2iBDMXZKFEypbNaGnBbz5J1dz-JKPNeEc1BYTXrVyfUe1LMP5CEixiTDrRmo1DCSETvuygLffr0v-SKuAzZij8XxwLuXDsETN_cEpUUC915os85RLB-yCQzVVuujJYGp8tGlPVBXHwKLBu1sI51E45ZJRUaeJRPjg2GXg9g6Z62cws_YrhWEs9XTumyW1sKBUr2EoCYAv4ep5WFMgfiP-a_nrQNYrSaWZ_CsqWU61F-R-AoHB3GT6koKWSBc0RPWqR5u9jeLP7wzf9vyglr0K8ZOfNGZJmSHC_98h9YjgqXfpuJ1cZpAM4lkz0sK8DfVf7Q4Axi4dnR4POiv9osOt-xgsAXy6Oa4_ejHchbJovp94iZl05NdV5SXpc3-Ki-009w50eGZbPrYVG6UeDCZUlB10drvvEzT4S7AWZRLqWXTJ53emCVIyQnrE0hQWq98VfMry-tnDZh_3ZquOfEgKGH8oYa7j7IjXwQAjFEgLRJLle7X_xvQtjXfHtBj4s1J9JDfsN1WjBh_tIHILDER8GWe-QRdboGEZc8PWp07xD7F-JuPFx2-NgUhKBX_dSTxbn9yRuCjncmUQ9F5NjIiaF8HSzPYRe1fH-7yBPNvdy3-P0813-JnWedcATHJtYUPRoa7jR_DQMH7uw8HWWajbFS8gv5Jut_VOItXreEHK-1zuQ5stdZXIxtPCG9OlRSyDVg6EKzFy7eAkxmb4hjkZ89RFIHiu8bWAhRd_VY6DWK5XQLa7u5Ach2eXFGJNu3VLBaPOqnjvGe7-7wkQRLsaAVwDPYuTFBFaiiMFeUmJbPNRQdijMDZyFQwdI3ZUgH1QE0qAi38CaRFMKjDwLvJ5m8_DE_VF5iX-4Rgz99QxXAF493SMOhIu-3qz2pV_ZaEZ6PWgnYCD9T-UYapZwQv4_bMCiCTzQvMnwwkDsqfzC282HzkGhLdS_tOertKY65Uf_d9z-ypl8KjAmzY6zPPJTHeN2cHunxtWCH57wbn7ZrkCO5qzsWzPl0UgncgpEtTBwZfMb4623MfMXTlkXkvIbzCho3P5y4iPQZ8yhi9Y-6hY1bZG0xaDNxGofoQ1yXA5eU\"}"
+    },
+    {
+      "name": "a key that is not text",
+      "sealed": "{\"v\":1,\"iv\":\"TVRbYmlwd36FjJOa\",\"ciphertext\":\"6R259nBf_2NQaGoaTnVNM_0WzUia3hGYS6aMehzXJBNPOlwng1sArgNRCdm1_-hZPWexj5KpcdHpUSUwxDP7XeYf3tRfAm5fSJmCcn8jsMzZNcuY2JhZbWag4nchehfLHt3gs_wHOGcHy9-Y00QCDyMxn7I9jk8Jh6FuazUU4LR4ZisGGxqDs6x60A5ssMjA4sMoX9hTu0BRXinvK7d8p0rbG4U5nrRVtViAp602-UNErsPzeyHaWl8WvK_3a2zcnBqOcPNzRSyrYEVwi_n3JwXTXxNCFiVgaSpzF6hYIDQ17CHsYo3_aBn5nNWsU_aO6FeoiJXBzXMBNVcX7I2W_gI9Dr25WAfUyP3MH-U21sEBW0MDy33jtmvfOIhQxU4DkLuIWAv_onhSIsfMj296f2_wvSPog88ktVKPdfy4MaOfDI_ocBNDc6OERuBKytVpCI0bIfkJpGcQYKjlJHuDBgbG0kBogFYoxYVJcUpKnzZtfS9Yl-Fz0c-FeoohJb2Tzoi4jys3pK28wZ6XLxtzkoe70XQcRn7dS-c7wIPdoixoiR-BjnThqVEUJPKwGY0Awphqppu12oFDyNaPzHHl8NZWvYskWUYTPvhTtQqCZqKH4UO38ERyIa-NA1YS7SjRhtbTfO3EaR8UZT1PG0_9otRPEZa7sIIlll95zVELwOr2634ubOeYtj2JZ2KR9asSc6MMGjeHM5yMUIZyOOlQtXd57SYB9RsyplFcxKl9T1LBQhD56hRpf3_6niEJBwU1aR-QrPfzxcbNdLr0ts7fBF7G_Ddn-ov4WDef6bVurU0pY4R3oH_R9T6NcjZFr4LXmuXUy5y5bBTjMxZw_aw9_Or1egMgkPc265ByCcQPKoWLhJ6cbHH56ksrGl1L411_4hTlZTBYY0L0CxNC0B0ZU7LjLHFaiJMywXZRbd0WRwElHUf6x6N2oxA3i6MjkJ1BWiMSkb5d_VY4RG30_MHFMZgBVeCGQ1hr_K0UFg0zJaAEipDY6jCv-V3a2fSTWxL7pRq-clQYKRNnB0lVJzeniHwF6payrJyd8-hKXZJniL3vTnu5R4WDr354yM60LmpZhldvZrqA4fiC5PWGa2ExpFQZ6xyFWzxqY9o4_BpktSSXPFLnELB3qwxcdc99BbOUF-2LcFc2tESqU501T5Wg3h2xXFcofEQ4DGCSdaMBRK369iUDhgFhE0Y25JDIPSsoWTmeQrRGjf9f_U0B1cC_hG6Hm7Lbn5MhixfgcmplG_LaXy1fBzAhugsVDJgf0T-uBevMeolU9bkFSBJTyPi_1TnvPyMdISxjz2Fz3fWTADEDgwkktMgrGjTkSKYPXlQ0Jsc-EsWCeWacnAL2rDvm8DGjh6uM5yUlJDe4yiZ7ZfQ\"}"
+    },
+    {
+      "name": "not an object",
+      "sealed": "{\"v\":1,\"iv\":\"bHN6gYiPlp2kq7K5\",\"ciphertext\":\"swDXIViAQoN8uxWpDUs1zIfzwNFM7oSmug\"}"
+    },
+    {
+      "name": "not JSON inside",
+      "sealed": "{\"v\":1,\"iv\":\"i5KZoKeutbzDytHY\",\"ciphertext\":\"MUhVvOm5GUyRLm5z8CpqAA37ysrFMfY\"}"
+    },
+    {
+      "name": "not an envelope",
+      "sealed": "{\"v\":1}"
+    },
+    {
+      "name": "not JSON",
+      "sealed": "sealed"
+    }
+  ],
+  "shares": [
+    {
+      "name": "a Claude key",
+      "config": {
+        "provider": "anthropic",
+        "key": "  sk-ant-test-NOT-A-REAL-KEY  ",
+        "model": " claude-haiku-5-5 ",
+        "baseUrl": "https://ignored.example.test",
+        "includeShared": true
+      },
+      "shared": {
+        "provider": "anthropic",
+        "key": "sk-ant-test-NOT-A-REAL-KEY",
+        "model": "claude-haiku-5-5",
+        "baseUrl": ""
+      }
+    },
+    {
+      "name": "an own https address",
+      "config": {
+        "provider": "custom",
+        "key": "test-NOT-A-REAL-KEY",
+        "model": "m",
+        "baseUrl": "https://ai.example.test/v1/"
+      },
+      "shared": {
+        "provider": "custom",
+        "key": "test-NOT-A-REAL-KEY",
+        "model": "m",
+        "baseUrl": "https://ai.example.test/v1/"
+      }
+    },
+    {
+      "name": "a local model",
+      "config": {
+        "provider": "ollama",
+        "key": "",
+        "model": "llama",
+        "baseUrl": ""
+      },
+      "error": "local"
+    },
+    {
+      "name": "an own address on this computer",
+      "config": {
+        "provider": "custom",
+        "key": "k",
+        "model": "m",
+        "baseUrl": "http://127.0.0.1:8080"
+      },
+      "error": "address"
+    },
+    {
+      "name": "an own address without a key",
+      "config": {
+        "provider": "custom",
+        "key": "",
+        "model": "m",
+        "baseUrl": "https://ai.example.test"
+      },
+      "error": "key"
+    },
+    {
+      "name": "nothing chosen",
+      "config": {
+        "provider": "",
+        "key": "",
+        "model": "",
+        "baseUrl": ""
+      },
+      "error": "off"
+    },
+    {
+      "name": "a key of 501 characters",
+      "config": {
+        "provider": "openai",
+        "key": "kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk",
+        "model": "",
+        "baseUrl": ""
+      },
+      "error": "key"
+    }
+  ],
+  "decisions": [
+    {
+      "name": "no key here, a key is ready",
+      "local": {
+        "hasKey": false,
+        "synced": 0
+      },
+      "remote": {
+        "status": "found",
+        "updatedAt": 1000,
+        "opens": true
+      },
+      "action": "offer"
+    },
+    {
+      "name": "an own key here, a shared one exists",
+      "local": {
+        "hasKey": true,
+        "synced": 0
+      },
+      "remote": {
+        "status": "found",
+        "updatedAt": 1000,
+        "opens": true
+      },
+      "action": "available"
+    },
+    {
+      "name": "the shared copy is current",
+      "local": {
+        "hasKey": true,
+        "synced": 1000
+      },
+      "remote": {
+        "status": "found",
+        "updatedAt": 1000,
+        "opens": true
+      },
+      "action": "none"
+    },
+    {
+      "name": "a newer key was shared",
+      "local": {
+        "hasKey": true,
+        "synced": 1000
+      },
+      "remote": {
+        "status": "found",
+        "updatedAt": 1001,
+        "opens": true
+      },
+      "action": "update"
+    },
+    {
+      "name": "the server shows an older blob again",
+      "local": {
+        "hasKey": true,
+        "synced": 1000
+      },
+      "remote": {
+        "status": "found",
+        "updatedAt": 999,
+        "opens": true
+      },
+      "action": "none"
+    },
+    {
+      "name": "a newer blob that does not open never replaces the copy",
+      "local": {
+        "hasKey": true,
+        "synced": 1000
+      },
+      "remote": {
+        "status": "found",
+        "updatedAt": 2000,
+        "opens": false
+      },
+      "action": "none"
+    },
+    {
+      "name": "a blob that does not open is not offered",
+      "local": {
+        "hasKey": false,
+        "synced": 0
+      },
+      "remote": {
+        "status": "found",
+        "updatedAt": 2000,
+        "opens": false
+      },
+      "action": "none"
+    },
+    {
+      "name": "removed on another device",
+      "local": {
+        "hasKey": true,
+        "synced": 1000
+      },
+      "remote": {
+        "status": "none"
+      },
+      "action": "remove"
+    },
+    {
+      "name": "nothing shared and nothing from sharing here",
+      "local": {
+        "hasKey": true,
+        "synced": 0
+      },
+      "remote": {
+        "status": "none"
+      },
+      "action": "none"
+    },
+    {
+      "name": "nothing shared, no key here",
+      "local": {
+        "hasKey": false,
+        "synced": 0
+      },
+      "remote": {
+        "status": "none"
+      },
+      "action": "none"
+    },
+    {
+      "name": "Plus ended: the copy stays",
+      "local": {
+        "hasKey": true,
+        "synced": 1000
+      },
+      "remote": {
+        "status": "plus"
+      },
+      "action": "waiting"
+    },
+    {
+      "name": "no Plus and nothing from sharing",
+      "local": {
+        "hasKey": true,
+        "synced": 0
+      },
+      "remote": {
+        "status": "plus"
+      },
+      "action": "none"
+    },
+    {
+      "name": "the server could not be reached: nothing changes",
+      "local": {
+        "hasKey": true,
+        "synced": 1000
+      },
+      "remote": {
+        "status": "unavailable"
+      },
+      "action": "none"
+    },
+    {
+      "name": "an answer without a usable time: nothing changes",
+      "local": {
+        "hasKey": true,
+        "synced": 1000
+      },
+      "remote": {
+        "status": "found",
+        "updatedAt": "soon",
+        "opens": true
+      },
+      "action": "none"
+    },
+    {
+      "name": "an answer this app does not know: nothing changes",
+      "local": {
+        "hasKey": true,
+        "synced": 1000
+      },
+      "remote": {
+        "status": "gone"
+      },
+      "action": "none"
+    }
+  ],
+  "services": [
+    {
+      "name": "the same service with another key and model",
+      "a": {
+        "provider": "anthropic",
+        "key": "sk-ant-test-NOT-A-REAL-KEY-0123456789",
+        "model": "claude-haiku-5-5",
+        "baseUrl": ""
+      },
+      "b": {
+        "provider": "anthropic",
+        "key": "sk-ant-test-NOT-A-REAL-KEY-other",
+        "model": "claude-other",
+        "baseUrl": ""
+      },
+      "same": true
+    },
+    {
+      "name": "another service",
+      "a": {
+        "provider": "anthropic",
+        "key": "sk-ant-test-NOT-A-REAL-KEY-0123456789",
+        "model": "claude-haiku-5-5",
+        "baseUrl": ""
+      },
+      "b": {
+        "provider": "openrouter",
+        "key": "sk-or-test-NOT-A-REAL-KEY-é",
+        "model": "",
+        "baseUrl": ""
+      },
+      "same": false
+    },
+    {
+      "name": "the same own address",
+      "a": {
+        "provider": "custom",
+        "key": "test-own-address-NOT-A-REAL-KEY",
+        "model": "my-model",
+        "baseUrl": "https://ai.example.test/v1"
+      },
+      "b": {
+        "provider": "custom",
+        "key": "test-NOT-A-REAL-KEY-other",
+        "model": "my-model",
+        "baseUrl": "https://ai.example.test/v1"
+      },
+      "same": true
+    },
+    {
+      "name": "an own address that moved",
+      "a": {
+        "provider": "custom",
+        "key": "test-own-address-NOT-A-REAL-KEY",
+        "model": "my-model",
+        "baseUrl": "https://ai.example.test/v1"
+      },
+      "b": {
+        "provider": "custom",
+        "key": "test-own-address-NOT-A-REAL-KEY",
+        "model": "my-model",
+        "baseUrl": "https://elsewhere.example.test/v1"
+      },
+      "same": false
+    },
+    {
+      "name": "no key here yet",
+      "a": {
+        "provider": "anthropic",
+        "key": "sk-ant-test-NOT-A-REAL-KEY-0123456789",
+        "model": "claude-haiku-5-5",
+        "baseUrl": ""
+      },
+      "b": {
+        "provider": "",
+        "key": "",
+        "model": "",
+        "baseUrl": ""
+      },
+      "same": false
+    },
+    {
+      "name": "nothing at all",
+      "a": {
+        "provider": "anthropic",
+        "key": "sk-ant-test-NOT-A-REAL-KEY-0123456789",
+        "model": "claude-haiku-5-5",
+        "baseUrl": ""
+      },
+      "b": null,
+      "same": false
+    }
+  ],
+  "answers": [
+    {
+      "name": "a blob",
+      "response": {
+        "status": 200,
+        "body": {
+          "sealed": "<sealed>",
+          "updatedAt": 1000
+        }
+      },
+      "remote": "found"
+    },
+    {
+      "name": "no blob, said by a server that knows this address",
+      "response": {
+        "status": 404,
+        "body": {
+          "error": "No key is kept for your devices.",
+          "code": "no-ai-key"
+        }
+      },
+      "remote": "none"
+    },
+    {
+      "name": "an older server that does not know this address",
+      "response": {
+        "status": 404,
+        "body": {
+          "error": "Not found"
+        }
+      },
+      "remote": "unavailable"
+    },
+    {
+      "name": "no Plus",
+      "response": {
+        "status": 402,
+        "body": {
+          "error": "Plus",
+          "code": "plus-required"
+        }
+      },
+      "remote": "plus"
+    },
+    {
+      "name": "this app is not let in",
+      "response": {
+        "status": 403,
+        "body": {
+          "error": "no",
+          "code": "client-not-allowed"
+        }
+      },
+      "remote": "unavailable"
+    },
+    {
+      "name": "signed out",
+      "response": {
+        "status": 401,
+        "body": {
+          "error": "Device access denied"
+        }
+      },
+      "remote": "unavailable"
+    },
+    {
+      "name": "a server error",
+      "response": {
+        "status": 500,
+        "body": {
+          "error": "Internal server error"
+        }
+      },
+      "remote": "unavailable"
+    },
+    {
+      "name": "busy",
+      "response": {
+        "status": 503,
+        "body": {
+          "error": "Cloud is busy."
+        }
+      },
+      "remote": "unavailable"
+    },
+    {
+      "name": "a blob without a time",
+      "response": {
+        "status": 200,
+        "body": {
+          "sealed": "<sealed>"
+        }
+      },
+      "remote": "unavailable"
+    },
+    {
+      "name": "a blob that is not text",
+      "response": {
+        "status": 200,
+        "body": {
+          "sealed": {
+            "v": 1
+          },
+          "updatedAt": 1000
+        }
+      },
+      "remote": "unavailable"
+    }
+  ]
+}
