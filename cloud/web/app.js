@@ -4501,7 +4501,7 @@ function renderGoes() {
   // A note that moved up after another was cleared stays in the list once shown, so it can be cleared and ticked again.
   if (digest) for (const note of picked) if (!aiScope.digestAll.some((shown) => shown.id === note.id)) aiScope.digestAll.push(note);
   const notes = digest ? aiScope.digestAll : aiCandidates();
-  $('ai-goes-note').textContent = digest ? 'JotDrop picked these notes on this device: changed in the last 7 days, a reminder in the next 7 days, or an expiry date within 30 days. Only the title, the first line, the open tasks, the reminder and the expiry date of each go along, not the whole note. Clear a box to keep a note out.' : AI_GOES_NOTE;
+  $('ai-goes-note').textContent = digest ? 'JotDrop picked these notes on this device: changed in the last 7 days, a reminder in the next 7 days, or an expiry date within 30 days. Only the title, the first line, the open tasks, the time of the last change, the reminder and the expiry date of each go along, not the whole note. Clear a box to keep a note out.' : AI_GOES_NOTE;
   const kept = notes.filter((note) => aiExcluded.has(note.id));
   const row = (note, on) => {
     const item = document.createElement('li');
