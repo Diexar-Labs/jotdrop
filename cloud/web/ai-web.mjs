@@ -31,14 +31,16 @@ const isNotePath = (path) => /\.md$/i.test(path) && path.startsWith('notes/') &&
 
 /**
  * The notes Ask JotDrop may look at, from [{ id, path, text, modifiedAt, deleted }]: Notes and Archive, as
- * { id, title, text, labels, updatedAt, shared }. text is the note without front matter and title. shared marks a
+ * { id, title, text, labels, updatedAt, reminder, expires, shared }. text is the note without front matter and title;
+ * reminder ("YYYY-MM-DDTHH:MM") and expires ("YYYY-MM-DD") are the note's properties or '' (the week overview and
+ * the duplicate search read them). shared marks a
  * note in a shared group or with a live list link (sharedPaths), which stays home unless the user allows it.
  */
 export function aiNotes(entries, { sharedPaths = [], inSpace = false } = {}) {
   const shared = new Set(sharedPaths);
   return entries.filter((entry) => !entry.deleted && isNotePath(entry.path)).map((entry) => {
     const parts = noteSummary(entry.text, entry.path);
-    return { id: entry.id, title: parts.title, text: splitNote(entry.text).body, labels: parts.labels, updatedAt: entry.modifiedAt, shared: inSpace || shared.has(entry.path) };
+    return { id: entry.id, title: parts.title, text: splitNote(entry.text).body, labels: parts.labels, updatedAt: entry.modifiedAt, reminder: parts.reminder, expires: parts.expires, shared: inSpace || shared.has(entry.path) };
   });
 }
 

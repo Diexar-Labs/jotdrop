@@ -476,6 +476,11 @@ html { scrollbar-color: color-mix(in srgb, var(--ink) 35%, transparent) transpar
 .ai-goes summary { cursor: pointer; font-weight: 600; }
 .ai-goes-list { list-style: none; padding: 0; margin: .3rem 0; max-height: 14rem; overflow: auto; }
 .ai-goes-list .check-label { margin: .4rem 0; }
+.dup-list { list-style: none; padding: 0; margin: .5rem 0; }
+.dup-list > li { border: 1px solid var(--line); border-radius: 10px; padding: .6rem .9rem; margin: .7rem 0; }
+.dup-list h3 { margin: 0 0 .3rem; font-size: 1rem; }
+.dup-list p { margin: .15rem 0; }
+.dup-list .history-diff { margin-top: .5rem; }
 .ai-confirm { border: 1.5px solid var(--edge); border-radius: 10px; padding: .8rem 1rem; margin: 1rem 0; background: var(--field); }
 .ai-confirm h3 { margin: 0 0 .3rem; }
 .ai-receipt-keep { border: 1px solid var(--line); border-radius: 8px; margin: 1rem 0 0; padding: .3rem .8rem; }

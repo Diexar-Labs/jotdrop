@@ -81,7 +81,7 @@ test('Ask JotDrop: the page may reach the four AI providers and a local Ollama, 
   const connect = /connect-src ([^;]*);/.exec(page.headers.get('content-security-policy'))?.[1].split(' ');
   assert.deepEqual(connect, ["'self'", 'https://api.anthropic.com', 'https://api.openai.com', 'https://generativelanguage.googleapis.com', 'https://openrouter.ai', 'http://127.0.0.1:11434', 'http://localhost:11434']);
   assert.ok(!connect.includes('https:') && !connect.includes('*'));
-  for (const path of ['/ai-web.mjs', '/shared/ai/assistant.mjs', '/shared/ai/providers.mjs', '/shared/ai/tools.mjs', '/shared/ai/prompt.mjs', '/shared/ai/context.mjs', '/shared/ai/redact.mjs', '/shared/ai/markdown.mjs', '/shared/ai/parts.mjs', '/shared/ai/receipt.mjs', '/shared/paper.mjs', '/shared/diff.mjs']) {
+  for (const path of ['/ai-web.mjs', '/shared/ai/assistant.mjs', '/shared/ai/providers.mjs', '/shared/ai/tools.mjs', '/shared/ai/prompt.mjs', '/shared/ai/context.mjs', '/shared/ai/redact.mjs', '/shared/ai/markdown.mjs', '/shared/ai/parts.mjs', '/shared/ai/receipt.mjs', '/shared/ai/digest.mjs', '/shared/paper.mjs', '/shared/diff.mjs', '/shared/similar.mjs']) {
     const response = await fetch(`${app.url}${path}`);
     assert.equal(response.status, 200, path);
     assert.match(response.headers.get('content-type'), /^text\/javascript/, path);

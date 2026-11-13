@@ -181,6 +181,7 @@
         <button id="time-machine" type="button" aria-expanded="false" aria-controls="timeline">Time machine</button>
         <button id="new-note" class="primary" type="button">New note</button>
         <button id="ask-jotdrop" type="button">Ask JotDrop</button>
+        <button id="find-duplicates" type="button">Find duplicates</button>
         <button id="new-photo-text" type="button">Text from photo</button>
         <button id="new-voice" type="button">Voice memo</button>
         <button id="new-drawing" type="button">Drawing</button>
@@ -382,10 +383,10 @@
     <form id="ai-ask">
       <label for="ai-request">What should JotDrop do?</label>
       <textarea id="ai-request" rows="3" maxlength="4000" placeholder="Put milk and bread on my shopping list"></textarea>
-      <div class="ai-ask-row"><button id="ai-send" class="primary" type="submit">Send</button><button id="ai-dictate" type="button" aria-pressed="false" hidden>Dictate</button><button id="ai-stop" type="button" hidden>Stop</button></div>
+      <div class="ai-ask-row"><button id="ai-send" class="primary" type="submit">Send</button><button id="ai-week" type="button">This week</button><button id="ai-dictate" type="button" aria-pressed="false" hidden>Dictate</button><button id="ai-stop" type="button" hidden>Stop</button></div>
       <p id="ai-via" class="ai-note"></p>
       <details id="ai-goes" class="ai-goes"><summary id="ai-goes-summary">What goes along</summary>
-        <p class="ai-note">These notes go along with your question. Clear a box to keep a note out of this conversation. While it answers, the AI can also search your other notes; what it reads is listed afterwards. A file of the note goes only when you tick it.</p>
+        <p id="ai-goes-note" class="ai-note">These notes go along with your question. Clear a box to keep a note out of this conversation. While it answers, the AI can also search your other notes; what it reads is listed afterwards. A file of the note goes only when you tick it.</p>
         <ul id="ai-goes-list" class="ai-goes-list"></ul>
         <p id="ai-goes-files" class="ai-note" hidden>The ticked file goes to the AI service as it is; a photo is made smaller first. A photo or recording can hold other people's details, so only send what you may share.</p>
       </details>
@@ -429,6 +430,12 @@
         <div class="ai-form-actions"><a id="ai-report-mail" href="mailto:hello@jotdrop.net">Write to hello@jotdrop.net</a><button id="ai-report-download" type="button">Download the question and answer</button></div>
       </div>
     </section>
+  </dialog>
+  <dialog id="dup-dialog" class="ai-dialog dup-dialog" aria-labelledby="dup-title">
+    <div class="dialog-heading"><h2 id="dup-title">Find duplicates</h2><button id="dup-close" type="button">Close</button></div>
+    <p class="ai-note">JotDrop compares your notes on this device. No AI is used and nothing is sent. Notes from shared groups and notes with a live list link are left out, and so are very short notes and the trash.</p>
+    <p id="dup-status" class="ai-status" role="status" aria-live="polite"></p>
+    <ul id="dup-list" class="dup-list"></ul>
   </dialog>
   <dialog id="photo-viewer" class="photo-viewer" aria-labelledby="photo-title">
     <div class="dialog-heading"><h2 id="photo-title">Photo</h2><button id="close-photo" type="button">Close</button></div>

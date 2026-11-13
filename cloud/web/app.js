@@ -2,6 +2,8 @@ import { CloudClient, identifyClient } from '/shared/client.mjs';
 import { mergeNote } from '/shared/merge.mjs';
 import { cardPreview, checklistOnly, tagOnly } from '/shared/card-preview.mjs';
 import { diffLines, foldUnchanged } from '/shared/diff.mjs';
+import { findDuplicates, pairKey } from '/shared/similar.mjs';
+import { digestRequest, weekDigest } from '/shared/ai/digest.mjs';
 import { createLink, listLinks, removeLink } from '/shared/links.mjs';
 import { createListLink, hasChecklist, listListLinks, openList, removeListLink, syncList } from '/shared/list-links.mjs';
 import { acceptInvite, blockMember, createSpace, deleteSpace, leaveSpace, listSpaces, makeInvite, readInvite, removeMember, replaceSpace, reportSpace, saveSpacePrefs, setMemberName, spaceClient, spaceDetails, takeOverSpace, unreadableFile, withdrawInvite, writeUnderFreeName } from '/shared/spaces.mjs';
@@ -2702,8 +2704,8 @@ workspaceForm('delete-account-form', async () => {
   for (const [key] of await store('entries', recordPrefix())) await forgetSpace(key.slice(recordPrefix().length));
   // The cloud is gone: forget this browser's connection and its encrypted copies of it.
   for (const prefix of [cachePrefix(), pendingPrefix()]) for (const [key] of await store('entries', prefix)) await store('delete', key);
-  // Also the sealed Ask JotDrop key and the labels made on this device: nothing of the deleted cloud stays here.
-  await store('delete', [aiStoreKey(), `labels:${ownClient.credentials.vaultId}`]);
+  // Also the sealed Ask JotDrop key, the labels made on this device and the duplicate pairs kept: nothing of the deleted cloud stays here.
+  await store('delete', [aiStoreKey(), `labels:${ownClient.credentials.vaultId}`, `dups:${ownClient.credentials.vaultId}`]);
   await store('delete', 'connection');
   field.value = $('delete-confirm').value = '';
   lock('Your account and cloud were deleted. The notes on your own devices were not touched.');
@@ -4469,6 +4471,12 @@ async function aiPart(file) {
   return { kind: 'image', mime: 'image/jpeg', name: file.name.replace(/\.[^.]+$/, '.jpg'), data: plainBase64(bytesToBase64(photo)) };
 }
 
+// Fixed requests with their own notes: "This week" (the digest) and "Merge with AI" (two notes). Their request cannot be edited.
+const FIXED_KINDS = new Set(['digest', 'merge']);
+const AI_GOES_NOTE = $('ai-goes-note').textContent;
+const aiZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone;
+// What "This week" would send now: the notes the digest picks on this device, minus the ones the user cleared.
+const aiDigest = () => weekDigest(aiNotesNow().filter((note) => !aiExcluded.has(note.id)), { now: new Date(), timeZone: aiZone(), includeShared: aiConfig.includeShared });
 const aiCandidates = () => (aiScope.editor ? [aiScope.editor] : aiScope.only ?? aiNotesNow());
 const aiPick = (notes, request) => selectNotes(notes, request, { includeShared: aiConfig.includeShared, pinned: aiScope.pinned });
 function aiOffReason() {
@@ -4488,8 +4496,12 @@ function renderAiVia() {
 }
 // The list is what really goes: the same choice the assistant makes, minus the notes the user cleared.
 function renderGoes() {
-  const notes = aiCandidates();
-  const picked = aiPick(notes.filter((note) => !aiExcluded.has(note.id)), $('ai-request').value).notes;
+  const digest = aiScope.kind === 'digest';
+  const picked = digest ? aiDigest().notes : aiPick(aiCandidates().filter((note) => !aiExcluded.has(note.id)), $('ai-request').value).notes;
+  // A note that moved up after another was cleared stays in the list once shown, so it can be cleared and ticked again.
+  if (digest) for (const note of picked) if (!aiScope.digestAll.some((shown) => shown.id === note.id)) aiScope.digestAll.push(note);
+  const notes = digest ? aiScope.digestAll : aiCandidates();
+  $('ai-goes-note').textContent = digest ? 'JotDrop picked these notes on this device: changed in the last 7 days, a reminder in the next 7 days, or an expiry date within 30 days. Only the title, the first line, the open tasks, the reminder and the expiry date of each go along, not the whole note. Clear a box to keep a note out.' : AI_GOES_NOTE;
   const kept = notes.filter((note) => aiExcluded.has(note.id));
   const row = (note, on) => {
     const item = document.createElement('li');
@@ -4559,9 +4571,19 @@ function resetAiResult() {
  * Version 2, with an entry: kind 'transcribe', 'photo' or 'receipt' sends one of the card's files and no notes;
  * asking about a card lists its files unticked.
  */
-function openAi({ entry, editor, request = '', send = false, summarize = false, kind = 'ask' } = {}) {
+function openAi({ entry, editor, request = '', send = false, summarize = false, kind = 'ask', merge } = {}) {
   if (!client || aiRun) return;
-  aiScope = { pinned: entry ? [entry.id] : editor ? [editor.id] : [], target: entry, editor, kind: summarize ? 'summarize' : kind };
+  if (merge) kind = 'merge';
+  aiScope = { pinned: entry ? [entry.id] : editor ? [editor.id] : merge ? [merge.older.id, merge.newer.id] : [], target: entry, editor, kind: summarize ? 'summarize' : kind, merge };
+  if (kind === 'digest') {
+    aiScope.only = [];
+    aiScope.digestAll = weekDigest(aiNotesNow(), { now: new Date(), timeZone: aiZone(), includeShared: aiConfig.includeShared }).notes;
+    request = 'Overview of my week';
+  }
+  if (merge) {
+    aiScope.only = aiNotesNow().filter((note) => aiScope.pinned.includes(note.id));
+    request = mergeRequest(merge);
+  }
   if (summarize && entry) {
     aiScope.only = aiNotesNow().filter((note) => note.id === entry.id);
     request = editorRequest('summarize', aiScope.only[0]?.title);
@@ -4582,7 +4604,7 @@ function openAi({ entry, editor, request = '', send = false, summarize = false, 
   aiExcluded = new Set();
   resetAiResult();
   $('ai-request').value = request;
-  $('ai-request').readOnly = Boolean(editor) || summarize || FILE_KINDS.has(kind);
+  $('ai-request').readOnly = Boolean(editor) || summarize || FILE_KINDS.has(kind) || FIXED_KINDS.has(kind);
   const off = aiOffReason();
   $('ai-off').hidden = !off;
   $('ai-ask').hidden = Boolean(off);
@@ -4590,8 +4612,9 @@ function openAi({ entry, editor, request = '', send = false, summarize = false, 
   $('ai-setup').hidden = !off || Boolean(moment) || Boolean(aiConfig.provider && activeSpace);
   $('ai-goes').hidden = Boolean(editor);
   // A file action shows the file at once: the user sends it, or chooses another one first. Its request is fixed.
-  $('ai-goes').open = FILE_KINDS.has(kind);
-  $('ai-dictate').hidden = !Recognition || FILE_KINDS.has(kind);
+  $('ai-goes').open = FILE_KINDS.has(kind) || FIXED_KINDS.has(kind);
+  $('ai-dictate').hidden = !Recognition || FILE_KINDS.has(kind) || FIXED_KINDS.has(kind);
+  $('ai-week').hidden = Boolean(entry || editor || merge) || kind === 'digest';
   if (!$('ai-dialog').open) $('ai-dialog').showModal();
   renderAiVia();
   renderGoes();
@@ -4600,6 +4623,7 @@ function openAi({ entry, editor, request = '', send = false, summarize = false, 
   else $('ai-request').focus();
 }
 $('ask-jotdrop').addEventListener('click', () => openAi());
+$('ai-week').addEventListener('click', () => openAi({ kind: 'digest' }));
 $('ai-setup').addEventListener('click', () => {
   $('ai-dialog').close();
   if ($('editor').open) closeEditor();
@@ -4726,8 +4750,14 @@ async function sendAi() {
   const request = $('ai-request').value.trim();
   if (!request || aiRun || aiOffReason()) return;
   const spec = WEB_PROVIDERS[aiConfig.provider];
+  const digest = aiScope.kind === 'digest' ? aiDigest() : undefined;
+  if (digest && !digest.notes.length) { $('ai-status').textContent = 'Nothing to write about: no notes changed in the last 7 days, and no reminder or expiry date is coming up.'; return; }
   const notes = aiCandidates().filter((note) => !aiExcluded.has(note.id));
-  const first = new Set(aiPick(notes, request).notes.map((note) => note.id));
+  const picks = digest ? digest.notes : aiPick(notes, request).notes;
+  // A merge replaces the newer note's text: the AI must see all of both notes, or the merged text loses the rest.
+  if (aiScope.kind === 'merge' && picks.length < 2) { $('ai-status').textContent = 'Both notes must go along to merge them. Tick both, or search for duplicates again.'; return; }
+  if (aiScope.kind === 'merge' && picks.some((note) => note.truncated)) { $('ai-status').textContent = 'These notes are too long to merge with AI: the AI would not see all of their text. Compare them and merge them yourself.'; return; }
+  const first = new Set(picks.map((note) => note.id));
   const before = new Map(notes.filter((note) => files.has(note.id)).map((note) => [note.id, noteText(files.get(note.id).file)]));
   const chosen = (aiScope.files ?? []).filter((file) => aiFilesOn.has(file.id) && !aiFileProblem(file));
   if (FILE_KINDS.has(aiScope.kind) && !chosen.length) { $('ai-status').textContent = 'Choose a file first.'; return; }
@@ -4750,6 +4780,13 @@ async function sendAi() {
     } else if (aiScope.kind === 'receipt') {
       const { system, text } = receiptRequest(navigator.language);
       report = await aiOnce(request, parts, (ai, signal) => ai.complete({ system, messages: [{ role: 'user', text, parts }], tools: [], signal }), controller.signal);
+    } else if (digest) {
+      // The overview has no tools: what the notes say can never make or change a note.
+      const { system, text } = digestRequest({ language: navigator.language, date: aiToday(), timeZone: aiZone(), text: digest.text });
+      report = await aiOnce(request, parts, (ai, signal) => ai.complete({ system, messages: [{ role: 'user', text }], tools: [], signal }), controller.signal);
+      report.sent = digest.notes.map(({ id, title }) => ({ id, title }));
+      const said = report.answer.toLowerCase();
+      report.sources = report.sent.filter((note) => note.title.length >= 3 && said.includes(note.title.toLowerCase()));
     } else if (aiScope.kind === 'photo') {
       // A fixed action has no tools: text on a photo can never make or change a note.
       report = await aiOnce(request, parts, (ai, signal) => ai.complete({ system: PHOTO_SYSTEM, messages: [{ role: 'user', text: request, parts }], tools: [], signal }), controller.signal);
@@ -4853,6 +4890,7 @@ function showAiReport(report, request, first) {
       if (made) item.append(' ', button('Open', () => { const entry = files.get(made); $('ai-dialog').close(); if (entry) openEditor(entry); }));
       return item;
     }));
+    mergeTrashRow(report);
   }
   const also = report.sent.filter((note) => !first.has(note.id));
   // In words what went: the question (a recording goes on its own), the notes, and each file by name.
@@ -4952,7 +4990,7 @@ $('ai-save-answer').addEventListener('click', async () => {
   try {
     const target = aiScope.editor?.title || aiScope.target && noteParts(noteText(aiScope.target.file), aiScope.target.file.path).title;
     const titles = { summarize: 'Summary of', transcribe: 'Recording in', photo: 'Text from the photo in', receipt: 'Receipt in' };
-    const title = titles[aiScope.kind] && target ? `${titles[aiScope.kind]} ${target}` : aiLast.request.split('\n')[0].slice(0, 80);
+    const title = aiScope.kind === 'merge' ? `Merged text of ${aiScope.merge.newer.title}` : titles[aiScope.kind] && target ? `${titles[aiScope.kind]} ${target}` : aiLast.request.split('\n')[0].slice(0, 80);
     const text = newNoteText({ title, text: aiLast.report.answer });
     const name = noteFilename(text);
     let path = `notes/${name}`;
@@ -4981,6 +5019,100 @@ function closeAi() {
 }
 $('ai-close').addEventListener('click', closeAi);
 $('ai-dialog').addEventListener('close', () => { dictation?.abort(); aiConfirming?.(false); aiRun?.controller.abort(new DOMException('Stopped.', 'AbortError')); });
+
+// "Merge with AI" (from Find duplicates): both notes go along and the AI writes one text, which the usual
+// confirmation (+ and -) puts in the newer note. Notes are named by id only: a title is data, never part of the request.
+function mergeRequest({ older, newer }) {
+  return `Two notes may be duplicates. The older one has id ${older.id}, the newer one has id ${newer.id}. Write one text that keeps everything from both notes and does not repeat itself, in the language of the notes. Replace the text of the newer note (id ${newer.id}) with that text. Do not change the older note.`;
+}
+// After a merge that was applied, the older note is still there: moving it to the trash is the user's own step.
+function mergeTrashRow(report) {
+  const merge = aiScope.merge;
+  if (!merge || !report.actions.some((action) => action.tool === 'replace_note_text' && action.status === 'done' && action.input?.id === merge.newer.id)) return;
+  const older = files.get(merge.older.id);
+  if (!older || older.deleted) return;
+  const item = document.createElement('li');
+  item.append(`The older note "${merge.older.title}" is still there. `);
+  item.append(button('Move it to the trash', async () => {
+    try { await deleteEntry(older); } catch (error) { $('ai-status').textContent = errorText(error); return; }
+    if (files.get(older.id)?.deleted) item.textContent = `Moved "${merge.older.title}" to the trash.`;
+  }));
+  $('ai-actions').append(item);
+}
+
+// Find duplicates (Ask JotDrop v2, part E): compared on this device, without AI and without sending anything.
+// "Keep both" is remembered on this device, sealed like the local labels, and is never synced.
+const dupKey = () => `dups:${client.credentials.vaultId}`;
+let dupKept = new Set();
+async function loadDupKept() {
+  const prepared = await store('get', dupKey());
+  const file = prepared && await decryptEnvelope(client.credentials.vaultKey, JSON.parse(prepared.envelope), aad(prepared.id));
+  dupKept = new Set(file ? JSON.parse(decoder.decode(base64ToBytes(file.content))) : []);
+}
+async function saveDupKept() {
+  await store('put', dupKey(), await sealFile('local/dups.json', encoder.encode(JSON.stringify([...dupKept])), 0));
+}
+const dupSay = (text) => { $('dup-status').textContent = text; };
+const dupWhen = (note) => (note.updatedAt ? `edited ${new Date(note.updatedAt).toLocaleDateString()}` : 'no edit date');
+
+async function showDuplicateCompare(box, pair, byId) {
+  const lines = diffLines(noteText(files.get(pair.a).file), noteText(files.get(pair.b).file));
+  box.replaceChildren();
+  if (!lines) box.append(paragraph('These notes are too long to compare here.'));
+  else {
+    box.append(paragraph(`From the older note "${byId.get(pair.a).title}" to the newer note "${byId.get(pair.b).title}": + was added, - was removed.`));
+    for (const line of foldUnchanged(lines)) {
+      const shown = document.createElement('div');
+      shown.className = `diff-line ${line.type}`;
+      shown.textContent = line.type === 'gap' ? `${line.count} unchanged ${line.count === 1 ? 'line' : 'lines'}` : `${{ same: '  ', added: '+ ', removed: '- ' }[line.type]}${line.text}`;
+      box.append(shown);
+    }
+  }
+}
+
+function renderDuplicates() {
+  const notes = aiNotesNow();
+  const byId = new Map(notes.map((note) => [note.id, note]));
+  const { pairs, complete } = findDuplicates(notes, { dismissed: [...dupKept] });
+  const more = complete ? '' : ' The search stopped early, so this list may not be complete. Deal with these, then search again.';
+  dupSay(pairs.length ? `${pairs.length} ${pairs.length === 1 ? 'pair' : 'pairs'} found.${more}` : complete ? 'No duplicate notes found.' : `Nothing found yet, and the search stopped early. Try again.`);
+  $('dup-list').replaceChildren(...pairs.map((pair) => {
+    const older = byId.get(pair.a), newer = byId.get(pair.b);
+    const item = document.createElement('li');
+    const heading = document.createElement('h3');
+    // Words, not color: the kind is written out.
+    heading.textContent = pair.kind === 'same' ? 'Same text' : pair.kind === 'near' ? `Almost the same (${Math.round(pair.score * 100)}%)` : `One note is inside the other (${Math.round(pair.score * 100)}% of "${byId.get(pair.drop).title}")`;
+    const box = document.createElement('div');
+    box.className = 'history-diff';
+    box.hidden = true;
+    const actions = document.createElement('div');
+    actions.className = 'ai-form-actions';
+    actions.append(
+      button('Compare', async () => { box.hidden = !box.hidden; if (!box.hidden) await showDuplicateCompare(box, pair, byId); }),
+      // The button names the note: the older one, or for "inside" the shorter one, never the note that holds more.
+      button(`Move "${byId.get(pair.drop).title}" to the trash`, async () => { try { await deleteEntry(files.get(pair.drop)); } catch (error) { dupSay(errorText(error)); return; } renderDuplicates(); }),
+      button('Keep both', async () => { dupKept.add(pairKey(pair.a, pair.b)); try { await saveDupKept(); } catch (error) { dupSay(errorText(error)); return; } renderDuplicates(); }),
+    );
+    if (aiConfig.provider && !activeSpace) actions.append(button('Merge with AI…', () => { $('dup-dialog').close(); openAi({ merge: { older, newer } }); }));
+    item.append(heading, paragraph(`Older: "${older.title}", ${dupWhen(older)}`), paragraph(`Newer: "${newer.title}", ${dupWhen(newer)}`), actions, box);
+    return item;
+  }));
+}
+$('find-duplicates').addEventListener('click', async () => {
+  if (!client) return;
+  $('dup-list').replaceChildren();
+  if (moment) dupSay('Go back to now first: duplicates are looked for in your notes as they are.');
+  else if (activeSpace) dupSay('This is a shared group. Notes in shared groups are left out. Open your own notes to look for duplicates.');
+  else dupSay('Looking for duplicates on this device...');
+  if (!$('dup-dialog').open) $('dup-dialog').showModal();
+  $('dup-close').focus();
+  if (moment || activeSpace) return;
+  try { await loadDupKept(); } catch { dupKept = new Set(); }
+  // Let the window show first: many notes can take a few seconds.
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  renderDuplicates();
+});
+$('dup-close').addEventListener('click', () => $('dup-dialog').close());
 
 // Dictation with the browser's own speech recognition, where it has one. That service is the browser's, not ours.
 const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;

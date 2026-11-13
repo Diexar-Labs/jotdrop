@@ -7,7 +7,7 @@ const note = (path, text, extra = {}) => ({ id: `id-${path}`, path, text, modifi
 
 test('Ask JotDrop gets the notes in Notes and Archive, without trash, files, deleted notes or front matter', () => {
   const notes = aiNotes([
-    note('notes/a.md', '---\njotdrop_labels: ["Home"]\ncolor: "red"\n---\n# Groceries\n\n- [ ] milk\n'),
+    note('notes/a.md', '---\njotdrop_labels: ["Home"]\ncolor: "red"\nreminder: "2026-11-14T09:00"\nexpires: "2027-01-02"\n---\n# Groceries\n\n- [ ] milk\n'),
     note('notes/Archive/old.md', '# Old\n\nkept'),
     note('notes/Trash/gone.md', '# Gone'),
     note('notes/b.md', '# Deleted', { deleted: true }),
@@ -16,9 +16,9 @@ test('Ask JotDrop gets the notes in Notes and Archive, without trash, files, del
     note('notes/plain.md', 'No heading here'),
   ]);
   assert.deepEqual(notes, [
-    { id: 'id-notes/a.md', title: 'Groceries', text: '- [ ] milk\n', labels: ['Home'], updatedAt: '2026-11-09T10:00:00Z', shared: false },
-    { id: 'id-notes/Archive/old.md', title: 'Old', text: 'kept', labels: [], updatedAt: '2026-11-09T10:00:00Z', shared: false },
-    { id: 'id-notes/plain.md', title: 'plain', text: 'No heading here', labels: [], updatedAt: '2026-11-09T10:00:00Z', shared: false },
+    { id: 'id-notes/a.md', title: 'Groceries', text: '- [ ] milk\n', labels: ['Home'], updatedAt: '2026-11-09T10:00:00Z', reminder: '2026-11-14T09:00', expires: '2027-01-02', shared: false },
+    { id: 'id-notes/Archive/old.md', title: 'Old', text: 'kept', labels: [], updatedAt: '2026-11-09T10:00:00Z', reminder: '', expires: '', shared: false },
+    { id: 'id-notes/plain.md', title: 'plain', text: 'No heading here', labels: [], updatedAt: '2026-11-09T10:00:00Z', reminder: '', expires: '', shared: false },
   ]);
 });
 
