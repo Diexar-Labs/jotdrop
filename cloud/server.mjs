@@ -1709,7 +1709,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   // An invitation link opens the app on its own path: /# is for the way back from Google or GitHub.
   assets.set('/join', [join(webRoot, 'index.html'), 'text/html']);
   assets.set('/family', [join(webRoot, 'index.html'), 'text/html']);
-  for (const name of ['account.mjs', 'words.mjs', 'merge.mjs', 'diff.mjs', 'spaces.mjs', 'links.mjs', 'drawing.mjs', 'drawing-editor.mjs', 'mail.mjs', 'paper.mjs', 'expiry.mjs', 'list-links.mjs']) assets.set(`/shared/${name}`, [join(directory, 'shared', name), 'text/javascript']);
+  for (const name of ['account.mjs', 'words.mjs', 'merge.mjs', 'diff.mjs', 'spaces.mjs', 'links.mjs', 'drawing.mjs', 'drawing-editor.mjs', 'mail.mjs', 'paper.mjs', 'expiry.mjs', 'list-links.mjs', 'similar.mjs']) assets.set(`/shared/${name}`, [join(directory, 'shared', name), 'text/javascript']);
   assets.set('/vendor/hash-wasm.mjs', [join(directory, '../node_modules/hash-wasm/dist/index.esm.min.js'), 'text/javascript']);
   // The page's only inline script is its import map; allow exactly that content.
   const importMap = /<script type="importmap">([^<]*)<\/script>/.exec(readFileSync(join(webRoot, 'index.html'), 'utf8'))?.[1];
@@ -1724,7 +1724,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   // providers' fixed addresses and Ollama on the user's own computer. Never `https:` in general, and no free address.
   const aiConnect = 'https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com https://openrouter.ai http://127.0.0.1:11434 http://localhost:11434';
   assets.set('/ai-web.mjs', [join(webRoot, 'ai-web.mjs'), 'text/javascript']);
-  for (const name of ['assistant.mjs', 'providers.mjs', 'tools.mjs', 'prompt.mjs', 'context.mjs', 'redact.mjs', 'markdown.mjs', 'parts.mjs', 'receipt.mjs']) assets.set(`/shared/ai/${name}`, [join(directory, 'shared', 'ai', name), 'text/javascript']);
+  for (const name of ['assistant.mjs', 'providers.mjs', 'tools.mjs', 'prompt.mjs', 'context.mjs', 'redact.mjs', 'markdown.mjs', 'parts.mjs', 'receipt.mjs', 'digest.mjs']) assets.set(`/shared/ai/${name}`, [join(directory, 'shared', 'ai', name), 'text/javascript']);
   // Turnstile's widget is the one script and frame from elsewhere, and only when the person check is on.
   const challenges = turnstile ? ' https://challenges.cloudflare.com' : '';
   let server, activeRequests = 0;

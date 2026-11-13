@@ -1,0 +1,313 @@
+{
+ "comment": "Cases for similar.mjs and Similar.kt. text is the note without title. dismissed holds id pairs the user keeps (either order). expect is the result, in order; score has two decimals; drop is the note to offer for the trash (the older one, or for inside the shorter one).",
+ "cases": [
+  {
+   "name": "same text, other case and spacing, other title",
+   "notes": [
+    {
+     "id": "n2",
+     "title": "Zolder",
+     "text": "IK  WIL  DIT  JAAR  DE  ZOLDER  VERBOUWEN:  EERST  DE  DAKISOLATIE  LATEN  OPMETEN,  DAN  TWEE  OFFERTES  VRAGEN  BIJ  DE  AANNEMER,  EEN  VERGUNNING  AANVRAGEN  BIJ  DE  GEMEENTE  EN  IN  HET  VOORJAAR  BEGINNEN  MET  DE  VLOER  EN  DE  TRAP  NAAR  BOVEN\n",
+     "updatedAt": "2026-11-02T10:00:00Z"
+    },
+    {
+     "id": "n1",
+     "title": "Verbouwing",
+     "text": "Ik wil dit jaar de zolder verbouwen: eerst de dakisolatie laten opmeten, dan twee offertes vragen bij de aannemer, een vergunning aanvragen bij de gemeente en in het voorjaar beginnen met de vloer en de trap naar boven",
+     "updatedAt": "2026-11-01T10:00:00Z"
+    }
+   ],
+   "expect": [
+    {
+     "a": "n1",
+     "b": "n2",
+     "kind": "same",
+     "score": 1,
+     "drop": "n1"
+    }
+   ]
+  },
+  {
+   "name": "accents do not matter",
+   "notes": [
+    {
+     "id": "a",
+     "title": "A",
+     "text": "Een café-bezoek met Zoë en Chloé over de reünie van de school in het najaar",
+     "updatedAt": "2026-11-01T00:00:00Z"
+    },
+    {
+     "id": "b",
+     "title": "B",
+     "text": "een cafe-bezoek met zoe en chloe over de reunie van de school in het najaar",
+     "updatedAt": "2026-11-02T00:00:00Z"
+    }
+   ],
+   "expect": [
+    {
+     "a": "a",
+     "b": "b",
+     "kind": "same",
+     "score": 1,
+     "drop": "a"
+    }
+   ]
+  },
+  {
+   "name": "near: one word changed in a long note",
+   "notes": [
+    {
+     "id": "n1",
+     "title": "Zolder",
+     "text": "Ik wil dit jaar de zolder verbouwen: eerst de dakisolatie laten opmeten, dan twee offertes vragen bij de aannemer, een vergunning aanvragen bij de gemeente en in het voorjaar beginnen met de vloer en de trap naar boven",
+     "updatedAt": "2026-11-01T10:00:00Z"
+    },
+    {
+     "id": "n2",
+     "title": "Zolder 2",
+     "text": "Ik wil dit jaar de zolder verbouwen: eerst de dakisolatie laten opmeten, dan drie offertes vragen bij de aannemer, een vergunning aanvragen bij de gemeente en in het voorjaar beginnen met de vloer en de trap naar boven",
+     "updatedAt": "2026-11-03T10:00:00Z"
+    }
+   ],
+   "expect": [
+    {
+     "a": "n1",
+     "b": "n2",
+     "kind": "near",
+     "score": 0.92,
+     "drop": "n1"
+    }
+   ]
+  },
+  {
+   "name": "inside: a short note pasted into a longer, newer one",
+   "notes": [
+    {
+     "id": "long",
+     "title": "Vergadering",
+     "text": "Vergadering maandag: Ik wil dit jaar de zolder verbouwen: eerst de dakisolatie laten opmeten, dan twee offertes vragen bij de aannemer, een vergunning aanvragen bij de gemeente en in het voorjaar beginnen met de vloer en de trap naar boven. Daarna bespreken we het budget voor de keuken, de nieuwe tuin en de fietsenschuur, en wie de verhuizing van de kantoorspullen coördineert voor het einde van de maand.",
+     "updatedAt": "2026-11-05T09:00:00Z"
+    },
+    {
+     "id": "pasted",
+     "title": "Zolder",
+     "text": "Ik wil dit jaar de zolder verbouwen: eerst de dakisolatie laten opmeten, dan twee offertes vragen bij de aannemer, een vergunning aanvragen bij de gemeente en in het voorjaar beginnen met de vloer en de trap naar boven",
+     "updatedAt": "2026-11-01T09:00:00Z"
+    }
+   ],
+   "expect": [
+    {
+     "a": "pasted",
+     "b": "long",
+     "kind": "inside",
+     "score": 1,
+     "drop": "pasted"
+    }
+   ]
+  },
+  {
+   "name": "inside: a short note in an older long one, the short one is offered for the trash",
+   "notes": [
+    {
+     "id": "plan",
+     "title": "Projectplan",
+     "text": "Vergadering maandag: Ik wil dit jaar de zolder verbouwen: eerst de dakisolatie laten opmeten, dan twee offertes vragen bij de aannemer, een vergunning aanvragen bij de gemeente en in het voorjaar beginnen met de vloer en de trap naar boven. Daarna bespreken we het budget voor de keuken, de nieuwe tuin en de fietsenschuur, en wie de verhuizing van de kantoorspullen coördineert voor het einde van de maand.",
+     "updatedAt": "2026-11-01T09:00:00Z"
+    },
+    {
+     "id": "note",
+     "title": "Zolder",
+     "text": "Ik wil dit jaar de zolder verbouwen: eerst de dakisolatie laten opmeten, dan twee offertes vragen bij de aannemer, een vergunning aanvragen bij de gemeente en in het voorjaar beginnen met de vloer en de trap naar boven",
+     "updatedAt": "2026-11-05T09:00:00Z"
+    }
+   ],
+   "expect": [
+    {
+     "a": "plan",
+     "b": "note",
+     "kind": "inside",
+     "score": 1,
+     "drop": "note"
+    }
+   ]
+  },
+  {
+   "name": "different notes",
+   "notes": [
+    {
+     "id": "x",
+     "title": "Boodschappen",
+     "text": "Melk, brood, kaas, appels en een fles olijfolie halen bij de markt voordat het donderdag gaat regenen",
+     "updatedAt": "2026-11-01T00:00:00Z"
+    },
+    {
+     "id": "y",
+     "title": "Zolder",
+     "text": "Ik wil dit jaar de zolder verbouwen: eerst de dakisolatie laten opmeten, dan twee offertes vragen bij de aannemer, een vergunning aanvragen bij de gemeente en in het voorjaar beginnen met de vloer en de trap naar boven",
+     "updatedAt": "2026-11-02T00:00:00Z"
+    }
+   ],
+   "expect": []
+  },
+  {
+   "name": "a text shorter than 40 characters is left out",
+   "notes": [
+    {
+     "id": "s1",
+     "title": "Kort",
+     "text": "Bel de tandarts morgen",
+     "updatedAt": "2026-11-01T00:00:00Z"
+    },
+    {
+     "id": "s2",
+     "title": "Kort",
+     "text": "Bel de tandarts morgen",
+     "updatedAt": "2026-11-02T00:00:00Z"
+    }
+   ],
+   "expect": []
+  },
+  {
+   "name": "shared notes are left out",
+   "notes": [
+    {
+     "id": "h1",
+     "title": "Zolder",
+     "text": "Ik wil dit jaar de zolder verbouwen: eerst de dakisolatie laten opmeten, dan twee offertes vragen bij de aannemer, een vergunning aanvragen bij de gemeente en in het voorjaar beginnen met de vloer en de trap naar boven",
+     "updatedAt": "2026-11-01T00:00:00Z",
+     "shared": true
+    },
+    {
+     "id": "h2",
+     "title": "Zolder",
+     "text": "Ik wil dit jaar de zolder verbouwen: eerst de dakisolatie laten opmeten, dan twee offertes vragen bij de aannemer, een vergunning aanvragen bij de gemeente en in het voorjaar beginnen met de vloer en de trap naar boven",
+     "updatedAt": "2026-11-02T00:00:00Z"
+    }
+   ],
+   "expect": []
+  },
+  {
+   "name": "a kept pair is not shown again, in either order",
+   "notes": [
+    {
+     "id": "k1",
+     "title": "Zolder",
+     "text": "Ik wil dit jaar de zolder verbouwen: eerst de dakisolatie laten opmeten, dan twee offertes vragen bij de aannemer, een vergunning aanvragen bij de gemeente en in het voorjaar beginnen met de vloer en de trap naar boven",
+     "updatedAt": "2026-11-01T00:00:00Z"
+    },
+    {
+     "id": "k2",
+     "title": "Zolder",
+     "text": "Ik wil dit jaar de zolder verbouwen: eerst de dakisolatie laten opmeten, dan twee offertes vragen bij de aannemer, een vergunning aanvragen bij de gemeente en in het voorjaar beginnen met de vloer en de trap naar boven",
+     "updatedAt": "2026-11-02T00:00:00Z"
+    }
+   ],
+   "dismissed": [
+    [
+     "k2",
+     "k1"
+    ]
+   ],
+   "expect": []
+  },
+  {
+   "name": "three equal notes make three pairs, older first, same before near",
+   "notes": [
+    {
+     "id": "t3",
+     "title": "Drie",
+     "text": "Ik wil dit jaar de zolder verbouwen: eerst de dakisolatie laten opmeten, dan twee offertes vragen bij de aannemer, een vergunning aanvragen bij de gemeente en in het voorjaar beginnen met de vloer en de trap naar boven",
+     "updatedAt": "2026-11-03T00:00:00Z"
+    },
+    {
+     "id": "t1",
+     "title": "Een",
+     "text": "Ik wil dit jaar de zolder verbouwen: eerst de dakisolatie laten opmeten, dan twee offertes vragen bij de aannemer, een vergunning aanvragen bij de gemeente en in het voorjaar beginnen met de vloer en de trap naar boven",
+     "updatedAt": "2026-11-01T00:00:00Z"
+    },
+    {
+     "id": "t2",
+     "title": "Twee",
+     "text": "Ik wil dit jaar de zolder verbouwen: eerst de dakisolatie laten opmeten, dan twee offertes vragen bij de aannemer, een vergunning aanvragen bij de gemeente en in het voorjaar beginnen met de vloer en de trap naar boven",
+     "updatedAt": "2026-11-02T00:00:00Z"
+    },
+    {
+     "id": "near",
+     "title": "Bijna",
+     "text": "Ik wil dit jaar de zolder verbouwen: eerst de dakisolatie laten opmeten, dan drie offertes vragen bij de aannemer, een vergunning aanvragen bij de gemeente en in het voorjaar beginnen met de vloer en de trap naar boven",
+     "updatedAt": "2026-11-04T00:00:00Z"
+    }
+   ],
+   "expect": [
+    {
+     "a": "t1",
+     "b": "t3",
+     "kind": "same",
+     "score": 1,
+     "drop": "t1"
+    },
+    {
+     "a": "t2",
+     "b": "t3",
+     "kind": "same",
+     "score": 1,
+     "drop": "t2"
+    },
+    {
+     "a": "t1",
+     "b": "t2",
+     "kind": "same",
+     "score": 1,
+     "drop": "t1"
+    },
+    {
+     "a": "t1",
+     "b": "near",
+     "kind": "near",
+     "score": 0.92,
+     "drop": "t1"
+    },
+    {
+     "a": "t2",
+     "b": "near",
+     "kind": "near",
+     "score": 0.92,
+     "drop": "t2"
+    },
+    {
+     "a": "t3",
+     "b": "near",
+     "kind": "near",
+     "score": 0.92,
+     "drop": "t3"
+    }
+   ]
+  },
+  {
+   "name": "equal updatedAt: the lower id is the older one",
+   "notes": [
+    {
+     "id": "b",
+     "title": "B",
+     "text": "Ik wil dit jaar de zolder verbouwen: eerst de dakisolatie laten opmeten, dan twee offertes vragen bij de aannemer, een vergunning aanvragen bij de gemeente en in het voorjaar beginnen met de vloer en de trap naar boven",
+     "updatedAt": "2026-11-01T00:00:00Z"
+    },
+    {
+     "id": "a",
+     "title": "A",
+     "text": "Ik wil dit jaar de zolder verbouwen: eerst de dakisolatie laten opmeten, dan twee offertes vragen bij de aannemer, een vergunning aanvragen bij de gemeente en in het voorjaar beginnen met de vloer en de trap naar boven",
+     "updatedAt": "2026-11-01T00:00:00Z"
+    }
+   ],
+   "expect": [
+    {
+     "a": "a",
+     "b": "b",
+     "kind": "same",
+     "score": 1,
+     "drop": "a"
+    }
+   ]
+  }
+ ]
+}
