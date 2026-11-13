@@ -186,9 +186,9 @@ def check_key_sync(browser, url, token, data_dir):
         nudge.get_by_role("button", name=TRIAL).click()
         a.locator("#plan-status").filter(has_text="JotDrop Plus trial").wait_for()
         switch_a.click()
-        said(a, 'On. Open Ask JotDrop in your other JotDrop apps and select "Use it here".')
+        said(a, 'On. Open Ask JotDrop on your other devices and select "Use it here".')
         assert switch_a.is_checked()
-        assert "On: your other JotDrop apps can use this key." in a.locator("#ai-sync-status").inner_text()
+        assert "On: your other devices can use this key." in a.locator("#ai-sync-status").inner_text()
         first = rows()
         assert len(first) == 1 and sorted(json.loads(first[0][0])) == ["ciphertext", "iv", "v"]
         shot(a, "key-sync-on")
@@ -210,7 +210,7 @@ def check_key_sync(browser, url, token, data_dir):
         b.locator("#ai-close").click()
         assert fake.keys[-1] == KEYS[0]
         settings(b)
-        b.locator("#ai-sync-status").filter(has_text="On: your other JotDrop apps can use this key.").wait_for()
+        b.locator("#ai-sync-status").filter(has_text="On: your other devices can use this key.").wait_for()
         assert switch_b.is_checked() and b.locator("#ai-offer").is_hidden()
         assert b.locator("#ai-provider").input_value() == "anthropic" and b.locator("#ai-key").input_value() == ""
         # The key is never put on the page.

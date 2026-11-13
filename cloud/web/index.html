@@ -274,7 +274,7 @@
         </section>
         <section id="ai-section" aria-labelledby="ai-heading">
           <h2 id="ai-heading">Ask JotDrop: AI with your own key</h2>
-          <p>Ask JotDrop does what you ask in your notes, with your own AI account. Your question and the notes it needs go straight from this browser to the AI service you choose, never through JotDrop. "This week" sends a short digest of your notes, not the notes themselves. It is free on every plan; the AI service bills you for what you use.</p>
+          <p>Ask JotDrop does what you ask in your notes, with your own AI account. Your question and the notes it needs go straight from this browser to the AI service you choose, never through JotDrop. "This week" sends a short digest of your notes, not the notes themselves. Ask JotDrop is free on every plan, except one key on all your devices, which is part of JotDrop Plus. The AI service bills you for what you use.</p>
           <div id="ai-offer" class="ai-confirm" hidden>
             <p id="ai-offer-text"></p>
             <div class="ai-form-actions"><button id="ai-offer-use" class="primary" type="button">Use it here</button></div>
@@ -286,14 +286,14 @@
             <div id="ai-key-row" hidden>
               <label for="ai-key">Your API key</label>
               <input id="ai-key" type="password" autocomplete="off" spellcheck="false" maxlength="500">
-              <p class="ai-note">The key stays in this browser, sealed with your workspace key. It is not synced and JotDrop does not receive it, unless you switch on "Use this key on all my devices" below.</p>
+              <p class="ai-note">The key stays in this browser, sealed with your workspace key. It is not synced, unless you switch on "Use this key on all my devices" below. Even then JotDrop only gets a sealed copy that it cannot read.</p>
             </div>
             <label for="ai-model">Model</label>
             <div class="ai-model-row"><input id="ai-model" autocomplete="off" spellcheck="false" maxlength="200"><button id="ai-test" type="button">Test and load models</button></div>
             <div id="ai-model-pick" class="ai-model-row" hidden><label for="ai-model-list">Or choose from the list</label><select id="ai-model-list"></select></div>
             <label class="check-label"><input id="ai-shared" type="checkbox">Also use notes from shared groups and notes with a live list link</label>
             <label class="check-label"><input id="ai-sync" type="checkbox">Use this key on all my devices</label>
-            <p class="ai-note">Part of JotDrop Plus. Your other JotDrop apps then offer this key, and you turn it on there with one tap. JotDrop keeps a copy that is sealed with your workspace key, so we cannot read it. Whoever gets into your workspace can use the key, so set a spending limit at your AI service.</p>
+            <p class="ai-note">Part of JotDrop Plus. Other devices that support it offer this key, and you accept it there with one tap. Right now that means other browsers. JotDrop keeps a copy sealed with your workspace key, so we cannot read it. Whoever gets into your workspace can use the key, so set a spending limit at your AI service.</p>
             <p id="ai-sync-status" class="ai-note" role="status" aria-live="polite"></p>
             <div class="ai-form-actions"><button type="submit" class="primary">Save</button><button id="ai-remove" type="button">Turn off and remove key</button></div>
             <div id="ai-remove-choice" class="ai-confirm" hidden>

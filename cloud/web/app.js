@@ -4448,7 +4448,7 @@ function renderAiSync() {
   // Only a saved key of an AI service can go to other devices; a local model has none.
   $('ai-sync').disabled = !ownClient || (!aiConfig.synced && !(spec?.needsKey && aiConfig.key));
   $('ai-sync-status').textContent = aiConfig.synced
-    ? action === 'waiting' || (currentPlan && currentPlan.name !== 'plus') ? 'This waits for JotDrop Plus. This browser keeps its key, and nothing is removed.' : 'On: your other JotDrop apps can use this key.'
+    ? action === 'waiting' || (currentPlan && currentPlan.name !== 'plus') ? 'This waits for JotDrop Plus. This browser keeps its key, and nothing is removed.' : 'On: your other devices can use this key.'
     : action === 'available' ? `Your other devices share a key for ${keyLabel(aiRemote.config)}. Switch this on to use that key here too.` : '';
   const offer = aiOfferText();
   $('ai-offer').hidden = !offer;
@@ -4549,7 +4549,7 @@ $('ai-sync').addEventListener('change', async () => {
         return;
       }
       await saveAiSettings({ ...aiConfig, synced: await saveSharedKey(ownClient, aiConfig) });
-      aiSay('On. Open Ask JotDrop in your other JotDrop apps and select "Use it here".');
+      aiSay('On. Open Ask JotDrop on your other devices and select "Use it here".');
     } else {
       if (!confirm('Stop using this key on all your devices?\n\nJotDrop removes its sealed copy. Your other devices that got the key this way lose it, and Ask JotDrop turns off there. This browser keeps the key.')) return;
       await removeSharedKey(ownClient);
