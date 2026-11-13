@@ -4,7 +4,7 @@
     <string name="ai_title">JotDrop fragen</string>
     <string name="ai_settings_button">JotDrop fragen: KI mit deinem eigenen Schlüssel</string>
     <string name="ai_settings_title">KI mit eigenem Schlüssel</string>
-    <string name="ai_settings_intro">Gib JotDrop Aufgaben in deinen eigenen Worten, getippt oder gesprochen. Es nutzt einen KI-Dienst deiner Wahl mit deinem eigenen Schlüssel und spricht direkt von diesem Telefon aus mit ihm. Die Server von JotDrop sehen nie deine Notizen, deine Fragen oder deinen Schlüssel. Den KI-Dienst bezahlst du selbst.</string>
+    <string name="ai_settings_intro">Gib JotDrop Aufgaben in deinen eigenen Worten, getippt oder gesprochen. Es nutzt einen KI-Dienst deiner Wahl mit deinem eigenen Schlüssel und spricht direkt von diesem Telefon aus mit ihm. Die Server von JotDrop sehen nie deine Notizen, deine Fragen oder deinen Schlüssel. Den KI-Dienst bezahlst du selbst. \"Diese Woche\" sendet einen kurzen Auszug deiner Notizen, nicht die Notizen selbst.</string>
     <string name="ai_provider">KI-Dienst</string>
     <string name="ai_provider_off">Aus</string>
     <string name="ai_provider_custom">Eigene Adresse (OpenAI-kompatibel)</string>
@@ -161,4 +161,43 @@
         <item quantity="other">%d Jahre</item>
     </plurals>
     <string name="ai_no_answer">Die KI hat keine Antwort in Worten gegeben.</string>
+    <!-- Version 2, part E and F: Find duplicates and This week (13 Nov 2026). -->
+    <string name="dup_title">Doppelte Notizen finden</string>
+    <string name="dup_intro">JotDrop vergleicht deine Notizen auf diesem Telefon. Die Suche nutzt keine KI und sendet nichts. \"Mit KI zusammenführen\" ist eine eigene Wahl: Dann gehen die zwei Notizen, die du wählst, an deinen KI-Dienst. Notizen aus geteilten Gruppen und Notizen mit einem Live-Listenlink bleiben draußen, ebenso sehr kurze Notizen und der Papierkorb.</string>
+    <string name="dup_looking">Suche doppelte Notizen auf diesem Telefon...</string>
+    <plurals name="dup_found">
+        <item quantity="one">%d Paar gefunden.</item>
+        <item quantity="other">%d Paare gefunden.</item>
+    </plurals>
+    <string name="dup_incomplete">Die Suche hat früh aufgehört, die Liste ist also vielleicht nicht vollständig. Erledige diese und suche dann noch einmal.</string>
+    <string name="dup_none">Keine doppelten Notizen gefunden.</string>
+    <string name="dup_none_incomplete">Noch nichts gefunden, und die Suche hat früh aufgehört. Versuche es noch einmal.</string>
+    <string name="dup_same">Gleicher Text</string>
+    <string name="dup_near">Fast gleich (%1$d%%)</string>
+    <string name="dup_inside">Eine Notiz steckt in der anderen (%1$d%% von \"%2$s\")</string>
+    <string name="dup_older">Älter: \"%1$s\", %2$s</string>
+    <string name="dup_newer">Neuer: \"%1$s\", %2$s</string>
+    <string name="dup_edited">geändert am %1$s</string>
+    <string name="dup_no_date">kein Änderungsdatum</string>
+    <string name="dup_compare">Vergleichen</string>
+    <string name="dup_compare_hide">Vergleich ausblenden</string>
+    <string name="dup_compare_intro">Von der älteren Notiz \"%1$s\" zur neueren \"%2$s\": + kam dazu, - wurde entfernt.</string>
+    <string name="dup_too_long">Diese Notizen sind zu lang, um sie hier zu vergleichen.</string>
+    <plurals name="dup_unchanged">
+        <item quantity="one">%d unveränderte Zeile</item>
+        <item quantity="other">%d unveränderte Zeilen</item>
+    </plurals>
+    <string name="dup_trash">\"%1$s\" in den Papierkorb</string>
+    <string name="dup_keep">Beide behalten</string>
+    <string name="dup_merge">Mit KI zusammenführen…</string>
+    <string name="ai_week">Diese Woche</string>
+    <string name="ai_week_request">Überblick über meine Woche</string>
+    <string name="ai_week_goes">JotDrop hat diese Notizen auf diesem Telefon gewählt: in den letzten 7 Tagen geändert, eine Erinnerung in den nächsten 7 Tagen oder ein Ablaufdatum innerhalb von 30 Tagen. Von jeder Notiz gehen nur der Titel, die erste Zeile, die offenen Aufgaben, die Zeit der letzten Änderung, die Erinnerung und das Ablaufdatum mit, nicht die ganze Notiz. Entferne das Häkchen, um eine Notiz draußen zu lassen.</string>
+    <string name="ai_week_nothing">Nichts zu schreiben: Keine Notiz wurde in den letzten 7 Tagen geändert, und es steht keine Erinnerung und kein Ablaufdatum an.</string>
+    <string name="ai_merge_both">Beide Notizen müssen mit, um sie zusammenzuführen. Suche noch einmal nach doppelten Notizen.</string>
+    <string name="ai_merge_too_long">Diese Notizen sind zu lang, um sie mit KI zusammenzuführen: Die KI würde nicht ihren ganzen Text sehen. Vergleiche sie und führe sie selbst zusammen.</string>
+    <string name="ai_merge_older_left">Die ältere Notiz \"%1$s\" ist noch da.</string>
+    <string name="ai_merge_trash">In den Papierkorb</string>
+    <string name="ai_merge_trashed">\"%1$s\" liegt im Papierkorb.</string>
+    <string name="ai_title_merge">Zusammengeführter Text von %1$s</string>
 </resources>

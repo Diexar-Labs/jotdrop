@@ -1422,6 +1422,15 @@ private fun NotesListScreen(
                                         onSetSortMode(NoteSortMode.MANUAL)
                                     },
                                 )
+                                // Find duplicates (Ask JotDrop v2, part E): on this phone, without AI, also when the AI is off.
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.dup_title)) },
+                                    leadingIcon = { Icon(Icons.Filled.ContentCopy, contentDescription = null) },
+                                    onClick = {
+                                        overflowOpen = false
+                                        context.startActivity(Intent(context, DuplicatesActivity::class.java))
+                                    },
+                                )
                                 DropdownMenuItem(
                                     text = { Text(stringResource(R.string.update_check)) },
                                     leadingIcon = { Icon(Icons.Filled.SystemUpdate, contentDescription = null) },

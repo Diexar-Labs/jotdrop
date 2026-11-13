@@ -4,7 +4,7 @@
     <string name="ai_title">Ask JotDrop</string>
     <string name="ai_settings_button">Ask JotDrop: AI with your own key</string>
     <string name="ai_settings_title">AI with your own key</string>
-    <string name="ai_settings_intro">Give JotDrop tasks in your own words, typed or spoken. It uses an AI service you choose, with your own key, and talks to it straight from this phone. JotDrop\'s servers never see your notes, your questions or your key. You pay the AI service yourself.</string>
+    <string name="ai_settings_intro">Give JotDrop tasks in your own words, typed or spoken. It uses an AI service you choose, with your own key, and talks to it straight from this phone. JotDrop\'s servers never see your notes, your questions or your key. You pay the AI service yourself. \"This week\" sends a short digest of your notes, not the notes themselves.</string>
     <string name="ai_provider">AI service</string>
     <string name="ai_provider_off">Off</string>
     <string name="ai_provider_custom">Own address (OpenAI-compatible)</string>
@@ -161,4 +161,43 @@
         <item quantity="other">%d years</item>
     </plurals>
     <string name="ai_no_answer">The AI gave no answer in words.</string>
+    <!-- Version 2, part E and F: Find duplicates and This week (13 Nov 2026). -->
+    <string name="dup_title">Find duplicates</string>
+    <string name="dup_intro">JotDrop compares your notes on this phone. Finding duplicates uses no AI and sends nothing. \"Merge with AI\" is a separate choice: it sends the two notes you pick to your AI service. Notes from shared groups and notes with a live list link are left out, and so are very short notes and the trash.</string>
+    <string name="dup_looking">Looking for duplicates on this phone...</string>
+    <plurals name="dup_found">
+        <item quantity="one">%d pair found.</item>
+        <item quantity="other">%d pairs found.</item>
+    </plurals>
+    <string name="dup_incomplete">The search stopped early, so this list may not be complete. Deal with these, then search again.</string>
+    <string name="dup_none">No duplicate notes found.</string>
+    <string name="dup_none_incomplete">Nothing found yet, and the search stopped early. Try again.</string>
+    <string name="dup_same">Same text</string>
+    <string name="dup_near">Almost the same (%1$d%%)</string>
+    <string name="dup_inside">One note is inside the other (%1$d%% of \"%2$s\")</string>
+    <string name="dup_older">Older: \"%1$s\", %2$s</string>
+    <string name="dup_newer">Newer: \"%1$s\", %2$s</string>
+    <string name="dup_edited">edited %1$s</string>
+    <string name="dup_no_date">no edit date</string>
+    <string name="dup_compare">Compare</string>
+    <string name="dup_compare_hide">Hide the comparison</string>
+    <string name="dup_compare_intro">From the older note \"%1$s\" to the newer note \"%2$s\": + was added, - was removed.</string>
+    <string name="dup_too_long">These notes are too long to compare here.</string>
+    <plurals name="dup_unchanged">
+        <item quantity="one">%d unchanged line</item>
+        <item quantity="other">%d unchanged lines</item>
+    </plurals>
+    <string name="dup_trash">Move \"%1$s\" to the trash</string>
+    <string name="dup_keep">Keep both</string>
+    <string name="dup_merge">Merge with AI…</string>
+    <string name="ai_week">This week</string>
+    <string name="ai_week_request">Overview of my week</string>
+    <string name="ai_week_goes">JotDrop picked these notes on this phone: changed in the last 7 days, a reminder in the next 7 days, or an expiry date within 30 days. Only the title, the first line, the open tasks, the time of the last change, the reminder and the expiry date of each go along, not the whole note. Untick a note to keep it out.</string>
+    <string name="ai_week_nothing">Nothing to write about: no notes changed in the last 7 days, and no reminder or expiry date is coming up.</string>
+    <string name="ai_merge_both">Both notes must go along to merge them. Search for duplicates again.</string>
+    <string name="ai_merge_too_long">These notes are too long to merge with AI: the AI would not see all of their text. Compare them and merge them yourself.</string>
+    <string name="ai_merge_older_left">The older note \"%1$s\" is still there.</string>
+    <string name="ai_merge_trash">Move it to the trash</string>
+    <string name="ai_merge_trashed">Moved \"%1$s\" to the trash.</string>
+    <string name="ai_title_merge">Merged text of %1$s</string>
 </resources>
