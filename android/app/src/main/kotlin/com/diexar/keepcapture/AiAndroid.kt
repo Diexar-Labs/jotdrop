@@ -296,7 +296,8 @@ class AiExecutor(private val context: Context, private val open: (Uri) -> Unit) 
         notes = summaries.zip(texts).mapIndexedNotNull { index, (summary, text) ->
             if (text == null) return@mapIndexedNotNull null
             val id = remember(index, summary.uri)
-            AiNote(id, summary.title, AiNoteEdits.splitNote(text).body, summary.meta.labels, iso.format(Date(summary.lastModified)), summary.space != null || linked(summary.uri))
+            AiNote(id, summary.title, AiNoteEdits.splitNote(text).body, summary.meta.labels, iso.format(Date(summary.lastModified)), summary.space != null || linked(summary.uri),
+                summary.meta.reminder, summary.meta.expires)
         }
         fromCache = cached.get()
         labels = Storage.getLabels(context)
@@ -310,7 +311,8 @@ class AiExecutor(private val context: Context, private val open: (Uri) -> Unit) 
         }
         uris.clear(); ids.clear(); next = 1
         notes = if (summary == null || text == null) emptyList()
-            else listOf(AiNote(remember(0, uri), summary.title, AiNoteEdits.splitNote(text).body, summary.meta.labels, iso().format(Date(summary.lastModified)), shared || linked(uri)))
+            else listOf(AiNote(remember(0, uri), summary.title, AiNoteEdits.splitNote(text).body, summary.meta.labels, iso().format(Date(summary.lastModified)), shared || linked(uri),
+                summary.meta.reminder, summary.meta.expires))
         labels = withContext(Dispatchers.IO) { Storage.getLabels(context) }
     }
 

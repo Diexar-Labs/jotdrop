@@ -97,4 +97,11 @@ object AiNoteEdits {
             else -> throw IllegalArgumentException("Unknown request.")
         }
     }
+
+    /**
+     * The fixed request behind "Merge with AI" (Find duplicates), word for word mergeRequest in cloud/web/app.js. The
+     * notes are named by id only: a title is data, never part of the request.
+     */
+    fun mergeRequest(older: String, newer: String): String =
+        "Two notes may be duplicates. The older one has id $older, the newer one has id $newer. Write one text that keeps everything from both notes and does not repeat itself, in the language of the notes. Replace the text of the newer note (id $newer) with that text. Do not change the older note."
 }

@@ -4,7 +4,7 @@
     <string name="ai_title">Demander à JotDrop</string>
     <string name="ai_settings_button">Demander à JotDrop : IA avec ta propre clé</string>
     <string name="ai_settings_title">IA avec ta propre clé</string>
-    <string name="ai_settings_intro">Donne des tâches à JotDrop avec tes propres mots, à l\'écrit ou à la voix. Il utilise un service d\'IA que tu choisis, avec ta propre clé, et lui parle directement depuis ce téléphone. Les serveurs de JotDrop ne voient jamais tes notes, tes questions ni ta clé. Tu paies toi-même le service d\'IA.</string>
+    <string name="ai_settings_intro">Donne des tâches à JotDrop avec tes propres mots, à l\'écrit ou à la voix. Il utilise un service d\'IA que tu choisis, avec ta propre clé, et lui parle directement depuis ce téléphone. Les serveurs de JotDrop ne voient jamais tes notes, tes questions ni ta clé. Tu paies toi-même le service d\'IA. \"Cette semaine\" envoie un court extrait de tes notes, pas les notes elles-mêmes.</string>
     <string name="ai_provider">Service d\'IA</string>
     <string name="ai_provider_off">Désactivé</string>
     <string name="ai_provider_custom">Adresse personnelle (compatible OpenAI)</string>
@@ -161,4 +161,43 @@
         <item quantity="other">%d ans</item>
     </plurals>
     <string name="ai_no_answer">L\'IA n\'a donné aucune réponse en mots.</string>
+    <!-- Version 2, part E and F: Find duplicates and This week (13 Nov 2026). -->
+    <string name="dup_title">Trouver les doublons</string>
+    <string name="dup_intro">JotDrop compare tes notes sur ce téléphone. La recherche n\'utilise pas d\'IA et n\'envoie rien. \"Fusionner avec l\'IA\" est un choix à part : il envoie les deux notes que tu choisis à ton service d\'IA. Les notes des groupes partagés et les notes avec un lien de liste en direct sont laissées de côté, comme les notes très courtes et la corbeille.</string>
+    <string name="dup_looking">Recherche de doublons sur ce téléphone...</string>
+    <plurals name="dup_found">
+        <item quantity="one">%d paire trouvée.</item>
+        <item quantity="other">%d paires trouvées.</item>
+    </plurals>
+    <string name="dup_incomplete">La recherche s\'est arrêtée tôt, la liste n\'est donc peut-être pas complète. Traite celles-ci, puis cherche à nouveau.</string>
+    <string name="dup_none">Aucun doublon trouvé.</string>
+    <string name="dup_none_incomplete">Rien trouvé pour l\'instant, et la recherche s\'est arrêtée tôt. Réessaie.</string>
+    <string name="dup_same">Même texte</string>
+    <string name="dup_near">Presque pareil (%1$d %%)</string>
+    <string name="dup_inside">Une note est dans l\'autre (%1$d %% de \"%2$s\")</string>
+    <string name="dup_older">Plus ancienne : \"%1$s\", %2$s</string>
+    <string name="dup_newer">Plus récente : \"%1$s\", %2$s</string>
+    <string name="dup_edited">modifiée le %1$s</string>
+    <string name="dup_no_date">pas de date de modification</string>
+    <string name="dup_compare">Comparer</string>
+    <string name="dup_compare_hide">Masquer la comparaison</string>
+    <string name="dup_compare_intro">De la note la plus ancienne \"%1$s\" à la plus récente \"%2$s\" : + a été ajouté, - a été retiré.</string>
+    <string name="dup_too_long">Ces notes sont trop longues pour être comparées ici.</string>
+    <plurals name="dup_unchanged">
+        <item quantity="one">%d ligne inchangée</item>
+        <item quantity="other">%d lignes inchangées</item>
+    </plurals>
+    <string name="dup_trash">Mettre \"%1$s\" à la corbeille</string>
+    <string name="dup_keep">Garder les deux</string>
+    <string name="dup_merge">Fusionner avec l\'IA…</string>
+    <string name="ai_week">Cette semaine</string>
+    <string name="ai_week_request">Aperçu de ma semaine</string>
+    <string name="ai_week_goes">JotDrop a choisi ces notes sur ce téléphone : modifiées ces 7 derniers jours, avec un rappel dans les 7 prochains jours ou une date d\'expiration dans les 30 jours. De chaque note, seuls le titre, la première ligne, les tâches ouvertes, l\'heure de la dernière modification, le rappel et la date d\'expiration sont envoyés, pas la note entière. Décoche une note pour la garder ici.</string>
+    <string name="ai_week_nothing">Rien à raconter : aucune note modifiée ces 7 derniers jours, et aucun rappel ni date d\'expiration à venir.</string>
+    <string name="ai_merge_both">Les deux notes doivent être envoyées pour les fusionner. Cherche à nouveau les doublons.</string>
+    <string name="ai_merge_too_long">Ces notes sont trop longues pour les fusionner avec l\'IA : l\'IA ne verrait pas tout leur texte. Compare-les et fusionne-les toi-même.</string>
+    <string name="ai_merge_older_left">La note la plus ancienne \"%1$s\" est toujours là.</string>
+    <string name="ai_merge_trash">Mettre à la corbeille</string>
+    <string name="ai_merge_trashed">\"%1$s\" est dans la corbeille.</string>
+    <string name="ai_title_merge">Texte fusionné de %1$s</string>
 </resources>

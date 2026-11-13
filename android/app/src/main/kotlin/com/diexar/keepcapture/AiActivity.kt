@@ -153,6 +153,14 @@ class AskActivity : ThemedComponentActivity() {
         /** kind is "rewrite", "checklist" or "summarize". */
         fun draftIntent(context: Context, kind: String, title: String, text: String): Intent =
             Intent(context, AskActivity::class.java).putExtra(EXTRA_KIND, kind).putExtra(EXTRA_TITLE, title).putExtra(EXTRA_TEXT, text)
+        private const val EXTRA_WEEK = "ai_week"
+        private const val EXTRA_MERGE_OLDER = "ai_merge_older"
+        private const val EXTRA_MERGE_NEWER = "ai_merge_newer"
+        /** "This week" (v2, part F): a short overview from a digest made on this phone, no tools. */
+        fun weekIntent(context: Context): Intent = Intent(context, AskActivity::class.java).putExtra(EXTRA_WEEK, true)
+        /** "Merge with AI" from Find duplicates (v2, part E): only these two notes go along; the newer one gets the text. */
+        fun mergeIntent(context: Context, older: Uri, newer: Uri): Intent = Intent(context, AskActivity::class.java)
+            .putExtra(EXTRA_MERGE_OLDER, older.toString()).putExtra(EXTRA_MERGE_NEWER, newer.toString())
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -164,9 +172,11 @@ class AskActivity : ThemedComponentActivity() {
         val kind = intent.getStringExtra(EXTRA_KIND)
         val draft = kind?.let { AiNote("draft", intent.getStringExtra(EXTRA_TITLE).orEmpty(), intent.getStringExtra(EXTRA_TEXT).orEmpty()) }
         val action = intent.getStringExtra(EXTRA_ACTION)?.takeIf { note != null && it in FILE_ACTION_KINDS }
+        val week = intent.getBooleanExtra(EXTRA_WEEK, false)
+        val merge = intent.getStringExtra(EXTRA_MERGE_OLDER)?.let { older -> intent.getStringExtra(EXTRA_MERGE_NEWER)?.let { Uri.parse(older) to Uri.parse(it) } }
         setContent {
             JotDropTheme {
-                AskScreen(note, shared, summarize, draft, kind, action, onClose = { finish() }, onDraftAnswer = { answer, replace ->
+                AskScreen(note, shared, summarize, draft, kind, action, week, merge, onClose = { finish() }, onDraftAnswer = { answer, replace ->
                     setResult(RESULT_OK, Intent().putExtra(RESULT_TEXT, answer).putExtra(RESULT_REPLACE, replace))
                     finish()
                 })
@@ -179,7 +189,10 @@ private class Pending(val change: AiChange, val answer: CompletableDeferred<Bool
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AskScreen(target: Uri?, targetShared: Boolean, summarize: Boolean, draft: AiNote?, kind: String?, action: String?, onClose: () -> Unit, onDraftAnswer: (String, Boolean) -> Unit) {
+private fun AskScreen(
+    target: Uri?, targetShared: Boolean, summarize: Boolean, draft: AiNote?, kind: String?, action: String?, week: Boolean, merge: Pair<Uri, Uri>?,
+    onClose: () -> Unit, onDraftAnswer: (String, Boolean) -> Unit,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var settings by remember { mutableStateOf(AiSecretStore(context).load()) }
@@ -189,7 +202,19 @@ private fun AskScreen(target: Uri?, targetShared: Boolean, summarize: Boolean, d
     val reading = remember { CompletableDeferred<Unit>() }
     // The receipt's title is asked for in the phone's language; the request of a file action is fixed.
     val language = Locale.getDefault().getDisplayLanguage(Locale.ENGLISH)
-    var request by remember { mutableStateOf(when (action) { null -> ""; "receipt" -> AiReceipt.request(language).second; else -> AiParts.fileRequest(action) }) }
+    var request by remember { mutableStateOf(when {
+        week -> context.getString(R.string.ai_week_request)
+        action == null -> ""
+        action == "receipt" -> AiReceipt.request(language).second
+        else -> AiParts.fileRequest(action)
+    }) }
+    // Version 2: "This week" lists what its digest picked; "Merge with AI" knows its two notes by id once they are read.
+    var weekShown by remember { mutableStateOf<List<DigestEntry>>(emptyList()) }
+    var mergeIds by remember { mutableStateOf<Pair<AiNote, AiNote>?>(null) }
+    var olderTrashed by remember { mutableStateOf(false) }
+    // Why nothing was sent (nothing for the week, notes too long to merge), in words.
+    var notice by remember { mutableStateOf<Int?>(null) }
+    val zone = TimeZone.getDefault().id
     var excluded by remember { mutableStateOf(setOf<String>()) }
     var goesOpen by remember { mutableStateOf(false) }
     var job by remember { mutableStateOf<Job?>(null) }
@@ -219,8 +244,8 @@ private fun AskScreen(target: Uri?, targetShared: Boolean, summarize: Boolean, d
     val model = if (action == "transcribe" && settings.provider == "openai") AiProviders.TRANSCRIBE_MODEL
         else settings.model.ifEmpty { AiProviders.SPECS[settings.provider]?.defaultModel.orEmpty() }
 
-    // A fixed request (card summary, file action or editor button) cannot be edited or dictated, and has no list of notes to untick.
-    val fixed = summarize || draft != null || action != null
+    // A fixed request (card summary, file action, editor button, This week, Merge with AI) cannot be edited or dictated.
+    val fixed = summarize || draft != null || action != null || week || merge != null
 
     // What goes along, decided from the notes as they are now: the list on screen and the request use the same plan.
     fun plan(text: String, unticked: Set<String>): AiPlan = AiAsk.plan(executor.notes, text, unticked,
@@ -250,9 +275,27 @@ private fun AskScreen(target: Uri?, targetShared: Boolean, summarize: Boolean, d
         missing = false
         receipt = null
         receiptSaid = null
+        notice = null
+        olderTrashed = false
         val unticked = excluded
         job = scope.launch {
             try {
+                if (week) {
+                    // The overview has no tools: what the notes say can never make or change a note.
+                    reading.await()
+                    val digest = Digest.weekDigest(executor.notes.filter { it.id !in unticked }, System.currentTimeMillis(), zone, settings.includeShared)
+                    if (digest.notes.isEmpty()) { notice = R.string.ai_week_nothing; return@launch }
+                    val day = SimpleDateFormat("yyyy-MM-dd EEEE", Locale.US).format(Date())
+                    val (system, overview) = Digest.request(language, day, zone, digest.text)
+                    val done = AiAssistant.once(text, emptyList(), provider = { AiProviders.create(settings.config(), AiHttp) }, secrets = listOf(settings.key)) { ai, time ->
+                        ai.complete(system, listOf(AiMessage.User(overview)), emptyList(), time)
+                    }
+                    digest.notes.mapTo(done.sent) { AiSent(it.id, it.title) }
+                    val said = done.answer.lowercase()
+                    done.sources = done.sent.filter { it.title.length >= 3 && said.contains(it.title.lowercase()) }
+                    report = done
+                    return@launch
+                }
                 // The ticked files are read only now. One that cannot be read stops everything before anything goes out.
                 val parts = if (sending.isEmpty()) emptyList() else try {
                     preparing = if (sending.any { it.kind == "image" }) R.string.ai_file_making_small else R.string.ai_file_getting_ready
@@ -277,7 +320,16 @@ private fun AskScreen(target: Uri?, targetShared: Boolean, summarize: Boolean, d
                 }
                 // An editor button sends only the draft; anything else waits until the notes are read.
                 val (notes, chosen) = if (draft != null) listOf(draft) to AiContext.selectNotes(listOf(draft), "", pinned = listOf(draft.id)).notes
-                else {
+                else if (merge != null) {
+                    // A merge replaces the newer note's text: the AI must see all of both notes, or the merged text loses the rest.
+                    reading.await()
+                    val (older, newer) = mergeIds ?: run { notice = R.string.ai_merge_both; return@launch }
+                    val two = executor.notes.filter { it.id == older.id || it.id == newer.id }
+                    val picked = AiContext.selectNotes(two, "", pinned = listOf(older.id, newer.id)).notes
+                    if (picked.size < 2) { notice = R.string.ai_merge_both; return@launch }
+                    if (picked.any { it.truncated }) { notice = R.string.ai_merge_too_long; return@launch }
+                    two to picked
+                } else {
                     reading.await()
                     val now = plan(text, unticked)
                     // The card's note could not be read: say so instead of sending the request without it.
@@ -364,6 +416,16 @@ private fun AskScreen(target: Uri?, targetShared: Boolean, summarize: Boolean, d
             // A file action sends one file: the first that can go is chosen.
             if (action != null) files.firstOrNull { fileProblem(it) == null }?.let { filesOn = setOf(it.name) }
         }
+        if (week) weekShown = withContext(Dispatchers.Default) { Digest.weekDigest(executor.notes, System.currentTimeMillis(), zone, settings.includeShared).notes }
+        if (merge != null) {
+            // Notes are named by id only: a title is data, never part of the request.
+            val older = executor.idOf(merge.first)?.let { id -> executor.notes.firstOrNull { it.id == id } }
+            val newer = executor.idOf(merge.second)?.let { id -> executor.notes.firstOrNull { it.id == id } }
+            if (older != null && newer != null) {
+                mergeIds = older to newer
+                request = AiNoteEdits.mergeRequest(older.id, newer.id)
+            } else missing = true
+        }
         loaded = true
         reading.complete(Unit)
         if (summarize) {
@@ -422,6 +484,8 @@ private fun AskScreen(target: Uri?, targetShared: Boolean, summarize: Boolean, d
                     if (job == null) {
                         if (!fixed) OutlinedButton(onClick = { dictate() }) { Icon(Icons.Filled.Mic, contentDescription = null); Text(" " + stringResource(R.string.ai_dictate)) }
                         Button(onClick = { send() }, enabled = request.isNotBlank() && (action == null || (loaded && !keptOut && files.isNotEmpty()))) { Text(stringResource(R.string.ai_send)) }
+                        // Only from the plain ask screen, as on the web: not about one card, not from the editor.
+                        if (!fixed && target == null) OutlinedButton(onClick = { context.startActivity(AskActivity.weekIntent(context)); onClose() }) { Text(stringResource(R.string.ai_week)) }
                     } else {
                         OutlinedButton(onClick = { job?.cancel() }) { Text(stringResource(R.string.ai_stop)) }
                     }
@@ -431,6 +495,30 @@ private fun AskScreen(target: Uri?, targetShared: Boolean, summarize: Boolean, d
             if (!loaded) item {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
                 Text(stringResource(R.string.ai_reading_notes), style = MaterialTheme.typography.bodySmall)
+            } else if (week && job == null && report == null) {
+                // What the digest picked, each a switch; only the facts the help names go along.
+                item {
+                    Text(stringResource(R.string.ai_what_goes, weekShown.count { it.id !in excluded }), style = MaterialTheme.typography.titleSmall)
+                    Text(stringResource(if (weekShown.isEmpty()) R.string.ai_week_nothing else R.string.ai_week_goes), style = MaterialTheme.typography.bodySmall)
+                }
+                items(weekShown, key = { "w:" + it.id }) { entry ->
+                    val on = entry.id !in excluded
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
+                        .toggleable(value = on, role = Role.Checkbox) { excluded = if (it) excluded - entry.id else excluded + entry.id }.padding(vertical = 4.dp)) {
+                        Checkbox(checked = on, onCheckedChange = null)
+                        Column(Modifier.padding(start = 8.dp)) {
+                            val title = AiAsk.shortTitle(entry.title).ifBlank { stringResource(R.string.ai_untitled) }
+                            Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            entry.firstLine.takeIf { it.isNotEmpty() && it != title }?.let { Text(AiAsk.shortTitle(it, 80), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                            if (!on) Text(stringResource(R.string.ai_stays_home), style = MaterialTheme.typography.labelSmall)
+                        }
+                    }
+                }
+            } else if (merge != null && job == null && report == null) mergeIds?.let { (older, newer) ->
+                item {
+                    Text(stringResource(R.string.ai_what_goes, 2), style = MaterialTheme.typography.titleSmall)
+                    for (note in listOf(older, newer)) Text("• " + AiAsk.shortTitle(note.title).ifBlank { stringResource(R.string.ai_untitled) }, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
             } else if (action != null && job == null && report == null) {
                 // A file action shows the files at once: the user sends the chosen one, or chooses another first.
                 item {
@@ -488,6 +576,7 @@ private fun AskScreen(target: Uri?, targetShared: Boolean, summarize: Boolean, d
                 Text(preparing?.let { stringResource(it) } ?: if (loaded) stringResource(R.string.ai_working, provider) else stringResource(R.string.ai_reading_notes), style = MaterialTheme.typography.bodySmall)
             }
             if (stopped) item { Text(stringResource(R.string.ai_stopped)) }
+            notice?.let { said -> item { Text(stringResource(said)) } }
             val found = receipt
             if (found != null && receiptSaid == null) item {
                 val drawers = (executor.labels.filter { PaperDrawer.drawerName(it).isNotEmpty() } + PaperDrawer.SUGGESTED_DRAWERS.map(PaperDrawer::drawerLabel)).distinctBy { it.lowercase() }
@@ -498,8 +587,30 @@ private fun AskScreen(target: Uri?, targetShared: Boolean, summarize: Boolean, d
             receiptSaid?.let { said -> item { Text(said) } }
             report?.let { done -> item {
                 AiResult(done, asked, provider, model, executor, target, summarize, kind.takeIf { draft != null }, action, targetTitle, hideAnswer = found != null,
-                    savedNote, addedBelow, onSaved = { savedNote = true }, onAddedBelow = { addedBelow = true }, onDraft = { replace -> onDraftAnswer(done.answer, replace) })
+                    savedNote, addedBelow, onSaved = { savedNote = true }, onAddedBelow = { addedBelow = true }, onDraft = { replace -> onDraftAnswer(done.answer, replace) },
+                    saveTitle = mergeIds?.second?.let { context.getString(R.string.ai_title_merge, AiAsk.shortTitle(it.title).ifBlank { context.getString(R.string.ai_untitled) }) })
             } }
+            // After a merge that was applied, the older note is still there: moving it to the trash is the user's own step.
+            val merged = mergeIds
+            if (merged != null && report?.actions?.any { it.tool == "replace_note_text" && it.status == "done" && it.input?.get("id") == merged.second.id } == true) item {
+                val older = AiAsk.shortTitle(merged.first.title).ifBlank { stringResource(R.string.ai_untitled) }
+                if (olderTrashed) Text(stringResource(R.string.ai_merge_trashed, older))
+                else Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(stringResource(R.string.ai_merge_older_left, older))
+                    OutlinedButton(onClick = {
+                        scope.launch {
+                            try {
+                                val uri = merge!!.first
+                                ReminderScheduler.cancel(context, uri)
+                                withContext(Dispatchers.IO) { Storage.noteWriteMutex.withLock { Storage.trashNote(context, uri).getOrThrow() } }
+                                olderTrashed = true
+                            } catch (error: CancellationException) {
+                                throw error
+                            } catch (_: Exception) { Toast.makeText(context, R.string.ai_error_save, Toast.LENGTH_SHORT).show() }
+                        }
+                    }) { Text(stringResource(R.string.ai_merge_trash)) }
+                }
+            }
         }
     }
 
@@ -538,6 +649,7 @@ private fun AiResult(
     report: AiReport, asked: String, provider: String, model: String, executor: AiExecutor, target: Uri?, summarize: Boolean,
     draftKind: String?, action: String?, targetTitle: String, hideAnswer: Boolean,
     savedNote: Boolean, addedBelow: Boolean, onSaved: () -> Unit, onAddedBelow: () -> Unit, onDraft: (Boolean) -> Unit,
+    saveTitle: String? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -597,7 +709,7 @@ private fun AiResult(
             if (draftKind == null && !summarize) OutlinedButton(enabled = !savedNote, onClick = {
                 scope.launch {
                     val name = AiAsk.shortTitle(targetTitle).ifBlank { context.getString(R.string.ai_untitled) }
-                    val title = when (action) {
+                    val title = saveTitle ?: when (action) {
                         "transcribe" -> context.getString(R.string.ai_title_transcribe, name)
                         "photo" -> context.getString(R.string.ai_title_photo, name)
                         "receipt" -> context.getString(R.string.ai_title_receipt, name)

@@ -4,7 +4,7 @@
     <string name="ai_title">Vraag JotDrop</string>
     <string name="ai_settings_button">Vraag JotDrop: AI met je eigen sleutel</string>
     <string name="ai_settings_title">AI met je eigen sleutel</string>
-    <string name="ai_settings_intro">Geef JotDrop opdrachten in je eigen woorden, getypt of ingesproken. Het gebruikt een AI-dienst die jij kiest, met je eigen sleutel, en praat daar rechtstreeks mee vanaf deze telefoon. De servers van JotDrop zien je notities, je vragen en je sleutel nooit. Je betaalt de AI-dienst zelf.</string>
+    <string name="ai_settings_intro">Geef JotDrop opdrachten in je eigen woorden, getypt of ingesproken. Het gebruikt een AI-dienst die jij kiest, met je eigen sleutel, en praat daar rechtstreeks mee vanaf deze telefoon. De servers van JotDrop zien je notities, je vragen en je sleutel nooit. Je betaalt de AI-dienst zelf. \"Deze week\" stuurt een kort uittreksel van je notities, niet de notities zelf.</string>
     <string name="ai_provider">AI-dienst</string>
     <string name="ai_provider_off">Uit</string>
     <string name="ai_provider_custom">Eigen adres (OpenAI-compatibel)</string>
@@ -161,4 +161,43 @@
         <item quantity="other">%d jaar</item>
     </plurals>
     <string name="ai_no_answer">De AI gaf geen antwoord in woorden.</string>
+    <!-- Version 2, part E and F: Find duplicates and This week (13 Nov 2026). -->
+    <string name="dup_title">Dubbele notities zoeken</string>
+    <string name="dup_intro">JotDrop vergelijkt je notities op deze telefoon. Het zoeken gebruikt geen AI en verstuurt niets. \"Samenvoegen met AI\" is een aparte keuze: dan gaan de twee notities die je kiest naar je AI-dienst. Notities uit gedeelde groepen en notities met een live lijstlink blijven buiten, net als heel korte notities en de prullenbak.</string>
+    <string name="dup_looking">Dubbele notities zoeken op deze telefoon...</string>
+    <plurals name="dup_found">
+        <item quantity="one">%d paar gevonden.</item>
+        <item quantity="other">%d paren gevonden.</item>
+    </plurals>
+    <string name="dup_incomplete">Het zoeken is vroeg gestopt, dus deze lijst is misschien niet compleet. Handel deze eerst af en zoek dan opnieuw.</string>
+    <string name="dup_none">Geen dubbele notities gevonden.</string>
+    <string name="dup_none_incomplete">Nog niets gevonden, en het zoeken is vroeg gestopt. Probeer het opnieuw.</string>
+    <string name="dup_same">Zelfde tekst</string>
+    <string name="dup_near">Bijna hetzelfde (%1$d%%)</string>
+    <string name="dup_inside">De ene notitie zit in de andere (%1$d%% van \"%2$s\")</string>
+    <string name="dup_older">Ouder: \"%1$s\", %2$s</string>
+    <string name="dup_newer">Nieuwer: \"%1$s\", %2$s</string>
+    <string name="dup_edited">gewijzigd %1$s</string>
+    <string name="dup_no_date">geen wijzigingsdatum</string>
+    <string name="dup_compare">Vergelijken</string>
+    <string name="dup_compare_hide">Vergelijking verbergen</string>
+    <string name="dup_compare_intro">Van de oudere notitie \"%1$s\" naar de nieuwere \"%2$s\": + is erbij gekomen, - is weggehaald.</string>
+    <string name="dup_too_long">Deze notities zijn te lang om hier te vergelijken.</string>
+    <plurals name="dup_unchanged">
+        <item quantity="one">%d ongewijzigde regel</item>
+        <item quantity="other">%d ongewijzigde regels</item>
+    </plurals>
+    <string name="dup_trash">\"%1$s\" naar de prullenbak</string>
+    <string name="dup_keep">Allebei houden</string>
+    <string name="dup_merge">Samenvoegen met AI…</string>
+    <string name="ai_week">Deze week</string>
+    <string name="ai_week_request">Overzicht van mijn week</string>
+    <string name="ai_week_goes">JotDrop koos deze notities op deze telefoon: gewijzigd in de laatste 7 dagen, een herinnering in de komende 7 dagen, of een vervaldatum binnen 30 dagen. Van elke notitie gaan alleen de titel, de eerste regel, de open taken, het tijdstip van de laatste wijziging, de herinnering en de vervaldatum mee, niet de hele notitie. Vink een notitie uit om hem thuis te houden.</string>
+    <string name="ai_week_nothing">Niets om over te schrijven: er zijn geen notities gewijzigd in de laatste 7 dagen, en er komt geen herinnering of vervaldatum aan.</string>
+    <string name="ai_merge_both">Beide notities moeten mee om ze samen te voegen. Zoek opnieuw naar dubbele notities.</string>
+    <string name="ai_merge_too_long">Deze notities zijn te lang om met AI samen te voegen: de AI zou niet al hun tekst zien. Vergelijk ze en voeg ze zelf samen.</string>
+    <string name="ai_merge_older_left">De oudere notitie \"%1$s\" staat er nog.</string>
+    <string name="ai_merge_trash">Naar de prullenbak</string>
+    <string name="ai_merge_trashed">\"%1$s\" staat in de prullenbak.</string>
+    <string name="ai_title_merge">Samengevoegde tekst van %1$s</string>
 </resources>

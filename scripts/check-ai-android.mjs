@@ -11,6 +11,8 @@ import { PHOTO_SYSTEM, aiFileKind, appendedText, editorRequest, fileRequest, lab
 import { joinNote, splitNote } from '../cloud/web/note.mjs';
 import { formatNotes, searchNotes, selectNotes } from '../cloud/shared/ai/context.mjs';
 import { systemPrompt } from '../cloud/shared/ai/prompt.mjs';
+import { findDuplicates, normalizeText, pairKey } from '../cloud/shared/similar.mjs';
+import { digestRequest, wallClock, weekDigest } from '../cloud/shared/ai/digest.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ai = path.join(root, 'cloud/shared/ai');
@@ -75,6 +77,89 @@ const edits = {
   receiptNote: files.flatMap((file) => [['Wasmachine', 'Shop: MediaMarkt\nAmount: 499,00 EUR'], ['', 'Bought: 2026-11-08'], ['Two\nlines', ''], ['  ', '  ']]
     .map(([title, lines]) => ({ file, title, lines, expect: receiptText(file, title, lines) }))),
 };
+
+// Version 2, part E and F (Find duplicates, This week): Similar.kt and Digest.kt against similar.mjs and digest.mjs,
+// for every vector case, the limits, and a few hundred generated notes (a fixed seed, so a failure can be found again).
+const readJson = (file) => JSON.parse(readFileSync(path.join(root, file), 'utf8'));
+let seed = 20261113;
+const random = () => ((seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648);
+const pick = (list) => list[Math.floor(random() * list.length)];
+const vocabulary = ['zolder', 'offerte', 'aannemer', 'dak', 'café', 'Zoë', 'boodschappen', 'brood', 'melk', 'kaas', 'garantie', 'bon', 'wasmachine',
+  'tandarts', 'afspraak', 'trein', 'Madrid', 'vergunning', 'gemeente', 'vloer', 'trap', 'tuin', 'schutting', 'verf', 'kraan', 'loodgieter', 'donderdag',
+  'vakantie', 'paspoort', 'verzekering', 'factuur', 'BTW', 'klant', 'project', 'JotDrop', 'release', 'Android', 'web', 'sleutel', '2026', '42', 'één'];
+const sentence = (words) => Array.from({ length: words }, () => pick(vocabulary)).join(pick([' ', ' ', ' ', '  ', ', ', '\n', '\t']));
+const similarNotes = [];
+for (let i = 0; i < 260; i += 1) {
+  const base = sentence(8 + Math.floor(random() * 40));
+  const updatedAt = `2026-1${Math.floor(random() * 2)}-${String(1 + Math.floor(random() * 28)).padStart(2, '0')}T10:00:00Z`;
+  similarNotes.push({ id: `g${i}`, title: `G${i}`, text: base, updatedAt, shared: random() < 0.05 });
+  const kind = random();
+  if (kind < 0.12) similarNotes.push({ id: `g${i}s`, title: 'Copy', text: base.toUpperCase(), updatedAt });
+  else if (kind < 0.24) similarNotes.push({ id: `g${i}n`, title: 'Near', text: base.replace(/\S+$/, 'anders'), updatedAt: '2026-11-12T10:00:00Z' });
+  else if (kind < 0.32) similarNotes.push({ id: `g${i}i`, title: 'Inside', text: `${sentence(30)}\n${base}\n${sentence(3)}`, updatedAt: '2026-10-01T10:00:00Z' });
+}
+const similarVectors = readJson('cloud/shared/similar-vectors.json').cases;
+const base40 = Array.from({ length: 40 }, (_, i) => `woord${i}`).join(' ');
+const equal40 = 'dit is een precies gelijke notitie die ruim veertig tekens lang is';
+const threeEqual = similarVectors.find((vector) => vector.name.startsWith('three equal')).notes;
+const similarCases = [
+  ...similarVectors.map((vector) => ({ name: vector.name, notes: vector.notes, dismissed: (vector.dismissed ?? []).map(([a, b]) => pairKey(a, b)) })),
+  { name: 'three equal, reversed', notes: [...threeEqual].reverse() },
+  { name: 'fewer than three words', notes: [{ id: 'a', title: 'A', text: 'Onderhoudscontract-verlenging-aanvraagformulier-ingevuld' }, { id: 'b', title: 'B', text: 'Onderhoudscontract-verlenging-aanvraagformulier-ingevuld ' }] },
+  { name: 'time limit', notes: Array.from({ length: 60 }, (_, i) => ({ id: `n${i}`, title: `N${i}`, text: `${base40} extra${i}` })), timeLimitMs: 10, tick: 5 },
+  { name: '500 pairs', notes: Array.from({ length: 40 }, (_, i) => ({ id: `n${String(i).padStart(2, '0')}`, title: 'N', text: equal40 })) },
+  { name: 'generated', notes: similarNotes },
+  { name: 'generated, some kept', notes: similarNotes, dismissed: findDuplicates(similarNotes).pairs.filter((_, i) => i % 3 === 0).map((pair) => pairKey(pair.b, pair.a)) },
+].map((c) => {
+  let tick = 0;
+  const result = findDuplicates(c.notes, { dismissed: c.dismissed ?? [], ...(c.timeLimitMs ? { timeLimitMs: c.timeLimitMs } : {}), now: c.tick ? () => (tick += c.tick) : () => 0 });
+  return { ...c, expect: result };
+});
+if (similarCases.find((c) => c.name === 'generated').expect.pairs.length < 30) throw new Error('the generated notes should give some pairs');
+
+const digestVectors = readJson('cloud/shared/ai/digest-vectors.json');
+const nowMs = Date.parse(digestVectors.now);
+const at = (days) => new Date(nowMs + days * 86400000);
+const iso = (days) => at(days).toISOString();
+const wall = (days) => at(days).toISOString().slice(0, 16);
+const digestNotes = Array.from({ length: 300 }, (_, i) => {
+  const note = { id: `d${String(i).padStart(3, '0')}`, title: pick(['Boodschappen', '', '  Klus  ', 'Bon <note>', 'Week\nplan', pick(vocabulary)]),
+    text: [pick(['', '## Kop', '- [ ] eerste', '> citaat', '   ', 'Gewone regel']), ...Array.from({ length: Math.floor(random() * 14) }, () => pick(['- [ ] ', '- [x] ', '* [ ] ', '  + [ ] ', '']) + sentence(3))].join(pick(['\n', '\r\n'])) };
+  if (random() < 0.8) note.updatedAt = pick([iso(-20 + random() * 22), '2026-11-13', '', 'not a date']);
+  if (random() < 0.3) note.reminder = pick([wall(-3 + random() * 12), `${wall(random() * 8)}:00`, '2026-11-15', ' 2026-11-14T08:00 ']);
+  if (random() < 0.3) note.expires = pick([iso(-45 + random() * 90).slice(0, 10), '2026-02-30', '0026-11-20', ' 2026-11-20 ', '2026-11-20T00:00']);
+  if (random() < 0.1) note.shared = true;
+  return note;
+});
+const bons = Array.from({ length: 45 }, (_, i) => ({ id: `bon${i}`, title: `Bon ${i}`, text: 'x', expires: `202${i % 5}-0${1 + (i % 9)}-15` }));
+const week3 = [1, 2, 3].map((i) => ({ id: `c${i}`, title: `This week ${i}`, text: 'y', updatedAt: '2026-11-12T10:00:00Z' }));
+const longTasks = Array.from({ length: 40 }, (_, i) => ({ id: `n${i}`, title: `N${i}`, text: Array.from({ length: 20 }, () => `- [ ] ${'x'.repeat(500)}`).join('\n'), updatedAt: '2026-11-12T10:00:00Z' }));
+const digestCases = [
+  ...digestVectors.cases.map((vector) => ({ name: vector.name, notes: vector.notes, now: digestVectors.now, timeZone: digestVectors.timeZone, includeShared: vector.includeShared ?? false })),
+  { name: 'zone UTC', notes: [{ id: 'a', title: 'A', text: 'x', reminder: '2026-11-13T23:30' }], now: '2026-11-13T22:45:00Z', timeZone: 'UTC' },
+  { name: 'zone Amsterdam', notes: [{ id: 'a', title: 'A', text: 'x', reminder: '2026-11-13T23:30' }], now: '2026-11-13T22:45:00Z', timeZone: 'Europe/Amsterdam' },
+  { name: 'old papers', notes: [...bons, ...week3], now: digestVectors.now, timeZone: 'UTC' },
+  { name: '30,000 characters', notes: longTasks, now: digestVectors.now, timeZone: 'UTC' },
+  { name: 'generated', notes: digestNotes, now: digestVectors.now, timeZone: 'Europe/Madrid' },
+  { name: 'generated, shared allowed', notes: digestNotes, now: digestVectors.now, timeZone: 'America/New_York', includeShared: true },
+  { name: 'generated, unknown zone', notes: digestNotes, now: '2026-03-29T00:30:00Z', timeZone: 'Not/AZone' },
+].map((c) => {
+  const digest = weekDigest(c.notes, { now: new Date(c.now), timeZone: c.timeZone, includeShared: c.includeShared });
+  return { ...c, expect: { notes: digest.notes, left: digest.left, truncated: digest.truncated, counts: digest.counts, text: digest.text } };
+});
+if (digestCases.find((c) => c.name === 'generated').expect.notes.length < 20) throw new Error('the generated notes should give a digest');
+edits.similar = similarCases;
+edits.pairKeys = [['a', 'b'], ['b', 'a'], ['n10', 'n9'], ['É', 'e']].map(([a, b]) => ({ a, b, expect: pairKey(a, b) }));
+edits.normalize = ['  Café\n\tAU   Lait ', 'Ünïcödé  spaces﻿', 'İstanbul ŞEHİR', '', '\u001ftab\u001c'].map((text) => ({ text, expect: normalizeText(text) }));
+edits.digest = digestCases;
+edits.wallClock = [['2026-11-13T10:00:00Z', 'Europe/Amsterdam'], ['2026-07-01T23:30:00Z', 'Europe/Amsterdam'], ['2026-11-13T10:00:00Z', 'Not/AZone'], ['2026-03-29T01:30:00Z', 'Europe/Madrid'], ['2026-11-13T10:00:00Z', 'Asia/Kolkata']]
+  .map(([now, timeZone]) => ({ now, timeZone, expect: wallClock(new Date(now), timeZone) }));
+// "Merge with AI": the request is app.js's own mergeRequest, read from the file (it is not exported).
+const mergeSource = /function mergeRequest\(\{ older, newer \}\) \{\s*return `([^`]+)`;/.exec(readFileSync(path.join(root, 'cloud/web/app.js'), 'utf8'));
+if (!mergeSource) throw new Error('cloud/web/app.js: mergeRequest is not where this check looks for it');
+edits.merge = [['n1', 'n2'], ['n12', 'n3']].map(([older, newer]) => ({ older, newer, expect: mergeSource[1].replaceAll('${older.id}', older).replaceAll('${newer.id}', newer) }));
+edits.digestRequest = [{ language: 'nl-NL', date: 'Friday 13 November 2026', timeZone: 'Europe/Amsterdam', text: '<note id="a">\nTitle: A\n</note>' }, { date: '2026-11-13', text: '' }]
+  .map((c) => ({ ...c, expect: digestRequest(c) }));
 
 // The JVM check runs java.util.regex; the phone runs ICU, which rejects some Java-only flags (found 9 Nov 2026: (?U)
 // crashed Ask JotDrop on the emulator while the JVM check passed).

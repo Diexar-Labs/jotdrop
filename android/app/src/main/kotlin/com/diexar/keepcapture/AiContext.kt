@@ -2,7 +2,10 @@ package com.diexar.keepcapture
 
 import java.text.Normalizer
 
-/** A note as Ask JotDrop reads it: text is the note without front matter and title. */
+/**
+ * A note as Ask JotDrop reads it: text is the note without front matter and title. reminder and expires (version 2,
+ * "This week") are the front matter's values, as the web app's aiNotes hands them over.
+ */
 data class AiNote(
     val id: String,
     val title: String,
@@ -10,6 +13,8 @@ data class AiNote(
     val labels: List<String> = emptyList(),
     val updatedAt: String? = null,
     val shared: Boolean = false,
+    val reminder: String? = null,
+    val expires: String? = null,
 )
 
 /** A note chosen to go with a question, cut to fit. */

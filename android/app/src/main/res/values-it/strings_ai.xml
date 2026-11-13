@@ -4,7 +4,7 @@
     <string name="ai_title">Chiedi a JotDrop</string>
     <string name="ai_settings_button">Chiedi a JotDrop: IA con la tua chiave</string>
     <string name="ai_settings_title">IA con la tua chiave</string>
-    <string name="ai_settings_intro">Dai compiti a JotDrop con parole tue, scritte o dette a voce. Usa un servizio di IA che scegli tu, con la tua chiave, e ci parla direttamente da questo telefono. I server di JotDrop non vedono mai le tue note, le tue domande o la tua chiave. Il servizio di IA lo paghi tu.</string>
+    <string name="ai_settings_intro">Dai compiti a JotDrop con parole tue, scritte o dette a voce. Usa un servizio di IA che scegli tu, con la tua chiave, e ci parla direttamente da questo telefono. I server di JotDrop non vedono mai le tue note, le tue domande o la tua chiave. Il servizio di IA lo paghi tu. \"Questa settimana\" invia un breve estratto delle tue note, non le note stesse.</string>
     <string name="ai_provider">Servizio di IA</string>
     <string name="ai_provider_off">Disattivato</string>
     <string name="ai_provider_custom">Indirizzo proprio (compatibile OpenAI)</string>
@@ -161,4 +161,43 @@
         <item quantity="other">%d anni</item>
     </plurals>
     <string name="ai_no_answer">L\'IA non ha dato nessuna risposta a parole.</string>
+    <!-- Version 2, part E and F: Find duplicates and This week (13 Nov 2026). -->
+    <string name="dup_title">Trova note doppie</string>
+    <string name="dup_intro">JotDrop confronta le tue note su questo telefono. La ricerca non usa l\'IA e non invia nulla. \"Unisci con l\'IA\" è una scelta a parte: invia al tuo servizio di IA le due note che scegli. Le note dei gruppi condivisi e le note con un link alla lista attivo restano fuori, come le note molto brevi e il cestino.</string>
+    <string name="dup_looking">Cerco note doppie su questo telefono...</string>
+    <plurals name="dup_found">
+        <item quantity="one">%d coppia trovata.</item>
+        <item quantity="other">%d coppie trovate.</item>
+    </plurals>
+    <string name="dup_incomplete">La ricerca si è fermata presto, quindi l\'elenco potrebbe non essere completo. Sistema queste, poi cerca di nuovo.</string>
+    <string name="dup_none">Nessuna nota doppia trovata.</string>
+    <string name="dup_none_incomplete">Ancora niente, e la ricerca si è fermata presto. Riprova.</string>
+    <string name="dup_same">Stesso testo</string>
+    <string name="dup_near">Quasi uguale (%1$d%%)</string>
+    <string name="dup_inside">Una nota è dentro l\'altra (%1$d%% di \"%2$s\")</string>
+    <string name="dup_older">Più vecchia: \"%1$s\", %2$s</string>
+    <string name="dup_newer">Più recente: \"%1$s\", %2$s</string>
+    <string name="dup_edited">modificata il %1$s</string>
+    <string name="dup_no_date">nessuna data di modifica</string>
+    <string name="dup_compare">Confronta</string>
+    <string name="dup_compare_hide">Nascondi il confronto</string>
+    <string name="dup_compare_intro">Dalla nota più vecchia \"%1$s\" a quella più recente \"%2$s\": + è stato aggiunto, - è stato tolto.</string>
+    <string name="dup_too_long">Queste note sono troppo lunghe per confrontarle qui.</string>
+    <plurals name="dup_unchanged">
+        <item quantity="one">%d riga invariata</item>
+        <item quantity="other">%d righe invariate</item>
+    </plurals>
+    <string name="dup_trash">Sposta \"%1$s\" nel cestino</string>
+    <string name="dup_keep">Tienile entrambe</string>
+    <string name="dup_merge">Unisci con l\'IA…</string>
+    <string name="ai_week">Questa settimana</string>
+    <string name="ai_week_request">Panoramica della mia settimana</string>
+    <string name="ai_week_goes">JotDrop ha scelto queste note su questo telefono: modificate negli ultimi 7 giorni, con un promemoria nei prossimi 7 giorni o con una data di scadenza entro 30 giorni. Di ogni nota vanno solo il titolo, la prima riga, le attività aperte, l\'ora dell\'ultima modifica, il promemoria e la data di scadenza, non la nota intera. Togli la spunta per tenerne fuori una.</string>
+    <string name="ai_week_nothing">Niente da raccontare: nessuna nota modificata negli ultimi 7 giorni, e nessun promemoria o data di scadenza in arrivo.</string>
+    <string name="ai_merge_both">Devono andare entrambe le note per unirle. Cerca di nuovo le note doppie.</string>
+    <string name="ai_merge_too_long">Queste note sono troppo lunghe per unirle con l\'IA: l\'IA non vedrebbe tutto il loro testo. Confrontale e uniscile tu.</string>
+    <string name="ai_merge_older_left">La nota più vecchia \"%1$s\" è ancora lì.</string>
+    <string name="ai_merge_trash">Sposta nel cestino</string>
+    <string name="ai_merge_trashed">\"%1$s\" è nel cestino.</string>
+    <string name="ai_title_merge">Testo unito di %1$s</string>
 </resources>

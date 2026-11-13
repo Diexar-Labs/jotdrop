@@ -56,7 +56,7 @@ private fun callJson(call: AiToolCall): Map<String, Any?> = linkedMapOf<String, 
 private fun note(value: Any?): AiNote {
     val n = value.obj()
     @Suppress("UNCHECKED_CAST")
-    return AiNote(n.str("id")!!, n.str("title") ?: "", n.str("text") ?: "", (n?.get("labels") as? List<String>) ?: emptyList(), n.str("updatedAt"), n?.get("shared") == true)
+    return AiNote(n.str("id")!!, n.str("title") ?: "", n.str("text") ?: "", (n?.get("labels") as? List<String>) ?: emptyList(), n.str("updatedAt"), n?.get("shared") == true, n.str("reminder"), n.str("expires"))
 }
 
 private fun fetcherFor(replies: MutableList<Map<String, Any?>>, urls: MutableList<String>) = AiFetcher { request, _ ->
@@ -480,6 +480,36 @@ private suspend fun version2(vectors: Map<String, Any?>, edits: Map<String, Any?
 }
 
 @Suppress("UNCHECKED_CAST")
+/**
+ * Version 2, part E and F: duplicate notes and "This week" as cloud/shared/similar.mjs and digest.mjs make them,
+ * for every case of similar-vectors.json and digest-vectors.json and the extra cases scripts/check-ai-android.mjs
+ * adds (limits, a clock that ticks, a few hundred generated notes).
+ */
+private fun overview(edits: Map<String, Any?>) {
+    for (case in edits.items("similar").map { it.obj()!! }) {
+        var tick = 0L
+        val step = case.num("tick")?.toLong()
+        @Suppress("UNCHECKED_CAST")
+        val result = Similar.findDuplicates(case.items("notes").map(::note), (case["dismissed"] as? List<String>) ?: emptyList(),
+            timeLimitMs = case.num("timeLimitMs")?.toLong() ?: Similar.TIME_LIMIT_MS, now = if (step != null) ({ tick += step; tick }) else ({ 0L }))
+        same(mapOf("pairs" to result.pairs.map { it.json() }, "complete" to result.complete), case["expect"], "similar ${case["name"]}")
+    }
+    for (case in edits.items("pairKeys").map { it.obj()!! }) same(Similar.pairKey(case.str("a")!!, case.str("b")!!), case["expect"], "pair key ${case["a"]} ${case["b"]}")
+    for (case in edits.items("normalize").map { it.obj()!! }) same(Similar.normalizeText(case.str("text")!!), case["expect"], "normalize ${AiJson.stringify(case["text"])}")
+    for (case in edits.items("digest").map { it.obj()!! }) {
+        val digest = Digest.weekDigest(case.items("notes").map(::note), java.time.Instant.parse(case.str("now")!!).toEpochMilli(), case.str("timeZone"), case["includeShared"] == true)
+        same(mapOf("notes" to digest.notes.map { it.json() }, "left" to digest.left, "truncated" to digest.truncated,
+            "counts" to mapOf("changed" to digest.counts.changed, "reminders" to digest.counts.reminders, "expiring" to digest.counts.expiring), "text" to digest.text),
+            case["expect"], "digest ${case["name"]}")
+    }
+    for (case in edits.items("wallClock").map { it.obj()!! }) same(Digest.wallClock(java.time.Instant.parse(case.str("now")!!).toEpochMilli(), case.str("timeZone")), case["expect"], "wall clock ${case["now"]} ${case["timeZone"]}")
+    for (case in edits.items("merge").map { it.obj()!! }) same(AiNoteEdits.mergeRequest(case.str("older")!!, case.str("newer")!!), case["expect"], "merge request ${case["older"]}")
+    for (case in edits.items("digestRequest").map { it.obj()!! }) {
+        val (system, text) = Digest.request(case.str("language"), case.str("date") ?: "", case.str("timeZone"), case.str("text") ?: "")
+        same(mapOf("system" to system, "text" to text), case["expect"], "digest request ${case["language"]}")
+    }
+}
+
 fun main(arguments: Array<String>) = runBlocking {
     val vectors = AiJson.parse(File(arguments[0]).readText()).obj()!!
     val tools = AiTools.load(File(arguments[1]).readText())
@@ -623,6 +653,7 @@ fun main(arguments: Array<String>) = runBlocking {
     askScreen(tools, promptJson)
     markdown()
     version2(vectorsV2, edits, tools, promptJson)
+    overview(edits)
 
     // The limits from the design.
     same(AiAssistant.MAX_ROUNDS, 6, "max rounds")
