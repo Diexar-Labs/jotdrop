@@ -52,8 +52,30 @@ export class AiSettingsStore {
   async remove(): Promise<void> { await this.store.delete("settings"); }
 }
 
+/**
+ * "Keep both" of Find duplicates: the pairs the user said to leave alone, by vault path (pairKey). On this device only:
+ * one sealed value in a store of its own, never in data.json and never synced. A renamed note forgets its pair.
+ */
+export class DuplicatesKept {
+  private store: KeyValues;
+  constructor(app: App, store?: KeyValues) {
+    const id = (app as unknown as { appId?: string }).appId || app.vault.getName();
+    this.store = store ?? new CloudStore(`jotdrop-duplicates-${id}`);
+  }
+  async load(): Promise<string[]> {
+    try {
+      const saved = await this.store.get<Sealed>("kept");
+      const list = saved ? await unseal<unknown>(saved) : [];
+      return Array.isArray(list) ? list.filter((key): key is string => typeof key === "string") : [];
+    } catch {
+      return [];
+    }
+  }
+  async save(keys: string[]): Promise<void> { await this.store.put("kept", await seal([...new Set(keys)])); }
+}
+
 /** A note as the shared assistant reads it; id is the vault path. */
-export type AiNote = { id: string; title: string; text: string; labels: string[]; updatedAt: string; shared: boolean };
+export type AiNote = { id: string; title: string; text: string; labels: string[]; updatedAt: string; shared: boolean; reminder?: string; expires?: string };
 
 const isUnder = (path: string, folder: string) => !!folder && (path === folder || path.startsWith(`${folder}/`));
 
@@ -84,12 +106,16 @@ export async function collectAiNotes(plugin: JotDropPlugin): Promise<{ notes: Ai
     const text = await app.vault.cachedRead(file);
     texts.set(file.path, text);
     const cloud = plugin.cloud;
+    const meta = readMeta(app, file);
     notes.push({
       id: file.path,
       title: aiTitle(text, file.basename),
       text: splitNote(text).body,
-      labels: readMeta(app, file).labels,
+      labels: meta.labels,
       updatedAt: new Date(file.stat.mtime).toISOString(),
+      // The week overview reads these two (cloud/shared/ai/digest.mjs).
+      reminder: meta.reminder ?? "",
+      expires: meta.expires ?? "",
       shared: Boolean(cloud?.spaceOf(file.path)) || (cloud?.listLinksOf(file.path).length ?? 0) > 0,
     });
   }

@@ -6,7 +6,9 @@ import { selectNotes as select } from "../cloud/shared/ai/context.mjs";
 import { parseMarkdown as parse } from "../cloud/shared/ai/markdown.mjs";
 import * as parts from "../cloud/shared/ai/parts.mjs";
 import * as receipt from "../cloud/shared/ai/receipt.mjs";
-import { foldUnchanged as fold } from "../cloud/shared/diff.mjs";
+import { diffLines as diff, foldUnchanged as fold } from "../cloud/shared/diff.mjs";
+import { digestRequest as digestAsk, weekDigest as digest } from "../cloud/shared/ai/digest.mjs";
+import { findDuplicates as similar, pairKey as pairs } from "../cloud/shared/similar.mjs";
 import * as web from "../cloud/web/ai-web.mjs";
 import { joinNote as join, splitNote as split } from "../cloud/web/note.mjs";
 export { AiError, PROVIDERS, TRANSCRIBE_MODEL, createProvider, pickDefaultModel } from "../cloud/shared/ai/providers.mjs";
@@ -62,3 +64,23 @@ export const expiryChanges = web.expiryChanges as unknown as (text: string, date
 export const describeChange = web.describeChange as unknown as (change: AiChange) => { heading: string; lines?: Array<{ type: string; text: string; sign: string }>; facts?: Array<[string, string]> };
 export const editorRequest = web.editorRequest as unknown as (kind: string, title: string) => string;
 export const modelGroups = web.modelGroups as unknown as <M extends { id: string; name: string }>(provider: string, models: M[], preferred: string | null) => Array<{ label: string; models: M[] }>;
+
+// Version 2, phase 7: duplicate notes and the week overview. The code is the shared code (cloud/shared/similar.mjs and
+// cloud/shared/ai/digest.mjs, the same on the web and in Android); this file only states the types.
+type OverviewNote = { id: string; title: string; text: string; updatedAt?: string; reminder?: string; expires?: string; shared?: boolean };
+export type DuplicatePair = { a: string; b: string; kind: "same" | "near" | "inside"; score: number; drop: string };
+export const findDuplicates = similar as unknown as (notes: OverviewNote[], options?: { dismissed?: string[] }) => { pairs: DuplicatePair[]; complete: boolean };
+export const pairKey = pairs as unknown as (first: string, second: string) => string;
+export const diffLines = diff as unknown as (before: string, after: string) => Array<{ type: string; text: string }> | null;
+export type WeekDigest = { notes: Array<{ id: string; title: string }>; text: string; left: number; truncated: boolean; counts: { changed: number; reminders: number; expiring: number } };
+export const weekDigest = digest as unknown as (notes: OverviewNote[], options: { now?: Date; timeZone: string; includeShared: boolean }) => WeekDigest;
+export const digestRequest = digestAsk as unknown as (args: { language: string; date: string; timeZone: string; text: string }) => { system: string; text: string };
+
+/**
+ * "Merge with AI" (from Find duplicates): both notes go along and the AI writes one text, which the usual confirmation
+ * (+ and -) puts in the newer note. Notes are named by id only: a title is data, never part of the request. The same
+ * words as mergeRequest in cloud/web/app.js; check:ai-obsidian reads that file and compares.
+ */
+export function mergeRequest({ older, newer }: { older: { id: string }; newer: { id: string } }): string {
+  return `Two notes may be duplicates. The older one has id ${older.id}, the newer one has id ${newer.id}. Write one text that keeps everything from both notes and does not repeat itself, in the language of the notes. Replace the text of the newer note (id ${newer.id}) with that text. Do not change the older note.`;
+}

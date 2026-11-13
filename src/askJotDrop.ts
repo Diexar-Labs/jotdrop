@@ -14,6 +14,7 @@ import {
   AiError, type AiAction, type AiChange, type AiPart, type AiReceipt, type AiReport, FILE_TIMEOUT_MS, KEEP_YEARS, LIMITS, PHOTO_SYSTEM, PROVIDERS, TRANSCRIBE_MODEL,
   appendedText, capabilities, createProvider, decodedLength, describeChange, editorRequest, explain, fileRequest, foldUnchanged, keepUntil, modelGroups, newNoteText,
   parseMarkdown, parseReceipt, pickDefaultModel, receiptLines, receiptRequest, runAssistant, selectNotes,
+  digestRequest, mergeRequest, weekDigest,
 } from "./aiShared";
 
 type Spec = { name: string; needsKey: boolean; defaultModel: string | null };
@@ -81,8 +82,14 @@ export type AskOptions = {
    * out a recording, photo reads the text on a photo, receipt reads a receipt for the Paper drawer.
    */
   action?: FileAction;
+  /** Version 2, phase 7, "This week": the digest of the week goes, with a fixed request and no tools. */
+  week?: boolean;
+  /** Version 2, phase 7, "Merge with AI" from Find duplicates: only these two notes go; the AI writes one text for the newer one. */
+  merge?: { older: AiNote; newer: AiNote };
   /** How the board opens a note (open_note, sources, a new note). */
   openNote: (file: TFile) => void;
+  /** The board's own way to move a note to the JotDrop trash (after a merge: the user's own click). */
+  trash?: (file: TFile) => Promise<void>;
 };
 
 /** The answer as simple formatting: bold, italic, code, headings, bullets. textContent only; links stay as typed. */
@@ -133,6 +140,8 @@ export class AskJotDropModal extends Modal {
   private filesOn = new Set<string>();
   private labels: string[] = [];
   private targetShared = false;
+  // "This week": the notes shown once, so a cleared note can be ticked again.
+  private digestAll: Array<{ id: string; title: string }> = [];
   private receipt?: { receipt: AiReceipt; before: string; path: string };
   private groupName = `jotdrop-ai-file-${Math.random().toString(36).slice(2)}`;
   private el!: {
@@ -155,7 +164,7 @@ export class AskJotDropModal extends Modal {
     this.modalEl.addClass("jotdrop-ai-modal");
     this.titleEl.setText("Ask JotDrop");
     this.config = await this.plugin.aiStore.load();
-    const { editor, file, summarize, action } = this.options;
+    const { editor, file, summarize, action, week, merge } = this.options;
     if (editor) {
       this.notes = [{ id: "draft", title: editor.title || "Untitled", text: editor.text, labels: [], updatedAt: "", shared: false }];
       this.labels = aiLabels(this.plugin, this.notes);
@@ -176,22 +185,39 @@ export class AskJotDropModal extends Modal {
         } else this.files = own;
       }
     }
-    this.pinned = editor ? ["draft"] : file && !action ? [file.path] : [];
+    // A merge: only the two notes go along. This week: the digest picks the notes on this device, the list shows them first.
+    if (merge) this.notes = this.notes.filter((note) => note.id === merge.older.id || note.id === merge.newer.id);
+    if (week) this.digestAll = this.digest().notes;
+    this.pinned = editor ? ["draft"] : merge ? [merge.older.id, merge.newer.id] : file && !action ? [file.path] : [];
     this.build();
     const request = editor ? editorRequest(editor.kind, editor.title || "Untitled")
       : summarize ? editorRequest("summarize", this.notes[0]?.title ?? file?.basename ?? "")
+      : week ? "Overview of my week"
+      : merge ? mergeRequest(merge)
       : action === "receipt" ? receiptRequest(this.language()).text
       : action ? fileRequest(action) : "";
     this.el.request.value = request;
-    this.el.request.readOnly = Boolean(editor || summarize || action);
-    // A file action shows the file at once: the user sends it, or chooses another one first.
-    this.el.goes.open = Boolean(action);
+    this.el.request.readOnly = this.fixedRequest();
+    // A file action, the week and a merge show their list at once: the user checks it first, then sends.
+    const showList = Boolean(action || week || merge);
+    this.el.goes.open = showList;
     this.renderGoes();
     const off = this.offReason();
     if (off) return;
-    if (request && !action) void this.send();
-    else if (action) this.el.send.focus();
+    if (request && !showList) void this.send();
+    else if (showList) this.el.send.focus();
     else this.el.request.focus();
+  }
+
+  /** A fixed request cannot be edited: the draft, a summary, a file action, the week and a merge. */
+  private fixedRequest(): boolean {
+    const { editor, summarize, action, week, merge } = this.options;
+    return Boolean(editor || summarize || action || week || merge);
+  }
+
+  /** What "This week" would send now: the notes the digest picks on this device, minus the ones the user cleared. */
+  private digest() {
+    return weekDigest(this.notes.filter((note) => !this.excluded.has(note.id)), { now: new Date(), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, includeShared: this.config.includeShared });
   }
 
   /** Why a file cannot go with this service, in words, or "". The limits before reading; a photo is made small first. */
@@ -234,7 +260,11 @@ export class AskJotDropModal extends Modal {
     const goesSummary = goes.createEl("summary");
     goes.createEl("p", {
       cls: "setting-item-description",
-      text: this.options.action
+      text: this.options.week
+        ? "JotDrop picked these notes on this device: changed in the last 7 days, a reminder in the next 7 days, or an expiry date within 30 days. Only the title, the first line, the open tasks, the time of the last change, the reminder and the expiry date of each go along, not the whole note. Clear a box to keep a note out."
+        : this.options.merge
+        ? "Both notes go along, in full. The AI writes one text for the newer note. Nothing is changed until you select Apply, and the older note goes to the trash only when you choose that."
+        : this.options.action
         ? "Only the chosen file goes, with the fixed request above. No notes go along, and the AI cannot change anything."
         : `These notes go along with your question. Clear a note to keep it out. While answering, the AI can search and read more notes; you see which ones afterwards.${this.files.length ? " A file of the note goes only when you tick it." : ""}`,
     });
@@ -246,6 +276,11 @@ export class AskJotDropModal extends Modal {
     const buttons = form.createDiv({ cls: "jotdrop-ai-buttons" });
     const send = buttons.createEl("button", { text: "Send", cls: "mod-cta" });
     send.addEventListener("click", () => void this.send());
+    // "This week" is a fixed request of its own: only on the plain Ask window.
+    const { editor: draft, file: about, summarize: summary, action: fileAction, week: weekly, merge: merging } = this.options;
+    if (!draft && !about && !summary && !fileAction && !weekly && !merging) {
+      buttons.createEl("button", { text: "This week" }).addEventListener("click", () => { this.close(); new AskJotDropModal(this.app, this.plugin, { ...this.options, week: true }).open(); });
+    }
     const stop = buttons.createEl("button", { text: "Stop" });
     stop.hide();
     stop.addEventListener("click", () => { this.confirming?.(false); this.controller?.abort(new DOMException("Stopped.", "AbortError")); });
@@ -284,8 +319,11 @@ export class AskJotDropModal extends Modal {
   }
 
   private renderGoes(): void {
-    const picked = this.pick(this.el.request.value).notes;
-    const kept = this.notes.filter((note) => this.excluded.has(note.id));
+    const week = Boolean(this.options.week);
+    const picked = week ? this.digest().notes : this.pick(this.el.request.value).notes;
+    // A note that moved up after another was cleared stays in the list once shown, so it can be cleared and ticked again.
+    if (week) for (const note of picked) if (!this.digestAll.some((shown) => shown.id === note.id)) this.digestAll.push(note);
+    const kept = (week ? this.digestAll : this.notes).filter((note) => this.excluded.has(note.id));
     this.el.goesList.empty();
     const row = (note: { id: string; title: string; truncated?: boolean }, on: boolean) => {
       const label = this.el.goesList.createEl("li").createEl("label");
@@ -353,7 +391,7 @@ export class AskJotDropModal extends Modal {
   private setBusy(busy: boolean): void {
     this.el.send.disabled = busy;
     this.el.stop.toggle(busy);
-    this.el.request.readOnly = busy || Boolean(this.options.editor || this.options.summarize || this.options.action);
+    this.el.request.readOnly = busy || this.fixedRequest();
   }
 
   private resetResult(): void {
@@ -399,9 +437,15 @@ export class AskJotDropModal extends Modal {
   private async send(): Promise<void> {
     const request = this.el.request.value.trim();
     if (!request || this.controller || this.offReason()) return;
-    const { editor, action, file } = this.options;
+    const { editor, action, file, week, merge } = this.options;
     const notes = this.notes.filter((note) => !this.excluded.has(note.id));
-    const first = new Set(this.pick(request).notes.map((note) => note.id));
+    const digest = week ? this.digest() : undefined;
+    if (digest && !digest.notes.length) { this.el.status.setText("Nothing to write about: no notes changed in the last 7 days, and no reminder or expiry date is coming up."); return; }
+    const picks: Array<{ id: string; title: string; truncated?: boolean }> = digest ? digest.notes : this.pick(request).notes;
+    // A merge replaces the newer note's text: the AI must see all of both notes, or the merged text loses the rest.
+    if (merge && picks.length < 2) { this.el.status.setText("Both notes must go along to merge them. Tick both, or search for duplicates again."); return; }
+    if (merge && picks.some((note) => note.truncated)) { this.el.status.setText("These notes are too long to merge with AI: the AI would not see all of their text. Compare them and merge them yourself."); return; }
+    const first = new Set(picks.map((note) => note.id));
     const before = new Map([...this.texts].filter(([id]) => notes.some((note) => note.id === id)));
     const chosen = this.files.filter((one) => this.filesOn.has(one.id) && !this.fileProblem(one));
     if (action && !chosen.length) { this.el.status.setText(this.files.length ? "Choose a file first." : "This note has no such file on this device."); return; }
@@ -426,6 +470,13 @@ export class AskJotDropModal extends Modal {
       } else if (action === "receipt") {
         const { system, text } = receiptRequest(this.language());
         report = await this.once(request, parts, (ai, s) => ai.complete({ system, messages: [{ role: "user", text, parts }], tools: [], signal: s }), signal);
+      } else if (digest) {
+        // The overview has no tools: what the notes say can never make or change a note.
+        const { system, text } = digestRequest({ language: this.language(), date: aiToday(), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, text: digest.text });
+        report = await this.once(request, parts, (ai, s) => ai.complete({ system, messages: [{ role: "user", text }], tools: [], signal: s }), signal);
+        report.sent = digest.notes.map(({ id, title }) => ({ id, title }));
+        const said = report.answer.toLowerCase();
+        report.sources = report.sent.filter((note) => note.title.length >= 3 && said.includes(note.title.toLowerCase()));
       } else if (action === "photo") {
         // A fixed action has no tools: text on a photo can never make or change a note.
         report = await this.once(request, parts, (ai, s) => ai.complete({ system: PHOTO_SYSTEM, messages: [{ role: "user", text: request, parts }], tools: [], signal: s }), signal);
@@ -464,6 +515,17 @@ export class AskJotDropModal extends Modal {
 
   private titleOf(id: string | undefined): string {
     return this.notes.find((note) => note.id === id)?.title ?? this.fileOf(id)?.basename ?? "a note";
+  }
+
+  /** After a merge that was applied, the older note is still there: moving it to the trash is the user's own step. */
+  private mergeTrashRow(report: Report): void {
+    const { merge, trash } = this.options;
+    if (!merge || !trash || !report.actions.some((action) => action.tool === "replace_note_text" && action.status === "done" && (action.input as { id?: string } | null | undefined)?.id === merge.newer.id)) return;
+    const older = this.fileOf(merge.older.id);
+    if (!older) return;
+    const item = this.el.actions.createEl("li", { text: `The older note "${merge.older.title}" is still there. ` });
+    const move = item.createEl("button", { text: "Move it to the trash", cls: "jotdrop-ai-inline" });
+    move.addEventListener("click", () => void trash(older).then(() => { if (!this.fileOf(merge.older.id)) item.setText(`Moved "${merge.older.title}" to the trash.`); }));
   }
 
   private actionLine(action: AiAction): string {
@@ -506,6 +568,7 @@ export class AskJotDropModal extends Modal {
         const made = action.tool === "create_note" && action.status === "done" ? this.fileOf((action.result as { id?: string } | undefined)?.id) : null;
         if (made) item.createEl("button", { text: "Open", cls: "jotdrop-ai-inline" }).addEventListener("click", () => { this.close(); this.options.openNote(made); });
       }
+      this.mergeTrashRow(report);
     }
     const also = report.sent.filter((note) => !first.has(note.id));
     // In words what went: the question (a recording goes on its own), the notes, and each file by name.
@@ -631,7 +694,7 @@ export class AskJotDropModal extends Modal {
       const target = this.options.editor?.title || (file ? (this.texts.has(file.path) ? aiTitle(this.texts.get(file.path) ?? "", file.basename) : this.titleOf(file.path)) : "");
       const kind = this.options.editor?.kind ?? (this.options.summarize ? "summarize" : this.options.action ?? "ask");
       const titles: Record<string, string> = { summarize: "Summary of", transcribe: "Recording in", photo: "Text from the photo in", receipt: "Receipt in" };
-      const title = titles[kind] && target ? `${titles[kind]} ${target}` : this.last.request.split("\n")[0].slice(0, 80);
+      const title = this.options.merge ? `Merged text of ${this.options.merge.newer.title}` : titles[kind] && target ? `${titles[kind]} ${target}` : this.last.request.split("\n")[0].slice(0, 80);
       await createNoteInFolder(this.app, this.plugin.settings.notesFolder, newNoteText({ title, text: this.last.report.answer }));
       this.el.status.setText(`Saved as the note "${title}".`);
       button.remove();
@@ -682,7 +745,7 @@ export function renderAiSettings(el: HTMLElement, plugin: JotDropPlugin): void {
   const render = () => {
     el.empty();
     new Setting(el).setName("Ask JotDrop (AI with your own key)").setHeading();
-    el.createEl("p", { text: "Optional and free. Ask JotDrop sends your question, and the notes it shows you first, straight from this device to the AI service you choose, with your own key. JotDrop never sees them. A paid service bills you for what you use. New notes are made at once; a change to a note waits until you apply it." });
+    el.createEl("p", { text: "Optional and free. Ask JotDrop sends your question, and the notes it shows you first, straight from this device to the AI service you choose, with your own key. JotDrop never sees them. \"This week\" sends a short digest of your notes, not the notes themselves. A paid service bills you for what you use. New notes are made at once; a change to a note waits until you apply it." });
     el.createEl("p", { cls: "setting-item-description", text: "Your key stays on this device, outside the vault: it does not sync and is not in the plugin's data.json. On each device you add it again." });
 
     new Setting(el).setName("AI service").setDesc(draft.provider ? providerNote(draft.provider) : "Ask JotDrop is off. Choose an AI service to turn it on.")

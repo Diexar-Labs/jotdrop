@@ -82,6 +82,16 @@ export default class JotDropPlugin extends Plugin {
     });
 
     this.addCommand({
+      id: "find-duplicates",
+      name: t("cmd_find_duplicates"),
+      callback: async () => {
+        await this.activateView();
+        const view = this.app.workspace.getLeavesOfType(VIEW_TYPE_JOTDROP)[0]?.view;
+        if (view instanceof JotDropView) view.openDuplicates();
+      },
+    });
+
+    this.addCommand({
       id: "quick-capture-keep",
       name: t("cmd_quick_capture"),
       callback: () => new QuickCaptureModal(this.app, this).open(),

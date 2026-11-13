@@ -2236,3 +2236,8 @@ button.jotdrop-provider-github:not(.clickable-icon):hover { background: #32383f;
 .jotdrop-ai-receipt-keep { border: none; padding: 0; margin: 6px 0; }
 .jotdrop-ai-receipt-keep legend { padding: 0; }
 .jotdrop-ai-receipt-keep button[aria-pressed="true"] { font-weight: 600; }
+.jotdrop-dup-list { list-style: none; padding: 0; margin: 0; }
+.jotdrop-dup-item { border: 1px solid var(--background-modifier-border); border-radius: var(--radius-m); padding: 8px 12px; margin: 0 0 10px; }
+.jotdrop-dup-item h4 { margin: 0 0 4px; }
+.jotdrop-dup-item p { margin: 2px 0; }
+.jotdrop-dup-compare { margin: 6px 0; max-height: 40vh; overflow: auto; }
