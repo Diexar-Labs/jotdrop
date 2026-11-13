@@ -53,7 +53,7 @@ function tile(label, value, note) {
 const LIMITS = {
   storage: 'Storage full', devices: 'One device too many', 'file-size': 'File too large', links: 'A second link', 'link-days': 'A link longer than 7 days',
   'shared-spaces': 'A second shared note', 'old-trash': 'Restore a note deleted over 30 days ago', 'old-version': 'Open a version older than 30 days',
-  voting: 'Vote on the roadmap', mail: 'Turn on Mail to JotDrop', 'family-invite': 'Invite people without a family plan',
+  voting: 'Vote on the roadmap', mail: 'Turn on Mail to JotDrop', 'family-invite': 'Invite people without a family plan', 'ai-key': 'One AI key on all devices',
 };
 const plural = (count, one, many) => `${count} ${count === 1 ? one : many}`;
 // What each app calls itself in its X-JotDrop-Client header; an app this page does not know yet shows its own name.

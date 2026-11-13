@@ -254,7 +254,8 @@ def use_markdown_editor(browser):
     browser.new_context = with_markdown_editor
 
 
-def main(check=check_browser, history_limit=5, camera=False):
+def main(check=check_browser, history_limit=5, camera=False, with_data=False):
+    """with_data: the check also gets the server's data directory, to change a plan in its database."""
     root = Path(__file__).resolve().parent.parent
     with tempfile.TemporaryDirectory(prefix="jotdrop-browser-test-") as directory:
         with socket.socket() as candidate:
@@ -270,7 +271,7 @@ def main(check=check_browser, history_limit=5, camera=False):
                 browser = playwright.chromium.launch(headless=True, channel=sys.argv[1] if len(sys.argv) > 1 else "msedge", args=["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"] if camera else [])
                 use_markdown_editor(browser)
                 try:
-                    result = check(browser, f"http://127.0.0.1:{port}", token)
+                    result = check(browser, f"http://127.0.0.1:{port}", token, *([Path(directory)] if with_data else []))
                     with closing(sqlite3.connect((Path(directory) / "cloud.db").as_uri() + "?mode=ro", uri=True)) as database:
                         if check is check_browser:
                             for table, count in [("revisions", 5), ("changes", 5), ("envelopes", 3), ("devices", 2), ("pairings", 1)]:

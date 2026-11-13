@@ -106,6 +106,10 @@ const SPACE_ROUTES = [['GET', /^\/changes$/], ['GET', /^\/status$/], ['POST', /^
   ['GET', /^\/objects\/[0-9a-f]{64}$/], ['PUT', /^\/objects\/[0-9a-f]{64}$/], ['DELETE', /^\/objects\/[0-9a-f]{64}$/], ['GET', /^\/objects\/[0-9a-f]{64}\/history$/], ['POST', /^\/objects\/[0-9a-f]{64}\/restore$/]];
 const MAX_SPACE_MEMBERS = 20, MAX_OPEN_INVITES = 20, MAX_MEMBERSHIPS = 100, MAX_OWN_SPACES = 100, MAX_SPACE_PREFS = 64 * 1024;
 const INVITE_LIFETIME = 7 * DAY, TAKEOVER_WAIT = 7 * DAY, FROZEN_SPACE_LIFETIME = 30 * DAY, UNFINISHED_SPACE_LIFETIME = 2 * DAY;
+// Ask JotDrop, "Use this key on all my devices": the apps that may keep and fetch the sealed AI key. jotdrop-mcp gives an
+// AI agent its tools and none of them may come near the key; an app that never asks for it stays out as well. The app
+// name is what the device says about itself: an extra lock, not proof.
+const AI_KEY_APPS = ['web', 'obsidian', 'android'], MAX_AI_KEY = 8 * 1024;
 
 /** QR code as rows of "1" (dark) and "0", so every client can draw it without a QR library of its own. */
 function qrRows(text) {
@@ -362,6 +366,9 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       // How a subscription is billed, from Stripe: 'month' or 'year', and the currency.
       db.exec('CREATE TABLE IF NOT EXISTS subscription_details(subscriptionId TEXT PRIMARY KEY, interval TEXT, currency TEXT);');
       db.exec('CREATE TABLE IF NOT EXISTS purges(vaultId TEXT NOT NULL, id TEXT NOT NULL, revision INTEGER NOT NULL, purgedAt INTEGER NOT NULL, PRIMARY KEY(vaultId,id));');
+      // Ask JotDrop, the key on all your devices: one blob per cloud, sealed with the vault key, without history.
+      // No foreign key to vaults: an older server must keep deleting clouds; the sweep removes what it leaves behind.
+      db.exec('CREATE TABLE IF NOT EXISTS ai_keys(vaultId TEXT PRIMARY KEY, sealed TEXT NOT NULL, updatedAt INTEGER NOT NULL);');
       // Who uploaded a piece that no version uses yet; only set in a space, so one member cannot block the others.
       if (!all('PRAGMA table_info(chunks)').some((column) => column.name === 'deviceId')) db.exec('ALTER TABLE chunks ADD COLUMN deviceId TEXT;');
       db.exec('CREATE INDEX IF NOT EXISTS chunks_by_device ON chunks(deviceId) WHERE deviceId IS NOT NULL;');
@@ -1175,7 +1182,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       run('DELETE FROM code_failures WHERE scope IN (?,?,?)', `login:${account.id}`, `reset:${account.id}`, `signup:${account.email}`);
       run('DELETE FROM accounts WHERE id=?', account.id);
     }
-    for (const table of ['uploads', 'pairings', 'revisions', 'envelope_chunks', 'chunks', 'retired_envelopes', 'envelopes', 'changes', 'purges', 'signups', 'devices', 'plans', 'trials', 'subscriptions', 'mail_accounts', 'mail_senders', 'mail_items', 'mail_parts', 'mail_log']) run(`DELETE FROM ${table} WHERE vaultId=?`, vaultId);
+    for (const table of ['uploads', 'pairings', 'revisions', 'envelope_chunks', 'chunks', 'retired_envelopes', 'envelopes', 'changes', 'purges', 'signups', 'devices', 'plans', 'trials', 'subscriptions', 'mail_accounts', 'mail_senders', 'mail_items', 'mail_parts', 'mail_log', 'ai_keys']) run(`DELETE FROM ${table} WHERE vaultId=?`, vaultId);
     run('DELETE FROM vaults WHERE id=?', vaultId);
   }
   function forgetAddress(account, kind) {
@@ -1232,6 +1239,8 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       run('DELETE FROM family_subscriptions WHERE subscriptionId NOT IN (SELECT subscriptionId FROM subscriptions)');
       run('DELETE FROM subscription_details WHERE subscriptionId NOT IN (SELECT subscriptionId FROM subscriptions)');
       run('DELETE FROM limit_hits WHERE weekStart<?', now - 26 * 7 * DAY);
+      // A sealed AI key never outlives its cloud, also when an older server deleted the cloud without knowing this table.
+      run('DELETE FROM ai_keys WHERE vaultId NOT IN (SELECT id FROM vaults)');
       run('DELETE FROM space_reports WHERE createdAt<=? OR accountId NOT IN (SELECT id FROM accounts)', now - 24 * 60 * 60 * 1000);
       run('UPDATE spaces SET ownerGoneAt=?,frozenAt=COALESCE(frozenAt,?) WHERE ownerGoneAt IS NULL AND ownerAccountId NOT IN (SELECT id FROM accounts)', now, now);
       const finished = all(`SELECT s.id FROM spaces s WHERE s.frozenAt<=? OR (s.createdAt<=? AND ${unfinishedSql}) OR NOT EXISTS (SELECT 1 FROM space_members m WHERE m.spaceId=s.id)`, now - FROZEN_SPACE_LIFETIME, now - UNFINISHED_SPACE_LIFETIME);
@@ -1724,7 +1733,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   // providers' fixed addresses and Ollama on the user's own computer. Never `https:` in general, and no free address.
   const aiConnect = 'https://api.anthropic.com https://api.openai.com https://generativelanguage.googleapis.com https://openrouter.ai http://127.0.0.1:11434 http://localhost:11434';
   assets.set('/ai-web.mjs', [join(webRoot, 'ai-web.mjs'), 'text/javascript']);
-  for (const name of ['assistant.mjs', 'providers.mjs', 'tools.mjs', 'prompt.mjs', 'context.mjs', 'redact.mjs', 'markdown.mjs', 'parts.mjs', 'receipt.mjs', 'digest.mjs']) assets.set(`/shared/ai/${name}`, [join(directory, 'shared', 'ai', name), 'text/javascript']);
+  for (const name of ['assistant.mjs', 'providers.mjs', 'tools.mjs', 'prompt.mjs', 'context.mjs', 'redact.mjs', 'markdown.mjs', 'parts.mjs', 'receipt.mjs', 'digest.mjs', 'keysync.mjs']) assets.set(`/shared/ai/${name}`, [join(directory, 'shared', 'ai', name), 'text/javascript']);
   // Turnstile's widget is the one script and frame from elsewhere, and only when the person check is on.
   const challenges = turnstile ? ' https://challenges.cloudflare.com' : '';
   let server, activeRequests = 0;
@@ -1997,8 +2006,9 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           run('UPDATE subscriptions SET vaultId=? WHERE vaultId=?', vaultId, account.vaultId);
           setCredentials(account.id, next);
           run('DELETE FROM device_approvals WHERE accountId=?', account.id);
-          // Nobody can read the old ciphertext any more; deleting it is what the user confirmed.
-          for (const table of ['uploads', 'pairings', 'revisions', 'envelope_chunks', 'chunks', 'retired_envelopes', 'envelopes', 'changes', 'purges', 'signups', 'devices']) run(`DELETE FROM ${table} WHERE vaultId=?`, account.vaultId);
+          // Nobody can read the old ciphertext any more; deleting it is what the user confirmed. Mail to JotDrop goes too:
+          // its address, filter and sealed mail belong to the old key, and mail_accounts still points at the vault that is deleted here.
+          for (const table of ['uploads', 'pairings', 'revisions', 'envelope_chunks', 'chunks', 'retired_envelopes', 'envelopes', 'changes', 'purges', 'signups', 'devices', 'ai_keys', 'mail_accounts', 'mail_senders', 'mail_items', 'mail_parts', 'mail_log']) run(`DELETE FROM ${table} WHERE vaultId=?`, account.vaultId);
           run('DELETE FROM vaults WHERE id=?', account.vaultId);
           return addDevice(vaultId, value.deviceName, value.deviceTokenHash);
         })); return;
@@ -2402,6 +2412,43 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           if (!response.ok || typeof session.url !== 'string' || !session.url.startsWith('https://checkout.stripe.com/')) throw new Error('Stripe refused the checkout');
         } catch { fail(502, 'Could not start the payment. Try again later.'); }
         reply(200, { url: session.url }); return;
+      }
+      // Ask JotDrop, "Use this key on all my devices" (JotDrop Plus). The AI key arrives sealed with the vault key, with
+      // the cloud's id in its AAD; the server keeps one blob per cloud and cannot open it. A shared space never comes
+      // here (SPACE_ROUTES): the key belongs to one account.
+      if (route === '/ai-key') {
+        // Before the plan: a device that is not let in learns nothing, and its attempt is no limit that Plus lifts.
+        if (!AI_KEY_APPS.includes(client?.app)) fail(403, 'This app cannot use one AI key on all your devices.', { code: 'client-not-allowed' });
+        if (method === 'GET') {
+          // Devices look once a day; that is no attempt to buy something, so it is not counted (no planLimit).
+          if (!isPlus(vaultId)) fail(402, 'Using one AI key on all your devices is part of JotDrop Plus.', { code: 'plus-required' });
+          // The code tells "no key" apart from an older server that does not know this address (a plain 404).
+          const kept = one('SELECT sealed,updatedAt FROM ai_keys WHERE vaultId=?', vaultId) ?? fail(404, 'No AI key is kept for your devices.', { code: 'no-ai-key' });
+          reply(200, { sealed: kept.sealed, updatedAt: kept.updatedAt }); return;
+        }
+        if (method === 'PUT') {
+          limit(`ai-key:${vaultId}`, 20);
+          const value = await body(req, MAX_METADATA_BODY);
+          envelopeSize(value.sealed, MAX_AI_KEY);
+          const updatedAt = transaction(() => {
+            requireAccess(vaultId, deviceId);
+            if (!isPlus(vaultId)) planLimit('ai-key', vaultId, 402, 'Using one AI key on all your devices is part of JotDrop Plus.');
+            // Later than the blob it replaces, whatever the clock does: devices take a new key only when its time is later.
+            const time = Math.max(clock(), (one('SELECT updatedAt FROM ai_keys WHERE vaultId=?', vaultId)?.updatedAt ?? 0) + 1);
+            run('INSERT INTO ai_keys(vaultId,sealed,updatedAt) VALUES(?,?,?) ON CONFLICT(vaultId) DO UPDATE SET sealed=excluded.sealed,updatedAt=excluded.updatedAt', vaultId, value.sealed, time);
+            return time;
+          });
+          reply(200, { updatedAt }); return;
+        }
+        if (method === 'DELETE') {
+          // Always allowed, with or without Plus: nobody has to pay to get their sealed key off our server.
+          transaction(() => {
+            requireAccess(vaultId, deviceId);
+            run('DELETE FROM ai_keys WHERE vaultId=?', vaultId);
+          });
+          reply(200, { ok: true }); return;
+        }
+        fail(405, 'Method not allowed');
       }
       if (route === '/spaces' || route.startsWith('/spaces/') || route.startsWith('/invites/')) { await spaceRequest(req, reply, method, route, vaultId, deviceId, ip); return; }
       if (route === '/links' || route.startsWith('/links/')) {

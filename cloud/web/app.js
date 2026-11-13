@@ -17,6 +17,7 @@ import { createDrawingEditor } from '/shared/drawing-editor.mjs';
 import { AiError, TRANSCRIBE_MODEL, createProvider, pickDefaultModel } from '/shared/ai/providers.mjs';
 import { FILE_TIMEOUT_MS, runAssistant } from '/shared/ai/assistant.mjs';
 import { selectNotes } from '/shared/ai/context.mjs';
+import { decideKeySync, keyLabel, readSharedKey, removeSharedKey, sameService, saveSharedKey, sharedKey } from '/shared/ai/keysync.mjs';
 import { parseMarkdown } from '/shared/ai/markdown.mjs';
 import { LIMITS, capabilities, decodedLength, explain } from '/shared/ai/parts.mjs';
 import { KEEP_YEARS, keepUntil, parseReceipt, receiptRequest } from '/shared/ai/receipt.mjs';
@@ -1711,7 +1712,7 @@ async function sync() {
   // Only a sync that takes a while can be paused: a quick check every 30 seconds that showed the button
   // and hid it again added a toolbar row on some widths and moved the whole page (Eric, 27 Oct).
   const showPause = setTimeout(() => { if (syncController === controller) $('pause-sync').hidden = false; }, 1000);
-  syncing = performSync(controller.signal).then(() => checkListLinks(activeGeneration)).catch((error) => {
+  syncing = performSync(controller.signal).then(() => checkListLinks(activeGeneration)).then(() => { void checkSharedKeyDaily().catch(() => {}); }).catch((error) => {
     if (activeGeneration !== generation) return;
     // Removed from a group or the group went read-only: that goes for this group only.
     if (activeSpace && (error.status === 401 || error.code === 'space-frozen' || error.code === 'space-unfinished')) void refreshSpaces();
@@ -2314,6 +2315,7 @@ function lock(notice = '') {
   // The AI key leaves memory with the workspace key; sealed in this browser it waits for the next unlock.
   closeAi();
   aiConfig = aiSettings();
+  aiRemote = undefined;
   renderAiSettings();
   editing = undefined;
   releaseMedia(true);
@@ -3137,6 +3139,7 @@ for (const navigation of document.querySelectorAll('[data-view]')) navigation.ad
   message();
   render();
   if (view === 'devices') void Promise.all([renderDevices(), renderAccount()]).catch((error) => message(errorText(error)));
+  if (view === 'devices') void checkSharedKey();
 });
 $('edit-labels').addEventListener('click', () => {
   $('labels-message').textContent = '';
@@ -4286,6 +4289,7 @@ let aiRun;
 let aiConfirming;
 let aiLast;
 let aiOpen;
+let aiOpened;
 let dictation;
 for (const [id, spec] of Object.entries(WEB_PROVIDERS)) $('ai-provider').append(new Option(spec.name, id));
 
@@ -4338,7 +4342,9 @@ function renderAiSettings() {
   $('ai-model').value = aiConfig.model;
   $('ai-shared').checked = aiConfig.includeShared;
   $('ai-key').value = '';
+  $('ai-remove-choice').hidden = true;
   showAiProvider();
+  renderAiSync();
 }
 // The service's models as a plain list in groups. A suggestion list (datalist) showed only the models matching what
 // was already in the field, so after the default was filled in it showed one family only (Eric, 9 Nov 2026).
@@ -4369,7 +4375,7 @@ $('ai-provider').addEventListener('change', () => {
 // What the form says now; an empty key field keeps the saved key of the same service.
 function aiFormSettings() {
   const provider = $('ai-provider').value, typed = $('ai-key').value.trim();
-  return aiSettings({ provider, key: typed || (provider === aiConfig.provider ? aiConfig.key : ''), model: $('ai-model').value, includeShared: $('ai-shared').checked });
+  return aiSettings({ provider, key: typed || (provider === aiConfig.provider ? aiConfig.key : ''), model: $('ai-model').value, includeShared: $('ai-shared').checked, synced: aiConfig.synced });
 }
 $('ai-form').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -4377,9 +4383,12 @@ $('ai-form').addEventListener('submit', async (event) => {
   try {
     const next = aiFormSettings();
     if (next.provider && WEB_PROVIDERS[next.provider].needsKey && !next.key) throw new Error('Paste your API key first.');
+    // A browser that follows the shared key passes its new settings on, or lets go when there is nothing to share.
+    const followed = aiConfig.synced;
     await saveAiSettings(next);
     renderAiSettings();
-    aiSay(next.provider ? 'Saved. Ask JotDrop is on in this browser.' : 'Saved. Ask JotDrop is off.');
+    const saved = next.provider ? 'Saved. Ask JotDrop is on in this browser.' : 'Saved. Ask JotDrop is off.';
+    aiSay(followed ? `${saved} ${await shareSavedKey()}` : saved);
   } catch (error) { aiSay(aiErrorText(error), true); }
 });
 // Asking for the model list checks key and connection; no note goes along.
@@ -4398,13 +4407,181 @@ $('ai-test').addEventListener('click', async () => {
   } catch (error) { aiSay(aiErrorText(error, $('ai-provider').value), true); }
   finally { $('ai-test').disabled = !WEB_PROVIDERS[$('ai-provider').value]; }
 });
+async function removeAiHere(said) {
+  await store('delete', aiStoreKey());
+  aiConfig = aiSettings();
+  renderAiSettings();
+  showAiModels([]);
+  aiSay(said);
+}
 $('ai-remove').addEventListener('click', async () => {
+  // A key the other devices use too: the user says where it goes.
+  if (aiConfig.synced) { $('ai-remove-choice').hidden = false; $('ai-remove-all').focus(); return; }
+  try { await removeAiHere('Ask JotDrop is off, and the key is removed from this browser.'); } catch (error) { aiSay(aiErrorText(error), true); }
+});
+
+// "Use this key on all my devices" (JotDrop Plus; Hand-off/ontwerp-ask-jotdrop-v2.md 4.8). The key goes to the
+// server sealed with the account's own workspace key, in a place of its own (never a file of the workspace), and
+// the server cannot open it. Another device shows "Use it here?" and keeps its own copy after one tap. What the
+// server has is looked at when these settings or Ask JotDrop open, and once a day by a browser that follows a
+// shared key. The key itself is never shown, logged or put in a message.
+let aiRemote;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const aiCheckedKey = () => `ai-key-checked:${ownClient.credentials.vaultId}`;
+const aiLocal = () => ({ hasKey: Boolean(aiConfig.provider), synced: aiConfig.synced });
+const aiKeyAction = () => (aiRemote ? decideKeySync(aiLocal(), aiRemote) : 'none');
+const webCanUse = (config) => Object.hasOwn(WEB_PROVIDERS, config?.provider);
+const keyPlusText = 'Using one key on all your devices is part of JotDrop Plus.';
+// A newer shared key for another service than the one here: it changes where questions and notes go, so it is asked.
+const aiKeySwitched = () => aiKeyAction() === 'update' && !sameService(aiRemote.config, aiConfig);
+// A key that is ready for this browser, in words; '' when there is none.
+function aiOfferText() {
+  const switched = aiKeySwitched();
+  if (!switched && aiKeyAction() !== 'offer') return '';
+  const label = keyLabel(aiRemote.config), usable = webCanUse(aiRemote.config);
+  if (switched) return usable ? `Your other devices now use a key for ${label}. Use it here too? Until then this browser keeps the key it has.` : `Your other devices now use a key for ${label}, which the web app cannot use. This browser keeps the key it has.`;
+  return usable ? `A key from another device is ready: ${label}. Use it here?` : `A key from another device is ready, for ${label}. The web app cannot use an own address, so that key stays on your other devices.`;
+}
+function renderAiSync() {
+  const action = aiKeyAction(), spec = WEB_PROVIDERS[aiConfig.provider];
+  $('ai-sync').checked = Boolean(aiConfig.synced);
+  // Only a saved key of an AI service can go to other devices; a local model has none.
+  $('ai-sync').disabled = !ownClient || (!aiConfig.synced && !(spec?.needsKey && aiConfig.key));
+  $('ai-sync-status').textContent = aiConfig.synced
+    ? action === 'waiting' || (currentPlan && currentPlan.name !== 'plus') ? 'This waits for JotDrop Plus. This browser keeps its key, and nothing is removed.' : 'On: your other devices can use this key.'
+    : action === 'available' ? `Your other devices share a key for ${keyLabel(aiRemote.config)}. Switch this on to use that key here too.` : '';
+  const offer = aiOfferText();
+  $('ai-offer').hidden = !offer;
+  $('ai-offer-text').textContent = offer;
+  $('ai-offer-use').hidden = !offer || !webCanUse(aiRemote.config);
+}
+// Ask JotDrop, when it is open and off: the same offer there.
+function renderAiOff() {
+  if (!$('ai-dialog').open || $('ai-off').hidden || aiConfig.provider) return;
+  const offer = aiOfferText();
+  $('ai-off-text').textContent = offer ? `Ask JotDrop is off in this browser. ${offer}` : aiOffReason();
+  $('ai-off-use').hidden = !offer || !webCanUse(aiRemote.config);
+  // One main button: with a key ready that is "Use it here".
+  $('ai-setup').classList.toggle('primary', $('ai-off-use').hidden);
+  if (!$('ai-off-use').hidden) $('ai-off-use').focus();
+}
+/** Looks at what the server has and follows it: a newer shared key replaces the copy, a removed one takes it away. */
+async function checkSharedKey() {
+  if (!ownClient || aiRun) return;
+  const own = ownClient, opened = generation;
+  // On the free plan the server answers "Plus" without saying more; nothing to ask.
+  const remote = currentPlan && currentPlan.name !== 'plus' ? { status: 'plus' } : await readSharedKey(own);
+  if (opened !== generation || own !== ownClient) return;
+  aiRemote = remote;
+  if (remote.status !== 'unavailable') await store('put', aiCheckedKey(), Date.now()).catch(() => {});
+  const action = aiKeyAction();
   try {
-    await store('delete', aiStoreKey());
-    aiConfig = aiSettings();
-    renderAiSettings();
-    showAiModels([]);
-    aiSay('Ask JotDrop is off, and the key is removed from this browser.');
+    if (action === 'update' && !aiKeySwitched()) {
+      // The same service with a new key: taken without a question. Another service waits for "Use it here".
+      await saveAiSettings(aiSettings({ ...remote.config, includeShared: aiConfig.includeShared, synced: remote.updatedAt }));
+      renderAiSettings();
+      aiSay('The key was replaced on another device. This browser now uses the new one.');
+    } else if (action === 'remove') {
+      const said = 'The key was removed on another device, so Ask JotDrop is off in this browser. Add a key to turn it on again.';
+      await removeAiHere(said);
+      message(said);
+    } else renderAiSync();
+  } catch (error) { aiSay(aiErrorText(error), true); }
+  renderAiOff();
+}
+// Once a day, after an ordinary sync, and only by a browser that follows a shared key.
+async function checkSharedKeyDaily() {
+  if (!ownClient || !aiConfig.synced) return;
+  const last = await store('get', aiCheckedKey()).catch(() => 0);
+  if (!(Date.now() - last < DAY_MS)) await checkSharedKey();
+}
+/** One tap on another device: this browser keeps its own sealed copy of the shared key and follows it from now on. */
+async function useSharedKey() {
+  const own = ownClient, opened = generation;
+  // A fresh look, so it is the key of this moment.
+  const remote = await readSharedKey(own);
+  if (opened !== generation || own !== ownClient) return false;
+  aiRemote = remote;
+  if (remote.status !== 'found' || !remote.config || !webCanUse(remote.config)) {
+    renderAiSync();
+    aiSay(remote.status === 'plus' ? keyPlusText : remote.status === 'unavailable' ? 'Could not reach JotDrop for the key. Try again in a moment.' : 'That key is no longer there.', true);
+    return false;
+  }
+  await saveAiSettings(aiSettings({ ...remote.config, includeShared: aiConfig.includeShared, synced: remote.updatedAt }));
+  renderAiSettings();
+  showAiModels([]);
+  aiSay(`Ask JotDrop is on in this browser, with the key for ${keyLabel(remote.config)}.`);
+  return true;
+}
+/** After Save in a browser that follows the shared key: the other devices get the new settings. Returns what to say. */
+async function shareSavedKey() {
+  try { sharedKey(aiConfig); } catch (error) {
+    // A local model or "Off" has nothing to share: this browser lets go, the other devices keep their key.
+    await saveAiSettings({ ...aiConfig, synced: 0 });
+    renderAiSync();
+    return aiConfig.provider ? `${error.message} This browser no longer follows the key of your other devices; they keep it.` : 'This browser no longer follows the key of your other devices; they keep it.';
+  }
+  try {
+    await saveAiSettings({ ...aiConfig, synced: await saveSharedKey(ownClient, aiConfig) });
+    renderAiSync();
+    return 'Your other devices get the same key.';
+  } catch (error) {
+    if (error.code === 'plus-required') offerPlus('JotDrop Plus puts your AI key on all your devices.');
+    return `Your other devices keep the earlier key: ${error.code === 'plus-required' ? keyPlusText : errorMessage(error)}`;
+  }
+}
+$('ai-sync').addEventListener('change', async () => {
+  const on = $('ai-sync').checked;
+  $('ai-sync').disabled = true;
+  aiSay('');
+  try {
+    if (on) {
+      const remote = await readSharedKey(ownClient);
+      aiRemote = remote;
+      if (remote.status === 'plus') throw Object.assign(new Error(keyPlusText), { code: 'plus-required' });
+      if (remote.status === 'unavailable') throw new Error('Could not reach JotDrop for this. Try again in a moment.');
+      // A blob this version cannot open may come from a newer app: never write over it.
+      if (remote.status === 'found' && !remote.config) throw new Error('Your other devices share a key that this page cannot open. Reload the page, or update JotDrop on your other devices, and try again.');
+      if (remote.status === 'found' && (remote.config.provider !== aiConfig.provider || remote.config.key !== aiConfig.key)) {
+        // The other devices already share another key: take theirs, never replace it without a word.
+        if (!webCanUse(remote.config)) throw new Error(`Your other devices share a key for ${keyLabel(remote.config)}, which the web app cannot use. This browser keeps its own key.`);
+        if (confirm(`Your other devices already share a key for ${keyLabel(remote.config)}.\n\nOK: use that key in this browser too. It replaces the key that is here now.\nCancel: this browser keeps its own key and nothing changes.`)) await useSharedKey();
+        return;
+      }
+      await saveAiSettings({ ...aiConfig, synced: await saveSharedKey(ownClient, aiConfig) });
+      aiSay('On. Open Ask JotDrop on your other devices and select "Use it here".');
+    } else {
+      if (!confirm('Stop using this key on all your devices?\n\nJotDrop removes its sealed copy. Your other devices that got the key this way lose it, and Ask JotDrop turns off there. This browser keeps the key.')) return;
+      await removeSharedKey(ownClient);
+      await saveAiSettings({ ...aiConfig, synced: 0 });
+      aiRemote = { status: 'none' };
+      aiSay('Off. The sealed copy is removed. This browser keeps its key.');
+    }
+  } catch (error) {
+    if (error.code === 'plus-required') { offerPlus('JotDrop Plus puts your AI key on all your devices.'); aiSay(keyPlusText, true); }
+    else aiSay(aiErrorText(error), true);
+  } finally { renderAiSync(); }
+});
+$('ai-offer-use').addEventListener('click', async () => { try { await useSharedKey(); } catch (error) { aiSay(aiErrorText(error), true); } });
+$('ai-off-use').addEventListener('click', async () => {
+  $('ai-off-use').disabled = true;
+  try {
+    // Ask JotDrop opens again as it was asked, now with the key.
+    if (await useSharedKey()) openAi(aiOpened);
+    else renderAiOff();
+  } catch (error) { $('ai-off-text').textContent = aiErrorText(error); }
+  finally { $('ai-off-use').disabled = false; }
+});
+$('ai-remove-cancel').addEventListener('click', () => { $('ai-remove-choice').hidden = true; $('ai-remove').focus(); });
+$('ai-remove-here').addEventListener('click', async () => {
+  try { await removeAiHere('Ask JotDrop is off, and the key is removed from this browser. Your other devices keep it.'); } catch (error) { aiSay(aiErrorText(error), true); }
+});
+$('ai-remove-all').addEventListener('click', async () => {
+  try {
+    // First the sealed copy on the server: if that fails, nothing is removed and the user can try again.
+    await removeSharedKey(ownClient);
+    aiRemote = { status: 'none' };
+    await removeAiHere('Ask JotDrop is off. The key is removed from this browser and from JotDrop. Your other devices drop it the next time they look, within a day.');
   } catch (error) { aiSay(aiErrorText(error), true); }
 });
 
@@ -4573,6 +4750,7 @@ function resetAiResult() {
  */
 function openAi({ entry, editor, request = '', send = false, summarize = false, kind = 'ask', merge } = {}) {
   if (!client || aiRun) return;
+  aiOpened = { entry, editor, request, send, summarize, kind, merge };
   if (merge) kind = 'merge';
   aiScope = { pinned: entry ? [entry.id] : editor ? [editor.id] : merge ? [merge.older.id, merge.newer.id] : [], target: entry, editor, kind: summarize ? 'summarize' : kind, merge };
   if (kind === 'digest') {
@@ -4610,6 +4788,8 @@ function openAi({ entry, editor, request = '', send = false, summarize = false, 
   $('ai-ask').hidden = Boolean(off);
   $('ai-off-text').textContent = off;
   $('ai-setup').hidden = !off || Boolean(moment) || Boolean(aiConfig.provider && activeSpace);
+  $('ai-off-use').hidden = true;
+  $('ai-setup').classList.add('primary');
   $('ai-goes').hidden = Boolean(editor);
   // A file action shows the file at once: the user sends it, or chooses another one first. Its request is fixed.
   $('ai-goes').open = FILE_KINDS.has(kind) || FIXED_KINDS.has(kind);
@@ -4620,6 +4800,8 @@ function openAi({ entry, editor, request = '', send = false, summarize = false, 
   renderGoes();
   if (off) ($('ai-setup').hidden ? $('ai-close') : $('ai-setup')).focus();
   else if (send) void sendAi();
+  // No key in this browser: maybe another device shares one.
+  if (off && !aiConfig.provider && !activeSpace && !moment) { renderAiOff(); void checkSharedKey(); }
   else $('ai-request').focus();
 }
 $('ask-jotdrop').addEventListener('click', () => openAi());
