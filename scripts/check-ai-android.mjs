@@ -1,7 +1,8 @@
 // Ask JotDrop on Android against the shared code: the Kotlin check (android/checks/AiCheck.kt) plays every case of
 // cloud/shared/ai/ai-vectors.json and ai-vectors-v2.json (files, transcription, receipts), and compares note edits,
 // note choice, the prompt, the file table and the receipt lines with what the web app's JavaScript makes of the
-// cases below.
+// cases below. Part G (the key on all your devices): AiKeySync.kt plays ai-key-vectors.json, opens blobs keysync.mjs
+// sealed, and the blobs it seals are opened here with keysync.mjs.
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -13,6 +14,7 @@ import { formatNotes, searchNotes, selectNotes } from '../cloud/shared/ai/contex
 import { systemPrompt } from '../cloud/shared/ai/prompt.mjs';
 import { findDuplicates, normalizeText, pairKey } from '../cloud/shared/similar.mjs';
 import { digestRequest, wallClock, weekDigest } from '../cloud/shared/ai/digest.mjs';
+import { openKey, sealKey } from '../cloud/shared/ai/keysync.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ai = path.join(root, 'cloud/shared/ai');
@@ -199,15 +201,30 @@ for (const name of ['buildNoteSummaries', 'extractTitle', 'extractSnippet', 'wit
 if (/attachments: Map<String, Uri> = snapshotAttachments/.test(storage)) throw new Error('Storage.kt: buildNoteSummaries must get the attachments of its listing, not read the folder again');
 if (/traverseSubfolder\(context, tree, "\$\{getSubfolder\(context\)\}\/Mail"\)/.test(storage)) throw new Error('Storage.kt: Mail is a folder in the notes folder; take it from that listing');
 
+// Part G: blobs the web app seals (random IVs, so new ones every run) for Kotlin to open, and Kotlin's for keysync.mjs.
+const keyVectors = readJson('cloud/shared/ai/ai-key-vectors.json');
+const cross = { web: await Promise.all(keyVectors.opens.map(async ({ name, config }) => ({ name, config, sealed: await sealKey(keyVectors.vaultKey, keyVectors.vaultId, config) }))) };
+
 const temporary = mkdtempSync(path.join(tmpdir(), 'jotdrop-ai-android-'));
 try {
   const editsFile = path.join(temporary, 'edits.json');
   writeFileSync(editsFile, JSON.stringify(edits));
+  const crossFile = path.join(temporary, 'key-cross.json'), outFile = path.join(temporary, 'key-android.json');
+  writeFileSync(crossFile, JSON.stringify(cross));
   const windows = process.platform === 'win32';
   execFileSync(windows ? process.env.ComSpec || 'cmd.exe' : './gradlew', windows ? ['/d', '/c', 'gradlew.bat checkAi --no-daemon --console=plain'] : ['checkAi', '--no-daemon', '--console=plain'], {
     cwd: path.join(root, 'android'), stdio: 'inherit',
-    env: { ...process.env, JOTDROP_AI_VECTORS: path.join(ai, 'ai-vectors.json'), JOTDROP_AI_TOOLS: path.join(ai, 'tools.json'), JOTDROP_AI_PROMPT: path.join(ai, 'prompt.json'), JOTDROP_AI_EDITS: editsFile, JOTDROP_AI_VECTORS_V2: path.join(ai, 'ai-vectors-v2.json') },
+    env: { ...process.env, JOTDROP_AI_VECTORS: path.join(ai, 'ai-vectors.json'), JOTDROP_AI_TOOLS: path.join(ai, 'tools.json'), JOTDROP_AI_PROMPT: path.join(ai, 'prompt.json'), JOTDROP_AI_EDITS: editsFile, JOTDROP_AI_VECTORS_V2: path.join(ai, 'ai-vectors-v2.json'),
+      JOTDROP_AI_KEY_VECTORS: path.join(ai, 'ai-key-vectors.json'), JOTDROP_AI_KEY_CROSS: crossFile, JOTDROP_AI_KEY_OUT: outFile },
   });
+  // What Android sealed opens in the web app with the same settings, and not for another workspace.
+  const sealed = JSON.parse(readFileSync(outFile, 'utf8')).android;
+  if (sealed.length !== keyVectors.opens.length) throw new Error('AiKeySync.kt sealed fewer blobs than the vectors have');
+  for (const { name, config, sealed: blob } of sealed) {
+    const opened = await openKey(keyVectors.vaultKey, keyVectors.vaultId, blob);
+    if (JSON.stringify(opened) !== JSON.stringify(config)) throw new Error(`keysync.mjs does not open what Android sealed: ${name}`);
+    if (await openKey(keyVectors.vaultKey, '1b0f6f0e-3c56-4d0a-9d55-7a1c3a5e9f10', blob) !== null) throw new Error(`Android's blob opens for another workspace: ${name}`);
+  }
   console.log('Android Ask JotDrop parity ok');
 } finally {
   rmSync(temporary, { recursive: true, force: true });

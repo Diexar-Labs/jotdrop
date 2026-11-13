@@ -243,7 +243,7 @@ tasks.register<JavaExec>("checkListLinks") {
 
 // Ask JotDrop: the same requests, answers, tool rules and note edits as cloud/shared/ai and cloud/web/ai-web.mjs.
 val aiClasses = layout.buildDirectory.dir("ai-check")
-val aiSources = files(listOf("AiJson", "AiRedact", "AiTools", "AiContext", "AiProviders", "AiAssistant", "AiNoteEdits", "AiAsk", "AiMarkdown", "CloudVersionDiff", "AiParts", "AiReceipt", "PaperDrawer", "ExpiryWords", "DrawingFormat", "Similar", "Digest")
+val aiSources = files(listOf("AiJson", "AiRedact", "AiTools", "AiContext", "AiProviders", "AiAssistant", "AiNoteEdits", "AiAsk", "AiMarkdown", "CloudVersionDiff", "AiParts", "AiReceipt", "PaperDrawer", "ExpiryWords", "DrawingFormat", "Similar", "Digest", "CloudCrypto", "AiKeySync")
     .map { "app/src/main/kotlin/com/diexar/keepcapture/$it.kt" } + "checks/AiCheck.kt")
 val aiCompile = tasks.register<JavaExec>("aiCompile") {
     inputs.files(aiSources)
@@ -264,7 +264,7 @@ tasks.register<JavaExec>("checkAi") {
     classpath(provider { project(":app").configurations.getByName("debugCompileClasspath") })
     mainClass.set("com.diexar.keepcapture.AiCheckKt")
     doFirst {
-        args(listOf("JOTDROP_AI_VECTORS", "JOTDROP_AI_TOOLS", "JOTDROP_AI_PROMPT", "JOTDROP_AI_EDITS", "JOTDROP_AI_VECTORS_V2").map { requireNotNull(System.getenv(it)) { "Run through npm run check:ai-android" } })
+        args(listOf("JOTDROP_AI_VECTORS", "JOTDROP_AI_TOOLS", "JOTDROP_AI_PROMPT", "JOTDROP_AI_EDITS", "JOTDROP_AI_VECTORS_V2", "JOTDROP_AI_KEY_VECTORS", "JOTDROP_AI_KEY_CROSS", "JOTDROP_AI_KEY_OUT").map { requireNotNull(System.getenv(it)) { "Run through npm run check:ai-android" } })
     }
 }
 

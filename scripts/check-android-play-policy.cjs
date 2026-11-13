@@ -73,11 +73,23 @@ for (const file of ["Attachments.kt", "AttachProblemsDialog.kt", "ShareFilesChoo
 
 // Ask JotDrop (generative AI with the user's own key): no price, currency or checkout link in its screens and texts,
 // a way to report an answer, every answer marked as AI, and a change to a note only after a yes.
-const aiFiles = ["android/app/src/main/kotlin/com/diexar/keepcapture/AiActivity.kt", ...["", "-nl", "-de", "-es", "-fr", "-it"].map((locale) => `android/app/src/main/res/values${locale}/strings_ai.xml`)];
+// "Use this key on all my devices" (13 Nov 2026, Ask JotDrop v2 phase 8) may name JotDrop Plus in words, as Mail to
+// JotDrop does: no price, no currency, no link, no offer to buy, and its code opens nothing.
+const aiLocales = ["", "-nl", "-de", "-es", "-fr", "-it"];
+const keySyncCode = ["AiKeySyncUi.kt", "AiKeyCloud.kt", "AiKeySync.kt"].map((file) => `android/app/src/main/kotlin/com/diexar/keepcapture/${file}`);
+const aiFiles = ["android/app/src/main/kotlin/com/diexar/keepcapture/AiActivity.kt", ...keySyncCode, ...aiLocales.map((locale) => `android/app/src/main/res/values${locale}/strings_ai.xml`)];
 for (const file of aiFiles) {
   const text = read(file);
-  check(!/€|\$\d|\bEUR\b|\bUSD\b|per month|per year|JotDrop Plus|checkout|stripe/i.test(text), `${file} must not name a price, Plus or a checkout`);
+  check(!/€|\$\d|\bEUR\b|\bUSD\b|per month|per year|per maand|per jaar|pro Monat|por mes|par mois|al mese|checkout|stripe/i.test(text), `${file} must not name a price or a checkout`);
   check(!/https?:\/\/[a-z0-9]/i.test(text), `${file} must not show a web link`);
+}
+for (const file of keySyncCode) check(!/Uri\.parse|ACTION_VIEW|uriHandler|LocalUriHandler|startActivity/.test(read(file)), `${file} must not open a link or a page`);
+// Plus is named only where the key sync speaks of it, and never as an offer to buy or upgrade.
+for (const locale of aiLocales) {
+  const strings = read(`android/app/src/main/res/values${locale}/strings_ai.xml`);
+  const plus = [...strings.matchAll(/<string name="([a-z_]+)">[^<]*JotDrop Plus[^<]*<\/string>/g)].map((match) => match[1]).sort();
+  check(JSON.stringify(plus) === JSON.stringify(["ai_sync_note", "ai_sync_plus", "ai_sync_waiting"]), `strings_ai.xml${locale}: JotDrop Plus belongs in ai_sync_note, ai_sync_plus and ai_sync_waiting only (found ${plus.join(", ")})`);
+  check(!/upgrade|subscri|abonne|suscri|abbona|abonnier|kopen|kaufen|comprar|acheter|acquista/i.test(strings), `strings_ai.xml${locale} must not ask the user to buy or upgrade`);
 }
 const aiUi = read(aiFiles[0]);
 check(aiUi.includes("R.string.ai_report") && aiUi.includes("mailto:hello@jotdrop.net"), "Ask JotDrop needs a report button for answers");

@@ -17,7 +17,9 @@ import java.util.Base64
  * and prompt from tools.json and prompt.json, and note edits computed by cloud/web/ai-web.mjs
  * (scripts/check-ai-android.mjs writes those and runs this). Version 2 (files, transcription, receipts): every case
  * of ai-vectors-v2.json, and the file table and receipt lines as cloud/web/ai-web.mjs makes them.
- * Arguments: ai-vectors.json, tools.json, prompt.json, edits.json, ai-vectors-v2.json.
+ * Version 2, part G: every case of ai-key-vectors.json, and blobs sealed by the web app and by this file.
+ * Arguments: ai-vectors.json, tools.json, prompt.json, edits.json, ai-vectors-v2.json, ai-key-vectors.json,
+ * the web app's blobs, and the file for the blobs sealed here.
  */
 private var passed = 0
 
@@ -510,6 +512,72 @@ private fun overview(edits: Map<String, Any?>) {
     }
 }
 
+// Version 2, part G ("Use this key on all my devices"): every case of cloud/shared/ai/ai-key-vectors.json, blobs the
+// web app sealed (cross.json, made by keysync.mjs in scripts/check-ai-android.mjs), and blobs sealed here, which the
+// script opens with keysync.mjs after this run. Only fake keys.
+private fun sharedJson(value: SharedAiKey?): Map<String, Any?>? = value?.let { mapOf("provider" to it.provider, "key" to it.key, "model" to it.model, "baseUrl" to it.baseUrl) }
+
+private fun keySync(vectors: Map<String, Any?>, cross: Map<String, Any?>, out: File) {
+    val vaultKey = vectors.str("vaultKey")!!
+    val vaultId = vectors.str("vaultId")!!
+    same(AiKeySync.aad(vaultId), "jotdrop:ai-key:v1:$vaultId", "key sync: the AAD")
+    check(runCatching { AiKeySync.aad(vaultId.uppercase()) }.isFailure) { "key sync: an id in capitals must not make an AAD" }
+    for (case in vectors.items("opens").map { it.obj()!! }) same(sharedJson(AiKeySync.openKey(vaultKey, vaultId, case["sealed"])), case["config"], "key sync opens: ${case["name"]}")
+    for (case in vectors.items("refuses").map { it.obj()!! }) same(sharedJson(AiKeySync.openKey(vaultKey, vaultId, case["sealed"])), null, "key sync refuses: ${case["name"]}")
+    for (case in vectors.items("shares").map { it.obj()!! }) {
+        val config = case.child("config")!!
+        val result = try { sharedJson(AiKeySync.sharedKey(config.str("provider") ?: "", config.str("key") ?: "", config.str("model") ?: "", config.str("baseUrl") ?: "")) }
+            catch (error: AiKeyShareException) { mapOf("error" to error.code) }
+        same(result, case["shared"] ?: mapOf("error" to case["error"]), "key sync shares: ${case["name"]}")
+        // What cannot be shared cannot be sealed either, and the message never holds the key.
+        if (case["error"] != null) {
+            val error = runCatching { AiKeySync.sealKey(vaultKey, vaultId, config.str("provider") ?: "", config.str("key") ?: "", config.str("model") ?: "", config.str("baseUrl") ?: "") }.exceptionOrNull()
+            check(error is AiKeyShareException) { "key sync: ${case["name"]} was sealed" }
+            val key = config.str("key").orEmpty().trim()
+            check(key.length < 8 || !error.message.orEmpty().contains(key)) { "key sync: the key is in the message" }
+        }
+    }
+    val fakeKey = SharedAiKey("anthropic", "sk-ant-test-NOT-A-REAL-KEY", "", "")
+    for (case in vectors.items("decisions").map { it.obj()!! }) {
+        val local = case.child("local")!!
+        val remote = case.child("remote")!!
+        val answer = AiKeyRemote(remote.str("status") ?: "", AiKeySync.validTime(remote["updatedAt"]), if (remote["opens"] == true) fakeKey else null)
+        same(AiKeySync.decide(local["hasKey"] == true, local.num("synced") ?: 0, answer), case["action"], "key sync decides: ${case["name"]}")
+    }
+    for (case in vectors.items("services").map { it.obj()!! }) {
+        val a = case.child("a"); val b = case.child("b")
+        same(AiKeySync.sameService(a.str("provider"), a.str("baseUrl"), b.str("provider"), b.str("baseUrl")), case["same"], "key sync same service: ${case["name"]}")
+    }
+    val first = vectors.items("opens").first().obj()!!
+    for (case in vectors.items("answers").map { it.obj()!! }) {
+        val response = case.child("response")!!
+        val body = response.child("body")?.let { LinkedHashMap(it) }?.also { if (it["sealed"] == "<sealed>") it["sealed"] = first["sealed"] }
+        val remote = AiKeySync.remote(response.num("status")!!.toInt(), body) { AiKeySync.openKey(vaultKey, vaultId, it) }
+        same(remote.status, case["remote"], "key sync answer: ${case["name"]}")
+        if (remote.status == AiKeyRemote.FOUND) same(sharedJson(remote.config), first["config"], "key sync answer opens: ${case["name"]}")
+    }
+    // Blobs the web app sealed open here, and nowhere else.
+    for (case in cross.items("web").map { it.obj()!! }) {
+        same(sharedJson(AiKeySync.openKey(vaultKey, vaultId, case["sealed"])), case["config"], "key sync opens the web app's blob: ${case["name"]}")
+        same(AiKeySync.openKey(vaultKey, "1b0f6f0e-3c56-4d0a-9d55-7a1c3a5e9f10", case["sealed"]), null, "key sync: the web app's blob for another workspace")
+    }
+    // Sealed here: opens here, is padded to whole blocks of 1024 bytes, fits the server, and goes to the script.
+    val sealed = vectors.items("opens").map { it.obj()!! }.map { case ->
+        val config = case.child("config")!!
+        val blob = AiKeySync.sealKey(vaultKey, vaultId, config.str("provider")!!, config.str("key")!!, config.str("model")!!, config.str("baseUrl")!!)
+        same(sharedJson(AiKeySync.openKey(vaultKey, vaultId, blob)), config, "key sync seals and opens: ${case["name"]}")
+        val envelope = AiJson.parse(blob).obj()!!
+        val plain = CloudCrypto.decrypt(vaultKey, CloudEnvelope(envelope.str("iv")!!, envelope.str("ciphertext")!!), AiKeySync.aad(vaultId))
+        same(plain.size % 1024, 0, "key sync pads: ${case["name"]}")
+        check(blob.length <= AiKeySync.MAX_SEALED) { "key sync: ${case["name"]} is too large for the server" }
+        same(AiKeySync.openKey(vaultKey, "1b0f6f0e-3c56-4d0a-9d55-7a1c3a5e9f10", blob), null, "key sync: sealed here, another workspace")
+        mapOf("name" to case["name"], "config" to config, "sealed" to blob)
+    }
+    // A key is never in what is printed about it.
+    check(!fakeKey.toString().contains(fakeKey.key) && !AiKeyRemote(AiKeyRemote.FOUND, 1, fakeKey).toString().contains(fakeKey.key)) { "key sync: a key in toString" }
+    out.writeText(AiJson.stringify(mapOf("android" to sealed)))
+}
+
 fun main(arguments: Array<String>) = runBlocking {
     val vectors = AiJson.parse(File(arguments[0]).readText()).obj()!!
     val tools = AiTools.load(File(arguments[1]).readText())
@@ -654,6 +722,7 @@ fun main(arguments: Array<String>) = runBlocking {
     markdown()
     version2(vectorsV2, edits, tools, promptJson)
     overview(edits)
+    keySync(AiJson.parse(File(arguments[5]).readText()).obj()!!, AiJson.parse(File(arguments[6]).readText()).obj()!!, File(arguments[7]))
 
     // The limits from the design.
     same(AiAssistant.MAX_ROUNDS, 6, "max rounds")

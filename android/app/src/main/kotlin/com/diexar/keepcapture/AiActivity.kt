@@ -392,7 +392,14 @@ private fun AskScreen(
         }
     }
 
-    LaunchedEffect(Unit) {
+    // Ask JotDrop off: maybe another device shares a key ("Use it here?").
+    var offLook by remember { mutableStateOf<AiKeyCloud.Look?>(null) }
+    var offSaid by remember { mutableStateOf<String?>(null) }
+    var offUsing by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { if (!settings.on) offLook = AiKeyCloud.look(context) }
+
+    // Runs again when a key from another device is taken here: the screen then opens as it was asked.
+    LaunchedEffect(settings.on) {
         if (!settings.on) return@LaunchedEffect
         if (draft != null && kind != null) {
             loaded = true
@@ -467,8 +474,25 @@ private fun AskScreen(
         LazyColumn(Modifier.fillMaxSize().padding(padding).imePadding(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if (!settings.on) {
                 item {
-                    Text(stringResource(R.string.ai_off))
-                    Button(onClick = { context.startActivity(Intent(context, AiSettingsActivity::class.java)); onClose() }, Modifier.padding(top = 12.dp)) { Text(stringResource(R.string.ai_open_settings)) }
+                    val offer = offLook?.let { aiOfferText(context, it) }
+                    Text(if (offer != null) stringResource(R.string.ai_off_offer, offer) else stringResource(R.string.ai_off))
+                    offSaid?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(top = 8.dp)) }
+                    val openSettings = { context.startActivity(Intent(context, AiSettingsActivity::class.java)); onClose() }
+                    Row(Modifier.padding(top = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        if (offer != null) {
+                            Button(enabled = !offUsing, onClick = {
+                                offUsing = true; offSaid = null
+                                scope.launch {
+                                    try { settings = AiKeyCloud.use(context) }
+                                    catch (error: CancellationException) { throw error }
+                                    catch (error: AiKeyCloud.Refused) { offSaid = AiKeyCloud.reasonText(context, error) }
+                                    catch (_: Exception) { offSaid = context.getString(R.string.ai_sync_unreachable) }
+                                    finally { offUsing = false }
+                                }
+                            }) { Text(stringResource(R.string.ai_sync_use)) }
+                            OutlinedButton(onClick = openSettings) { Text(stringResource(R.string.ai_open_settings)) }
+                        } else Button(onClick = openSettings) { Text(stringResource(R.string.ai_open_settings)) }
+                    }
                 }
                 return@LazyColumn
             }
@@ -817,11 +841,28 @@ private fun AiSettingsScreen(onClose: () -> Unit) {
     var problem by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var pickModel by remember { mutableStateOf(false) }
+    // "Use this key on all my devices": whether this phone is in JotDrop Cloud, what the server has, and the remove choice.
+    var connected by remember { mutableStateOf(false) }
+    var look by remember { mutableStateOf<AiKeyCloud.Look?>(null) }
+    var removing by remember { mutableStateOf(false) }
     // The key field stays empty after saving; an empty field keeps the saved key for the same service.
     fun keyNow() = key.trim().ifEmpty { if (provider == saved.provider) saved.key else "" }
-    fun current() = AiSettings(provider, keyNow(), model.trim(), address.trim(), includeShared)
+    fun current() = AiSettings(provider, keyNow(), model.trim(), address.trim(), includeShared, saved.synced)
+    fun showSaved(next: AiSettings) { saved = next; provider = next.provider; model = next.model; address = next.baseUrl; includeShared = next.includeShared; key = ""; models = emptyList() }
     fun say(text: String, isProblem: Boolean) { message = if (isProblem) context.getString(R.string.ai_problem, text) else text; problem = isProblem }
     fun addressOk() = provider != "custom" || address.trim().startsWith("https://")
+
+    // When these settings open, a look at what the server has: a newer key, a removed one, or one that is ready here.
+    LaunchedEffect(Unit) {
+        connected = withContext(Dispatchers.IO) { AiKeyCloud.client(context) != null }
+        if (!connected) return@LaunchedEffect
+        val found = AiKeyCloud.look(context) ?: return@LaunchedEffect
+        look = found
+        when (found.changed) {
+            "replaced" -> { showSaved(found.settings); say(context.getString(R.string.ai_sync_replaced), false) }
+            "removed" -> { showSaved(AiSettings()); say(context.getString(R.string.ai_sync_removed), false) }
+        }
+    }
 
     Scaffold(topBar = {
         TopAppBar(title = { Text(stringResource(R.string.ai_settings_title)) },
@@ -877,9 +918,16 @@ private fun AiSettingsScreen(onClose: () -> Unit) {
                     Switch(includeShared, { includeShared = it })
                 }
             }
+            AiKeySyncBlock(saved, connected, look, onLook = { look = it }, onSaved = { showSaved(it) }, say = ::say)
             message?.let { Text(it, color = if (problem) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface) }
             Button(onClick = {
-                if (provider.isEmpty()) { store.clear(); saved = AiSettings(); say(context.getString(R.string.ai_turned_off), false); return@Button }
+                // A phone that follows the shared key passes its new settings on, or lets go when there is nothing to share.
+                val followed = saved.synced > 0
+                if (provider.isEmpty()) {
+                    store.clear(); saved = AiSettings()
+                    say(context.getString(R.string.ai_turned_off) + if (followed) " " + context.getString(R.string.ai_sync_let_go) else "", false)
+                    return@Button
+                }
                 if (!addressOk()) { say(context.getString(R.string.ai_https_only), true); return@Button }
                 val next = current()
                 try { AiProviders.create(next.config()) { _, _ -> error("not sent") } } catch (error: AiError) { say(aiErrorText(context, error.code), true); return@Button }
@@ -887,13 +935,44 @@ private fun AiSettingsScreen(onClose: () -> Unit) {
                 saved = next
                 key = ""
                 say(context.getString(R.string.ai_saved), false)
+                if (!followed) return@Button
+                scope.launch {
+                    val (kept, refused) = AiKeyCloud.shareSaved(context, next)
+                    saved = kept
+                    if (refused == null) look = AiKeyCloud.ownLook(kept)
+                    val more = when {
+                        refused == null -> context.getString(R.string.ai_sync_shared_saved)
+                        refused.reason.startsWith("let-go") || refused.reason == "cloud" -> context.getString(R.string.ai_sync_let_go)
+                        else -> context.getString(R.string.ai_sync_kept_earlier, AiKeyCloud.reasonText(context, refused))
+                    }
+                    say(context.getString(R.string.ai_saved) + " " + more, false)
+                }
             }) { Text(stringResource(R.string.ai_save)) }
             if (saved.on) OutlinedButton(onClick = {
-                store.clear(); saved = AiSettings(); provider = ""; key = ""; model = ""; address = ""; models = emptyList()
+                // A key the other devices use too: the user says where it goes.
+                if (saved.synced > 0) { removing = true; return@OutlinedButton }
+                store.clear(); showSaved(AiSettings())
                 say(context.getString(R.string.ai_turned_off), false)
             }) { Text(stringResource(R.string.ai_turn_off)) }
         }
     }
+
+    if (removing) AiRemoveChoiceDialog(
+        onAll = {
+            removing = false
+            scope.launch {
+                try {
+                    AiKeyCloud.removeEverywhere(context)
+                    showSaved(AiSettings())
+                    look = look?.let { AiKeyCloud.Look(AiKeyRemote(AiKeyRemote.NONE), AiSettings(), null) }
+                    say(context.getString(R.string.ai_removed_all), false)
+                } catch (error: CancellationException) { throw error }
+                catch (error: AiKeyCloud.Refused) { say(AiKeyCloud.reasonText(context, error), true) }
+            }
+        },
+        onHere = { removing = false; store.clear(); showSaved(AiSettings()); look = look?.let { AiKeyCloud.Look(it.remote, AiSettings(), null) }; say(context.getString(R.string.ai_removed_here), false) },
+        onCancel = { removing = false },
+    )
 
     if (pickModel) AiModelDialog(provider, models, onPick = { model = it; pickModel = false }, onDismiss = { pickModel = false })
 }
