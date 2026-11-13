@@ -40,6 +40,7 @@ import { ConflictReviewModal, NoteHistoryModal } from "./cloudReview";
 import { EndListLinkModal, NoteLinkModal } from "./noteLink";
 import { SharedGroupsModal } from "./cloud";
 import { AskJotDropModal, type AskOptions, addAskButton } from "./askJotDrop";
+import { DuplicatesModal, addDuplicatesButton } from "./duplicates";
 import { aiFileKinds } from "./ai";
 import { betweenRank, rankForManualOrder, respaceRanks } from "./manualOrder";
 import { t } from "./i18n";
@@ -491,6 +492,8 @@ export class JotDropView extends ItemView {
 
     // Ask JotDrop: AI with the user's own key, for everyone (ontwerp-ai-eigen-sleutel.md, phase 4).
     addAskButton(this.normalToolbarEl, t("action_ask_jotdrop"), () => this.openAsk());
+    // Find duplicates (phase 7): compared on this device, without AI.
+    addDuplicatesButton(this.normalToolbarEl, t("action_find_duplicates"), () => this.openDuplicates());
 
     this.searchEl = this.normalToolbarEl.createEl("input", {
       cls: "jotdrop-search",
@@ -1531,8 +1534,16 @@ export class JotDropView extends ItemView {
    * to the previous/next card with arrows, swipe or the header buttons.
    */
   /** Ask JotDrop, for all notes or about one note; a note it names opens in the editor. */
-  openAsk(options: Omit<AskOptions, "openNote"> = {}): void {
-    new AskJotDropModal(this.app, this.plugin, { ...options, openNote: (file) => this.openEditModal(file) }).open();
+  openAsk(options: Omit<AskOptions, "openNote" | "trash"> = {}): void {
+    new AskJotDropModal(this.app, this.plugin, { ...options, openNote: (file) => this.openEditModal(file), trash: (file) => this.moveToFolder(file, this.trashFolder(), "notice_trashed") }).open();
+  }
+
+  /** Find duplicates, and from there "Merge with AI" in the Ask window. Moving a note to the trash is the user's own click. */
+  openDuplicates(): void {
+    new DuplicatesModal(this.app, this.plugin, {
+      trash: (file) => this.moveToFolder(file, this.trashFolder(), "notice_trashed"),
+      merge: (older, newer) => this.openAsk({ merge: { older, newer } }),
+    }).open();
   }
 
   private openEditModal(file: TFile, attachment?: AttachmentResource | null): void {
