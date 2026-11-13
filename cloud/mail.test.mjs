@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { createCloudServer } from './server.mjs';
 import { CloudClient } from './shared/client.mjs';
 import { decryptEnvelope, encryptEnvelope, generateVaultKey, hashToken, randomToken } from './shared/crypto.mjs';
@@ -27,7 +28,7 @@ async function fixture(t, options = {}) {
     return { status: response.status, body: JSON.parse(await response.text() || 'null') };
   };
   const mailin = (path, body, token = mailinToken) => api(path, body, { Authorization: `Bearer ${token}` });
-  return { mails, url, api, mailin, mailinToken, advance: (ms) => { now += ms; }, now: () => now };
+  return { mails, url, api, mailin, mailinToken, dbPath: app.dbPath, advance: (ms) => { now += ms; }, now: () => now };
 }
 
 async function signUp(cloud, name) {
@@ -157,6 +158,25 @@ test('the hourly limit holds, deleting the cloud wipes every mail trace, and mai
   // Deleting the cloud deletes the address, the items and the log with it.
   await client.call('/account/delete', 'POST', { confirm: 'DELETE MY CLOUD', currentAuthKey: authKey });
   assert.deepEqual((await cloud.mailin('/mailin/rcpt', { addressHash: await addressHash(address) })).body, { accept: false, code: 'unknown' });
+});
+
+test('starting over with a new vault key works while Mail to JotDrop is on, and leaves no mail of the old key behind', async (t) => {
+  const cloud = await fixture(t);
+  const { client, vaultKey, email } = await signUp(cloud, 'fay');
+  const { address } = await enableMail(client, vaultKey, 'senders');
+  await client.call('/mail/senders', 'POST', { senders: [await senderHash('mother@example.test')] });
+  assert.equal((await deliver(cloud, address, { v: 1, subject: 'hi' }, [Uint8Array.of(1, 2, 3)], { sender: 'mother@example.test' })).outcome.accept, true);
+  cloud.advance(MINUTE + 1);
+  const { resetId } = (await cloud.api('/auth/reset/start', { email })).body;
+  const code = cloud.mails.filter((mail) => mail.kind === 'reset').at(-1).code, newKey = generateVaultKey();
+  const restarted = await cloud.api('/auth/reset/restart', { resetId, code, confirm: 'DELETE CLOUD DATA', recoveryTokenHash: await hashToken(randomToken()), deviceName: 'New phone', deviceTokenHash: await hashToken(randomToken()), authKey: randomToken(), kdf: { salt: b64(randomBytes(16)), memory: 65536, passes: 3, parallelism: 1 }, wrappedVaultKey: JSON.stringify(await encryptEnvelope(randomToken(), { vaultKey: newKey }, 'jotdrop:wrap:v1')) });
+  assert.equal(restarted.status, 201, JSON.stringify(restarted.body));
+  // The address, its filter and the sealed mail belong to the old key, which nobody can open any more: all gone.
+  assert.deepEqual((await cloud.mailin('/mailin/rcpt', { addressHash: await addressHash(address) })).body, { accept: false, code: 'unknown' });
+  const db = new DatabaseSync(cloud.dbPath);
+  for (const table of ['mail_accounts', 'mail_senders', 'mail_items', 'mail_parts', 'mail_log']) assert.equal(db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count, 0, table);
+  assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(), []);
+  db.close();
 });
 
 test('a server without mail settings says so and serves no mailin routes', async (t) => {

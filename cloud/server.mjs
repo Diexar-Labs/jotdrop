@@ -2006,8 +2006,9 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           run('UPDATE subscriptions SET vaultId=? WHERE vaultId=?', vaultId, account.vaultId);
           setCredentials(account.id, next);
           run('DELETE FROM device_approvals WHERE accountId=?', account.id);
-          // Nobody can read the old ciphertext any more; deleting it is what the user confirmed.
-          for (const table of ['uploads', 'pairings', 'revisions', 'envelope_chunks', 'chunks', 'retired_envelopes', 'envelopes', 'changes', 'purges', 'signups', 'devices', 'ai_keys']) run(`DELETE FROM ${table} WHERE vaultId=?`, account.vaultId);
+          // Nobody can read the old ciphertext any more; deleting it is what the user confirmed. Mail to JotDrop goes too:
+          // its address, filter and sealed mail belong to the old key, and mail_accounts still points at the vault that is deleted here.
+          for (const table of ['uploads', 'pairings', 'revisions', 'envelope_chunks', 'chunks', 'retired_envelopes', 'envelopes', 'changes', 'purges', 'signups', 'devices', 'ai_keys', 'mail_accounts', 'mail_senders', 'mail_items', 'mail_parts', 'mail_log']) run(`DELETE FROM ${table} WHERE vaultId=?`, account.vaultId);
           run('DELETE FROM vaults WHERE id=?', account.vaultId);
           return addDevice(vaultId, value.deviceName, value.deviceTokenHash);
         })); return;
