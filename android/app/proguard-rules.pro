@@ -10,3 +10,8 @@
 -keep class androidx.credentials.playservices.** {
   *;
 }
+
+# LiteRT-LM (Ask JotDrop on this phone) brings no rules of its own; its native code calls back into these classes by name.
+-keep class com.google.ai.edge.litertlm.** {
+  *;
+}

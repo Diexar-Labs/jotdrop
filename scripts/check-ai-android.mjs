@@ -3,6 +3,7 @@
 // note choice, the prompt, the file table and the receipt lines with what the web app's JavaScript makes of the
 // cases below. Part G (the key on all your devices): AiKeySync.kt plays ai-key-vectors.json, opens blobs keysync.mjs
 // sealed, and the blobs it seals are opened here with keysync.mjs.
+// Part H1 (on this phone, phase 9): checkAiLocal runs android/checks/AiLocalCheck.kt, the download and the engine with a fake model.
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -212,7 +213,7 @@ try {
   const crossFile = path.join(temporary, 'key-cross.json'), outFile = path.join(temporary, 'key-android.json');
   writeFileSync(crossFile, JSON.stringify(cross));
   const windows = process.platform === 'win32';
-  execFileSync(windows ? process.env.ComSpec || 'cmd.exe' : './gradlew', windows ? ['/d', '/c', 'gradlew.bat checkAi --no-daemon --console=plain'] : ['checkAi', '--no-daemon', '--console=plain'], {
+  execFileSync(windows ? process.env.ComSpec || 'cmd.exe' : './gradlew', windows ? ['/d', '/c', 'gradlew.bat checkAi checkAiLocal --no-daemon --console=plain'] : ['checkAi', 'checkAiLocal', '--no-daemon', '--console=plain'], {
     cwd: path.join(root, 'android'), stdio: 'inherit',
     env: { ...process.env, JOTDROP_AI_VECTORS: path.join(ai, 'ai-vectors.json'), JOTDROP_AI_TOOLS: path.join(ai, 'tools.json'), JOTDROP_AI_PROMPT: path.join(ai, 'prompt.json'), JOTDROP_AI_EDITS: editsFile, JOTDROP_AI_VECTORS_V2: path.join(ai, 'ai-vectors-v2.json'),
       JOTDROP_AI_KEY_VECTORS: path.join(ai, 'ai-key-vectors.json'), JOTDROP_AI_KEY_CROSS: crossFile, JOTDROP_AI_KEY_OUT: outFile },

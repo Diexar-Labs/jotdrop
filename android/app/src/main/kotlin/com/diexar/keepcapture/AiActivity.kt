@@ -107,6 +107,12 @@ internal fun aiErrorText(context: Context, code: String?): String = context.getS
     "bad_response" -> R.string.ai_error_bad_response
     "unsupported_input" -> R.string.ai_error_unsupported_input
     "too_large" -> R.string.ai_error_too_large
+    "model_space" -> R.string.ai_error_model_space
+    "model_hash" -> R.string.ai_error_model_hash
+    "model_missing" -> R.string.ai_error_model_missing
+    "local_load" -> R.string.ai_error_local_load
+    "local_failed" -> R.string.ai_error_local_failed
+    "local_unsupported" -> R.string.ai_error_local_unsupported
     else -> R.string.ai_error_bad_request
 })
 
@@ -123,8 +129,15 @@ private fun aiReportError(context: Context, error: AiError?): String {
 /** Ask JotDrop's fixed file actions on a card, and the kinds of file each can send. */
 private val FILE_ACTION_KINDS = mapOf("transcribe" to setOf("audio"), "photo" to setOf("image"), "receipt" to setOf("image", "pdf"))
 
-internal fun aiProviderName(context: Context, id: String): String =
-    if (id == "custom") context.getString(R.string.ai_provider_custom) else AiProviders.SPECS[id]?.name ?: id
+internal fun aiProviderName(context: Context, id: String): String = when (id) {
+    "custom" -> context.getString(R.string.ai_provider_custom)
+    AiLocalModels.PHONE -> context.getString(R.string.ai_provider_phone)
+    else -> AiProviders.SPECS[id]?.name ?: id
+}
+
+/** The AI service of these settings: the model on this phone, or the service with the user's key. */
+internal fun aiProvider(context: Context, settings: AiSettings): AiProvider =
+    if (settings.provider == AiLocalModels.PHONE) AiLocal.provider(context, settings) else AiProviders.create(settings.config(), AiHttp)
 
 /**
  * Ask JotDrop: say or type what JotDrop should do; the AI service the user chose answers straight from this phone.
@@ -287,7 +300,7 @@ private fun AskScreen(
                     if (digest.notes.isEmpty()) { notice = R.string.ai_week_nothing; return@launch }
                     val day = SimpleDateFormat("yyyy-MM-dd EEEE", Locale.US).format(Date())
                     val (system, overview) = Digest.request(language, day, zone, digest.text)
-                    val done = AiAssistant.once(text, emptyList(), provider = { AiProviders.create(settings.config(), AiHttp) }, secrets = listOf(settings.key)) { ai, time ->
+                    val done = AiAssistant.once(text, emptyList(), provider = { aiProvider(context, settings) }, secrets = listOf(settings.key)) { ai, time ->
                         ai.complete(system, listOf(AiMessage.User(overview)), emptyList(), time)
                     }
                     digest.notes.mapTo(done.sent) { AiSent(it.id, it.title) }
@@ -307,7 +320,7 @@ private fun AskScreen(
                 if (action != null) {
                     // One request without tools: text on a photo or a receipt can never make or change a note.
                     val before = if (action == "receipt") withContext(Dispatchers.IO) { Storage.readNote(context, target!!).getOrNull() } else null
-                    val done = AiAssistant.once(text, parts, provider = { AiProviders.create(settings.config(), AiHttp) }, secrets = listOf(settings.key)) { ai, time ->
+                    val done = AiAssistant.once(text, parts, provider = { aiProvider(context, settings) }, secrets = listOf(settings.key)) { ai, time ->
                         when (action) {
                             "transcribe" -> ai.transcribe(parts.first(), Locale.getDefault().toLanguageTag(), time).answer()
                             "photo" -> ai.complete(AiParts.PHOTO_SYSTEM, listOf(AiMessage.User(text, parts)), emptyList(), time)
@@ -345,7 +358,7 @@ private fun AskScreen(
                     labels = executor.labels,
                     tools = tools,
                     system = system,
-                    provider = { AiProviders.create(settings.config(), AiHttp) },
+                    provider = { aiProvider(context, settings) },
                     // The draft is not saved yet, so the AI changes nothing: the answer waits for Replace or Add below.
                     executor = if (draft != null) emptyMap() else executor.tools,
                     confirm = if (draft != null) { _ -> false } else { change -> val answer = CompletableDeferred<Boolean>(); pending = Pending(change, answer); answer.await().also { pending = null } },
@@ -873,7 +886,7 @@ private fun AiSettingsScreen(onClose: () -> Unit) {
         Column(Modifier.fillMaxSize().padding(padding).imePadding().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(stringResource(R.string.ai_settings_intro))
             Text(stringResource(R.string.ai_provider), style = MaterialTheme.typography.titleSmall)
-            for (id in listOf("") + AiSecretStore.PROVIDERS) {
+            for (id in listOf("", AiLocalModels.PHONE) + AiSecretStore.PROVIDERS) {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().selectable(selected = provider == id, role = Role.RadioButton) {
                     if (provider != id) { provider = id; model = ""; models = emptyList(); message = null; key = "" }
                 }) {
@@ -888,39 +901,43 @@ private fun AiSettingsScreen(onClose: () -> Unit) {
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), modifier = Modifier.fillMaxWidth())
             }
             if (provider.isNotEmpty()) {
-                val hasSaved = provider == saved.provider && saved.key.isNotEmpty()
-                OutlinedTextField(key, { key = it },
-                    label = { Text(stringResource(if (provider == "custom") R.string.ai_key_optional else R.string.ai_key)) },
-                    placeholder = { if (hasSaved) Text(stringResource(R.string.ai_key_saved)) },
-                    singleLine = true, visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrect = false), modifier = Modifier.fillMaxWidth())
-                Text(stringResource(R.string.ai_key_where), style = MaterialTheme.typography.bodySmall)
-                OutlinedTextField(model, { model = it }, label = { Text(stringResource(R.string.ai_model)) }, singleLine = true, modifier = Modifier.fillMaxWidth(),
-                    placeholder = { AiProviders.SPECS[provider]?.defaultModel?.let { Text(it) } })
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(enabled = !busy, onClick = {
-                        if (!addressOk()) { say(context.getString(R.string.ai_https_only), true); return@OutlinedButton }
-                        busy = true; message = null
-                        scope.launch {
-                            try {
-                                val found = AiProviders.listModels(current().config(), AiHttp)
-                                models = found
-                                if (model.isBlank()) model = AiProviders.pickDefaultModel(provider, found) ?: ""
-                                say(context.getString(R.string.ai_models_loaded, found.size, model.ifBlank { "?" }), false)
-                            } catch (error: AiError) {
-                                say(aiErrorText(context, error.code), true)
-                            } finally { busy = false }
-                        }
-                    }) { Text(stringResource(R.string.ai_load_models)) }
-                    if (models.isNotEmpty()) OutlinedButton(onClick = { pickModel = true }) { Text(stringResource(R.string.ai_pick_model)) }
+                // The model on this phone has no key and no model list: its own block downloads and tries it.
+                if (provider == AiLocalModels.PHONE) AiLocalBlock(model, { model = it }, ::say, clear = { message = null }) else {
+                    val hasSaved = provider == saved.provider && saved.key.isNotEmpty()
+                    OutlinedTextField(key, { key = it },
+                        label = { Text(stringResource(if (provider == "custom") R.string.ai_key_optional else R.string.ai_key)) },
+                        placeholder = { if (hasSaved) Text(stringResource(R.string.ai_key_saved)) },
+                        singleLine = true, visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrect = false), modifier = Modifier.fillMaxWidth())
+                    Text(stringResource(R.string.ai_key_where), style = MaterialTheme.typography.bodySmall)
+                    OutlinedTextField(model, { model = it }, label = { Text(stringResource(R.string.ai_model)) }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                        placeholder = { AiProviders.SPECS[provider]?.defaultModel?.let { Text(it) } })
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(enabled = !busy, onClick = {
+                            if (!addressOk()) { say(context.getString(R.string.ai_https_only), true); return@OutlinedButton }
+                            busy = true; message = null
+                            scope.launch {
+                                try {
+                                    val found = AiProviders.listModels(current().config(), AiHttp)
+                                    models = found
+                                    if (model.isBlank()) model = AiProviders.pickDefaultModel(provider, found) ?: ""
+                                    say(context.getString(R.string.ai_models_loaded, found.size, model.ifBlank { "?" }), false)
+                                } catch (error: AiError) {
+                                    say(aiErrorText(context, error.code), true)
+                                } finally { busy = false }
+                            }
+                        }) { Text(stringResource(R.string.ai_load_models)) }
+                        if (models.isNotEmpty()) OutlinedButton(onClick = { pickModel = true }) { Text(stringResource(R.string.ai_pick_model)) }
+                    }
+                    if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                 }
-                if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Text(stringResource(R.string.ai_include_shared), Modifier.weight(1f))
                     Switch(includeShared, { includeShared = it })
                 }
             }
-            AiKeySyncBlock(saved, connected, look, onLook = { look = it }, onSaved = { showSaved(it) }, say = ::say)
+            // The model on this phone has no key to share.
+            if (provider != AiLocalModels.PHONE) AiKeySyncBlock(saved, connected, look, onLook = { look = it }, onSaved = { showSaved(it) }, say = ::say)
             message?.let { Text(it, color = if (problem) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface) }
             Button(onClick = {
                 // A phone that follows the shared key passes its new settings on, or lets go when there is nothing to share.
@@ -931,8 +948,11 @@ private fun AiSettingsScreen(onClose: () -> Unit) {
                     return@Button
                 }
                 if (!addressOk()) { say(context.getString(R.string.ai_https_only), true); return@Button }
-                val next = current()
-                try { AiProviders.create(next.config()) { _, _ -> error("not sent") } } catch (error: AiError) { say(aiErrorText(context, error.code), true); return@Button }
+                val phone = provider == AiLocalModels.PHONE
+                val next = if (phone) current().copy(key = "", model = AiLocal.chosen(context, model).id) else current()
+                if (phone) {
+                    if (AiLocal.ready(context, AiLocal.chosen(context, next.model)) == null) { say(context.getString(R.string.ai_local_need_download), true); return@Button }
+                } else try { AiProviders.create(next.config()) { _, _ -> error("not sent") } } catch (error: AiError) { say(aiErrorText(context, error.code), true); return@Button }
                 store.save(next)
                 saved = next
                 key = ""
