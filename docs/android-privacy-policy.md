@@ -1,6 +1,6 @@
 # JotDrop Android Privacy Policy
 
-Last updated: November 13, 2026
+Last updated: November 14, 2026
 
 JotDrop (`com.diexar.keepcapture`) is a local-first Android notes app from Diexar Labs. Contact us at [eric@diexar.com](mailto:eric@diexar.com) about privacy questions.
 
