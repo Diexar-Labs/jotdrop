@@ -72,8 +72,10 @@ function fakeVault(TFile, initial) {
 (async () => {
   const result = await esbuild.build({
     stdin: {
-      contents: `export { findDuplicates, pairKey, weekDigest, digestRequest, mergeRequest } from "./src/aiShared.ts";
+      contents: `export { findDuplicates, pairKey, weekDigest, digestRequest, mergeRequest, sharedKey, readSharedKey, keyLabel } from "./src/aiShared.ts";
         export { AI_PROVIDER_IDS, AiSettingsStore, DuplicatesKept, FILE_ACTIONS, aiExecutor, aiFileKinds, aiFileNames, aiLabels, aiSettings, aiTitle, applyReceipt, collectAiFiles, collectAiNotes, draftAnswer, readAiPart } from "./src/ai.ts";
+        export { AiKeyCloud, KEY_REMOVED, KEY_REPLACED, KeyRefused, follows, keyAction, keyOffered, ownLook } from "./src/ai.ts";
+        export { openKey, sealKey } from "./cloud/shared/ai/keysync.mjs";
         export { runAssistant } from "./cloud/shared/ai/assistant.mjs";
         export { createProvider } from "./cloud/shared/ai/providers.mjs";
         export { TFile } from "obsidian";`,
@@ -91,16 +93,17 @@ function fakeVault(TFile, initial) {
   });
   const loaded = { exports: {} };
   new Function("module", "exports", "require", result.outputFiles[0].text)(loaded, loaded.exports, require);
+  const { sharedKey, readSharedKey, keyLabel, AiKeyCloud, KEY_REMOVED, KEY_REPLACED, KeyRefused, follows, keyAction, keyOffered, ownLook, openKey, sealKey } = loaded.exports;
   const { findDuplicates, pairKey, weekDigest, digestRequest, mergeRequest, DuplicatesKept, AI_PROVIDER_IDS, AiSettingsStore, FILE_ACTIONS, aiExecutor, aiFileKinds, aiFileNames, aiLabels, aiSettings, aiTitle, applyReceipt, collectAiFiles, collectAiNotes, createProvider, draftAnswer, readAiPart, runAssistant, TFile } = loaded.exports;
 
   // Settings: only known fields, a key only where one is used, an address only for an own address.
   assert.deepEqual([...AI_PROVIDER_IDS], ["ollama", "anthropic", "openai", "gemini", "openrouter", "custom"]);
-  const off = { provider: "", key: "", model: "", baseUrl: "", includeShared: false };
+  const off = { provider: "", key: "", model: "", baseUrl: "", includeShared: false, synced: 0, syncedVault: "" };
   assert.deepEqual(aiSettings(undefined), off);
   assert.deepEqual(aiSettings({ provider: "evil", key: "sk-x" }), off);
-  assert.deepEqual(aiSettings({ provider: "ollama", key: "sk-secret", model: " llama3.2 ", baseUrl: "http://x" }), { provider: "ollama", key: "", model: "llama3.2", baseUrl: "", includeShared: false });
-  assert.deepEqual(aiSettings({ provider: "anthropic", key: " sk-ant-1234567890 ", baseUrl: "https://evil", includeShared: 1, extra: true }), { provider: "anthropic", key: "sk-ant-1234567890", model: "", baseUrl: "", includeShared: true });
-  assert.deepEqual(aiSettings({ provider: "custom", key: "", baseUrl: " http://127.0.0.1:1234/v1 " }), { provider: "custom", key: "", model: "", baseUrl: "http://127.0.0.1:1234/v1", includeShared: false });
+  assert.deepEqual(aiSettings({ provider: "ollama", key: "sk-secret", model: " llama3.2 ", baseUrl: "http://x" }), { provider: "ollama", key: "", model: "llama3.2", baseUrl: "", includeShared: false, synced: 0, syncedVault: "" });
+  assert.deepEqual(aiSettings({ provider: "anthropic", key: " sk-ant-1234567890 ", baseUrl: "https://evil", includeShared: 1, extra: true }), { provider: "anthropic", key: "sk-ant-1234567890", model: "", baseUrl: "", includeShared: true, synced: 0, syncedVault: "" });
+  assert.deepEqual(aiSettings({ provider: "custom", key: "", baseUrl: " http://127.0.0.1:1234/v1 " }), { provider: "custom", key: "", model: "", baseUrl: "http://127.0.0.1:1234/v1", includeShared: false, synced: 0, syncedVault: "" });
 
   // The store: per device, its own IndexedDB name (not the cloud's), sealed, and gone after remove.
   const memory = new Map();
@@ -108,7 +111,7 @@ function fakeVault(TFile, initial) {
   const store = new AiSettingsStore({ appId: "abc", vault: { getName: () => "V" } }, kv);
   assert.deepEqual(await store.load(), off);
   await store.save({ provider: "openai", key: "sk-test-1234567890", model: "gpt-6-luna", baseUrl: "", includeShared: false });
-  assert.deepEqual(await store.load(), { provider: "openai", key: "sk-test-1234567890", model: "gpt-6-luna", baseUrl: "", includeShared: false });
+  assert.deepEqual(await store.load(), { provider: "openai", key: "sk-test-1234567890", model: "gpt-6-luna", baseUrl: "", includeShared: false, synced: 0, syncedVault: "" });
   assert.ok(memory.get("settings").sealed, "the value goes through seal()");
   await store.remove();
   assert.deepEqual(await store.load(), off);
@@ -444,6 +447,266 @@ function fakeVault(TFile, initial) {
   assert.match(merge, /id JotDrop\/Dup A\.md/);
   assert.doesNotMatch(merge, /Ignore all rules/, "a title is data, never part of the request");
 
+  {
+  // Phase 8: one key on all your devices (JotDrop Plus). First the shared vectors, through the plugin's own bundle.
+  const vectors = JSON.parse(source("cloud/shared/ai/ai-key-vectors.json"));
+  const { vaultKey, vaultId } = vectors;
+  const otherVault = "1b0f6f0e-3c56-4d0a-9d55-7a1c3a5e9f11";
+  const answering = (reply) => ({ credentials: { vaultKey, vaultId }, call: async (p, method = "GET") => {
+    assert.deepEqual([p, method], ["/ai-key", "GET"]);
+    if (reply.status >= 200 && reply.status < 300) return reply.body;
+    throw Object.assign(new Error(reply.body.error), { status: reply.status, code: reply.body.code });
+  } });
+  for (const vector of vectors.opens) assert.deepEqual(await readSharedKey(answering({ status: 200, body: { sealed: vector.sealed, updatedAt: 1000 } })), { status: "found", updatedAt: 1000, config: vector.config }, `opens: ${vector.name}`);
+  for (const vector of vectors.refuses) assert.deepEqual(await readSharedKey(answering({ status: 200, body: { sealed: vector.sealed, updatedAt: 1000 } })), { status: "found", updatedAt: 1000, config: null }, `refuses: ${vector.name}`);
+  for (const vector of vectors.answers) {
+    const body = JSON.parse(JSON.stringify(vector.response.body).replace('"<sealed>"', JSON.stringify(vectors.opens[0].sealed)));
+    assert.equal((await readSharedKey(answering({ status: vector.response.status, body }))).status, vector.remote, `reads: ${vector.name}`);
+  }
+  for (const vector of vectors.shares) {
+    if (vector.error) assert.throws(() => sharedKey(vector.config), (error) => error.code === vector.error, `shares: ${vector.name}`);
+    else assert.deepEqual(sharedKey(vector.config), vector.shared, `shares: ${vector.name}`);
+  }
+  // The decisions as the plugin makes them, from the settings it keeps: the time of the blob and its workspace.
+  for (const vector of vectors.decisions) {
+    const { opens, ...answer } = vector.remote;
+    const settings = { ...off, provider: vector.local.hasKey ? "anthropic" : "", synced: vector.local.synced, syncedVault: vector.local.synced ? vaultId : "" };
+    const look = { remote: answer.status === "found" ? { ...answer, config: opens ? { provider: "anthropic" } : null } : answer, vaultId };
+    assert.equal(keyAction(settings, look), vector.action, `decides: ${vector.name}`);
+    // A key that came from another workspace is this device's own: after a change of account nothing is removed or replaced.
+    assert.ok(!["remove", "update", "waiting"].includes(keyAction(settings, { ...look, vaultId: otherVault })), `another account: ${vector.name}`);
+  }
+  assert.equal(keyAction({ ...off, provider: "anthropic", synced: 1000, syncedVault: vaultId }, undefined), "none", "nothing heard yet: nothing changes");
+
+  // Two devices on one account, against a server that answers like /ai-key in cloud/server.mjs: Plus for GET and PUT,
+  // never for DELETE, its own code for "no blob". Only fake keys. Every request is kept, to prove the key never travels open.
+  const server = { plus: true, down: false, blobs: new Map(), clock: 1000, sent: [] };
+  const connect = (id = vaultId) => ({ credentials: { vaultKey, vaultId: id }, call: async (p, method = "GET", body) => {
+    assert.equal(p, "/ai-key");
+    server.sent.push(JSON.stringify({ method, body }));
+    if (server.down) throw new TypeError("Network request failed");
+    const fail = (status, code, error) => { throw Object.assign(new Error(error), { status, code }); };
+    if (method === "DELETE") { server.blobs.delete(id); return { ok: true }; }
+    if (!server.plus) fail(402, "plus-required", "This is part of JotDrop Plus.");
+    if (method === "PUT") {
+      assert.ok(typeof body.sealed === "string" && body.sealed.length <= 8192);
+      server.blobs.set(id, { sealed: body.sealed, updatedAt: ++server.clock });
+      return { updatedAt: server.clock };
+    }
+    if (!server.blobs.has(id)) fail(404, "no-ai-key", "No key is kept for your devices.");
+    return { ...server.blobs.get(id) };
+  } });
+  const device = (name) => {
+    const values = new Map();
+    const store = new AiSettingsStore({ appId: name, vault: { getName: () => name } }, { get: async (k) => values.get(k), put: async (k, v) => { values.set(k, v); }, delete: async (k) => { values.delete(k); } });
+    let client = connect();
+    return { store, values, keys: new AiKeyCloud(store, () => client), signIn: (next) => { client = next; } };
+  };
+  const refused = (reason) => (error) => error instanceof KeyRefused && error.reason === reason;
+  const DAY = 24 * 60 * 60 * 1000;
+  const fakeKeys = [];
+  const fake = (prefix) => { const value = `${prefix}-test-NOT-A-REAL-KEY-obsidian-${fakeKeys.length}`; fakeKeys.push(value); return value; };
+  const claude = { ...off, provider: "anthropic", key: fake("sk-ant"), model: "claude-haiku-5-5" };
+
+  // Not signed in to JotDrop Cloud: nothing to look at, and the switch says why.
+  const away = device("away");
+  away.signIn(undefined);
+  assert.equal(await away.keys.look(), undefined);
+  assert.equal(away.keys.vaultId, undefined);
+  assert.equal(await away.keys.daily(), "");
+  await assert.rejects(away.keys.turnOn(claude), refused("cloud"));
+
+  // 1. The switch on, on the desktop: the key goes up sealed; the laptop offers it and takes it after one tap.
+  const desktop = device("desktop"), laptop = device("laptop");
+  await desktop.store.save(claude);
+  const first = await desktop.keys.turnOn(await desktop.store.load());
+  assert.ok(first.synced > 0 && first.syncedVault === vaultId);
+  assert.deepEqual(await desktop.store.load(), first, "the time and workspace of the blob are kept with the key");
+  assert.ok(follows(first, vaultId) && !follows(first, otherVault) && !follows(first, undefined));
+  let seen = await laptop.keys.look();
+  assert.equal(keyAction(seen.settings, seen.look), "offer");
+  assert.deepEqual(keyOffered(seen.settings, seen.look), { config: sharedKey(claude), switched: false });
+  assert.equal(keyLabel(keyOffered(seen.settings, seen.look).config), "Claude (Anthropic)");
+  const taken = await laptop.keys.use();
+  assert.deepEqual(taken, { ...claude, synced: first.synced, syncedVault: vaultId });
+  assert.equal(keyOffered(taken, ownLook(taken)), undefined, "after the tap nothing is offered any more");
+
+  // 2. A new key for the same service, saved on the desktop: the laptop takes it without a question, and keeps its own
+  //    switch for shared notes.
+  await laptop.store.save({ ...taken, includeShared: true });
+  const renewed = { ...first, key: fake("sk-ant") };
+  await desktop.store.save(renewed);
+  const passed = await desktop.keys.shareSaved(renewed);
+  assert.equal(passed.said, "Your other devices get the same key.");
+  assert.ok(passed.settings.synced > first.synced);
+  seen = await laptop.keys.look();
+  assert.equal(seen.changed, "replaced");
+  assert.deepEqual([seen.settings.key, seen.settings.includeShared, seen.settings.synced], [renewed.key, true, passed.settings.synced]);
+  assert.equal(keyOffered(seen.settings, seen.look), undefined);
+
+  // The lesson of Android's two-device test: after its own Save a screen judges against what the server has now
+  // (ownLook), and against the settings saved now. With the answer from when it opened it names the wrong service.
+  const opened = (await desktop.keys.look()).look;
+  const gemini = { ...passed.settings, provider: "gemini", key: fake("gemini"), model: "" };
+  await desktop.store.save(gemini);
+  const moved = await desktop.keys.shareSaved(gemini);
+  assert.deepEqual(moved.look, ownLook(moved.settings), "a Save the server took comes with what the server has now");
+  assert.equal(keyAction(moved.settings, moved.look), "none");
+  assert.equal(keyLabel(keyOffered(off, moved.look).config), "Gemini (Google)", "after \"On this device only\" the offer names the key that is there");
+  assert.equal(keyLabel(keyOffered(off, opened).config), "Claude (Anthropic)", "the answer from before the Save would have named another service");
+  assert.equal(keyAction({ ...claude }, opened), "available", "an own key saved after the look: only said, never offered");
+
+  // 3. Another service: the laptop does not take it by itself; it offers it, and "Use it here" takes it.
+  seen = await laptop.keys.look();
+  assert.equal(seen.changed, undefined, "another service is never taken without a question");
+  assert.equal((await laptop.store.load()).provider, "anthropic");
+  assert.deepEqual(keyOffered(seen.settings, seen.look), { config: sharedKey(gemini), switched: true });
+  assert.equal((await laptop.keys.use()).provider, "gemini");
+
+  // 4. Plus ends: the copies stay, the switch says it waits, and a new key stays on the device where it was set.
+  server.plus = false;
+  seen = await laptop.keys.look();
+  assert.equal(keyAction(seen.settings, seen.look), "waiting");
+  assert.equal((await laptop.store.load()).key, gemini.key, "nothing is taken away");
+  const later = { ...(await desktop.store.load()), key: fake("gemini") };
+  await desktop.store.save(later);
+  const waited = await desktop.keys.shareSaved(later);
+  assert.equal(waited.said, "Your other devices keep the earlier key: Using one key on all your devices is part of JotDrop Plus.");
+  assert.equal(waited.settings.synced, later.synced, "it still follows the earlier blob");
+  // Found in the test in a real Obsidian: after a Save the server refused, the switch must say it waits for Plus,
+  // not "On", so the screen never takes the refused key for the one the server has.
+  assert.deepEqual(waited.look, { remote: { status: "plus" }, vaultId });
+  assert.equal(keyAction(waited.settings, waited.look), "waiting");
+  server.down = true;
+  const unsent = await desktop.keys.shareSaved({ ...later, key: fake("gemini") });
+  assert.match(unsent.said, /^Your other devices keep the earlier key: Could not reach JotDrop/);
+  assert.equal(unsent.look, undefined, "an answer that did not come leaves the screen's answer as it was");
+  server.down = false;
+  await desktop.store.save(later);
+  await assert.rejects(laptop.keys.use(), refused("plus"));
+  await assert.rejects(desktop.keys.turnOn({ ...later, synced: 0, syncedVault: "" }), refused("plus"));
+
+  // 5. The switch off works without Plus: the sealed copy goes, the desktop keeps its key; the laptop that followed it
+  //    drops its copy at its next look, and Ask JotDrop is off there.
+  const stopped = await desktop.keys.turnOff(waited.settings);
+  assert.deepEqual([stopped.synced, stopped.syncedVault, stopped.key], [0, "", later.key]);
+  assert.deepEqual(await desktop.store.load(), stopped);
+  assert.equal(server.blobs.has(vaultId), false);
+  server.plus = true;
+  seen = await laptop.keys.look();
+  assert.equal(seen.changed, "removed");
+  assert.deepEqual(await laptop.store.load(), off);
+  assert.equal(KEY_REMOVED, "The key was removed on another device, so Ask JotDrop is off on this device. Add a key to turn it on again.");
+
+  // 6. An own key while the other devices share another one: only said; switching on refuses with their answer, so the
+  //    screen can ask, and the shared key is never replaced without a word.
+  const sharing = await desktop.keys.turnOn(stopped);
+  await laptop.store.save(claude);
+  seen = await laptop.keys.look();
+  assert.equal(keyAction(seen.settings, seen.look), "available");
+  assert.equal(keyOffered(seen.settings, seen.look), undefined);
+  const blobBefore = server.blobs.get(vaultId).sealed;
+  await assert.rejects(laptop.keys.turnOn(claude), (error) => refused("other")(error) && error.remote.config.provider === "gemini");
+  assert.equal(server.blobs.get(vaultId).sealed, blobBefore, "the shared key stays");
+  assert.equal((await laptop.store.load()).key, claude.key, "and the laptop keeps its own");
+  // The same key switched on twice is no question: it is simply shared again.
+  assert.ok((await desktop.keys.turnOn(sharing)).synced > sharing.synced);
+
+  // 7. "On all my devices": first the blob, then the key here; when the server cannot be reached nothing is removed.
+  await laptop.keys.use();
+  server.down = true;
+  await assert.rejects(laptop.keys.removeEverywhere(), refused("unreachable"));
+  assert.equal((await laptop.store.load()).provider, "gemini");
+  seen = await laptop.keys.look();
+  assert.equal(seen.look.remote.status, "unavailable");
+  assert.equal(seen.changed, undefined, "an answer that did not come changes nothing");
+  await assert.rejects(laptop.keys.turnOff(await laptop.store.load()), refused("unreachable"));
+  assert.ok((await laptop.store.load()).synced > 0, "the switch stays on");
+  server.down = false;
+  await laptop.keys.removeEverywhere();
+  assert.deepEqual(await laptop.store.load(), off);
+  assert.equal(server.blobs.has(vaultId), false);
+  assert.equal((await desktop.keys.look()).changed, "removed");
+
+  // 8. Once a day after a sync, on a device that follows a key: not again within the day; after a day a replaced key comes in.
+  await desktop.store.save(claude);
+  await desktop.keys.turnOn(await desktop.store.load());
+  await laptop.keys.look();
+  await laptop.keys.use();
+  let count = server.sent.length;
+  assert.equal(await laptop.keys.daily(), "", "looked a moment ago");
+  assert.equal(server.sent.length, count, "and no request for it");
+  const newer = { ...(await desktop.store.load()), key: fake("sk-ant") };
+  await desktop.store.save(newer);
+  await desktop.keys.shareSaved(newer);
+  laptop.values.set("key-checked", { vaultId, at: Date.now() - 2 * DAY });
+  assert.equal(await laptop.keys.daily(), KEY_REPLACED);
+  assert.equal((await laptop.store.load()).key, newer.key);
+  count = server.sent.length;
+  assert.equal(await laptop.keys.daily(), "", "once a day");
+  laptop.values.set("key-checked", { vaultId, at: Date.now() + DAY });
+  assert.equal(await laptop.keys.daily(), "", "a check time in the future (a clock set back) looks again, and finds nothing new");
+  assert.equal(server.sent.length, count + 1);
+  const own = device("own");
+  await own.store.save(claude);
+  own.values.set("key-checked", { vaultId, at: 0 });
+  count = server.sent.length;
+  assert.equal(await own.keys.daily(), "", "a device with its own key does not look by itself");
+  assert.equal(server.sent.length, count);
+
+  // 9. Signed in to another account: the key here is this device's own; nothing is removed or replaced, and no daily look.
+  laptop.signIn(connect(otherVault));
+  seen = await laptop.keys.look();
+  assert.equal(seen.changed, undefined);
+  assert.equal(keyAction(seen.settings, seen.look), "none");
+  assert.equal((await laptop.store.load()).key, newer.key);
+  assert.equal(await laptop.keys.daily(), "");
+  laptop.signIn(connect());
+
+  // 10. Settings that cannot go to other devices: an address on this computer is refused before anything is sent; a
+  //     local model or Off, saved on a device that follows, lets go, and the other devices keep theirs.
+  count = server.sent.length;
+  await assert.rejects(desktop.keys.turnOn({ ...off, provider: "custom", key: fake("sk"), baseUrl: "http://127.0.0.1:1234/v1" }), (error) => refused("share")(error) && /https address/.test(error.message));
+  assert.equal(server.sent.length, count);
+  const local = aiSettings({ ...(await laptop.store.load()), provider: "ollama", key: "", model: "llama3.2" });
+  assert.ok(local.synced > 0);
+  const letGo = await laptop.keys.shareSaved(local);
+  assert.equal(letGo.said, "A local model has no key to share. It stays on this device. This device no longer follows the key of your other devices. They keep it.");
+  assert.deepEqual([letGo.settings.synced, letGo.settings.provider], [0, "ollama"]);
+  assert.ok(server.blobs.has(vaultId), "the other devices keep theirs");
+  const followingAgain = await laptop.keys.use();
+  assert.equal((await laptop.keys.shareSaved(aiSettings({ ...followingAgain, provider: "" }))).said, "This device no longer follows the key of your other devices. They keep it.");
+
+  // 11. A blob this version cannot open (from a later app): never offered, never written over.
+  server.blobs.set(vaultId, { sealed: vectors.refuses[5].sealed, updatedAt: ++server.clock });
+  const third = device("third");
+  seen = await third.keys.look();
+  assert.equal(keyAction(seen.settings, seen.look), "none");
+  await assert.rejects(third.keys.use(), refused("gone"));
+  await third.store.save(claude);
+  await assert.rejects(third.keys.turnOn(claude), refused("unopened"));
+  assert.equal(server.blobs.get(vaultId).sealed, vectors.refuses[5].sealed);
+
+  // 12. The web app and the plugin open each other's blob: the web app seals with keysync.mjs as it is. An own https
+  //     address goes along too (the web app cannot use it; Obsidian and Android can).
+  const web = { provider: "openrouter", key: fake("sk-or"), model: "", baseUrl: "" };
+  server.blobs.set(vaultId, { sealed: await sealKey(vaultKey, vaultId, web), updatedAt: ++server.clock });
+  const fromWeb = await third.keys.use();
+  assert.deepEqual([fromWeb.provider, fromWeb.key], ["openrouter", web.key]);
+  const ownAddress = aiSettings({ ...fromWeb, provider: "custom", key: fake("sk"), model: "my-model", baseUrl: "https://ai.example.test/v1" });
+  assert.equal((await third.keys.shareSaved(ownAddress)).said, "Your other devices get the same key.");
+  assert.deepEqual(await openKey(vaultKey, vaultId, server.blobs.get(vaultId).sealed), sharedKey(ownAddress));
+  seen = await device("fourth").keys.look();
+  assert.equal(keyLabel(keyOffered(seen.settings, seen.look).config), "your own address ai.example.test");
+
+  // 13. No key ever in a request to JotDrop, and every blob has the same size whatever the service.
+  assert.ok(server.sent.length > 20);
+  for (const value of fakeKeys) assert.ok(!server.sent.some((line) => line.includes(value)), "no key in a request to JotDrop");
+  const sizes = new Set(server.sent.map((line) => JSON.parse(line)).filter((line) => line.method === "PUT").map((line) => line.body.sealed.length));
+  assert.equal(sizes.size, 1, "the size of a blob does not tell which service it is for");
+
+  }
+
   // Wiring and rules, read from the source.
   const code = (file) => source(file).replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
   const ask = code("src/askJotDrop.ts"), ai = code("src/ai.ts"), view = source("src/view.ts"), edit = source("src/edit.ts"), main = source("src/main.ts"), settings = source("src/settings.ts"), i18n = source("src/i18n.ts");
@@ -501,6 +764,28 @@ function fakeVault(TFile, initial) {
   assert.match(ask, /report\.sent = digest\.notes\.map/, "the report says which notes of the digest went");
   assert.match(ask, /Move it to the trash[\s\S]*void trash\(older\)/, "the older note goes to the trash only when the user selects it");
   assert.match(ask, /digestRequest\(\{ language: this\.language\(\)/);
+
+  // Phase 8 wiring: keysync.mjs itself, not a copy; the own account only; a look at the agreed moments.
+  const sharedCode = code("src/aiShared.ts"), cloudCode = code("src/cloud.ts"), askText = source("src/askJotDrop.ts");
+  assert.match(sharedCode, /import \* as keysync from "\.\.\/cloud\/shared\/ai\/keysync\.mjs"/, "the plugin uses the shared rules");
+  assert.doesNotMatch(ai + ask, /ai-key:v1|encryptEnvelope|decryptEnvelope|"\/ai-key"/, "no own copy of the sealing or of the address");
+  assert.match(main, /this\.aiKeys = new AiKeyCloud\(this\.aiStore, \(\) => this\.cloud\.connection\)/, "the own account's connection, never a shared group's");
+  assert.match(main, /identifyClient\("obsidian", this\.manifest\.version\)/, "the server lets obsidian/<version> in");
+  assert.match(cloudCode, /void this\.plugin\.aiKeys\.daily\(\)\.then\(\(said\) => \{ if \(said\) new Notice\(said, 10000\); \}, \(\) => \{\}\)/, "once a day after a sync, never failing the sync");
+  assert.match(ask, /render\(\); void checkKey\(\);/, "a look when the settings open");
+  assert.match(ask, /if \(!this\.config\.provider\) void this\.offerKey\(\)/, "and when Ask JotDrop opens without a key");
+  assert.match(ask, /new AskJotDropModal\(this\.app, this\.plugin, this\.options\)\.open\(\)/, "after one tap Ask JotDrop opens as it was asked");
+  assert.match(ask, /const offered = keyOffered\(saved, look\)/, "the offer is judged against the settings saved now");
+  assert.equal((ask.match(/keep\(next, ownLook\(next\)\)/g) ?? []).length, 2, "after Use it here and after switching on, the screen knows what the server has");
+  assert.match(ask, /keep\(shared\.settings, shared\.look\)/, "and after an own Save, only with what the server really has");
+  assert.match(ask, /if \(follows\(saved, keys\.vaultId\)\) \{ choosing = true;/, "removing a shared key asks where");
+  assert.match(ask, /confirmLabel: "Stop sharing"/, "switching off asks first");
+  assert.match(ask, /confirmLabel: "Use that key"/, "another shared key is never replaced without a word");
+  assert.doesNotMatch(ai + ask, /console\./, "nothing about the key in the console");
+  for (const words of ["Use this key on all my devices", "Part of JotDrop Plus.", "set a spending limit at your AI service", "A key from another device is ready: ${label}. Use it here?", "It does not sync, unless you switch on \\\"Use this key on all my devices\\\" below.", "On all my devices", "On this device only"]) {
+    assert.ok(askText.includes(words), `the words "${words}"`);
+  }
+  assert.doesNotMatch(askText + source("src/ai.ts"), /—|https?:\/\/[^"`\s]*(pricing|#plus)|€|\$\d/, "no em-dash, no price and no link to buy in the screens");
 
   console.log("check-ai-obsidian: ok");
 })().catch((error) => { console.error(error); process.exit(1); });

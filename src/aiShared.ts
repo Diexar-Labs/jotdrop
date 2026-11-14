@@ -9,6 +9,7 @@ import * as receipt from "../cloud/shared/ai/receipt.mjs";
 import { diffLines as diff, foldUnchanged as fold } from "../cloud/shared/diff.mjs";
 import { digestRequest as digestAsk, weekDigest as digest } from "../cloud/shared/ai/digest.mjs";
 import { findDuplicates as similar, pairKey as pairs } from "../cloud/shared/similar.mjs";
+import * as keysync from "../cloud/shared/ai/keysync.mjs";
 import * as web from "../cloud/web/ai-web.mjs";
 import { joinNote as join, splitNote as split } from "../cloud/web/note.mjs";
 export { AiError, PROVIDERS, TRANSCRIBE_MODEL, createProvider, pickDefaultModel } from "../cloud/shared/ai/providers.mjs";
@@ -75,6 +76,21 @@ export const diffLines = diff as unknown as (before: string, after: string) => A
 export type WeekDigest = { notes: Array<{ id: string; title: string }>; text: string; left: number; truncated: boolean; counts: { changed: number; reminders: number; expiring: number } };
 export const weekDigest = digest as unknown as (notes: OverviewNote[], options: { now?: Date; timeZone: string; includeShared: boolean }) => WeekDigest;
 export const digestRequest = digestAsk as unknown as (args: { language: string; date: string; timeZone: string; text: string }) => { system: string; text: string };
+
+// Version 2, phase 8: one key on all your devices (JotDrop Plus). The rules are the shared code (cloud/shared/ai/keysync.mjs,
+// the same in the web app; Android has them in Kotlin against the same vectors); this file only states the types.
+export type SharedKey = { provider: string; key: string; model: string; baseUrl: string };
+export type KeyRemote = { status: "found"; updatedAt: number; config: SharedKey | null } | { status: "none" | "plus" | "unavailable" };
+export type KeyAction = "offer" | "available" | "update" | "remove" | "waiting" | "none";
+/** What keysync.mjs needs of a connection: CloudClient of the own account, never a shared group's. */
+export type KeyClient = { credentials: { vaultKey: string; vaultId: string }; call(path: string, method?: string, body?: unknown): Promise<unknown> };
+export const sharedKey = keysync.sharedKey as unknown as (config: unknown) => SharedKey;
+export const readSharedKey = keysync.readSharedKey as unknown as (client: KeyClient) => Promise<KeyRemote>;
+export const saveSharedKey = keysync.saveSharedKey as unknown as (client: KeyClient, config: unknown) => Promise<number>;
+export const removeSharedKey = keysync.removeSharedKey as unknown as (client: KeyClient) => Promise<void>;
+export const decideKeySync = keysync.decideKeySync as unknown as (local: { hasKey: boolean; synced: number }, remote: KeyRemote) => KeyAction;
+export const sameService = keysync.sameService as unknown as (a: unknown, b: unknown) => boolean;
+export const keyLabel = keysync.keyLabel as unknown as (config: unknown) => string;
 
 /**
  * "Merge with AI" (from Find duplicates): both notes go along and the AI writes one text, which the usual confirmation

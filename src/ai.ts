@@ -9,27 +9,41 @@ import { CloudStore, type KeyValues, type Sealed, seal, unseal } from "./cloud";
 import { type ColorName, isColorName, readLabels, readMeta, updateMeta } from "./metadata";
 import { createNoteInFolder } from "./capture";
 import { bytesToBase64 } from "../cloud/shared/crypto.mjs";
-import { type AiFileKind, type AiPart, LIMITS, PROVIDERS, aiFileKind, appendedText, expiryChanges, joinNote, newNoteText, plainBase64, replacedText, splitNote } from "./aiShared";
+import {
+  type AiFileKind, type AiPart, type KeyAction, type KeyClient, type KeyRemote, LIMITS, PROVIDERS, type SharedKey, aiFileKind, appendedText, decideKeySync, expiryChanges,
+  joinNote, newNoteText, plainBase64, readSharedKey, removeSharedKey, replacedText, sameService, saveSharedKey, sharedKey, splitNote,
+} from "./aiShared";
 
 /** The services in the order the settings show them: a local model first, because nothing leaves the computer. */
 export const AI_PROVIDER_IDS = ["ollama", "anthropic", "openai", "gemini", "openrouter", "custom"] as const;
 export type AiProviderId = typeof AI_PROVIDER_IDS[number];
-export type AiConfig = { provider: AiProviderId | ""; key: string; model: string; baseUrl: string; includeShared: boolean };
-export const AI_OFF: AiConfig = { provider: "", key: "", model: "", baseUrl: "", includeShared: false };
+export type AiConfig = {
+  provider: AiProviderId | ""; key: string; model: string; baseUrl: string; includeShared: boolean;
+  /** One key on all your devices: the server's time of the shared key this device follows, 0 when its key is its own. */
+  synced: number;
+  /** The workspace of that shared key: signed in to another account, the key here is this device's own again. */
+  syncedVault: string;
+};
+export const AI_OFF: AiConfig = { provider: "", key: "", model: "", baseUrl: "", includeShared: false, synced: 0, syncedVault: "" };
+
+const isProvider = (value: unknown): value is AiProviderId => (AI_PROVIDER_IDS as readonly unknown[]).includes(value);
 
 /** What is stored, cleaned: only known fields and a known service; an address only for an own address. */
 export function aiSettings(stored: unknown): AiConfig {
   const value = stored && typeof stored === "object" ? stored as Record<string, unknown> : {};
-  const provider = (AI_PROVIDER_IDS as readonly string[]).includes(value.provider as string) ? value.provider as AiProviderId : "";
+  const provider = isProvider(value.provider) ? value.provider : "";
   if (!provider) return { ...AI_OFF };
   // Ollama needs no key; an own address may have one (Mistral, a proxy) or not (LM Studio).
   const keeps = PROVIDERS[provider].needsKey || provider === "custom";
+  const synced = Number.isSafeInteger(value.synced) && (value.synced as number) > 0 && typeof value.syncedVault === "string" && value.syncedVault ? value.synced as number : 0;
   return {
     provider,
     key: keeps ? String(value.key ?? "").trim() : "",
     model: String(value.model ?? "").trim(),
     baseUrl: provider === "custom" ? String(value.baseUrl ?? "").trim() : "",
     includeShared: Boolean(value.includeShared),
+    synced,
+    syncedVault: synced ? value.syncedVault as string : "",
   };
 }
 
@@ -50,6 +64,181 @@ export class AiSettingsStore {
   }
   async save(config: AiConfig): Promise<void> { await this.store.put("settings", await seal(aiSettings(config))); }
   async remove(): Promise<void> { await this.store.delete("settings"); }
+  /** When this device last looked at the shared key of this workspace; no key in it. */
+  async checkedAt(vaultId: string): Promise<number> {
+    const saved = await this.store.get<{ vaultId: string; at: number }>("key-checked").catch(() => undefined);
+    return saved?.vaultId === vaultId && Number.isFinite(saved.at) ? saved.at : 0;
+  }
+  async markChecked(vaultId: string): Promise<void> { await this.store.put("key-checked", { vaultId, at: Date.now() }); }
+}
+
+// "Use this key on all my devices" (JotDrop Plus; Hand-off/ontwerp-ask-jotdrop-v2.md 4.8), as the web app (cloud/web/app.js)
+// and Android (AiKeyCloud.kt) do it: the calls to /ai-key of the own account, never a shared group's, and the copy in
+// AiSettingsStore. The rules are keysync.mjs's. The key is never shown, logged or put in a message.
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const PLUS_TEXT = "Using one key on all your devices is part of JotDrop Plus.";
+const UNREACHABLE = "Could not reach JotDrop for the key. Try again in a moment.";
+export const KEY_REPLACED = "The key was replaced on another device. This device now uses the new one.";
+export const KEY_REMOVED = "The key was removed on another device, so Ask JotDrop is off on this device. Add a key to turn it on again.";
+
+/** What the server said, and for which workspace. The screens keep this and judge it against the settings saved now. */
+export type KeyLook = { remote: KeyRemote; vaultId: string };
+
+/** A step that did not happen, in words for the user; `remote` is the server's answer when the screen needs it. */
+export class KeyRefused extends Error {
+  constructor(message: string, readonly reason: string, readonly remote?: KeyRemote) { super(message); }
+}
+
+function refusal(error: unknown): KeyRefused {
+  if (error instanceof KeyRefused) return error;
+  const { code, status, message } = (error ?? {}) as { code?: string; status?: number; message?: string };
+  if (code === "plus-required") return new KeyRefused(PLUS_TEXT, "plus");
+  return typeof status === "number" && message ? new KeyRefused(message, "server") : new KeyRefused(UNREACHABLE, "unreachable");
+}
+
+/** Whether this device follows the shared key of this workspace. */
+export const follows = (config: AiConfig, vaultId: string | undefined): boolean => Boolean(vaultId) && config.synced > 0 && config.syncedVault === vaultId;
+
+/** What to do with what the server said, for these settings: those saved now, never those of the moment of looking. */
+export function keyAction(config: AiConfig, look: KeyLook | undefined): KeyAction {
+  return look ? decideKeySync({ hasKey: Boolean(config.provider), synced: follows(config, look.vaultId) ? config.synced : 0 }, look.remote) : "none";
+}
+
+/** A key that is ready here ("Use it here?"): one from another device, or a newer one for another service (switched). */
+export function keyOffered(config: AiConfig, look: KeyLook | undefined): { config: SharedKey; switched: boolean } | undefined {
+  const remote = look?.remote;
+  if (remote?.status !== "found" || !remote.config) return undefined;
+  const action = keyAction(config, look);
+  if (action === "offer") return { config: remote.config, switched: false };
+  return action === "update" && !sameService(remote.config, config) ? { config: remote.config, switched: true } : undefined;
+}
+
+/**
+ * What the server has right after this device saved its own settings there. A screen that kept the answer from before
+ * would offer or name the wrong key (found 13 Nov 2026 in Android's two-device test).
+ */
+export function ownLook(config: AiConfig): KeyLook | undefined {
+  if (!config.synced) return undefined;
+  try { return { remote: { status: "found", updatedAt: config.synced, config: sharedKey(config) }, vaultId: config.syncedVault }; } catch { return undefined; }
+}
+
+const followed = (shared: SharedKey, includeShared: boolean, synced: number, syncedVault: string): AiConfig => aiSettings({ ...shared, includeShared, synced, syncedVault });
+
+export class AiKeyCloud {
+  constructor(private store: AiSettingsStore, private connection: () => KeyClient | undefined) {}
+
+  /** The workspace of the own account, or undefined when this device is not signed in to JotDrop Cloud. */
+  get vaultId(): string | undefined { return this.connection()?.credentials.vaultId; }
+
+  private client(): KeyClient {
+    const client = this.connection();
+    if (!client) throw new KeyRefused("Sign in to JotDrop Cloud on this device to use this.", "cloud");
+    return client;
+  }
+
+  /**
+   * Looks at what the server has and follows it: a newer shared key for the same service replaces the copy here, a
+   * removed one takes it away and turns Ask JotDrop off. Undefined when not signed in, or signed in to another account meanwhile.
+   */
+  async look(): Promise<{ look: KeyLook; settings: AiConfig; changed?: "replaced" | "removed" } | undefined> {
+    const client = this.connection();
+    if (!client) return undefined;
+    const remote = await readSharedKey(client);
+    if (this.connection() !== client) return undefined;
+    const look = { remote, vaultId: client.credentials.vaultId };
+    if (remote.status !== "unavailable") await this.store.markChecked(look.vaultId).catch(() => {});
+    const settings = await this.store.load();
+    const action = keyAction(settings, look);
+    if (action === "update" && remote.status === "found" && remote.config && sameService(remote.config, settings)) {
+      const next = followed(remote.config, settings.includeShared, remote.updatedAt, look.vaultId);
+      await this.store.save(next);
+      return { look, settings: next, changed: "replaced" };
+    }
+    if (action === "remove") {
+      await this.store.remove();
+      return { look, settings: { ...AI_OFF }, changed: "removed" };
+    }
+    return { look, settings };
+  }
+
+  /** Once a day, after an ordinary sync, and only on a device that follows a shared key. Returns what to say, or "". */
+  async daily(): Promise<string> {
+    const vaultId = this.vaultId;
+    if (!vaultId || !follows(await this.store.load(), vaultId)) return "";
+    const since = Date.now() - await this.store.checkedAt(vaultId);
+    if (since >= 0 && since < DAY_MS) return "";
+    const found = await this.look();
+    return found?.changed === "replaced" ? KEY_REPLACED : found?.changed === "removed" ? KEY_REMOVED : "";
+  }
+
+  /** One tap: this device keeps its own sealed copy of the shared key and follows it from now on. A fresh look, so it is the key of this moment. */
+  async use(): Promise<AiConfig> {
+    const client = this.client();
+    const remote = await readSharedKey(client);
+    if (remote.status === "plus") throw new KeyRefused(PLUS_TEXT, "plus", remote);
+    if (remote.status === "unavailable") throw new KeyRefused(UNREACHABLE, "unreachable", remote);
+    if (remote.status !== "found" || !remote.config || !isProvider(remote.config.provider)) throw new KeyRefused("That key is no longer there.", "gone", remote);
+    const next = followed(remote.config, (await this.store.load()).includeShared, remote.updatedAt, client.credentials.vaultId);
+    await this.store.save(next);
+    return next;
+  }
+
+  /**
+   * The switch on: the key of this device goes to the other devices. When they already share another key it is never
+   * replaced without a word: KeyRefused "other", with the answer, so the screen can ask.
+   */
+  async turnOn(settings: AiConfig): Promise<AiConfig> {
+    const client = this.client();
+    try { sharedKey(settings); } catch (error) { throw new KeyRefused((error as Error).message, "share"); }
+    const remote = await readSharedKey(client);
+    if (remote.status === "plus") throw new KeyRefused(PLUS_TEXT, "plus", remote);
+    if (remote.status === "unavailable") throw new KeyRefused(UNREACHABLE, "unreachable", remote);
+    // A blob this version cannot open may come from a newer app: never write over it.
+    if (remote.status === "found" && !remote.config) throw new KeyRefused("Your other devices share a key that this version of JotDrop cannot open. Update JotDrop here or on your other devices, and try again.", "unopened", remote);
+    if (remote.status === "found" && remote.config && (remote.config.provider !== settings.provider || remote.config.key !== settings.key)) throw new KeyRefused("Your other devices already share a key.", "other", remote);
+    const next = { ...settings, synced: await saveSharedKey(client, settings).catch((error) => { throw refusal(error); }), syncedVault: client.credentials.vaultId };
+    await this.store.save(next);
+    return next;
+  }
+
+  /** The switch off: JotDrop removes its sealed copy; this device keeps its key, the devices that followed it lose theirs. */
+  async turnOff(settings: AiConfig): Promise<AiConfig> {
+    await removeSharedKey(this.client()).catch((error) => { throw refusal(error); });
+    const next = { ...settings, synced: 0, syncedVault: "" };
+    await this.store.save(next);
+    return next;
+  }
+
+  /**
+   * After Save on a device that follows the shared key: the other devices get the new settings, or, when there is
+   * nothing to share (Off, a local model, an address on this device), this device lets go and they keep theirs.
+   * Returns the settings kept now, what to say, and what the server has after this when that is known.
+   */
+  async shareSaved(settings: AiConfig): Promise<{ settings: AiConfig; said: string; look?: KeyLook }> {
+    const client = this.client();
+    try { sharedKey(settings); } catch (error) {
+      const next = { ...settings, synced: 0, syncedVault: "" };
+      await this.store.save(next);
+      const letGo = "This device no longer follows the key of your other devices. They keep it.";
+      return { settings: next, said: settings.provider ? `${(error as Error).message} ${letGo}` : letGo };
+    }
+    try {
+      const next = { ...settings, synced: await saveSharedKey(client, settings), syncedVault: client.credentials.vaultId };
+      await this.store.save(next);
+      return { settings: next, said: "Your other devices get the same key.", look: ownLook(next) };
+    } catch (error) {
+      // The server did not take the new key: never act as if it had (it still has the earlier one, or says Plus).
+      const refused = refusal(error);
+      return { settings, said: `Your other devices keep the earlier key: ${refused.message}`, look: refused.reason === "plus" ? { remote: { status: "plus" }, vaultId: client.credentials.vaultId } : undefined };
+    }
+  }
+
+  /** "On all my devices": first the sealed copy on the server; if that fails, nothing is removed and the user can try again. */
+  async removeEverywhere(): Promise<void> {
+    await removeSharedKey(this.client()).catch((error) => { throw refusal(error); });
+    await this.store.remove();
+  }
 }
 
 /**

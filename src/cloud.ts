@@ -642,6 +642,8 @@ export class CloudController {
       if (await this.syncSpaces(client, active, abort.signal)) redraw = true;
       const failed = this.spaces.filter((space) => this.spaceErrors.has(space.id));
       if (failed.length) this.status = [this.status, ...failed.map((space) => `Group "${space.name || "Shared group"}" did not sync: ${this.spaceErrors.get(space.id)}`)].join(" ");
+      // Ask JotDrop on a device that follows the shared AI key: once a day, whether it was replaced or removed elsewhere.
+      void this.plugin.aiKeys.daily().then((said) => { if (said) new Notice(said, 10000); }, () => {});
     } catch (error) {
       if (this.generation !== generation) return;
       const status = (error as { status?: number }).status;
