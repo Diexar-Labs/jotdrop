@@ -1,12 +1,19 @@
 plugins {
     id("com.android.application") version "8.5.2" apply false
     id("com.android.test") version "8.5.2" apply false
-    id("org.jetbrains.kotlin.android") version "1.9.24" apply false
+    id("org.jetbrains.kotlin.android") version "2.4.0" apply false
+    // Kotlin 2: the Compose compiler comes with Kotlin itself (was composeOptions.kotlinCompilerExtensionVersion).
+    id("org.jetbrains.kotlin.plugin.compose") version "2.4.0" apply false
     // Baseline Profile generator (see baselineprofile/build.gradle.kts). Only
     // :app:generateBaselineProfile runs it; normal release builds just read the
     // checked-in profile under app/src/main/generated/baselineProfiles.
     id("androidx.baselineprofile") version "1.3.4" apply false
 }
+
+// The check tasks below compile a few sources with the Kotlin compiler itself. Kotlin 2's Gradle plugin no longer
+// carries that compiler on the build classpath, so it gets its own configuration, same version as the app.
+val kotlinCompiler: Configuration by configurations.creating
+dependencies { kotlinCompiler("org.jetbrains.kotlin:kotlin-compiler-embeddable:2.4.0") }
 
 val cloudCryptoClasses = layout.buildDirectory.dir("cloud-crypto-check")
 val cloudCryptoSources = files("app/src/main/kotlin/com/diexar/keepcapture/CloudCrypto.kt", "../cloud/android/CloudCryptoCheck.kt",
@@ -17,7 +24,7 @@ val cloudCryptoSources = files("app/src/main/kotlin/com/diexar/keepcapture/Cloud
 val cloudCryptoCompile = tasks.register<JavaExec>("cloudCryptoCompile") {
     inputs.files(cloudCryptoSources)
     outputs.dir(cloudCryptoClasses)
-    classpath(buildscript.configurations.getByName("classpath"))
+    classpath(kotlinCompiler)
     mainClass.set("org.jetbrains.kotlin.cli.jvm.K2JVMCompiler")
     doFirst {
         args("-Xdisable-default-scripting-plugin", "-no-stdlib", "-no-reflect", "-jvm-target", "17", "-classpath",
@@ -53,7 +60,7 @@ val cloudMailSources = files("app/src/main/kotlin/com/diexar/keepcapture/CloudCr
 val cloudMailCompile = tasks.register<JavaExec>("cloudMailCompile") {
     inputs.files(cloudMailSources)
     outputs.dir(cloudMailClasses)
-    classpath(buildscript.configurations.getByName("classpath"))
+    classpath(kotlinCompiler)
     mainClass.set("org.jetbrains.kotlin.cli.jvm.K2JVMCompiler")
     doFirst {
         args("-Xdisable-default-scripting-plugin", "-no-stdlib", "-no-reflect", "-jvm-target", "17", "-classpath",
@@ -78,7 +85,7 @@ val listEditorSources = files("app/src/main/kotlin/com/diexar/keepcapture/ListEd
 val listEditorCompile = tasks.register<JavaExec>("listEditorCompile") {
     inputs.files(listEditorSources)
     outputs.dir(listEditorClasses)
-    classpath(buildscript.configurations.getByName("classpath"))
+    classpath(kotlinCompiler)
     mainClass.set("org.jetbrains.kotlin.cli.jvm.K2JVMCompiler")
     doFirst {
         args("-Xdisable-default-scripting-plugin", "-no-stdlib", "-no-reflect", "-jvm-target", "17", "-classpath",
@@ -102,7 +109,7 @@ val tikTokPageSources = files("app/src/main/kotlin/com/diexar/keepcapture/JsonTe
 val tikTokPageCompile = tasks.register<JavaExec>("tikTokPageCompile") {
     inputs.files(tikTokPageSources)
     outputs.dir(tikTokPageClasses)
-    classpath(buildscript.configurations.getByName("classpath"))
+    classpath(kotlinCompiler)
     mainClass.set("org.jetbrains.kotlin.cli.jvm.K2JVMCompiler")
     doFirst {
         args("-Xdisable-default-scripting-plugin", "-no-stdlib", "-no-reflect", "-jvm-target", "17", "-classpath",
@@ -124,7 +131,7 @@ val versionDiffSources = files("app/src/main/kotlin/com/diexar/keepcapture/Cloud
 val versionDiffCompile = tasks.register<JavaExec>("versionDiffCompile") {
     inputs.files(versionDiffSources)
     outputs.dir(versionDiffClasses)
-    classpath(buildscript.configurations.getByName("classpath"))
+    classpath(kotlinCompiler)
     mainClass.set("org.jetbrains.kotlin.cli.jvm.K2JVMCompiler")
     doFirst {
         args("-Xdisable-default-scripting-plugin", "-no-stdlib", "-no-reflect", "-jvm-target", "17", "-classpath",
@@ -147,7 +154,7 @@ val drawingFormatSources = files("app/src/main/kotlin/com/diexar/keepcapture/Dra
 val drawingFormatCompile = tasks.register<JavaExec>("drawingFormatCompile") {
     inputs.files(drawingFormatSources)
     outputs.dir(drawingFormatClasses)
-    classpath(buildscript.configurations.getByName("classpath"))
+    classpath(kotlinCompiler)
     mainClass.set("org.jetbrains.kotlin.cli.jvm.K2JVMCompiler")
     doFirst {
         args("-Xdisable-default-scripting-plugin", "-no-stdlib", "-no-reflect", "-jvm-target", "17", "-classpath",
@@ -172,7 +179,7 @@ val paperDrawerSources = files("app/src/main/kotlin/com/diexar/keepcapture/Paper
 val paperDrawerCompile = tasks.register<JavaExec>("paperDrawerCompile") {
     inputs.files(paperDrawerSources)
     outputs.dir(paperDrawerClasses)
-    classpath(buildscript.configurations.getByName("classpath"))
+    classpath(kotlinCompiler)
     mainClass.set("org.jetbrains.kotlin.cli.jvm.K2JVMCompiler")
     doFirst {
         args("-Xdisable-default-scripting-plugin", "-no-stdlib", "-no-reflect", "-jvm-target", "17", "-classpath",
@@ -197,7 +204,7 @@ val inlineTagsSources = files("app/src/main/kotlin/com/diexar/keepcapture/Inline
 val inlineTagsCompile = tasks.register<JavaExec>("inlineTagsCompile") {
     inputs.files(inlineTagsSources)
     outputs.dir(inlineTagsClasses)
-    classpath(buildscript.configurations.getByName("classpath"))
+    classpath(kotlinCompiler)
     mainClass.set("org.jetbrains.kotlin.cli.jvm.K2JVMCompiler")
     doFirst {
         args("-Xdisable-default-scripting-plugin", "-no-stdlib", "-no-reflect", "-jvm-target", "17", "-classpath",
@@ -221,7 +228,7 @@ val listLinkSources = files("app/src/main/kotlin/com/diexar/keepcapture/CloudCry
 val listLinkCompile = tasks.register<JavaExec>("listLinkCompile") {
     inputs.files(listLinkSources)
     outputs.dir(listLinkClasses)
-    classpath(buildscript.configurations.getByName("classpath"))
+    classpath(kotlinCompiler)
     mainClass.set("org.jetbrains.kotlin.cli.jvm.K2JVMCompiler")
     doFirst {
         args("-Xdisable-default-scripting-plugin", "-no-stdlib", "-no-reflect", "-jvm-target", "17", "-classpath",
@@ -248,7 +255,7 @@ val aiSources = files(listOf("AiJson", "AiRedact", "AiTools", "AiContext", "AiPr
 val aiCompile = tasks.register<JavaExec>("aiCompile") {
     inputs.files(aiSources)
     outputs.dir(aiClasses)
-    classpath(buildscript.configurations.getByName("classpath"))
+    classpath(kotlinCompiler)
     mainClass.set("org.jetbrains.kotlin.cli.jvm.K2JVMCompiler")
     doFirst {
         args("-Xdisable-default-scripting-plugin", "-no-stdlib", "-no-reflect", "-jvm-target", "17", "-classpath",
@@ -275,7 +282,7 @@ val cloudAccountSources = files("app/src/main/kotlin/com/diexar/keepcapture/Clou
 val cloudAccountCompile = tasks.register<JavaExec>("cloudAccountCompile") {
     inputs.files(cloudAccountSources)
     outputs.dir(cloudAccountClasses)
-    classpath(buildscript.configurations.getByName("classpath"))
+    classpath(kotlinCompiler)
     mainClass.set("org.jetbrains.kotlin.cli.jvm.K2JVMCompiler")
     doFirst {
         args("-Xdisable-default-scripting-plugin", "-no-stdlib", "-no-reflect", "-jvm-target", "17", "-classpath",
