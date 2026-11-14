@@ -196,6 +196,7 @@ The apps are free and always will be. Pay only when you want more from the cloud
 | Largest synced file | 25 MB | 200 MB |
 | Time machine | 30 days | Full available history |
 | End-to-end encryption | Included | Included |
+| One AI key on all your devices | No | Yes |
 
 250 MB is more than it sounds: 10,000 notes of 5 KB are about 50 MB of text. Photos, encryption and history take extra space. The free plan needs no payment details. When both free devices are in use, signing in on a third asks which one it replaces. JotDrop Plus is bought on the [JotDrop pricing page](https://jotdrop.net/#pricing), where the current prices are.
 
@@ -209,7 +210,7 @@ The apps are free and always will be. Pay only when you want more from the cloud
 
 Notes go to the `Mini Notes` folder of your vault; you can choose another folder in the settings.
 
-**Manual install** (offline or pre-release): download `manifest.json`, `main.js` and `styles.css` from the [latest plugin release](https://github.com/Diexar-Labs/jotdrop/releases/tag/0.30.0), put them in `<your-vault>/.obsidian/plugins/jotdrop/` and enable JotDrop under Community plugins.
+**Manual install** (offline or pre-release): download `manifest.json`, `main.js` and `styles.css` from the [latest plugin release](https://github.com/Diexar-Labs/jotdrop/releases/tag/0.31.0), put them in `<your-vault>/.obsidian/plugins/jotdrop/` and enable JotDrop under Community plugins.
 
 ### Android app
 
@@ -337,6 +338,9 @@ Resetting your login and opening your encrypted notes are two different things. 
 
 **Does JotDrop see what I ask Ask JotDrop?**
 No. Your request and the notes that go along travel from your device straight to the AI service you picked, with your own key. With a local model such as Ollama on your own computer, they stay on that computer.
+
+**Does JotDrop see my AI key?**
+No, unless you turn on "Use this key on all my devices", which is part of JotDrop Plus. Your device then seals the key with your workspace key and sends only that sealed copy to JotDrop Cloud, which cannot open it. Your other devices offer the key, and use it after you agree. Whoever gets into your workspace can use the key, so set a spending limit with your AI service. The web app, Android and the Obsidian plugin can do this; the Joplin plugin cannot.
 
 **Can Ask JotDrop read my photos, PDFs and voice memos?**
 Yes, in Obsidian, the web app and Android, but only a file you point at. Ask JotDrop never picks a file by itself, and a plain question about a note leaves its files at home. What a service can read differs: Claude reads photos and PDFs but cannot listen to recordings, Gemini and OpenAI can write out a recording, and a local model may or may not read photos. When a service cannot read a file, Ask JotDrop tells you before anything is sent. Drawings from the drawing editor do not go along. Joplin on the desktop can send files too; Joplin for Android cannot.
