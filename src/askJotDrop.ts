@@ -9,10 +9,14 @@ import { createNoteInFolder } from "./capture";
 import { FILE_KIND_ICON, formatFileSize } from "./fileKinds";
 import { readMeta } from "./metadata";
 import { PAPER_DRAWER, SUGGESTED_DRAWERS, drawerName, validExpires } from "../cloud/shared/paper.mjs";
-import { AI_OFF, AI_PROVIDER_IDS, type AiConfig, type AiFile, type AiNote, FILE_ACTIONS, type FileAction, aiExecutor, aiLabels, aiSettings, aiTitle, aiToday, applyReceipt, collectAiFiles, collectAiNotes, readAiPart } from "./ai";
+import { ConfirmModal } from "./confirmModal";
 import {
-  AiError, type AiAction, type AiChange, type AiPart, type AiReceipt, type AiReport, FILE_TIMEOUT_MS, KEEP_YEARS, LIMITS, PHOTO_SYSTEM, PROVIDERS, TRANSCRIBE_MODEL,
-  appendedText, capabilities, createProvider, decodedLength, describeChange, editorRequest, explain, fileRequest, foldUnchanged, keepUntil, modelGroups, newNoteText,
+  AI_OFF, AI_PROVIDER_IDS, type AiConfig, type AiFile, type AiNote, FILE_ACTIONS, type FileAction, KEY_REMOVED, KEY_REPLACED, type KeyLook, KeyRefused, aiExecutor, aiLabels,
+  aiSettings, aiTitle, aiToday, applyReceipt, collectAiFiles, collectAiNotes, follows, keyAction, keyOffered, ownLook, readAiPart,
+} from "./ai";
+import {
+  AiError, type AiAction, type AiChange, type AiPart, type AiReceipt, type AiReport, FILE_TIMEOUT_MS, KEEP_YEARS, LIMITS, PHOTO_SYSTEM, PROVIDERS, type SharedKey, TRANSCRIBE_MODEL,
+  appendedText, capabilities, createProvider, decodedLength, describeChange, editorRequest, explain, fileRequest, foldUnchanged, keepUntil, keyLabel, modelGroups, newNoteText,
   parseMarkdown, parseReceipt, pickDefaultModel, receiptLines, receiptRequest, runAssistant, selectNotes,
   digestRequest, mergeRequest, weekDigest,
 } from "./aiShared";
@@ -202,11 +206,34 @@ export class AskJotDropModal extends Modal {
     const showList = Boolean(action || week || merge);
     this.el.goes.open = showList;
     this.renderGoes();
+    if (!this.config.provider) void this.offerKey();
     const off = this.offReason();
     if (off) return;
     if (request && !showList) void this.send();
     else if (showList) this.el.send.focus();
     else this.el.request.focus();
+  }
+
+  /** Ask JotDrop is off here: a key the other devices share is offered, and after one tap this window opens as it was asked. */
+  private async offerKey(): Promise<void> {
+    const found = await this.plugin.aiKeys.look().catch(() => undefined);
+    const offered = found && keyOffered(found.settings, found.look);
+    const off = this.el.off;
+    if (!offered || !off.isConnected) return;
+    off.empty();
+    off.createEl("p", { text: `Ask JotDrop is off on this device. ${offerText(offered)}` });
+    const buttons = off.createDiv({ cls: "jotdrop-ai-buttons" });
+    const use = buttons.createEl("button", { text: "Use it here", cls: "mod-cta" });
+    buttons.createEl("button", { text: "Open settings" }).addEventListener("click", () => { this.close(); openSettings(this.app, this.plugin.manifest.id); });
+    const said = off.createEl("p", { cls: "jotdrop-ai-problem", attr: { role: "status" } });
+    use.addEventListener("click", () => {
+      use.disabled = true;
+      void this.plugin.aiKeys.use().then(() => {
+        this.close();
+        new AskJotDropModal(this.app, this.plugin, this.options).open();
+      }, (error: unknown) => { said.setText(`Problem: ${aiErrorText(error, "")}`); use.disabled = false; });
+    });
+    use.focus();
   }
 
   /** A fixed request cannot be edited: the draft, a summary, a file action, the week and a merge. */
@@ -730,23 +757,49 @@ export class AskJotDropModal extends Modal {
   }
 }
 
+/** "A key from another device is ready: …" or, for a newer key of another service, "Your other devices now use …". */
+function offerText(offered: { config: SharedKey; switched: boolean }): string {
+  const label = keyLabel(offered.config);
+  return offered.switched ? `Your other devices now use a key for ${label}. Use it here too? Until then this device keeps the key it has.` : `A key from another device is ready: ${label}. Use it here?`;
+}
+
 /** The settings section "Ask JotDrop": service, key, address, model, shared notes. Saved only on Save. */
 export function renderAiSettings(el: HTMLElement, plugin: JotDropPlugin): void {
+  const keys = plugin.aiKeys;
   let saved: AiConfig = { ...AI_OFF };
   let draft: AiConfig = { ...AI_OFF };
   let models: Model[] = [];
   let message = "";
   let problem = false;
+  // One key on all your devices: what the server said last, judged against the settings saved now.
+  let look: KeyLook | undefined;
+  let busy = false;
+  let choosing = false;
 
   const say = (text: string, isProblem = false) => { message = text; problem = isProblem; render(); };
   // What the form says now; an empty key field keeps the saved key of the same service.
   const formConfig = (): AiConfig => aiSettings({ ...draft, key: draft.key || (draft.provider === saved.provider ? saved.key : "") });
+  // Settings saved by a step of the key sync, with what the server has after it when that is known.
+  const keep = (next: AiConfig, seen?: KeyLook) => { saved = next; draft = { ...next, key: "" }; models = []; choosing = false; if (seen) look = seen; };
+  const keyStep = async (work: () => Promise<string>) => {
+    busy = true;
+    message = "";
+    render();
+    try { const said = await work(); if (said) message = said; problem = false; } catch (error) { message = aiErrorText(error, saved.provider); problem = true; }
+    busy = false;
+    render();
+  };
 
   const render = () => {
     el.empty();
     new Setting(el).setName("Ask JotDrop (AI with your own key)").setHeading();
-    el.createEl("p", { text: "Optional and free. Ask JotDrop sends your question, and the notes it shows you first, straight from this device to the AI service you choose, with your own key. JotDrop never sees them. \"This week\" sends a short digest of your notes, not the notes themselves. A paid service bills you for what you use. New notes are made at once; a change to a note waits until you apply it." });
-    el.createEl("p", { cls: "setting-item-description", text: "Your key stays on this device, outside the vault: it does not sync and is not in the plugin's data.json. On each device you add it again." });
+    el.createEl("p", { text: "Optional and free, except one key on all your devices, which is part of JotDrop Plus. Ask JotDrop sends your question, and the notes it shows you first, straight from this device to the AI service you choose, with your own key. JotDrop never sees them. \"This week\" sends a short digest of your notes, not the notes themselves. A paid service bills you for what you use. New notes are made at once; a change to a note waits until you apply it." });
+    el.createEl("p", { cls: "setting-item-description", text: "Your key stays on this device, outside the vault, and is not in the plugin's data.json. It does not sync, unless you switch on \"Use this key on all my devices\" below. Even then JotDrop only gets a sealed copy that it cannot read." });
+    const offered = keyOffered(saved, look);
+    if (offered) {
+      new Setting(el).setName(offerText(offered))
+        .addButton((button) => button.setButtonText("Use it here").setCta().setDisabled(busy).onClick(() => void useShared()));
+    }
 
     new Setting(el).setName("AI service").setDesc(draft.provider ? providerNote(draft.provider) : "Ask JotDrop is off. Choose an AI service to turn it on.")
       .addDropdown((dropdown) => {
@@ -799,31 +852,127 @@ export function renderAiSettings(el: HTMLElement, plugin: JotDropPlugin): void {
 
   const renderFooter = () => {
     new Setting(el)
-      .addButton((button) => button.setButtonText("Save").setCta().onClick(() => void save()))
-      .addButton((button) => button.setButtonText("Remove key and turn off").setWarning().setDisabled(!saved.provider).onClick(() => void remove()));
+      .addButton((button) => button.setButtonText("Save").setCta().setDisabled(busy).onClick(() => void save()))
+      .addButton((button) => button.setButtonText("Remove key and turn off").setWarning().setDisabled(busy || !saved.provider).onClick(() => void remove()));
+    // A key the other devices use too: the user says where it goes.
+    if (choosing) {
+      new Setting(el).setName("Your other devices use this key too. Where do you want to remove it?")
+        .addButton((button) => button.setButtonText("On all my devices").setWarning().setDisabled(busy).onClick(() => void removeAll()))
+        .addButton((button) => button.setButtonText("On this device only").setDisabled(busy).onClick(() => void removeHere("Ask JotDrop is off, and the key is removed from this device. Your other devices keep it.")))
+        .addButton((button) => button.setButtonText("Cancel").onClick(() => { choosing = false; render(); }));
+    }
+    renderKeySync();
     if (message) el.createEl("p", { cls: problem ? "jotdrop-ai-problem" : "jotdrop-ai-said", text: problem ? `Problem: ${message}` : message, attr: { role: "status" } });
   };
+
+  // "Use this key on all my devices" (JotDrop Plus, Hand-off/ontwerp-ask-jotdrop-v2.md 4.8). It acts on the saved
+  // settings, like the web app and Android; the key itself is never shown or put in a message.
+  const renderKeySync = () => {
+    const vaultId = keys.vaultId, on = follows(saved, vaultId), action = keyAction(saved, look);
+    // Only a saved key of an AI service can go to other devices; a local model has none.
+    const enabled = Boolean(vaultId) && !busy && (on || Boolean(saved.provider && saved.key));
+    new Setting(el).setName("Use this key on all my devices")
+      .setDesc("Part of JotDrop Plus. Your other devices offer this key, and you accept it there with one tap. JotDrop keeps a copy sealed with your workspace key, so we cannot read it. Whoever gets into your workspace can use the key, so set a spending limit at your AI service.")
+      .addToggle((toggle) => toggle.setValue(on).setDisabled(!enabled).onChange((value) => {
+        if (value) { void turnOn(); return; }
+        // The switch stays on until the user agrees.
+        render();
+        new ConfirmModal(plugin.app, {
+          title: "Stop using this key on all your devices?",
+          message: "JotDrop removes its sealed copy. Your other devices that got the key this way lose it, and Ask JotDrop turns off there. This device keeps the key.",
+          confirmLabel: "Stop sharing",
+          destructive: true,
+        }, () => void turnOff()).open();
+      }));
+    const remote = look?.remote;
+    const status = !vaultId ? "Sign in to JotDrop Cloud on this device to use this."
+      : on ? action === "waiting" ? "This waits for JotDrop Plus. This device keeps its key, and nothing is removed." : "On: your other devices can use this key."
+      : action === "available" && remote?.status === "found" && remote.config ? `Your other devices share a key for ${keyLabel(remote.config)}. Switch this on to use that key here too.` : "";
+    if (status) el.createEl("p", { cls: "setting-item-description", text: status, attr: { role: "status" } });
+  };
+
+  // The server's answer that came with a refusal, so the screen shows what is there now.
+  const refused = (error: unknown) => { if (error instanceof KeyRefused && error.remote && keys.vaultId) look = { remote: error.remote, vaultId: keys.vaultId }; };
+
+  const useShared = () => keyStep(async () => {
+    try {
+      const next = await keys.use();
+      keep(next, ownLook(next));
+      return `Ask JotDrop is on, with the key for ${keyLabel(next)}.`;
+    } catch (error) { refused(error); throw error; }
+  });
+
+  const turnOn = () => keyStep(async () => {
+    try {
+      const next = await keys.turnOn(saved);
+      keep(next, ownLook(next));
+      return "On. Open Ask JotDrop on your other devices and select \"Use it here\".";
+    } catch (error) {
+      refused(error);
+      const theirs = error instanceof KeyRefused && error.reason === "other" && error.remote?.status === "found" ? error.remote.config : null;
+      if (!theirs) throw error;
+      // The other devices already share another key: take theirs or keep this one, never replace it without a word.
+      new ConfirmModal(plugin.app, {
+        title: "Your other devices already share a key",
+        message: `It is a key for ${keyLabel(theirs)}. Use that key on this device too? It replaces the key that is here now. Cancel keeps this device's key, and nothing changes.`,
+        confirmLabel: "Use that key",
+      }, () => void useShared()).open();
+      return "";
+    }
+  });
+
+  const turnOff = () => keyStep(async () => {
+    const vaultId = keys.vaultId;
+    keep(await keys.turnOff(saved), vaultId ? { remote: { status: "none" }, vaultId } : undefined);
+    return "Off. The sealed copy is removed. This device keeps its key.";
+  });
 
   const save = async () => {
     try {
       const next = formConfig();
       if (next.provider && PROVIDERS[next.provider].needsKey && !next.key) throw new Error("Paste your API key first.");
       if (next.provider === "custom" && !next.baseUrl) throw new Error("Fill in the address of the service first.");
+      // A device that follows the shared key passes its new settings on, or lets go when there is nothing to share.
+      const following = follows(saved, keys.vaultId);
       await plugin.aiStore.save(next);
-      saved = next;
-      draft = { ...next, key: "" };
-      say(next.provider ? "Saved. Ask JotDrop is on on this device." : "Saved. Ask JotDrop is off.");
+      keep(next);
+      const said = next.provider ? "Saved. Ask JotDrop is on on this device." : "Saved. Ask JotDrop is off.";
+      if (!following) { say(said); return; }
+      const shared = await keys.shareSaved(next);
+      keep(shared.settings, shared.look);
+      say(`${said} ${shared.said}`);
+    } catch (error) { say(aiErrorText(error, draft.provider), true); }
+  };
+
+  const removeHere = async (said: string) => {
+    try {
+      await plugin.aiStore.remove();
+      keep({ ...AI_OFF });
+      say(said);
     } catch (error) { say(aiErrorText(error, draft.provider), true); }
   };
 
   const remove = async () => {
-    try {
-      await plugin.aiStore.remove();
-      saved = { ...AI_OFF };
-      draft = { ...AI_OFF };
-      models = [];
-      say("Ask JotDrop is off, and the key is removed from this device.");
-    } catch (error) { say(aiErrorText(error, draft.provider), true); }
+    if (follows(saved, keys.vaultId)) { choosing = true; message = ""; render(); return; }
+    await removeHere("Ask JotDrop is off, and the key is removed from this device.");
+  };
+
+  const removeAll = () => keyStep(async () => {
+    const vaultId = keys.vaultId;
+    await keys.removeEverywhere();
+    keep({ ...AI_OFF }, vaultId ? { remote: { status: "none" }, vaultId } : undefined);
+    return "Ask JotDrop is off. The key is removed from this device and from JotDrop. Your other devices drop it the next time they check, about once a day while they are in use.";
+  });
+
+  // What the server has, when these settings open: a newer shared key replaces the copy here, a removed one takes it away.
+  const checkKey = async () => {
+    const found = await keys.look().catch(() => undefined);
+    if (!found || !el.isConnected) return;
+    look = found.look;
+    if (found.changed) keep(found.settings);
+    if (found.changed === "replaced") say(KEY_REPLACED);
+    else if (found.changed === "removed") say(KEY_REMOVED);
+    else render();
   };
 
   // Asking for the model list checks key and connection; no note goes along.
@@ -844,7 +993,7 @@ export function renderAiSettings(el: HTMLElement, plugin: JotDropPlugin): void {
   };
 
   el.createEl("p", { text: "Loading..." });
-  void plugin.aiStore.load().then((config) => { saved = config; draft = { ...config, key: "" }; render(); });
+  void plugin.aiStore.load().then((config) => { saved = config; draft = { ...config, key: "" }; render(); void checkKey(); });
 }
 
 /** The toolbar button on the board. */

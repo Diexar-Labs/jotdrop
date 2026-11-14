@@ -13,7 +13,7 @@ import { fetchOg, safeMarkdownLink } from "./ogfetch";
 import { legacyAssetsPath } from "./attachments";
 import { cleanFileName, collectEmbedBasenames, isFileEmbed, uniqueFileName } from "./fileKinds";
 import { ExcalidrawPreviews } from "./excalidraw";
-import { AiSettingsStore } from "./ai";
+import { AiKeyCloud, AiSettingsStore } from "./ai";
 import { ConfirmModal } from "./confirmModal";
 import { ImportFiles, keepNoteFileName, keepNoteMarkdown, parseKeepExport, readZip } from "./keepImport";
 import { markdownNoteFileName, markdownNoteMarkdown, parseMarkdownExport } from "./markdownImport";
@@ -49,6 +49,8 @@ export default class JotDropPlugin extends Plugin {
   excalidraw!: ExcalidrawPreviews;
   /** Ask JotDrop's settings and key, on this device only (never in data.json). */
   aiStore!: AiSettingsStore;
+  /** One key on all your devices (JotDrop Plus): the sealed copy on the server of the own account. */
+  aiKeys!: AiKeyCloud;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -57,6 +59,7 @@ export default class JotDropPlugin extends Plugin {
     this.cloud.register();
     this.excalidraw = new ExcalidrawPreviews(this.app);
     this.aiStore = new AiSettingsStore(this.app);
+    this.aiKeys = new AiKeyCloud(this.aiStore, () => this.cloud.connection);
 
     this.registerView(VIEW_TYPE_JOTDROP, (leaf) => new JotDropView(leaf, this));
 
