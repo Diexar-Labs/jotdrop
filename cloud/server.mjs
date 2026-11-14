@@ -369,6 +369,9 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       // Ask JotDrop, the key on all your devices: one blob per cloud, sealed with the vault key, without history.
       // No foreign key to vaults: an older server must keep deleting clouds; the sweep removes what it leaves behind.
       db.exec('CREATE TABLE IF NOT EXISTS ai_keys(vaultId TEXT PRIMARY KEY, sealed TEXT NOT NULL, updatedAt INTEGER NOT NULL);');
+      // The latest time a blob of a cloud had, kept after removing it: a new blob always comes later, also when the clock
+      // went back meanwhile, so a device that still follows the removed key takes the new one.
+      db.exec('CREATE TABLE IF NOT EXISTS ai_key_times(vaultId TEXT PRIMARY KEY, lastAt INTEGER NOT NULL);');
       // Who uploaded a piece that no version uses yet; only set in a space, so one member cannot block the others.
       if (!all('PRAGMA table_info(chunks)').some((column) => column.name === 'deviceId')) db.exec('ALTER TABLE chunks ADD COLUMN deviceId TEXT;');
       db.exec('CREATE INDEX IF NOT EXISTS chunks_by_device ON chunks(deviceId) WHERE deviceId IS NOT NULL;');
@@ -1182,7 +1185,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       run('DELETE FROM code_failures WHERE scope IN (?,?,?)', `login:${account.id}`, `reset:${account.id}`, `signup:${account.email}`);
       run('DELETE FROM accounts WHERE id=?', account.id);
     }
-    for (const table of ['uploads', 'pairings', 'revisions', 'envelope_chunks', 'chunks', 'retired_envelopes', 'envelopes', 'changes', 'purges', 'signups', 'devices', 'plans', 'trials', 'subscriptions', 'mail_accounts', 'mail_senders', 'mail_items', 'mail_parts', 'mail_log', 'ai_keys']) run(`DELETE FROM ${table} WHERE vaultId=?`, vaultId);
+    for (const table of ['uploads', 'pairings', 'revisions', 'envelope_chunks', 'chunks', 'retired_envelopes', 'envelopes', 'changes', 'purges', 'signups', 'devices', 'plans', 'trials', 'subscriptions', 'mail_accounts', 'mail_senders', 'mail_items', 'mail_parts', 'mail_log', 'ai_keys', 'ai_key_times']) run(`DELETE FROM ${table} WHERE vaultId=?`, vaultId);
     run('DELETE FROM vaults WHERE id=?', vaultId);
   }
   function forgetAddress(account, kind) {
@@ -1241,6 +1244,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       run('DELETE FROM limit_hits WHERE weekStart<?', now - 26 * 7 * DAY);
       // A sealed AI key never outlives its cloud, also when an older server deleted the cloud without knowing this table.
       run('DELETE FROM ai_keys WHERE vaultId NOT IN (SELECT id FROM vaults)');
+      run('DELETE FROM ai_key_times WHERE vaultId NOT IN (SELECT id FROM vaults)');
       run('DELETE FROM space_reports WHERE createdAt<=? OR accountId NOT IN (SELECT id FROM accounts)', now - 24 * 60 * 60 * 1000);
       run('UPDATE spaces SET ownerGoneAt=?,frozenAt=COALESCE(frozenAt,?) WHERE ownerGoneAt IS NULL AND ownerAccountId NOT IN (SELECT id FROM accounts)', now, now);
       const finished = all(`SELECT s.id FROM spaces s WHERE s.frozenAt<=? OR (s.createdAt<=? AND ${unfinishedSql}) OR NOT EXISTS (SELECT 1 FROM space_members m WHERE m.spaceId=s.id)`, now - FROZEN_SPACE_LIFETIME, now - UNFINISHED_SPACE_LIFETIME);
@@ -2008,7 +2012,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           run('DELETE FROM device_approvals WHERE accountId=?', account.id);
           // Nobody can read the old ciphertext any more; deleting it is what the user confirmed. Mail to JotDrop goes too:
           // its address, filter and sealed mail belong to the old key, and mail_accounts still points at the vault that is deleted here.
-          for (const table of ['uploads', 'pairings', 'revisions', 'envelope_chunks', 'chunks', 'retired_envelopes', 'envelopes', 'changes', 'purges', 'signups', 'devices', 'ai_keys', 'mail_accounts', 'mail_senders', 'mail_items', 'mail_parts', 'mail_log']) run(`DELETE FROM ${table} WHERE vaultId=?`, account.vaultId);
+          for (const table of ['uploads', 'pairings', 'revisions', 'envelope_chunks', 'chunks', 'retired_envelopes', 'envelopes', 'changes', 'purges', 'signups', 'devices', 'ai_keys', 'ai_key_times', 'mail_accounts', 'mail_senders', 'mail_items', 'mail_parts', 'mail_log']) run(`DELETE FROM ${table} WHERE vaultId=?`, account.vaultId);
           run('DELETE FROM vaults WHERE id=?', account.vaultId);
           return addDevice(vaultId, value.deviceName, value.deviceTokenHash);
         })); return;
@@ -2434,8 +2438,11 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
             requireAccess(vaultId, deviceId);
             if (!isPlus(vaultId)) planLimit('ai-key', vaultId, 402, 'Using one AI key on all your devices is part of JotDrop Plus.');
             // Later than the blob it replaces, whatever the clock does: devices take a new key only when its time is later.
-            const time = Math.max(clock(), (one('SELECT updatedAt FROM ai_keys WHERE vaultId=?', vaultId)?.updatedAt ?? 0) + 1);
+            // Also later than a blob that was removed (ai_key_times).
+            const last = Math.max(one('SELECT updatedAt FROM ai_keys WHERE vaultId=?', vaultId)?.updatedAt ?? 0, one('SELECT lastAt FROM ai_key_times WHERE vaultId=?', vaultId)?.lastAt ?? 0);
+            const time = Math.max(clock(), last + 1);
             run('INSERT INTO ai_keys(vaultId,sealed,updatedAt) VALUES(?,?,?) ON CONFLICT(vaultId) DO UPDATE SET sealed=excluded.sealed,updatedAt=excluded.updatedAt', vaultId, value.sealed, time);
+            run('INSERT INTO ai_key_times(vaultId,lastAt) VALUES(?,?) ON CONFLICT(vaultId) DO UPDATE SET lastAt=excluded.lastAt', vaultId, time);
             return time;
           });
           reply(200, { updatedAt }); return;

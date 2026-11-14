@@ -327,6 +327,14 @@ def check_key_sync(browser, url, token, data_dir):
         a.locator("#ai-key").fill(OPENAI_KEY)
         a.locator('#ai-form button[type="submit"]').click()
         said(a, "Your other devices get the same key.")
+        # Found in Android's two-device test (13 Nov 2026): right after its own Save the screen must know what the server has
+        # now. "In this browser only" then offers OpenAI, the key that is there, not Claude from when the settings opened.
+        a.locator("#ai-remove").click()
+        a.locator("#ai-remove-here").click()
+        said(a, "Your other devices keep it.")
+        a.locator("#ai-offer").filter(has_text="A key from another device is ready: OpenAI. Use it here?").wait_for()
+        a.locator("#ai-offer-use").click()
+        said(a, "Ask JotDrop is on in this browser, with the key for OpenAI.")
         settings(b)
         offer = b.locator("#ai-offer")
         offer.filter(has_text="Your other devices now use a key for OpenAI. Use it here too? Until then this browser keeps the key it has.").wait_for()
