@@ -174,6 +174,33 @@ test('the server takes only a small, well-formed envelope, and limits how often'
   await saveSharedKey(phone, CONFIG);
 });
 
+// Found in the review of 14 Nov 2026: after a removal the next blob must still come later than the removed one, also
+// when the server clock steps back. Otherwise a device that missed the removal keeps the old key and never takes the new.
+test('a blob saved after a removal is later than the removed one, also when the clock went back', async (t) => {
+  const cloud = await fixture(t);
+  identifyClient('web');
+  const phone = await cloud.create(), laptop = await pair(phone);
+  cloud.plus(phone);
+  await saveSharedKey(phone, CONFIG);
+  await saveSharedKey(phone, CONFIG);
+  const followed = await saveSharedKey(phone, CONFIG);
+  await removeSharedKey(phone);
+  // Within the same millisecond.
+  const again = await saveSharedKey(phone, { ...CONFIG, key: 'sk-ant-test-NOT-A-REAL-KEY-again' });
+  assert.equal(again, followed + 1);
+  assert.equal(decideKeySync({ hasKey: true, synced: followed }, await readSharedKey(laptop)), 'update');
+  // The clock steps back between a removal and the next save.
+  await removeSharedKey(laptop);
+  cloud.advance(-DAY);
+  const later = await saveSharedKey(laptop, { ...CONFIG, key: 'sk-ant-test-NOT-A-REAL-KEY-later' });
+  assert.equal(later, again + 1);
+  assert.equal(decideKeySync({ hasKey: true, synced: again }, await readSharedKey(phone)), 'update');
+  // Removing keeps only that time, never the blob.
+  await removeSharedKey(phone);
+  assert.deepEqual(rows(cloud, phone), []);
+  assert.deepEqual(cloud.query('SELECT lastAt FROM ai_key_times WHERE vaultId=?', phone.credentials.vaultId).map((row) => row.lastAt), [later]);
+});
+
 test('another cloud, a signed-out device and a wrong token get nothing', async (t) => {
   const cloud = await fixture(t);
   identifyClient('web');
@@ -209,6 +236,7 @@ test('deleting the cloud removes its blob at once and leaves the blob of another
   assert.equal((await phone.call('/account/delete', 'POST', { confirm: 'DELETE MY CLOUD' })).deleted, true);
   assert.deepEqual(rows(cloud, phone), []);
   assert.equal(rows(cloud, other).length, 1);
+  assert.deepEqual(cloud.query('SELECT vaultId FROM ai_key_times').map((row) => row.vaultId), [other.credentials.vaultId], 'the time of the last blob goes with its cloud');
 });
 
 test('the sweep removes a blob that an older server left behind when it deleted a cloud', async (t) => {
@@ -220,11 +248,13 @@ test('the sweep removes a blob that an older server left behind when it deleted 
   const gone = '0b0f6f0e-3c56-4d0a-9d55-7a1c3a5e9f10';
   const db = new DatabaseSync(cloud.app.dbPath, { timeout: 5000 });
   db.prepare('INSERT INTO ai_keys VALUES(?,?,?)').run(gone, rows(cloud, other)[0].sealed, 1);
+  db.prepare('INSERT INTO ai_key_times VALUES(?,?)').run(gone, 1);
   // An older server deletes a cloud without knowing the table: no foreign key may stop that.
   assert.deepEqual(db.prepare('PRAGMA foreign_key_list(ai_keys)').all(), []);
   db.close();
   await cloud.sweep();
   assert.deepEqual(cloud.query('SELECT vaultId FROM ai_keys ORDER BY vaultId').map((row) => row.vaultId), [other.credentials.vaultId]);
+  assert.deepEqual(cloud.query('SELECT vaultId FROM ai_key_times ORDER BY vaultId').map((row) => row.vaultId), [other.credentials.vaultId]);
 });
 
 test('starting over with a new workspace key leaves no blob of the old one behind', async (t) => {
@@ -246,6 +276,7 @@ test('starting over with a new workspace key leaves no blob of the old one behin
   const restarted = await cloud.api('/auth/reset/restart', { resetId, code: cloud.mails.filter((mail) => mail.kind === 'reset').at(-1).code, confirm: 'DELETE CLOUD DATA', recoveryTokenHash: await hashToken(randomToken()), deviceName: 'New', deviceTokenHash: await hashToken(randomToken()), authKey: randomToken(), kdf: kdf(), wrappedVaultKey: await wrapped(generateVaultKey()) });
   assert.equal(restarted.status, 201);
   assert.deepEqual(cloud.query('SELECT vaultId FROM ai_keys'), []);
+  assert.deepEqual(cloud.query('SELECT vaultId FROM ai_key_times'), []);
 });
 
 test('the web app is served the key sync module, and never its vectors or tests', async (t) => {

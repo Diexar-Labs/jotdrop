@@ -4430,6 +4430,9 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const aiCheckedKey = () => `ai-key-checked:${ownClient.credentials.vaultId}`;
 const aiLocal = () => ({ hasKey: Boolean(aiConfig.provider), synced: aiConfig.synced });
 const aiKeyAction = () => (aiRemote ? decideKeySync(aiLocal(), aiRemote) : 'none');
+// What the server has right after this browser saved its own key there: the screen then offers and names the key that
+// is really there, not the one it saw before (found in Android's two-device test, 13 Nov 2026).
+const ownRemote = () => ({ status: 'found', updatedAt: aiConfig.synced, config: sharedKey(aiConfig) });
 const webCanUse = (config) => Object.hasOwn(WEB_PROVIDERS, config?.provider);
 const keyPlusText = 'Using one key on all your devices is part of JotDrop Plus.';
 // A newer shared key for another service than the one here: it changes where questions and notes go, so it is asked.
@@ -4523,9 +4526,12 @@ async function shareSavedKey() {
   }
   try {
     await saveAiSettings({ ...aiConfig, synced: await saveSharedKey(ownClient, aiConfig) });
+    aiRemote = ownRemote();
     renderAiSync();
     return 'Your other devices get the same key.';
   } catch (error) {
+    // The server did not take the new key: it still has the earlier one, or says Plus.
+    if (error.code === 'plus-required') aiRemote = { status: 'plus' };
     if (error.code === 'plus-required') offerPlus('JotDrop Plus puts your AI key on all your devices.');
     return `Your other devices keep the earlier key: ${error.code === 'plus-required' ? keyPlusText : errorMessage(error)}`;
   }
@@ -4549,6 +4555,7 @@ $('ai-sync').addEventListener('change', async () => {
         return;
       }
       await saveAiSettings({ ...aiConfig, synced: await saveSharedKey(ownClient, aiConfig) });
+      aiRemote = ownRemote();
       aiSay('On. Open Ask JotDrop on your other devices and select "Use it here".');
     } else {
       if (!confirm('Stop using this key on all your devices?\n\nJotDrop removes its sealed copy. Your other devices that got the key this way lose it, and Ask JotDrop turns off there. This browser keeps the key.')) return;
