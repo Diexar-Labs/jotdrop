@@ -11,7 +11,7 @@ import { identifyClient } from "../cloud/shared/client.mjs";
 import { MAX_CHUNKED_BYTES } from "../cloud/shared/crypto.mjs";
 import { fetchOg, safeMarkdownLink } from "./ogfetch";
 import { legacyAssetsPath } from "./attachments";
-import { cleanFileName, collectEmbedBasenames, isFileEmbed, uniqueFileName } from "./fileKinds";
+import { affectsView, cleanFileName, collectEmbedBasenames, isFileEmbed, uniqueFileName } from "./fileKinds";
 import { ExcalidrawPreviews } from "./excalidraw";
 import { AiKeyCloud, AiSettingsStore } from "./ai";
 import { ConfirmModal } from "./confirmModal";
@@ -105,13 +105,15 @@ export default class JotDropPlugin extends Plugin {
     this.reminderScheduler = new ReminderScheduler(this);
     this.clipServer = new ClipServer(this);
 
+    // Only changes the view can show redraw it: a tool that writes elsewhere in the vault every few seconds
+    // would otherwise make the whole view flicker.
     this.registerEvent(this.app.vault.on("create", (f) => {
       if (f instanceof TFile) this.reminderScheduler.scheduleFile(f);
-      this.refreshViews();
+      if (this.affectsView(f.path)) this.refreshViews();
     }));
     this.registerEvent(this.app.vault.on("delete", (f) => {
       this.reminderScheduler.cancelFile(f.path);
-      this.refreshViews();
+      if (this.affectsView(f.path)) this.refreshViews();
     }));
     this.registerEvent(this.app.vault.on("modify", (file) => {
       if (file instanceof TFile) this.reminderScheduler.scheduleFile(file);
@@ -119,12 +121,12 @@ export default class JotDropPlugin extends Plugin {
         this.suppressedPaths.delete(file.path);
         return;
       }
-      this.refreshViews();
+      if (this.affectsView(file.path)) this.refreshViews();
     }));
     this.registerEvent(this.app.vault.on("rename", (f, oldPath) => {
       this.reminderScheduler.cancelFile(oldPath);
       if (f instanceof TFile) this.reminderScheduler.scheduleFile(f);
-      this.refreshViews();
+      if (this.affectsView(f.path) || this.affectsView(oldPath)) this.refreshViews();
     }));
 
     this.app.workspace.onLayoutReady(() => {
@@ -276,6 +278,12 @@ export default class JotDropPlugin extends Plugin {
    * The effective assets folder: the explicit, normalized `assetsFolder` when
    * set, otherwise the dynamic legacy `<notesFolder>/.attachments`.
    */
+  /** Whether a change at this path can change the view: see affectsView in fileKinds.ts. */
+  affectsView(path: string): boolean {
+    const { notesFolder, archiveFolder } = this.settings;
+    return affectsView(path, [normalizePath(notesFolder), normalizePath(archiveFolder), this.resolveAssetsFolder()]);
+  }
+
   resolveAssetsFolder(): string {
     const explicit = (this.settings.assetsFolder || "").trim();
     if (explicit) return normalizePath(explicit);
