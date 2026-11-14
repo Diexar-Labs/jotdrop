@@ -196,6 +196,7 @@
     <string name="ai_week_nothing">Nichts zu schreiben: Keine Notiz wurde in den letzten 7 Tagen geändert, und es steht keine Erinnerung und kein Ablaufdatum an.</string>
     <string name="ai_merge_both">Beide Notizen müssen mit, um sie zusammenzuführen. Suche noch einmal nach doppelten Notizen.</string>
     <string name="ai_merge_too_long">Diese Notizen sind zu lang, um sie mit KI zusammenzuführen: Die KI würde nicht ihren ganzen Text sehen. Vergleiche sie und führe sie selbst zusammen.</string>
+    <string name="ai_draft_too_long">Diese Notiz ist zu lang für diese KI-Taste: Die KI würde nur ihren ersten Teil sehen, und beim Ersetzen ginge der Rest verloren. Teile sie zuerst in kürzere Notizen.</string>
     <string name="ai_merge_older_left">Die ältere Notiz \"%1$s\" ist noch da.</string>
     <string name="ai_merge_trash">In den Papierkorb</string>
     <string name="ai_merge_trashed">\"%1$s\" liegt im Papierkorb.</string>

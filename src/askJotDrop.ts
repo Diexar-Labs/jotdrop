@@ -472,6 +472,8 @@ export class AskJotDropModal extends Modal {
     // A merge replaces the newer note's text: the AI must see all of both notes, or the merged text loses the rest.
     if (merge && picks.length < 2) { this.el.status.setText("Both notes must go along to merge them. Tick both, or search for duplicates again."); return; }
     if (merge && picks.some((note) => note.truncated)) { this.el.status.setText("These notes are too long to merge with AI: the AI would not see all of their text. Compare them and merge them yourself."); return; }
+    // Rewrite and checklist end in "Replace the text": the AI must see the whole draft, or the rest of the note is lost.
+    if (editor && editor.kind !== "summarize" && picks.some((note) => note.truncated)) { this.el.status.setText("This note is too long for this AI button: the AI would see only its first part, so replacing the text would lose the rest. Split it into shorter notes first."); return; }
     const first = new Set(picks.map((note) => note.id));
     const before = new Map([...this.texts].filter(([id]) => notes.some((note) => note.id === id)));
     const chosen = this.files.filter((one) => this.filesOn.has(one.id) && !this.fileProblem(one));
