@@ -196,6 +196,7 @@
     <string name="ai_week_nothing">Niets om over te schrijven: er zijn geen notities gewijzigd in de laatste 7 dagen, en er komt geen herinnering of vervaldatum aan.</string>
     <string name="ai_merge_both">Beide notities moeten mee om ze samen te voegen. Zoek opnieuw naar dubbele notities.</string>
     <string name="ai_merge_too_long">Deze notities zijn te lang om met AI samen te voegen: de AI zou niet al hun tekst zien. Vergelijk ze en voeg ze zelf samen.</string>
+    <string name="ai_draft_too_long">Deze notitie is te lang voor deze AI-knop: de AI zou alleen het eerste deel zien, dus bij vervangen gaat de rest verloren. Splits haar eerst in kortere notities.</string>
     <string name="ai_merge_older_left">De oudere notitie \"%1$s\" staat er nog.</string>
     <string name="ai_merge_trash">Naar de prullenbak</string>
     <string name="ai_merge_trashed">\"%1$s\" staat in de prullenbak.</string>

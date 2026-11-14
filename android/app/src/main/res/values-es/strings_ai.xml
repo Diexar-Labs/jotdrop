@@ -196,6 +196,7 @@
     <string name="ai_week_nothing">No hay nada que contar: ninguna nota cambió en los últimos 7 días y no se acerca ningún recordatorio ni fecha de caducidad.</string>
     <string name="ai_merge_both">Las dos notas tienen que ir para unirlas. Vuelve a buscar notas duplicadas.</string>
     <string name="ai_merge_too_long">Estas notas son demasiado largas para unirlas con IA: la IA no vería todo su texto. Compáralas y únelas tú.</string>
+    <string name="ai_draft_too_long">Esta nota es demasiado larga para este botón de IA: la IA solo vería su primera parte, así que al reemplazar el texto se perdería el resto. Divídela antes en notas más cortas.</string>
     <string name="ai_merge_older_left">La nota más antigua \"%1$s\" sigue ahí.</string>
     <string name="ai_merge_trash">Mover a la papelera</string>
     <string name="ai_merge_trashed">\"%1$s\" está en la papelera.</string>

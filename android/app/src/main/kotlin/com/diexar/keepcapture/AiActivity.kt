@@ -363,6 +363,7 @@ private fun AskScreen(
                     if (now.missing) { missing = true; return@launch }
                     now.notes to now.chosen
                 }
+                if (draft != null && AiNoteEdits.draftTooLong(kind, chosen)) { notice = R.string.ai_draft_too_long; return@launch }
                 // On this phone the whole text goes, or nothing: "Replace text" must never lose the rest of a note.
                 if (phone && chosen.any { it.truncated }) { notice = R.string.ai_local_too_long; return@launch }
                 val (tools, prompt) = withContext(Dispatchers.IO) { AiAssets.get(context) }

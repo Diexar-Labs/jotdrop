@@ -87,6 +87,9 @@ object AiNoteEdits {
         return lines.map { line -> (when (line.kind) { CloudVersionDiff.Kind.ADDED -> '+'; CloudVersionDiff.Kind.REMOVED -> '-'; else -> ' ' }) to line.text }
     }
 
+    /** Rewrite and checklist end in "Replace text": a draft the AI would see shortened would lose the rest of the note. */
+    fun draftTooLong(kind: String?, chosen: List<AiPicked>): Boolean = kind != "summarize" && chosen.any { it.truncated }
+
     /** The fixed request behind an editor or card button. */
     fun editorRequest(kind: String, title: String): String {
         val name = oneLine(title).ifEmpty { "Untitled" }

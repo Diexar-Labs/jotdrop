@@ -16,6 +16,17 @@ export function fileKind(name: string): FileKind {
   return "file";
 }
 
+/**
+ * Whether a change at this vault path can change what the JotDrop view shows: a file in one of its folders, or a
+ * file a card can embed from anywhere (a photo, voice memo, PDF or drawing). Other files (logs, daily notes) cannot.
+ */
+export function affectsView(path: string, folders: string[]): boolean {
+  if (folders.some((folder) => path === folder || path.startsWith(`${folder}/`))) return true;
+  const name = path.toLowerCase();
+  if (name.endsWith(".excalidraw") || name.endsWith(".excalidraw.md")) return true;
+  return !name.endsWith(".md") && fileKind(path) !== "file";
+}
+
 /** An embed of a file, not of another note or an Excalidraw drawing. */
 export function isFileEmbed(name: string): boolean {
   const extension = extensionOf(name);
