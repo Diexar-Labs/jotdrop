@@ -538,12 +538,20 @@ private fun keySync(vectors: Map<String, Any?>, cross: Map<String, Any?>, out: F
         }
     }
     val fakeKey = SharedAiKey("anthropic", "sk-ant-test-NOT-A-REAL-KEY", "", "")
+    val otherVault = "1b0f6f0e-3c56-4d0a-9d55-7a1c3a5e9f11"
     for (case in vectors.items("decisions").map { it.obj()!! }) {
         val local = case.child("local")!!
         val remote = case.child("remote")!!
         val answer = AiKeyRemote(remote.str("status") ?: "", AiKeySync.validTime(remote["updatedAt"]), if (remote["opens"] == true) fakeKey else null)
         same(AiKeySync.decide(local["hasKey"] == true, local.num("synced") ?: 0, answer), case["action"], "key sync decides: ${case["name"]}")
+        // Connected to another account (found in the review of 14 Nov 2026): a key followed in the other workspace is this
+        // phone's own here, so nothing is removed, replaced or left waiting.
+        val synced = local.num("synced") ?: 0
+        same(AiKeySync.followedHere(synced, vaultId, vaultId), synced, "key sync, same workspace: ${case["name"]}")
+        val elsewhere = AiKeySync.decide(local["hasKey"] == true, AiKeySync.followedHere(synced, otherVault, vaultId), answer)
+        check(elsewhere !in listOf("remove", "update", "waiting")) { "key sync, another account: ${case["name"]} gave $elsewhere" }
     }
+    same(AiKeySync.followedHere(1000, "", vaultId), 0L, "key sync: a followed key without its workspace is this phone's own")
     for (case in vectors.items("services").map { it.obj()!! }) {
         val a = case.child("a"); val b = case.child("b")
         same(AiKeySync.sameService(a.str("provider"), a.str("baseUrl"), b.str("provider"), b.str("baseUrl")), case["same"], "key sync same service: ${case["name"]}")

@@ -847,7 +847,7 @@ private fun AiSettingsScreen(onClose: () -> Unit) {
     var removing by remember { mutableStateOf(false) }
     // The key field stays empty after saving; an empty field keeps the saved key for the same service.
     fun keyNow() = key.trim().ifEmpty { if (provider == saved.provider) saved.key else "" }
-    fun current() = AiSettings(provider, keyNow(), model.trim(), address.trim(), includeShared, saved.synced)
+    fun current() = AiSettings(provider, keyNow(), model.trim(), address.trim(), includeShared, saved.synced, saved.syncedVault)
     fun showSaved(next: AiSettings) { saved = next; provider = next.provider; model = next.model; address = next.baseUrl; includeShared = next.includeShared; key = ""; models = emptyList() }
     fun say(text: String, isProblem: Boolean) { message = if (isProblem) context.getString(R.string.ai_problem, text) else text; problem = isProblem }
     fun addressOk() = provider != "custom" || address.trim().startsWith("https://")
@@ -861,6 +861,8 @@ private fun AiSettingsScreen(onClose: () -> Unit) {
         when (found.changed) {
             "replaced" -> { showSaved(found.settings); say(context.getString(R.string.ai_sync_replaced), false) }
             "removed" -> { showSaved(AiSettings()); say(context.getString(R.string.ai_sync_removed), false) }
+            // Connected to another account: the key followed elsewhere is this phone's own here.
+            "own" -> showSaved(found.settings)
         }
     }
 

@@ -40,7 +40,10 @@ object AiKeyCloud {
 
     private fun same(shared: SharedAiKey?, settings: AiSettings) = shared != null && AiKeySync.sameService(shared.provider, shared.baseUrl, settings.provider, settings.baseUrl)
 
-    private fun followed(shared: SharedAiKey, includeShared: Boolean, updatedAt: Long) = AiSettings(shared.provider, shared.key, shared.model, shared.baseUrl, includeShared, updatedAt)
+    private fun followed(shared: SharedAiKey, includeShared: Boolean, updatedAt: Long, vaultId: String) = AiSettings(shared.provider, shared.key, shared.model, shared.baseUrl, includeShared, updatedAt, vaultId)
+
+    /** A key followed in another workspace is this phone's own here: connected to another account, nothing is removed or replaced. */
+    private fun forWorkspace(settings: AiSettings, vaultId: String) = if (settings.synced > 0 && AiKeySync.followedHere(settings.synced, settings.syncedVault, vaultId) == 0L) settings.copy(synced = 0, syncedVault = "") else settings
 
     suspend fun read(client: CloudClient): AiKeyRemote = withContext(Dispatchers.IO) {
         try {
@@ -84,24 +87,26 @@ object AiKeyCloud {
         if (remote.status != AiKeyRemote.UNAVAILABLE) withContext(Dispatchers.IO) { markChecked(context, client.credentials.vaultId) }
         return withContext(Dispatchers.IO) {
             val store = AiSecretStore(context)
-            val settings = store.load()
+            val loaded = store.load()
+            val settings = forWorkspace(loaded, client.credentials.vaultId)
+            if (settings != loaded) store.save(settings)
             val config = remote.config
             when (AiKeySync.decide(settings.on, settings.synced, remote)) {
                 "update" -> if (config != null && same(config, settings)) {
-                    val next = followed(config, settings.includeShared, remote.updatedAt)
+                    val next = followed(config, settings.includeShared, remote.updatedAt, client.credentials.vaultId)
                     store.save(next)
                     Look(remote, next, "replaced")
-                } else Look(remote, settings, null)
+                } else Look(remote, settings, if (settings != loaded) "own" else null)
                 "remove" -> { store.clear(); Look(remote, AiSettings(), "removed") }
-                else -> Look(remote, settings, null)
+                else -> Look(remote, settings, if (settings != loaded) "own" else null)
             }
         }
     }
 
     /** Once a day, after an ordinary sync, and only on a phone that follows a shared key. Returns what to say, or null. */
     suspend fun daily(context: Context): String? {
-        val settings = withContext(Dispatchers.IO) { AiSecretStore(context).load() }
         val client = client(context) ?: return null
+        val settings = withContext(Dispatchers.IO) { forWorkspace(AiSecretStore(context).load(), client.credentials.vaultId) }
         if (settings.synced == 0L || System.currentTimeMillis() - lastChecked(context, client.credentials.vaultId) in 0 until DAY_MS) return null
         return when (look(context)?.changed) {
             "replaced" -> context.getString(R.string.ai_sync_replaced)
@@ -120,7 +125,7 @@ object AiKeyCloud {
         if (remote.status != AiKeyRemote.FOUND || config == null || config.provider !in AiSecretStore.PROVIDERS) throw Refused("gone", remote)
         return withContext(Dispatchers.IO) {
             val store = AiSecretStore(context)
-            followed(config, store.load().includeShared, remote.updatedAt).also(store::save)
+            followed(config, store.load().includeShared, remote.updatedAt, client.credentials.vaultId).also(store::save)
         }
     }
 
@@ -139,7 +144,7 @@ object AiKeyCloud {
             remote.status == AiKeyRemote.FOUND && config == null -> throw Refused("unopened", remote)
             remote.status == AiKeyRemote.FOUND && config != null && (config.provider != settings.provider || config.key != settings.key) -> throw Refused("other", remote)
         }
-        val next = settings.copy(synced = saveOrRefuse(client, settings))
+        val next = settings.copy(synced = saveOrRefuse(client, settings), syncedVault = client.credentials.vaultId)
         withContext(Dispatchers.IO) { AiSecretStore(context).save(next) }
         return next
     }
@@ -156,7 +161,7 @@ object AiKeyCloud {
         val client = client(context) ?: throw Refused("cloud")
         try { remove(client) } catch (error: CancellationException) { throw error }
             catch (error: CloudRequestException) { throw Refused("server", detail = error.serverMessage) } catch (_: Exception) { throw Refused("unreachable") }
-        val next = settings.copy(synced = 0)
+        val next = settings.copy(synced = 0, syncedVault = "")
         withContext(Dispatchers.IO) { AiSecretStore(context).save(next) }
         return next
     }
@@ -171,12 +176,12 @@ object AiKeyCloud {
         val client = client(context)
         val shareable = settings.on && runCatching { AiKeySync.sharedKey(settings.config()) }.isSuccess
         if (!shareable || client == null) {
-            val next = settings.copy(synced = 0)
+            val next = settings.copy(synced = 0, syncedVault = "")
             withContext(Dispatchers.IO) { if (next.on) store.save(next) else store.clear() }
             return next to Refused(if (!settings.on) "let-go" else if (client == null) "cloud" else "let-go-unshareable")
         }
         return try {
-            val next = settings.copy(synced = save(client, settings))
+            val next = settings.copy(synced = save(client, settings), syncedVault = client.credentials.vaultId)
             withContext(Dispatchers.IO) { store.save(next) }
             next to null
         } catch (error: CancellationException) { throw error }

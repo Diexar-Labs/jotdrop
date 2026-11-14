@@ -179,6 +179,12 @@ object AiKeySync {
     }
 
     /**
+     * The time of the shared key this phone follows, as it counts in [vaultId]: a key followed in another workspace is
+     * this phone's own here (0), so after connecting to another account nothing is removed or replaced.
+     */
+    fun followedHere(synced: Long, syncedVault: String, vaultId: String): Long = if (synced > 0 && syncedVault == vaultId) synced else 0
+
+    /**
      * Whether two settings talk to the same AI service: the same provider and, for an own address, the same address.
      * A newer shared key for the same service is taken without a question (a replaced key); one for another service
      * or address is asked first, because it changes where questions and notes go.
