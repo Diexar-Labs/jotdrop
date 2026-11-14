@@ -205,21 +205,23 @@ object AiAssistant {
      * One request without tools, for the fixed file actions (write out a recording, read a photo, a receipt), the
      * same as aiOnce in cloud/web/app.js: 180 seconds, and a report in the form of run's, so the answer, the report
      * and the "Sent to" line work the same. call gets the provider and the time left. Stop cancels the coroutine.
+     * timeoutMs: longer for the model on this phone (AiLocalModels.TIMEOUT_MS).
      */
     suspend fun once(
         request: String,
         parts: List<AiPart>,
         provider: () -> AiProvider,
         secrets: List<String>,
+        timeoutMs: Long = FILE_TIMEOUT_MS,
         call: suspend (AiProvider, Long) -> AiAnswer,
     ): AiReport {
         val report = AiReport(request)
         parts.mapTo(report.files) { AiFileSent(it.name, it.kind, it.bytes.size.toLong()) }
         report.rounds = 1
-        report.timeoutMs = FILE_TIMEOUT_MS
+        report.timeoutMs = timeoutMs
         try {
             val ai = provider()
-            val answer = withTimeoutOrNull(FILE_TIMEOUT_MS) { call(ai, FILE_TIMEOUT_MS) } ?: throw AiError("timeout")
+            val answer = withTimeoutOrNull(timeoutMs) { call(ai, timeoutMs) } ?: throw AiError("timeout")
             report.answer = answer.text
             report.input = answer.input
             report.output = answer.output

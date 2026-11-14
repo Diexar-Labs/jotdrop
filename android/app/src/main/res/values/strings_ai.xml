@@ -2,9 +2,9 @@
 <!-- Ask JotDrop: AI with your own key. The same keys in all six languages. -->
 <resources>
     <string name="ai_title">Ask JotDrop</string>
-    <string name="ai_settings_button">Ask JotDrop: AI with your own key</string>
-    <string name="ai_settings_title">AI with your own key</string>
-    <string name="ai_settings_intro">Give JotDrop tasks in your own words, typed or spoken. It uses an AI service you choose, with your own key, and talks to it straight from this phone. JotDrop\'s servers never see your notes, your questions or your key. You pay the AI service yourself. \"This week\" sends a short digest of your notes, not the notes themselves.</string>
+    <string name="ai_settings_button">Ask JotDrop: AI with your own key or on this phone</string>
+    <string name="ai_settings_title">AI with your own key or on this phone</string>
+    <string name="ai_settings_intro">Give JotDrop tasks in your own words, typed or spoken. It uses an AI service you choose, with your own key, and talks to it straight from this phone. Or it uses a model that runs on this phone itself, without a key. JotDrop\'s servers never see your notes, your questions or your key. You pay an AI service yourself. \"This week\" sends a short digest of your notes, not the notes themselves.</string>
     <string name="ai_provider">AI service</string>
     <string name="ai_provider_off">Off</string>
     <string name="ai_provider_custom">Own address (OpenAI-compatible)</string>
@@ -244,4 +244,48 @@
     <string name="ai_removed_here">Ask JotDrop is off, and the key is removed from this phone. Your other devices keep it.</string>
     <string name="ai_removed_all">Ask JotDrop is off. The key is removed from this phone and from JotDrop. Your other devices drop it the next time they check, about once a day while they are in use.</string>
     <string name="ai_off_offer">Ask JotDrop is off on this phone. %1$s</string>
+    <!-- Ask JotDrop on this phone, without a key (phase 9). -->
+    <string name="ai_provider_phone">On this phone (no key)</string>
+    <string name="ai_local_intro">JotDrop runs a Gemma model from Google on this phone. Your notes and questions stay on this phone; only the model itself is downloaded once, from Hugging Face. It is slower than an AI service with a key.</string>
+    <string name="ai_local_model">Model</string>
+    <string name="ai_local_option">%1$s (%2$s)</string>
+    <string name="ai_local_recommended">recommended for this phone</string>
+    <string name="ai_local_wifi">The download is %1$s. Use Wi-Fi, and keep this screen open until it is done: the screen stays on meanwhile.</string>
+    <string name="ai_local_low_memory">This phone has little memory. The model may run slowly or not at all.</string>
+    <string name="ai_local_unsupported">This phone cannot run the model: it needs a 64-bit processor.</string>
+    <string name="ai_local_download">Download</string>
+    <string name="ai_local_continue">Continue download</string>
+    <string name="ai_local_stop">Stop</string>
+    <string name="ai_local_delete">Remove model</string>
+    <string name="ai_local_progress">Downloading: %1$s of %2$s (%3$d%%)</string>
+    <string name="ai_local_checking">Checking the download…</string>
+    <string name="ai_local_ready">%1$s is on this phone and checked.</string>
+    <string name="ai_local_paused">The download stopped at %1$s of %2$s. Tap Continue download to carry on.</string>
+    <string name="ai_local_failed_network">The download stopped because the connection broke. Tap Continue download to carry on.</string>
+    <string name="ai_local_failed_server">Hugging Face did not send the model. Try again later.</string>
+    <string name="ai_local_try">Try it</string>
+    <string name="ai_local_trying">Trying the model on this phone…</string>
+    <string name="ai_local_loading">Getting the model ready. The first time on this phone takes about a minute.</string>
+    <string name="ai_local_tried">It works (%1$s, %2$d s): %3$s</string>
+    <string name="ai_local_gpu">graphics chip</string>
+    <string name="ai_local_cpu">processor</string>
+    <string name="ai_local_need_download">Download the model first.</string>
+    <string name="ai_local_removed">The model is removed from this phone.</string>
+    <string name="ai_error_model_space">There is not enough free space on this phone for the model.</string>
+    <string name="ai_error_model_hash">The download was damaged and has been removed. Try again.</string>
+    <string name="ai_error_model_missing">The model is not on this phone yet. Download it in the Ask JotDrop settings.</string>
+    <string name="ai_error_local_load">The model could not start on this phone.</string>
+    <string name="ai_error_local_failed">The model on this phone stopped with an error. Try again.</string>
+    <string name="ai_error_local_unsupported">The model on this phone cannot do this yet. Choose an AI service with a key for this.</string>
+    <string name="ai_local_stays">Stays on this phone, model %1$s. Nothing goes out.</string>
+    <string name="ai_local_fixed_only">On this phone, Ask JotDrop does fixed tasks only: \"Summarize with AI\", \"Transcribe with AI\", \"Read photo with AI\" and \"Receipt to Paper drawer\" in a card\'s menu and the AI buttons in the editor. Free questions and \"This week\" need an AI service with a key.</string>
+    <string name="ai_local_no_merge">Merging needs an AI service with a key: the model on this phone does not change notes.</string>
+    <string name="ai_local_too_long">This note is too long for the model on this phone (at most about 6,000 characters of a note go at once). An AI service with a key can do it.</string>
+    <string name="ai_local_working">Working on this phone. This can take a few minutes; you can stop at any time.</string>
+    <string name="ai_local_sent">Read on this phone, nothing left it: %1$s</string>
+    <string name="ai_local_sent_none">Nothing left this phone.</string>
+    <string name="ai_local_credit">Runs with LiteRT-LM and Gemma 4 from Google, under the Apache License 2.0.</string>
+    <string name="ai_local_licences">Licences</string>
+    <string name="ai_local_close">Close</string>
+    <string name="ai_local_files">The model on this phone reads the file here; nothing goes out. A photo is made smaller first.</string>
 </resources>

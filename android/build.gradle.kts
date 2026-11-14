@@ -1,3 +1,11 @@
+// A newer R8 than AGP 8.5.2 brings (8.5.x): LiteRT-LM (Ask JotDrop on this phone) is built with Java 21's switch on
+// types (java.lang.runtime.SwitchBootstraps), which R8 8.5 cannot rewrite for Android and stops on. Take this out
+// when AGP itself brings R8 8.13 or newer.
+buildscript {
+    repositories { google() }
+    dependencies { classpath("com.android.tools:r8:8.13.25") }
+}
+
 plugins {
     id("com.android.application") version "8.5.2" apply false
     id("com.android.test") version "8.5.2" apply false
@@ -250,8 +258,8 @@ tasks.register<JavaExec>("checkListLinks") {
 
 // Ask JotDrop: the same requests, answers, tool rules and note edits as cloud/shared/ai and cloud/web/ai-web.mjs.
 val aiClasses = layout.buildDirectory.dir("ai-check")
-val aiSources = files(listOf("AiJson", "AiRedact", "AiTools", "AiContext", "AiProviders", "AiAssistant", "AiNoteEdits", "AiAsk", "AiMarkdown", "CloudVersionDiff", "AiParts", "AiReceipt", "PaperDrawer", "ExpiryWords", "DrawingFormat", "Similar", "Digest", "CloudCrypto", "AiKeySync")
-    .map { "app/src/main/kotlin/com/diexar/keepcapture/$it.kt" } + "checks/AiCheck.kt")
+val aiNames = listOf("AiJson", "AiRedact", "AiTools", "AiContext", "AiProviders", "AiAssistant", "AiNoteEdits", "AiAsk", "AiMarkdown", "CloudVersionDiff", "AiParts", "AiReceipt", "PaperDrawer", "ExpiryWords", "DrawingFormat", "Similar", "Digest", "CloudCrypto", "AiKeySync")
+val aiSources = files(aiNames.map { "app/src/main/kotlin/com/diexar/keepcapture/$it.kt" } + "checks/AiCheck.kt")
 val aiCompile = tasks.register<JavaExec>("aiCompile") {
     inputs.files(aiSources)
     outputs.dir(aiClasses)
@@ -273,6 +281,29 @@ tasks.register<JavaExec>("checkAi") {
     doFirst {
         args(listOf("JOTDROP_AI_VECTORS", "JOTDROP_AI_TOOLS", "JOTDROP_AI_PROMPT", "JOTDROP_AI_EDITS", "JOTDROP_AI_VECTORS_V2", "JOTDROP_AI_KEY_VECTORS", "JOTDROP_AI_KEY_CROSS", "JOTDROP_AI_KEY_OUT").map { requireNotNull(System.getenv(it)) { "Run through npm run check:ai-android" } })
     }
+}
+
+// Ask JotDrop on this phone (phase 9): the model download and the engine with a fake model, without a phone.
+val aiLocalClasses = layout.buildDirectory.dir("ai-local-check")
+val aiLocalSources = files((aiNames + "AiLocal").map { "app/src/main/kotlin/com/diexar/keepcapture/$it.kt" } + "checks/AiLocalCheck.kt")
+val aiLocalCompile = tasks.register<JavaExec>("aiLocalCompile") {
+    inputs.files(aiLocalSources)
+    outputs.dir(aiLocalClasses)
+    classpath(kotlinCompiler)
+    mainClass.set("org.jetbrains.kotlin.cli.jvm.K2JVMCompiler")
+    doFirst {
+        args("-Xdisable-default-scripting-plugin", "-no-stdlib", "-no-reflect", "-jvm-target", "17", "-classpath",
+            project(":app").configurations.getByName("debugCompileClasspath").asPath,
+            "-d", aiLocalClasses.get().asFile.absolutePath)
+        args(aiLocalSources.files.map { it.absolutePath })
+    }
+}
+
+tasks.register<JavaExec>("checkAiLocal") {
+    dependsOn(aiLocalCompile)
+    classpath(aiLocalClasses)
+    classpath(provider { project(":app").configurations.getByName("debugCompileClasspath") })
+    mainClass.set("com.diexar.keepcapture.AiLocalCheckKt")
 }
 
 val cloudAccountClasses = layout.buildDirectory.dir("cloud-account-check")

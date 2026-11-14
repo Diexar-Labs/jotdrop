@@ -82,9 +82,10 @@ class AiSecretStore(context: Context) {
             cipher.updateAAD(AAD.toByteArray(Charsets.UTF_8))
             AiJson.parse(String(cipher.doFinal(CloudCrypto.decode(envelope.ciphertext)), Charsets.UTF_8)).obj()
         }.getOrNull() ?: return AiSettings()
-        val provider = stored.str("provider")?.takeIf { it in PROVIDERS } ?: return AiSettings()
-        val spec = AiProviders.SPECS.getValue(provider)
-        val key = if (spec.needsKey || provider == "custom") stored.str("key").orEmpty().trim() else ""
+        // "phone" (the model on this phone) is not in PROVIDERS: it has no key and never comes from another device.
+        val provider = stored.str("provider")?.takeIf { it in PROVIDERS || it == AiLocalModels.PHONE } ?: return AiSettings()
+        val spec = AiProviders.SPECS[provider]
+        val key = if (spec?.needsKey == true || provider == "custom") stored.str("key").orEmpty().trim() else ""
         // A followed key without its workspace counts as this phone's own: when in doubt, nothing is taken away.
         val vault = stored.str("syncedVault").orEmpty()
         val synced = if (key.isNotEmpty() && vault.isNotEmpty()) AiKeySync.validTime(stored["synced"]) else 0

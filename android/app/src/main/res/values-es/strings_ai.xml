@@ -2,9 +2,9 @@
 <!-- Ask JotDrop: AI with your own key. The same keys in all six languages. -->
 <resources>
     <string name="ai_title">Pregunta a JotDrop</string>
-    <string name="ai_settings_button">Pregunta a JotDrop: IA con tu propia clave</string>
-    <string name="ai_settings_title">IA con tu propia clave</string>
-    <string name="ai_settings_intro">Dale tareas a JotDrop con tus propias palabras, escritas o habladas. Usa un servicio de IA que tú eliges, con tu propia clave, y habla con él directamente desde este teléfono. Los servidores de JotDrop nunca ven tus notas, tus preguntas ni tu clave. El servicio de IA lo pagas tú. \"Esta semana\" envía un extracto breve de tus notas, no las notas en sí.</string>
+    <string name="ai_settings_button">Pregunta a JotDrop: IA con tu propia clave o en este teléfono</string>
+    <string name="ai_settings_title">IA con tu propia clave o en este teléfono</string>
+    <string name="ai_settings_intro">Dale tareas a JotDrop con tus propias palabras, escritas o habladas. Usa un servicio de IA que tú eliges, con tu propia clave, y habla con él directamente desde este teléfono. O usa un modelo que funciona en este mismo teléfono, sin clave. Los servidores de JotDrop nunca ven tus notas, tus preguntas ni tu clave. Un servicio de IA lo pagas tú. \"Esta semana\" envía un extracto breve de tus notas, no las notas en sí.</string>
     <string name="ai_provider">Servicio de IA</string>
     <string name="ai_provider_off">Desactivado</string>
     <string name="ai_provider_custom">Dirección propia (compatible con OpenAI)</string>
@@ -244,4 +244,48 @@
     <string name="ai_removed_here">Pregunta a JotDrop está desactivado y la clave se ha quitado de este teléfono. Tus otros dispositivos la conservan.</string>
     <string name="ai_removed_all">Pregunta a JotDrop está desactivado. La clave se ha quitado de este teléfono y de JotDrop. Tus otros dispositivos la sueltan la próxima vez que miren, más o menos una vez al día mientras se usan.</string>
     <string name="ai_off_offer">Pregunta a JotDrop está desactivado en este teléfono. %1$s</string>
+    <!-- Ask JotDrop on this phone, without a key (phase 9). -->
+    <string name="ai_provider_phone">En este teléfono (sin clave)</string>
+    <string name="ai_local_intro">JotDrop ejecuta un modelo Gemma de Google en este teléfono. Tus notas y preguntas se quedan en este teléfono; solo el modelo se descarga una vez, desde Hugging Face. Es más lento que un servicio de IA con clave.</string>
+    <string name="ai_local_model">Modelo</string>
+    <string name="ai_local_option">%1$s (%2$s)</string>
+    <string name="ai_local_recommended">recomendado para este teléfono</string>
+    <string name="ai_local_wifi">La descarga ocupa %1$s. Usa wifi y deja esta pantalla abierta hasta que termine: la pantalla se queda encendida mientras tanto.</string>
+    <string name="ai_local_low_memory">Este teléfono tiene poca memoria. El modelo puede ir lento o no funcionar.</string>
+    <string name="ai_local_unsupported">Este teléfono no puede ejecutar el modelo: necesita un procesador de 64 bits.</string>
+    <string name="ai_local_download">Descargar</string>
+    <string name="ai_local_continue">Seguir descargando</string>
+    <string name="ai_local_stop">Detener</string>
+    <string name="ai_local_delete">Quitar modelo</string>
+    <string name="ai_local_progress">Descargando: %1$s de %2$s (%3$d%%)</string>
+    <string name="ai_local_checking">Comprobando la descarga…</string>
+    <string name="ai_local_ready">%1$s está en este teléfono y comprobado.</string>
+    <string name="ai_local_paused">La descarga se detuvo en %1$s de %2$s. Toca Seguir descargando para continuar.</string>
+    <string name="ai_local_failed_network">La descarga se detuvo porque se cortó la conexión. Toca Seguir descargando para continuar.</string>
+    <string name="ai_local_failed_server">Hugging Face no envió el modelo. Inténtalo más tarde.</string>
+    <string name="ai_local_try">Probar</string>
+    <string name="ai_local_trying">Probando el modelo en este teléfono…</string>
+    <string name="ai_local_loading">Preparando el modelo. La primera vez en este teléfono tarda alrededor de un minuto.</string>
+    <string name="ai_local_tried">Funciona (%1$s, %2$d s): %3$s</string>
+    <string name="ai_local_gpu">chip gráfico</string>
+    <string name="ai_local_cpu">procesador</string>
+    <string name="ai_local_need_download">Descarga primero el modelo.</string>
+    <string name="ai_local_removed">El modelo se ha quitado de este teléfono.</string>
+    <string name="ai_error_model_space">No hay suficiente espacio libre en este teléfono para el modelo.</string>
+    <string name="ai_error_model_hash">La descarga estaba dañada y se ha borrado. Inténtalo de nuevo.</string>
+    <string name="ai_error_model_missing">El modelo aún no está en este teléfono. Descárgalo en los ajustes de Ask JotDrop.</string>
+    <string name="ai_error_local_load">El modelo no pudo arrancar en este teléfono.</string>
+    <string name="ai_error_local_failed">El modelo de este teléfono se detuvo con un error. Inténtalo de nuevo.</string>
+    <string name="ai_error_local_unsupported">El modelo de este teléfono todavía no puede hacer esto. Elige un servicio de IA con clave para ello.</string>
+    <string name="ai_local_stays">Se queda en este teléfono, modelo %1$s. No sale nada.</string>
+    <string name="ai_local_fixed_only">En este teléfono, Ask JotDrop solo hace tareas fijas: \"Resumir con IA\", \"Transcribir con IA\", \"Leer foto con IA\" y \"Recibo a la Paper drawer\" en el menú de una tarjeta y los botones de IA del editor. Para preguntas libres y \"Esta semana\" hace falta un servicio de IA con clave.</string>
+    <string name="ai_local_no_merge">Para combinar hace falta un servicio de IA con clave: el modelo de este teléfono no cambia notas.</string>
+    <string name="ai_local_too_long">Esta nota es demasiado larga para el modelo de este teléfono (como mucho unos 6.000 caracteres de una nota a la vez). Un servicio de IA con clave sí puede.</string>
+    <string name="ai_local_working">Trabajando en este teléfono. Puede tardar unos minutos; puedes parar cuando quieras.</string>
+    <string name="ai_local_sent">Leído en este teléfono, no salió nada: %1$s</string>
+    <string name="ai_local_sent_none">No salió nada de este teléfono.</string>
+    <string name="ai_local_credit">Funciona con LiteRT-LM y Gemma 4 de Google, con la Apache License 2.0.</string>
+    <string name="ai_local_licences">Licencias</string>
+    <string name="ai_local_close">Cerrar</string>
+    <string name="ai_local_files">El modelo de este teléfono lee el archivo aquí; no sale nada. Una foto se reduce antes.</string>
 </resources>

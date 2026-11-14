@@ -15,8 +15,8 @@ android {
         applicationId = "com.diexar.keepcapture"
         minSdk = 26
         targetSdk = 36
-        versionCode = 115
-        versionName = "0.28.61"
+        versionCode = 116
+        versionName = "0.28.62"
     }
 
     // Stabiele debug-keystore in de repo. AGP's default genereert per CI-runner
@@ -176,6 +176,8 @@ dependencies {
     implementation("com.google.android.gms:play-services-mlkit-document-scanner:16.0.0")
     // Argon2id for cloud accounts (docs/cloud-accounts-design.md); used directly, not as a JCA provider.
     implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
+    // Ask JotDrop on this phone, without a key: Google's LiteRT-LM runs a Gemma model the user downloads (Apache 2.0).
+    implementation("com.google.ai.edge.litertlm:litertlm-android:0.19.1")
     // Android's own Google account picker for "Continue with Google"; the browser stays the fallback.
     // 1.3.0: the newest that builds against compileSdk 34.
     implementation("androidx.credentials:credentials:1.3.0")

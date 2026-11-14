@@ -3,6 +3,7 @@
 // note choice, the prompt, the file table and the receipt lines with what the web app's JavaScript makes of the
 // cases below. Part G (the key on all your devices): AiKeySync.kt plays ai-key-vectors.json, opens blobs keysync.mjs
 // sealed, and the blobs it seals are opened here with keysync.mjs.
+// Part H1 (on this phone, phase 9): checkAiLocal runs android/checks/AiLocalCheck.kt, the download and the engine with a fake model.
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -170,6 +171,17 @@ for (const file of readdirSync(kotlin).filter((name) => /^Ai.*\.kt$/.test(name))
   if (/\(\?[a-zA-Z]*U/.test(readFileSync(path.join(kotlin, file), 'utf8'))) throw new Error(`${file}: Android's ICU regex does not take the U flag`);
 }
 
+// 14 Nov 2026, Eric's phone: the model on this phone loaded but every answer failed with "Can not find OpenCL library":
+// since Android 12 an app reaches the vendor's OpenCL only when its manifest names it.
+const manifest = readFileSync(path.join(root, 'android/app/src/main/AndroidManifest.xml'), 'utf8');
+for (const library of ['libOpenCL.so', 'libOpenCL-car.so', 'libOpenCL-pixel.so', 'libvndksupport.so']) {
+  if (!manifest.includes(`<uses-native-library android:name="${library}" android:required="false" />`)) throw new Error(`AndroidManifest.xml: uses-native-library ${library} (not required) is missing`);
+}
+
+// 14 Nov 2026, measured on Eric's phone: the week overview by the model on this phone left notes out and mixed up
+// facts, so "This week" is offered only with an AI service with a key.
+if (!/if \(!fixed && target == null && !phone\) OutlinedButton\(onClick = \{ context\.startActivity\(AskActivity\.weekIntent/.test(readFileSync(path.join(kotlin, 'AiActivity.kt'), 'utf8'))) throw new Error('AiActivity.kt: "This week" must stay hidden for the model on this phone');
+
 // 10 Nov 2026, Eric's phone: "Summarize with AI" sent only the request. The screen kept the card's note id from a
 // composition before the notes were read, and the automatic send used that old, empty value. What goes along must
 // be decided by AiAsk.plan when it is needed, and the request must carry exactly that choice.
@@ -212,7 +224,7 @@ try {
   const crossFile = path.join(temporary, 'key-cross.json'), outFile = path.join(temporary, 'key-android.json');
   writeFileSync(crossFile, JSON.stringify(cross));
   const windows = process.platform === 'win32';
-  execFileSync(windows ? process.env.ComSpec || 'cmd.exe' : './gradlew', windows ? ['/d', '/c', 'gradlew.bat checkAi --no-daemon --console=plain'] : ['checkAi', '--no-daemon', '--console=plain'], {
+  execFileSync(windows ? process.env.ComSpec || 'cmd.exe' : './gradlew', windows ? ['/d', '/c', 'gradlew.bat checkAi checkAiLocal --no-daemon --console=plain'] : ['checkAi', 'checkAiLocal', '--no-daemon', '--console=plain'], {
     cwd: path.join(root, 'android'), stdio: 'inherit',
     env: { ...process.env, JOTDROP_AI_VECTORS: path.join(ai, 'ai-vectors.json'), JOTDROP_AI_TOOLS: path.join(ai, 'tools.json'), JOTDROP_AI_PROMPT: path.join(ai, 'prompt.json'), JOTDROP_AI_EDITS: editsFile, JOTDROP_AI_VECTORS_V2: path.join(ai, 'ai-vectors-v2.json'),
       JOTDROP_AI_KEY_VECTORS: path.join(ai, 'ai-key-vectors.json'), JOTDROP_AI_KEY_CROSS: crossFile, JOTDROP_AI_KEY_OUT: outFile },
