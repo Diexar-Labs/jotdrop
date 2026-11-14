@@ -3,6 +3,8 @@
 /app/build/
 /baselineprofile/build/
 /.gradle/
+# Kotlin 2 Gradle plugin: session files while a build runs (they made the release source check see a dirty tree)
+/.kotlin/
 /captures/
 local.properties
 

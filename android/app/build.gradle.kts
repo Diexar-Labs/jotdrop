@@ -3,6 +3,7 @@ import org.gradle.api.tasks.Exec
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
     id("androidx.baselineprofile")
 }
 
@@ -14,8 +15,8 @@ android {
         applicationId = "com.diexar.keepcapture"
         minSdk = 26
         targetSdk = 36
-        versionCode = 114
-        versionName = "0.28.60"
+        versionCode = 115
+        versionName = "0.28.61"
     }
 
     // Stabiele debug-keystore in de repo. AGP's default genereert per CI-runner
@@ -70,19 +71,15 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
     buildFeatures {
         viewBinding = true
         compose = true
         buildConfig = true
     }
+}
 
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.14"
-    }
+kotlin {
+    compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) }
 }
 
 // Ask JotDrop reads the same tool list and prompt as the web app: one source in cloud/shared/ai.

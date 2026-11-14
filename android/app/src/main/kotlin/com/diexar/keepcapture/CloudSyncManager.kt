@@ -780,6 +780,14 @@ object CloudSyncManager {
                 store.saveSettings(settings)
                 changed.value++
             }
+            // Ask JotDrop, "Use this key on all my devices": once a day a phone that follows the shared key looks again.
+            // It never stops the sync; a replaced or removed key is said in the sync message.
+            val aiSaid = try { AiKeyCloud.daily(context) } catch (error: CancellationException) { throw error } catch (_: Exception) { null }
+            if (aiSaid != null) {
+                settings.put("message", settings.optString("message") + " " + aiSaid)
+                store.saveSettings(settings)
+                changed.value++
+            }
         } catch (error: Exception) {
             if (error is CancellationException) throw error
             Log.w("JotDropCloud", CloudDiagnostics.failure(error, phase, (System.nanoTime() - startedAt) / 1_000_000))

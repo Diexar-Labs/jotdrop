@@ -37,10 +37,16 @@ import javax.crypto.spec.GCMParameterSpec
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 private val READERS = Dispatchers.IO.limitedParallelism(4)
 
-/** What the user chose in Settings. The key stays on this phone; it is not synced and not in a backup. */
-data class AiSettings(val provider: String = "", val key: String = "", val model: String = "", val baseUrl: String = "", val includeShared: Boolean = false) {
+/**
+ * What the user chose in Settings. The key stays on this phone and is not in a backup. [synced] is for "Use this
+ * key on all my devices" (AiKeySync): the server's time of the shared key this phone follows, 0 when its key is its
+ * own; [syncedVault] is the workspace of that key, so after connecting to another account nothing is taken away.
+ * The switch for shared notes is never shared.
+ */
+data class AiSettings(val provider: String = "", val key: String = "", val model: String = "", val baseUrl: String = "", val includeShared: Boolean = false, val synced: Long = 0, val syncedVault: String = "") {
     val on get() = provider.isNotEmpty()
     fun config() = AiConfig(provider, key, model, baseUrl)
+    override fun toString() = "AiSettings($provider, key hidden, synced=$synced)"
 }
 
 /**
@@ -78,13 +84,18 @@ class AiSecretStore(context: Context) {
         }.getOrNull() ?: return AiSettings()
         val provider = stored.str("provider")?.takeIf { it in PROVIDERS } ?: return AiSettings()
         val spec = AiProviders.SPECS.getValue(provider)
-        AiSettings(provider, if (spec.needsKey || provider == "custom") stored.str("key").orEmpty().trim() else "", stored.str("model").orEmpty().trim(),
-            if (provider == "custom") stored.str("baseUrl").orEmpty().trim() else "", stored["includeShared"] == true)
+        val key = if (spec.needsKey || provider == "custom") stored.str("key").orEmpty().trim() else ""
+        // A followed key without its workspace counts as this phone's own: when in doubt, nothing is taken away.
+        val vault = stored.str("syncedVault").orEmpty()
+        val synced = if (key.isNotEmpty() && vault.isNotEmpty()) AiKeySync.validTime(stored["synced"]) else 0
+        AiSettings(provider, key, stored.str("model").orEmpty().trim(), if (provider == "custom") stored.str("baseUrl").orEmpty().trim() else "",
+            stored["includeShared"] == true, synced, if (synced > 0) vault else "")
     }
 
     fun save(settings: AiSettings) = synchronized(lock) {
         val json = AiJson.stringify(linkedMapOf("provider" to settings.provider, "key" to settings.key.trim(), "model" to settings.model.trim(),
-            "baseUrl" to settings.baseUrl.trim(), "includeShared" to settings.includeShared))
+            "baseUrl" to settings.baseUrl.trim(), "includeShared" to settings.includeShared, "synced" to settings.synced.coerceAtLeast(0),
+            "syncedVault" to if (settings.synced > 0) settings.syncedVault else ""))
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, key())
         cipher.updateAAD(AAD.toByteArray(Charsets.UTF_8))
