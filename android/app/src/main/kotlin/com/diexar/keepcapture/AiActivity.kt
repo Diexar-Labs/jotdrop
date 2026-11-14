@@ -544,8 +544,9 @@ private fun AskScreen(
                     if (job == null) {
                         if (!fixed) OutlinedButton(onClick = { dictate() }) { Icon(Icons.Filled.Mic, contentDescription = null); Text(" " + stringResource(R.string.ai_dictate)) }
                         Button(onClick = { send() }, enabled = request.isNotBlank() && (action == null || (loaded && !keptOut && files.isNotEmpty())) && !(phone && !fixed)) { Text(stringResource(R.string.ai_send)) }
-                        // Only from the plain ask screen, as on the web: not about one card, not from the editor.
-                        if (!fixed && target == null) OutlinedButton(onClick = { context.startActivity(AskActivity.weekIntent(context)); onClose() }) { Text(stringResource(R.string.ai_week)) }
+                        // Only from the plain ask screen, as on the web: not about one card, not from the editor. Not on this
+                        // phone: the local models left notes out and mixed up facts in the week overview (14 Nov 2026).
+                        if (!fixed && target == null && !phone) OutlinedButton(onClick = { context.startActivity(AskActivity.weekIntent(context)); onClose() }) { Text(stringResource(R.string.ai_week)) }
                     } else {
                         OutlinedButton(onClick = { job?.cancel(); job = null; pending = null; stopped = true }) { Text(stringResource(R.string.ai_stop)) }
                     }

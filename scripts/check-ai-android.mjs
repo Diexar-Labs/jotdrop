@@ -178,6 +178,10 @@ for (const library of ['libOpenCL.so', 'libOpenCL-car.so', 'libOpenCL-pixel.so',
   if (!manifest.includes(`<uses-native-library android:name="${library}" android:required="false" />`)) throw new Error(`AndroidManifest.xml: uses-native-library ${library} (not required) is missing`);
 }
 
+// 14 Nov 2026, measured on Eric's phone: the week overview by the model on this phone left notes out and mixed up
+// facts, so "This week" is offered only with an AI service with a key.
+if (!/if \(!fixed && target == null && !phone\) OutlinedButton\(onClick = \{ context\.startActivity\(AskActivity\.weekIntent/.test(readFileSync(path.join(kotlin, 'AiActivity.kt'), 'utf8'))) throw new Error('AiActivity.kt: "This week" must stay hidden for the model on this phone');
+
 // 10 Nov 2026, Eric's phone: "Summarize with AI" sent only the request. The screen kept the card's note id from a
 // composition before the notes were read, and the automatic send used that old, empty value. What goes along must
 // be decided by AiAsk.plan when it is needed, and the request must carry exactly that choice.

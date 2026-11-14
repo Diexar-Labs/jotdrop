@@ -277,7 +277,7 @@
     <string name="ai_error_local_failed">Het model op deze telefoon stopte met een fout. Probeer het opnieuw.</string>
     <string name="ai_error_local_unsupported">Het model op deze telefoon kan dit nog niet. Kies hiervoor een AI-dienst met een sleutel.</string>
     <string name="ai_local_stays">Blijft op deze telefoon, model %1$s. Er gaat niets weg.</string>
-    <string name="ai_local_fixed_only">Op deze telefoon doet Ask JotDrop alleen vaste taken: \"Samenvatten met AI\", \"Uitschrijven met AI\", \"Foto lezen met AI\" en \"Bon naar de Paper drawer\" in het menu van een kaart, de AI-knoppen in de editor, en \"Deze week\". Voor vrije vragen is een AI-dienst met een sleutel nodig.</string>
+    <string name="ai_local_fixed_only">Op deze telefoon doet Ask JotDrop alleen vaste taken: \"Samenvatten met AI\", \"Uitschrijven met AI\", \"Foto lezen met AI\" en \"Bon naar de Paper drawer\" in het menu van een kaart en de AI-knoppen in de editor. Voor vrije vragen en \"Deze week\" is een AI-dienst met een sleutel nodig.</string>
     <string name="ai_local_no_merge">Samenvoegen kan alleen met een AI-dienst met een sleutel: het model op deze telefoon verandert geen notities.</string>
     <string name="ai_local_too_long">Deze notitie is te lang voor het model op deze telefoon (er gaan hooguit zo\'n 6.000 tekens van een notitie tegelijk). Een AI-dienst met een sleutel kan het wel.</string>
     <string name="ai_local_working">Bezig op deze telefoon. Dit kan een paar minuten duren; je kunt altijd stoppen.</string>
