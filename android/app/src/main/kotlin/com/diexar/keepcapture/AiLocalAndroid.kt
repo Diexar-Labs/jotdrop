@@ -2,7 +2,12 @@ package com.diexar.keepcapture
 
 import android.app.ActivityManager
 import android.content.Context
+import android.media.MediaCodec
+import android.media.MediaExtractor
+import android.media.MediaFormat
 import android.os.Build
+import android.os.SystemClock
+import android.util.Log
 import com.google.ai.edge.litertlm.Backend
 import com.google.ai.edge.litertlm.Content
 import com.google.ai.edge.litertlm.Contents
@@ -67,10 +72,10 @@ object AiLocal {
     }
 
     /** The provider for Ask JotDrop; AiError("model_missing") when the model is not downloaded (yet). */
-    fun provider(context: Context, settings: AiSettings, loading: () -> Unit = {}): AiProvider {
+    fun provider(context: Context, settings: AiSettings, loading: (Boolean) -> Unit = {}): AiProvider {
         val model = chosen(context, settings.model)
         val file = ready(context, model) ?: throw AiError("model_missing")
-        return AiLocalProvider(engine(context), model, file.absolutePath, loading)
+        return AiLocalProvider(engine(context), model, file.absolutePath, AiLocalFilesAndroid(context.applicationContext), loading)
     }
 
     fun start(context: Context, model: AiLocalModel) {
@@ -123,23 +128,35 @@ object AiModelHttp : AiRangeFetcher {
     }
 }
 
-/** LiteRT-LM: text only for now (no vision or audio part loaded), 4096 tokens. */
+/**
+ * LiteRT-LM with its vision part (on the same chip as the text) and its audio part (on the processor, as in the
+ * trial), 8192 tokens: the trial on Eric's phone ran E4B so. Only counts and times go to the log, never text.
+ */
 class AiLiteRtLoader(private val cacheDir: String) : AiLocalLoader {
-    companion object { const val MAX_TOKENS = 4096 }
+    companion object { const val MAX_TOKENS = 8192 }
 
     override fun load(path: String, backend: String): AiLocalRunner {
-        val engine = Engine(EngineConfig(modelPath = path, backend = if (backend == "gpu") Backend.GPU() else Backend.CPU(),
+        val started = SystemClock.elapsedRealtime()
+        val main = { if (backend == "gpu") Backend.GPU() else Backend.CPU() }
+        val engine = Engine(EngineConfig(modelPath = path, backend = main(), visionBackend = main(), audioBackend = Backend.CPU(),
             maxNumTokens = MAX_TOKENS, cacheDir = cacheDir))
         try { engine.initialize() } catch (error: Throwable) { runCatching { engine.close() }; throw error }
+        Log.i("AskJotDrop", "Phone model loaded on $backend in ${SystemClock.elapsedRealtime() - started} ms")
         return object : AiLocalRunner {
-            override suspend fun generate(system: String, prompt: String): String = withContext(Dispatchers.IO) {
+            override suspend fun generate(system: String, prompt: String, media: List<AiLocalMedia>): String = withContext(Dispatchers.IO) {
+                val asked = SystemClock.elapsedRealtime()
                 val conversation = engine.createConversation(ConversationConfig(systemInstruction = Contents.of(system),
                     samplerConfig = SamplerConfig(topK = 40, topP = 0.95, temperature = 0.3)))
                 val text = StringBuilder()
+                var first = 0L
                 val finished = CompletableDeferred<Throwable?>()
-                conversation.sendMessageAsync(Contents.of(prompt), object : MessageCallback {
+                val contents = media.map { if (it.kind == "audio") Content.AudioFile(it.path) else Content.ImageFile(it.path) } + Content.Text(prompt)
+                conversation.sendMessageAsync(Contents.of(contents), object : MessageCallback {
                     override fun onMessage(message: Message) {
-                        synchronized(text) { for (part in message.contents.contents) if (part is Content.Text) text.append(part.text) }
+                        synchronized(text) {
+                            if (first == 0L) first = SystemClock.elapsedRealtime()
+                            for (part in message.contents.contents) if (part is Content.Text) text.append(part.text)
+                        }
                     }
                     override fun onDone() { finished.complete(null) }
                     override fun onError(throwable: Throwable) { finished.complete(throwable) }
@@ -147,7 +164,12 @@ class AiLiteRtLoader(private val cacheDir: String) : AiLocalLoader {
                 var quiet = true
                 try {
                     finished.await()?.let { throw AiError("local_failed", it.javaClass.simpleName) }
-                    synchronized(text) { text.toString() }
+                    synchronized(text) {
+                        val now = SystemClock.elapsedRealtime()
+                        Log.i("AskJotDrop", "Phone model answered on $backend: ${media.size} files, ${prompt.length} chars in, ${text.length} chars out, " +
+                            "first words after ${if (first > 0) first - asked else -1} ms, done after ${now - asked} ms")
+                        text.toString()
+                    }
                 } catch (error: CancellationException) {
                     // Stop: the model ends its answer; the conversation closes only once it has, never under it.
                     runCatching { conversation.cancelProcess() }
@@ -159,6 +181,91 @@ class AiLiteRtLoader(private val cacheDir: String) : AiLocalLoader {
             }
 
             override fun close() = engine.close()
+        }
+    }
+}
+
+/**
+ * The files the model reads, in the cache folder "ai-local" (the provider deletes them after each answer): a photo as the
+ * JPEG Ask JotDrop already made, a recording decoded by Android (m4a, webm, ogg, mp3, wav, aac), made 16 kHz mono
+ * and cut in pieces of WAV.
+ */
+class AiLocalFilesAndroid(private val context: Context) : AiLocalFiles {
+    private fun folder() = File(context.cacheDir, "ai-local").apply { mkdirs() }
+    private fun file(ending: String) = File.createTempFile("ai-", ending, folder())
+
+    override fun image(part: AiPart): File = file(".jpg").apply { writeBytes(part.bytes) }
+
+    override fun audio(part: AiPart, maxSeconds: Int): List<File> {
+        val name = AiParts.label(part.name)
+        val source = file(".audio").apply { writeBytes(part.bytes) }
+        val extractor = MediaExtractor()
+        var codec: MediaCodec? = null
+        try {
+            try { extractor.setDataSource(source.absolutePath) } catch (_: Exception) { throw AiError("unsupported_input", "$name: Android cannot read this recording.") }
+            val track = (0 until extractor.trackCount).firstOrNull { extractor.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true }
+                ?: throw AiError("unsupported_input", "$name: Android cannot read this recording.")
+            val format = extractor.getTrackFormat(track)
+            val minutes = maxSeconds / 60
+            if (format.containsKey(MediaFormat.KEY_DURATION) && format.getLong(MediaFormat.KEY_DURATION) > maxSeconds * 1_000_000L) {
+                throw AiError("too_large", "$name is longer than $minutes minutes, the most the model on this phone writes out at once.")
+            }
+            extractor.selectTrack(track)
+            val decoder = MediaCodec.createDecoderByType(format.getString(MediaFormat.KEY_MIME)!!).also { codec = it }
+            decoder.configure(format, null, null, 0)
+            decoder.start()
+            var samples = ShortArray(AiLocalAudio.RATE * 60)
+            var size = 0
+            var resampler: AiLocalAudio.Resampler? = null
+            val info = MediaCodec.BufferInfo()
+            var inputDone = false
+            while (true) {
+                if (!inputDone) {
+                    val index = decoder.dequeueInputBuffer(10_000)
+                    if (index >= 0) {
+                        val read = extractor.readSampleData(decoder.getInputBuffer(index)!!, 0)
+                        if (read < 0) { decoder.queueInputBuffer(index, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM); inputDone = true }
+                        else { decoder.queueInputBuffer(index, 0, read, extractor.sampleTime, 0); extractor.advance() }
+                    }
+                }
+                val out = decoder.dequeueOutputBuffer(info, 10_000)
+                if (out == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) resampler = null
+                if (out < 0) continue
+                if (resampler == null) {
+                    val now = decoder.outputFormat
+                    if (now.containsKey(MediaFormat.KEY_PCM_ENCODING) && now.getInteger(MediaFormat.KEY_PCM_ENCODING) != android.media.AudioFormat.ENCODING_PCM_16BIT) {
+                        throw AiError("unsupported_input", "$name: Android cannot read this recording.")
+                    }
+                    resampler = AiLocalAudio.Resampler(now.getInteger(MediaFormat.KEY_SAMPLE_RATE), now.getInteger(MediaFormat.KEY_CHANNEL_COUNT))
+                }
+                val buffer = decoder.getOutputBuffer(out)!!
+                buffer.position(info.offset)
+                buffer.limit(info.offset + info.size)
+                val pcm = ShortArray(info.size / 2)
+                buffer.order(java.nio.ByteOrder.nativeOrder()).asShortBuffer().get(pcm)
+                decoder.releaseOutputBuffer(out, false)
+                val mono = resampler.feed(pcm)
+                if (size + mono.size > maxSeconds * AiLocalAudio.RATE) {
+                    throw AiError("too_large", "$name is longer than $minutes minutes, the most the model on this phone writes out at once.")
+                }
+                if (size + mono.size > samples.size) samples = samples.copyOf(maxOf(samples.size * 2, size + mono.size))
+                mono.copyInto(samples, size)
+                size += mono.size
+                if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) break
+            }
+            if (size == 0) throw AiError("bad_request", "$name is empty.")
+            val pieces = AiLocalAudio.pieces(samples, size).map { (from, to) -> file(".wav").apply { writeBytes(AiLocalAudio.wav(samples, from, to)) } }
+            Log.i("AskJotDrop", "Recording for the phone model: ${size / AiLocalAudio.RATE} s in ${pieces.size} pieces")
+            return pieces
+        } catch (error: AiError) {
+            throw error
+        } catch (error: Exception) {
+            throw AiError("unsupported_input", "$name: Android cannot read this recording.")
+        } finally {
+            runCatching { codec?.stop() }
+            runCatching { codec?.release() }
+            extractor.release()
+            source.delete()
         }
     }
 }

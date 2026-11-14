@@ -93,7 +93,7 @@ object Digest {
             ?: runCatching { LocalDate.parse(text).atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli() }.getOrNull()
     }
 
-    fun weekDigest(notes: List<AiNote>, nowMs: Long, timeZone: String?, includeShared: Boolean = false): WeekDigest {
+    fun weekDigest(notes: List<AiNote>, nowMs: Long, timeZone: String?, includeShared: Boolean = false, maxChars: Int = MAX_DIGEST_CHARS): WeekDigest {
         val today = wallClock(nowMs, timeZone)
         val reminderEnd = addDays(today, DIGEST_DAYS)
         val day = today.substring(0, 10)
@@ -126,7 +126,7 @@ object Digest {
         for (entry in sorted) {
             if (picked.size >= MAX_DIGEST_NOTES) break
             val next = AiContext.formatNotes((picked + entry).map(::asNote))
-            if (next.length > MAX_DIGEST_CHARS) break
+            if (next.length > maxChars) break
             picked.add(entry)
             text = next
         }

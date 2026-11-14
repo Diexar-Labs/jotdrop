@@ -2,9 +2,9 @@
 <!-- Ask JotDrop: AI with your own key. The same keys in all six languages. -->
 <resources>
     <string name="ai_title">Pregunta a JotDrop</string>
-    <string name="ai_settings_button">Pregunta a JotDrop: IA con tu propia clave</string>
-    <string name="ai_settings_title">IA con tu propia clave</string>
-    <string name="ai_settings_intro">Dale tareas a JotDrop con tus propias palabras, escritas o habladas. Usa un servicio de IA que tú eliges, con tu propia clave, y habla con él directamente desde este teléfono. Los servidores de JotDrop nunca ven tus notas, tus preguntas ni tu clave. El servicio de IA lo pagas tú. \"Esta semana\" envía un extracto breve de tus notas, no las notas en sí.</string>
+    <string name="ai_settings_button">Pregunta a JotDrop: IA con tu propia clave o en este teléfono</string>
+    <string name="ai_settings_title">IA con tu propia clave o en este teléfono</string>
+    <string name="ai_settings_intro">Dale tareas a JotDrop con tus propias palabras, escritas o habladas. Usa un servicio de IA que tú eliges, con tu propia clave, y habla con él directamente desde este teléfono. O usa un modelo que funciona en este mismo teléfono, sin clave. Los servidores de JotDrop nunca ven tus notas, tus preguntas ni tu clave. Un servicio de IA lo pagas tú. \"Esta semana\" envía un extracto breve de tus notas, no las notas en sí.</string>
     <string name="ai_provider">Servicio de IA</string>
     <string name="ai_provider_off">Desactivado</string>
     <string name="ai_provider_custom">Dirección propia (compatible con OpenAI)</string>
@@ -278,4 +278,15 @@
     <string name="ai_error_local_load">El modelo no pudo arrancar en este teléfono.</string>
     <string name="ai_error_local_failed">El modelo de este teléfono se detuvo con un error. Inténtalo de nuevo.</string>
     <string name="ai_error_local_unsupported">El modelo de este teléfono todavía no puede hacer esto. Elige un servicio de IA con clave para ello.</string>
+    <string name="ai_local_stays">Se queda en este teléfono, modelo %1$s. No sale nada.</string>
+    <string name="ai_local_fixed_only">En este teléfono, Ask JotDrop solo hace tareas fijas: \"Resumir con IA\", \"Transcribir con IA\", \"Leer foto con IA\" y \"Recibo a la Paper drawer\" en el menú de una tarjeta, los botones de IA del editor y \"Esta semana\". Para preguntas libres hace falta un servicio de IA con clave.</string>
+    <string name="ai_local_no_merge">Para combinar hace falta un servicio de IA con clave: el modelo de este teléfono no cambia notas.</string>
+    <string name="ai_local_too_long">Esta nota es demasiado larga para el modelo de este teléfono (como mucho unos 6.000 caracteres de una nota a la vez). Un servicio de IA con clave sí puede.</string>
+    <string name="ai_local_working">Trabajando en este teléfono. Puede tardar unos minutos; puedes parar cuando quieras.</string>
+    <string name="ai_local_sent">Leído en este teléfono, no salió nada: %1$s</string>
+    <string name="ai_local_sent_none">No salió nada de este teléfono.</string>
+    <string name="ai_local_credit">Funciona con LiteRT-LM y Gemma 4 de Google, con la Apache License 2.0.</string>
+    <string name="ai_local_licences">Licencias</string>
+    <string name="ai_local_close">Cerrar</string>
+    <string name="ai_local_files">El modelo de este teléfono lee el archivo aquí; no sale nada. Una foto se reduce antes.</string>
 </resources>

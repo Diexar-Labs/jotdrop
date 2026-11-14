@@ -2,9 +2,9 @@
 <!-- Ask JotDrop: AI with your own key. The same keys in all six languages. -->
 <resources>
     <string name="ai_title">Ask JotDrop</string>
-    <string name="ai_settings_button">Ask JotDrop: AI with your own key</string>
-    <string name="ai_settings_title">AI with your own key</string>
-    <string name="ai_settings_intro">Give JotDrop tasks in your own words, typed or spoken. It uses an AI service you choose, with your own key, and talks to it straight from this phone. JotDrop\'s servers never see your notes, your questions or your key. You pay the AI service yourself. \"This week\" sends a short digest of your notes, not the notes themselves.</string>
+    <string name="ai_settings_button">Ask JotDrop: AI with your own key or on this phone</string>
+    <string name="ai_settings_title">AI with your own key or on this phone</string>
+    <string name="ai_settings_intro">Give JotDrop tasks in your own words, typed or spoken. It uses an AI service you choose, with your own key, and talks to it straight from this phone. Or it uses a model that runs on this phone itself, without a key. JotDrop\'s servers never see your notes, your questions or your key. You pay an AI service yourself. \"This week\" sends a short digest of your notes, not the notes themselves.</string>
     <string name="ai_provider">AI service</string>
     <string name="ai_provider_off">Off</string>
     <string name="ai_provider_custom">Own address (OpenAI-compatible)</string>
@@ -278,4 +278,15 @@
     <string name="ai_error_local_load">The model could not start on this phone.</string>
     <string name="ai_error_local_failed">The model on this phone stopped with an error. Try again.</string>
     <string name="ai_error_local_unsupported">The model on this phone cannot do this yet. Choose an AI service with a key for this.</string>
+    <string name="ai_local_stays">Stays on this phone, model %1$s. Nothing goes out.</string>
+    <string name="ai_local_fixed_only">On this phone, Ask JotDrop does fixed tasks only: \"Summarize with AI\", \"Transcribe with AI\", \"Read photo with AI\" and \"Receipt to Paper drawer\" in a card\'s menu, the AI buttons in the editor, and \"This week\". Free questions need an AI service with a key.</string>
+    <string name="ai_local_no_merge">Merging needs an AI service with a key: the model on this phone does not change notes.</string>
+    <string name="ai_local_too_long">This note is too long for the model on this phone (at most about 6,000 characters of a note go at once). An AI service with a key can do it.</string>
+    <string name="ai_local_working">Working on this phone. This can take a few minutes; you can stop at any time.</string>
+    <string name="ai_local_sent">Read on this phone, nothing left it: %1$s</string>
+    <string name="ai_local_sent_none">Nothing left this phone.</string>
+    <string name="ai_local_credit">Runs with LiteRT-LM and Gemma 4 from Google, under the Apache License 2.0.</string>
+    <string name="ai_local_licences">Licences</string>
+    <string name="ai_local_close">Close</string>
+    <string name="ai_local_files">The model on this phone reads the file here; nothing goes out. A photo is made smaller first.</string>
 </resources>

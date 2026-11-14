@@ -41,10 +41,12 @@ object AiParts {
         "gemini" -> AiCaps(true, true, true, true)
         "openrouter" -> AiCaps(inputs?.contains("image"), true, inputs?.contains("audio"), inputs?.contains("audio"))
         "ollama", "custom" -> AiCaps(null, false, false, false)
+        // The model on this phone (Android only, AiLocalProvider): photos, and recordings to write out.
+        "phone" -> AiCaps(true, false, false, true)
         else -> AiCaps(false, false, false, false)
     }
 
-    private val WHO = mapOf("anthropic" to "Claude", "openai" to "OpenAI", "gemini" to "Gemini", "openrouter" to "This OpenRouter model", "ollama" to "This local model", "custom" to "This address")
+    private val WHO = mapOf("anthropic" to "Claude", "openai" to "OpenAI", "gemini" to "Gemini", "openrouter" to "This OpenRouter model", "ollama" to "This local model", "custom" to "This address", "phone" to "The model on this phone")
     private val OTHERS = listOf("gemini" to "Gemini", "openai" to "OpenAI", "anthropic" to "Claude", "openrouter" to "OpenRouter")
     private val VERB = mapOf("image" to "read photos", "pdf" to "read PDFs", "audio" to "listen to recordings")
 

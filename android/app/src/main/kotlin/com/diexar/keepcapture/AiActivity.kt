@@ -135,9 +135,9 @@ internal fun aiProviderName(context: Context, id: String): String = when (id) {
     else -> AiProviders.SPECS[id]?.name ?: id
 }
 
-/** The AI service of these settings: the model on this phone, or the service with the user's key. */
-internal fun aiProvider(context: Context, settings: AiSettings): AiProvider =
-    if (settings.provider == AiLocalModels.PHONE) AiLocal.provider(context, settings) else AiProviders.create(settings.config(), AiHttp)
+/** The AI service of these settings: the model on this phone (loading: while it loads), or the service with the user's key. */
+internal fun aiProvider(context: Context, settings: AiSettings, loading: (Boolean) -> Unit = {}): AiProvider =
+    if (settings.provider == AiLocalModels.PHONE) AiLocal.provider(context, settings, loading) else AiProviders.create(settings.config(), AiHttp)
 
 /**
  * Ask JotDrop: say or type what JotDrop should do; the AI service the user chose answers straight from this phone.
@@ -253,16 +253,25 @@ private fun AskScreen(
     var receiptBusy by remember { mutableStateOf(false) }
     var receiptSaid by remember { mutableStateOf<String?>(null) }
     val provider = aiProviderName(context, settings.provider)
+    // The model on this phone (phase 9): the fixed actions only, without tools, less text at once and more time.
+    val phone = settings.provider == AiLocalModels.PHONE
+    val maxChars = if (phone) AiLocalModels.MAX_CHARS else AiContext.MAX_CHARS
+    val onceTime = if (phone) AiLocalModels.TIMEOUT_MS else AiAssistant.FILE_TIMEOUT_MS
+    var modelLoading by remember { mutableStateOf(false) }
+    fun ai(): AiProvider = aiProvider(context, settings) { modelLoading = it }
     // OpenAI writes out a recording with its own model, which the line names.
-    val model = if (action == "transcribe" && settings.provider == "openai") AiProviders.TRANSCRIBE_MODEL
-        else settings.model.ifEmpty { AiProviders.SPECS[settings.provider]?.defaultModel.orEmpty() }
+    val model = when {
+        phone -> AiLocalModels.byId(settings.model)?.name ?: settings.model
+        action == "transcribe" && settings.provider == "openai" -> AiProviders.TRANSCRIBE_MODEL
+        else -> settings.model.ifEmpty { AiProviders.SPECS[settings.provider]?.defaultModel.orEmpty() }
+    }
 
     // A fixed request (card summary, file action, editor button, This week, Merge with AI) cannot be edited or dictated.
     val fixed = summarize || draft != null || action != null || week || merge != null
 
     // What goes along, decided from the notes as they are now: the list on screen and the request use the same plan.
     fun plan(text: String, unticked: Set<String>): AiPlan = AiAsk.plan(executor.notes, text, unticked,
-        pinned = target?.let(executor::idOf), target = target != null, summarize = summarize, includeShared = settings.includeShared)
+        pinned = target?.let(executor::idOf), target = target != null, summarize = summarize, includeShared = settings.includeShared, maxChars = maxChars)
 
     // Why a file cannot go with this service, in words, or null. The size is known before reading; a photo is made small first.
     fun fileProblem(file: AiFileRef): String? {
@@ -277,6 +286,9 @@ private fun AskScreen(
     fun send() {
         val text = request.trim()
         if (text.isEmpty() || job != null) return
+        // On this phone a free question (it needs tools) cannot be sent; a merge replaces a note's text with a tool.
+        if (phone && !fixed) return
+        if (phone && merge != null) { notice = R.string.ai_local_no_merge; return }
         val sending = files.filter { it.name in filesOn && fileProblem(it) == null }
         if (action != null && (keptOut || sending.isEmpty())) { chooseFile = !keptOut; return }
         chooseFile = false
@@ -290,17 +302,19 @@ private fun AskScreen(
         receiptSaid = null
         notice = null
         olderTrashed = false
+        modelLoading = false
         val unticked = excluded
         job = scope.launch {
             try {
                 if (week) {
                     // The overview has no tools: what the notes say can never make or change a note.
                     reading.await()
-                    val digest = Digest.weekDigest(executor.notes.filter { it.id !in unticked }, System.currentTimeMillis(), zone, settings.includeShared)
+                    val digest = Digest.weekDigest(executor.notes.filter { it.id !in unticked }, System.currentTimeMillis(), zone, settings.includeShared,
+                        maxChars = if (phone) AiLocalModels.MAX_CHARS else Digest.MAX_DIGEST_CHARS)
                     if (digest.notes.isEmpty()) { notice = R.string.ai_week_nothing; return@launch }
                     val day = SimpleDateFormat("yyyy-MM-dd EEEE", Locale.US).format(Date())
                     val (system, overview) = Digest.request(language, day, zone, digest.text)
-                    val done = AiAssistant.once(text, emptyList(), provider = { aiProvider(context, settings) }, secrets = listOf(settings.key)) { ai, time ->
+                    val done = AiAssistant.once(text, emptyList(), provider = ::ai, secrets = listOf(settings.key), timeoutMs = onceTime) { ai, time ->
                         ai.complete(system, listOf(AiMessage.User(overview)), emptyList(), time)
                     }
                     digest.notes.mapTo(done.sent) { AiSent(it.id, it.title) }
@@ -320,7 +334,7 @@ private fun AskScreen(
                 if (action != null) {
                     // One request without tools: text on a photo or a receipt can never make or change a note.
                     val before = if (action == "receipt") withContext(Dispatchers.IO) { Storage.readNote(context, target!!).getOrNull() } else null
-                    val done = AiAssistant.once(text, parts, provider = { aiProvider(context, settings) }, secrets = listOf(settings.key)) { ai, time ->
+                    val done = AiAssistant.once(text, parts, provider = ::ai, secrets = listOf(settings.key), timeoutMs = onceTime) { ai, time ->
                         when (action) {
                             "transcribe" -> ai.transcribe(parts.first(), Locale.getDefault().toLanguageTag(), time).answer()
                             "photo" -> ai.complete(AiParts.PHOTO_SYSTEM, listOf(AiMessage.User(text, parts)), emptyList(), time)
@@ -332,7 +346,7 @@ private fun AskScreen(
                     return@launch
                 }
                 // An editor button sends only the draft; anything else waits until the notes are read.
-                val (notes, chosen) = if (draft != null) listOf(draft) to AiContext.selectNotes(listOf(draft), "", pinned = listOf(draft.id)).notes
+                val (notes, chosen) = if (draft != null) listOf(draft) to AiContext.selectNotes(listOf(draft), "", maxChars = maxChars, pinned = listOf(draft.id)).notes
                 else if (merge != null) {
                     // A merge replaces the newer note's text: the AI must see all of both notes, or the merged text loses the rest.
                     reading.await()
@@ -349,28 +363,37 @@ private fun AskScreen(
                     if (now.missing) { missing = true; return@launch }
                     now.notes to now.chosen
                 }
+                // On this phone the whole text goes, or nothing: "Replace text" must never lose the rest of a note.
+                if (phone && chosen.any { it.truncated }) { notice = R.string.ai_local_too_long; return@launch }
                 val (tools, prompt) = withContext(Dispatchers.IO) { AiAssets.get(context) }
                 val day = SimpleDateFormat("yyyy-MM-dd EEEE", Locale.US).format(Date())
-                val system = AiPrompt.system(prompt, language, day, TimeZone.getDefault().id, executor.labels)
+                val system = if (phone) AiLocalPrompt.system(language, day, TimeZone.getDefault().id)
+                    else AiPrompt.system(prompt, language, day, TimeZone.getDefault().id, executor.labels)
                 report = AiAssistant.run(
                     request = text,
                     notes = notes,
                     labels = executor.labels,
-                    tools = tools,
+                    // The model on this phone answers in words only: no tools, so it never makes or changes a note.
+                    tools = if (phone) emptyList() else tools,
                     system = system,
-                    provider = { aiProvider(context, settings) },
+                    provider = ::ai,
                     // The draft is not saved yet, so the AI changes nothing: the answer waits for Replace or Add below.
-                    executor = if (draft != null) emptyMap() else executor.tools,
+                    executor = if (draft != null || phone) emptyMap() else executor.tools,
                     confirm = if (draft != null) { _ -> false } else { change -> val answer = CompletableDeferred<Boolean>(); pending = Pending(change, answer); answer.await().also { pending = null } },
                     includeShared = settings.includeShared,
                     secrets = listOf(settings.key),
                     chosen = chosen,
+                    timeoutMs = if (phone) AiLocalModels.TIMEOUT_MS else null,
+                    maxChars = maxChars,
                     parts = parts,
                 )
             } catch (error: CancellationException) {
                 stopped = true
                 throw error
-            } finally { job = null; pending = null }
+            } finally {
+                // Stop already freed the screen (the model on this phone finishes loading first); a newer request keeps its own.
+                if (job === coroutineContext[Job]) { job = null; pending = null }
+            }
         }
     }
 
@@ -520,14 +543,16 @@ private fun AskScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (job == null) {
                         if (!fixed) OutlinedButton(onClick = { dictate() }) { Icon(Icons.Filled.Mic, contentDescription = null); Text(" " + stringResource(R.string.ai_dictate)) }
-                        Button(onClick = { send() }, enabled = request.isNotBlank() && (action == null || (loaded && !keptOut && files.isNotEmpty()))) { Text(stringResource(R.string.ai_send)) }
+                        Button(onClick = { send() }, enabled = request.isNotBlank() && (action == null || (loaded && !keptOut && files.isNotEmpty())) && !(phone && !fixed)) { Text(stringResource(R.string.ai_send)) }
                         // Only from the plain ask screen, as on the web: not about one card, not from the editor.
                         if (!fixed && target == null) OutlinedButton(onClick = { context.startActivity(AskActivity.weekIntent(context)); onClose() }) { Text(stringResource(R.string.ai_week)) }
                     } else {
-                        OutlinedButton(onClick = { job?.cancel() }) { Text(stringResource(R.string.ai_stop)) }
+                        OutlinedButton(onClick = { job?.cancel(); job = null; pending = null; stopped = true }) { Text(stringResource(R.string.ai_stop)) }
                     }
                 }
-                Text(stringResource(R.string.ai_goes_to, provider, model.ifEmpty { "?" }), style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+                Text(if (phone) stringResource(R.string.ai_local_stays, model) else stringResource(R.string.ai_goes_to, provider, model.ifEmpty { "?" }),
+                    style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+                if (phone && !fixed) Text(stringResource(R.string.ai_local_fixed_only), modifier = Modifier.padding(top = 8.dp))
             }
             if (!loaded) item {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -565,7 +590,7 @@ private fun AskScreen(
                 items(files, key = { "f:" + it.name }) { file ->
                     AiFileRow(file, on = file.name in filesOn, one = true, problem = fileProblem(file)) { filesOn = setOf(file.name); chooseFile = false }
                 }
-                if (sendingFiles.isNotEmpty()) item { Text(stringResource(R.string.ai_files_others), style = MaterialTheme.typography.bodySmall) }
+                if (sendingFiles.isNotEmpty()) item { Text(stringResource(if (phone) R.string.ai_local_files else R.string.ai_files_others), style = MaterialTheme.typography.bodySmall) }
                 if (chooseFile) item { Text(stringResource(R.string.ai_file_choose_first)) }
             } else if (!fixed && job == null && report == null) listed?.let { now ->
                 val ticked = now.shown.filter { it.id !in excluded }
@@ -604,13 +629,17 @@ private fun AskScreen(
                     items(files, key = { "f:" + it.name }) { file ->
                         AiFileRow(file, on = file.name in filesOn, one = false, problem = fileProblem(file)) { on -> filesOn = if (on) filesOn + file.name else filesOn - file.name }
                     }
-                    if (sendingFiles.isNotEmpty()) item { Text(stringResource(R.string.ai_files_others), style = MaterialTheme.typography.bodySmall) }
+                    if (sendingFiles.isNotEmpty()) item { Text(stringResource(if (phone) R.string.ai_local_files else R.string.ai_files_others), style = MaterialTheme.typography.bodySmall) }
                 }
             }
             if (missing || (job == null && report == null && listed?.missing == true)) item { Text(stringResource(R.string.ai_note_missing)) }
             if (job != null) item {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
-                Text(preparing?.let { stringResource(it) } ?: if (loaded) stringResource(R.string.ai_working, provider) else stringResource(R.string.ai_reading_notes), style = MaterialTheme.typography.bodySmall)
+                Text(preparing?.let { stringResource(it) } ?: when {
+                    !loaded -> stringResource(R.string.ai_reading_notes)
+                    phone -> stringResource(if (modelLoading) R.string.ai_local_loading else R.string.ai_local_working)
+                    else -> stringResource(R.string.ai_working, provider)
+                }, style = MaterialTheme.typography.bodySmall)
             }
             if (stopped) item { Text(stringResource(R.string.ai_stopped)) }
             notice?.let { said -> item { Text(stringResource(said)) } }
@@ -623,7 +652,7 @@ private fun AskScreen(
             }
             receiptSaid?.let { said -> item { Text(said) } }
             report?.let { done -> item {
-                AiResult(done, asked, provider, model, executor, target, summarize, kind.takeIf { draft != null }, action, targetTitle, hideAnswer = found != null,
+                AiResult(done, asked, provider, model, phone, executor, target, summarize, kind.takeIf { draft != null }, action, targetTitle, hideAnswer = found != null,
                     savedNote, addedBelow, onSaved = { savedNote = true }, onAddedBelow = { addedBelow = true }, onDraft = { replace -> onDraftAnswer(done.answer, replace) },
                     saveTitle = mergeIds?.second?.let { context.getString(R.string.ai_title_merge, AiAsk.shortTitle(it.title).ifBlank { context.getString(R.string.ai_untitled) }) })
             } }
@@ -683,7 +712,7 @@ private fun AiFileRow(file: AiFileRef, on: Boolean, one: Boolean, problem: Strin
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun AiResult(
-    report: AiReport, asked: String, provider: String, model: String, executor: AiExecutor, target: Uri?, summarize: Boolean,
+    report: AiReport, asked: String, provider: String, model: String, phone: Boolean, executor: AiExecutor, target: Uri?, summarize: Boolean,
     draftKind: String?, action: String?, targetTitle: String, hideAnswer: Boolean,
     savedNote: Boolean, addedBelow: Boolean, onSaved: () -> Unit, onAddedBelow: () -> Unit, onDraft: (Boolean) -> Unit,
     saveTitle: String? = null,
@@ -722,6 +751,10 @@ private fun AiResult(
         val fileNames = report.files.joinToString(", ") { AiParts.label(it.name) }
         Text(when {
             report.stop == "off" || (report.error != null && report.rounds == 0) -> stringResource(R.string.ai_sent_nothing)
+            // The model on this phone: what it read, and that none of it left the phone.
+            phone -> listOf(names, fileNames).filter { it.isNotEmpty() }.joinToString(", ").let {
+                if (it.isEmpty()) stringResource(R.string.ai_local_sent_none) else stringResource(R.string.ai_local_sent, it)
+            }
             action == "transcribe" -> stringResource(R.string.ai_sent_recording, provider, fileNames)
             names.isEmpty() && fileNames.isEmpty() -> stringResource(R.string.ai_sent_none, provider)
             fileNames.isEmpty() -> stringResource(R.string.ai_sent_notes, provider, names)
@@ -729,7 +762,7 @@ private fun AiResult(
             else -> stringResource(R.string.ai_sent_notes_files, provider, names, fileNames)
         }, style = MaterialTheme.typography.bodySmall)
         // A recording written out by OpenAI is billed by its length, not in tokens.
-        if (report.rounds > 0) Text(report.seconds?.let { stringResource(R.string.ai_seconds, Math.round(it).toInt()) } ?: stringResource(R.string.ai_tokens, report.input, report.output), style = MaterialTheme.typography.bodySmall)
+        if (report.rounds > 0 && !phone) Text(report.seconds?.let { stringResource(R.string.ai_seconds, Math.round(it).toInt()) } ?: stringResource(R.string.ai_tokens, report.input, report.output), style = MaterialTheme.typography.bodySmall)
         // Back in the editor the answer is part of the draft; it is saved like any edit.
         if (draftKind != null && report.answer.isNotBlank()) Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (draftKind != "summarize") Button(onClick = { onDraft(true) }) { Text(stringResource(R.string.ai_replace_text)) }

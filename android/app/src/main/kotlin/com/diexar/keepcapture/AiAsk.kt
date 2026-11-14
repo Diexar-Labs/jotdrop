@@ -66,18 +66,18 @@ object AiAsk {
 
     fun plan(
         notes: List<AiNote>, request: String, excluded: Set<String> = emptySet(), pinned: String? = null, target: Boolean = false,
-        summarize: Boolean = false, includeShared: Boolean = false, maxNotes: Int = AiContext.MAX_NOTES,
+        summarize: Boolean = false, includeShared: Boolean = false, maxNotes: Int = AiContext.MAX_NOTES, maxChars: Int = AiContext.MAX_CHARS,
     ): AiPlan {
         if (target && pinned == null) return AiPlan(emptyList(), emptyList(), emptyList(), missing = true)
         if (summarize) {
             val own = notes.filter { it.id == pinned }
-            val picked = AiContext.selectNotes(own, "", pinned = listOfNotNull(pinned)).notes
+            val picked = AiContext.selectNotes(own, "", maxChars = maxChars, pinned = listOfNotNull(pinned)).notes
             return AiPlan(own, picked, own, missing = false)
         }
         // Something new needs no notes up front; the AI can still search for one.
         val question = if (pinned == null && isCreate(request)) "" else matchText(request)
         // Chosen from all notes, so that an unticked note leaves its place empty instead of letting another one in unseen.
-        val candidates = AiContext.selectNotes(notes, question, maxNotes = maxNotes, includeShared = includeShared, pinned = listOfNotNull(pinned)).notes
+        val candidates = AiContext.selectNotes(notes, question, maxNotes = maxNotes, maxChars = maxChars, includeShared = includeShared, pinned = listOfNotNull(pinned)).notes
         val byId = notes.associateBy { it.id }
         val shown = candidates.mapNotNull { byId[it.id] } + notes.filter { it.id in excluded && candidates.none { c -> c.id == it.id } }
         return AiPlan(notes.filter { it.id !in excluded }, candidates.filter { it.id !in excluded }, shown, missing = false)

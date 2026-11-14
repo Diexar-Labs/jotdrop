@@ -6,16 +6,22 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -31,7 +37,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Locale
 
 private fun size(context: Context, bytes: Long) = Formatter.formatShortFileSize(context, bytes)
@@ -72,8 +80,14 @@ internal fun AiLocalBlock(model: String, onModel: (String) -> Unit, say: (String
         onDispose { view.keepScreenOn = false }
     }
 
+    var licences by remember { mutableStateOf(false) }
+    if (licences) AiLocalLicences { licences = false }
+
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(stringResource(R.string.ai_local_intro), style = MaterialTheme.typography.bodySmall)
+        // Apache 2.0 asks for the licence and the notices of what the app carries along (LiteRT-LM); Gemma's is the same licence.
+        Text(stringResource(R.string.ai_local_credit), style = MaterialTheme.typography.bodySmall)
+        TextButton(onClick = { licences = true }) { Text(stringResource(R.string.ai_local_licences)) }
         if (!AiLocal.supported) {
             Text(stringResource(R.string.ai_local_unsupported), color = MaterialTheme.colorScheme.error)
             return@Column
@@ -118,7 +132,7 @@ internal fun AiLocalBlock(model: String, onModel: (String) -> Unit, say: (String
                         scope.launch {
                             val started = System.currentTimeMillis()
                             try {
-                                val provider = AiLocal.provider(context, AiSettings(AiLocalModels.PHONE, model = chosen.id)) { loading = true }
+                                val provider = AiLocal.provider(context, AiSettings(AiLocalModels.PHONE, model = chosen.id)) { loading = it }
                                 val answer = provider.complete("Answer in one short sentence, in ${Locale.getDefault().getDisplayLanguage(Locale.ENGLISH)}.",
                                     listOf(AiMessage.User("Say that the AI on this phone works.")), emptyList(), AiAssistant.FILE_TIMEOUT_MS)
                                 val where = context.getString(if (AiLocal.engine(context).backend == "gpu") R.string.ai_local_gpu else R.string.ai_local_cpu)
@@ -147,4 +161,25 @@ internal fun AiLocalBlock(model: String, onModel: (String) -> Unit, say: (String
             LinearProgressIndicator(Modifier.fillMaxWidth())
         }
     }
+}
+
+/** LiteRT-LM's licence and its notices for the libraries inside it, as it ships them (about 42,000 lines), line by line. */
+@Composable
+private fun AiLocalLicences(onClose: () -> Unit) {
+    val context = LocalContext.current
+    var lines by remember { mutableStateOf<List<String>?>(null) }
+    LaunchedEffect(Unit) {
+        lines = withContext(Dispatchers.IO) {
+            listOf("licenses/litertlm-LICENSE.txt", "licenses/litertlm-THIRD_PARTY_NOTICE.txt").flatMap { name ->
+                context.assets.open(name).bufferedReader().use { it.readLines() } + ""
+            }
+        }
+    }
+    AlertDialog(onDismissRequest = onClose, title = { Text(stringResource(R.string.ai_local_licences)) },
+        text = {
+            val shown = lines
+            if (shown == null) LinearProgressIndicator(Modifier.fillMaxWidth())
+            else LazyColumn(Modifier.heightIn(max = 480.dp)) { items(shown) { Text(it, style = MaterialTheme.typography.bodySmall) } }
+        },
+        confirmButton = { TextButton(onClick = onClose) { Text(stringResource(R.string.ai_local_close)) } })
 }

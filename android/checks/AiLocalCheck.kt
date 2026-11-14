@@ -20,7 +20,8 @@ import kotlin.random.Random
  * Ask JotDrop on this phone (phase 9) without a phone: the model list, the download (redirects, carrying on, a
  * server that ignores the range, a broken connection, a wrong hash, too little room, a foreign host, Stop), and the
  * engine with a fake model (graphics chip first, the processor as fallback and remembered, closing when idle, a
- * new file) and the provider (only one request without tools or files, the time limit, through AiAssistant).
+ * new file) and the provider (one request without tools, photos as files, recordings in pieces of 30 seconds, the
+ * time limit, through AiAssistant), and the sound for the model (16 kHz mono, pieces cut at a quiet moment, WAV).
  */
 private var passed = 0
 
@@ -181,19 +182,27 @@ private suspend fun downloads(root: File) {
 }
 
 /** A fake model: [fails] are the backends that do not load; it answers [answer] after [takes] ms. */
-private class FakeLoader(val fails: Set<String> = emptySet(), var answer: String = "  It works.  ", var takes: Long = 0) : AiLocalLoader {
+private class FakeLoader(val fails: Set<String> = emptySet(), var answer: String = "  It works.  ", var takes: Long = 0, var loadTakes: Long = 0) : AiLocalLoader {
     val loads = mutableListOf<Pair<String, String>>()
     var closed = 0
     var cancelled = 0
     var asked: Pair<String, String>? = null
+    val media = mutableListOf<List<AiLocalMedia>>()
+    // What each file held when the model got it (the provider deletes them afterwards).
+    val seen = mutableListOf<ByteArray>()
+    var answers: MutableList<String>? = null
     override fun load(path: String, backend: String): AiLocalRunner {
         loads.add(path to backend)
+        // Loading blocks and cannot be interrupted, as LiteRT-LM's.
+        if (loadTakes > 0) Thread.sleep(loadTakes)
         if (backend in fails) throw IllegalStateException("$backend not available")
         return object : AiLocalRunner {
-            override suspend fun generate(system: String, prompt: String): String {
+            override suspend fun generate(system: String, prompt: String, media: List<AiLocalMedia>): String {
                 asked = system to prompt
+                this@FakeLoader.media.add(media)
+                media.forEach { seen.add(File(it.path).readBytes()) }
                 try { delay(takes) } catch (error: CancellationException) { cancelled++; throw error }
-                return answer
+                return answers?.removeFirstOrNull() ?: answer
             }
             override fun close() { closed++ }
         }
@@ -249,25 +258,80 @@ private suspend fun engines() {
         delay(400)
         ok(loader.closed == 1 && engine.backend == null && loader.loads.size == 1, "closed when idle")
     }
+    // Stop while loading: the load finishes, the model is kept (not lost with its memory) and closed when idle.
+    run {
+        stored = null
+        val loader = FakeLoader(loadTakes = 300); val engine = engine(loader, idle = 300)
+        val asking = scope.launch { engine.use("/m/a") { it.generate("s", "p") } }
+        delay(100)
+        asking.cancel()
+        asking.join()
+        ok(asking.isCancelled && engine.backend == "gpu" && loader.asked == null, "Stop while loading: the model is kept, nothing asked")
+        engine.use("/m/a") { it.generate("s", "p") }
+        ok(loader.loads.size == 1, "the kept model is used next time, not loaded again")
+        delay(600)
+        ok(loader.closed == 1 && engine.backend == null, "and closed when idle")
+    }
     scope.cancel()
 }
 
-private suspend fun providers() {
+/** Files in a temporary folder: a photo as its bytes, a recording as [pieces] files (or [problem]). */
+private class FakeFiles(val dir: File) : AiLocalFiles {
+    val made = mutableListOf<File>()
+    var pieces = 1
+    var problem: AiError? = null
+    var askedMax = 0
+    override fun image(part: AiPart): File = File.createTempFile("img", ".jpg", dir).apply { writeBytes(part.bytes) }.also { made.add(it) }
+    override fun audio(part: AiPart, maxSeconds: Int): List<File> {
+        askedMax = maxSeconds
+        problem?.let { throw it }
+        return (1..pieces).map { n -> File.createTempFile("piece", ".wav", dir).apply { writeBytes(byteArrayOf(n.toByte())) }.also { made.add(it) } }
+    }
+}
+
+private suspend fun providers(root: File) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val loader = FakeLoader()
     val engine = AiLocalEngine(loader, { "gpu" }, { }, scope)
-    val provider = AiLocalProvider(engine, AiLocalModels.E2B, "/m/e2b")
-    ok(provider.id == "phone" && provider.model == "gemma-4-E2B-it" && provider.capabilities.of("image") == false && provider.capabilities.of("audio") == false, "provider id, model, no files yet")
+    val files = FakeFiles(File(root, "files").also { it.mkdirs() })
+    val states = mutableListOf<Boolean>()
+    val provider = AiLocalProvider(engine, AiLocalModels.E2B, "/m/e2b", files) { states.add(it) }
+    ok(provider.id == "phone" && provider.model == "gemma-4-E2B-it", "provider id and model")
+    ok(provider.capabilities.of("image") == true && provider.capabilities.of("pdf") == false && provider.capabilities.of("audio") == false &&
+        provider.capabilities.of("transcribe") == true, "reads photos and writes out recordings; no PDFs, no recording as a question")
+    ok(AiParts.capabilities("phone", null) == provider.capabilities, "AiParts knows the phone the same way (the screen asks it)")
+    ok(AiParts.explain("phone", "pdf") == "The model on this phone cannot read PDFs. Gemini, OpenAI, Claude and OpenRouter can.", "a PDF on the phone: said in words")
 
     val answer = provider.complete("Summarize.", listOf(AiMessage.User("Note text")), emptyList(), 5000)
-    ok(answer.text == "It works." && answer.stop == "end" && answer.toolCalls.isEmpty() && loader.asked == ("Summarize." to "Note text"), "one request, answer trimmed")
+    ok(answer.text == "It works." && answer.stop == "end" && answer.toolCalls.isEmpty() && loader.asked == ("Summarize." to "Note text") && loader.media.last().isEmpty(), "one request, answer trimmed")
+    ok(states == listOf(true, false), "loading: true while the model loads, false once it answers")
     loader.answer = "   "
     ok(provider.complete("s", listOf(AiMessage.User("p")), emptyList(), 5000).text == "", "an empty answer stays empty")
     loader.answer = "Fine."
 
     val tool = AiTool("search_notes", "read", "Search", emptyMap<String, Any?>())
     ok(code("tools") { provider.complete("s", listOf(AiMessage.User("p")), listOf(tool), 5000) } == "local_unsupported", "tools: not yet")
-    ok(code("files") { provider.complete("s", listOf(AiMessage.User("p", listOf(AiPart("image", "image/png", "a.png", ByteArray(3))))), emptyList(), 5000) } == "local_unsupported", "files: not yet")
+    // A photo goes to the model as a file, which is gone afterwards.
+    val photo = byteArrayOf(1, 2, 3)
+    val read = provider.complete(AiParts.PHOTO_SYSTEM, listOf(AiMessage.User("Write out the text.", listOf(AiPart("image", "image/jpeg", "a.jpg", photo)))), emptyList(), 5000)
+    ok(read.text == "Fine." && loader.media.last().map { it.kind } == listOf("image") && loader.seen.last().contentEquals(photo), "a photo goes as a file")
+    ok(files.made.isNotEmpty() && files.made.none { it.exists() }, "the photo's file is deleted after the answer")
+    ok(code("pdf") { provider.complete("s", listOf(AiMessage.User("p", listOf(AiPart("pdf", "application/pdf", "a.pdf", ByteArray(3))))), emptyList(), 5000) } == "unsupported_input", "a PDF: unsupported_input")
+    ok(code("audio") { provider.complete("s", listOf(AiMessage.User("p", listOf(AiPart("audio", "audio/mp4", "a.m4a", ByteArray(3))))), emptyList(), 5000) } == "unsupported_input", "a recording as a question: unsupported_input")
+
+    // A recording: each piece on its own, with the fixed request, the answers joined; the pieces are gone afterwards.
+    files.made.clear()
+    files.pieces = 3
+    loader.answers = mutableListOf(" First part. ", "", "Third part.")
+    val heard = provider.transcribe(AiPart("audio", "audio/mp4", "memo.m4a", ByteArray(10)), "nl-NL", 5000)
+    ok(heard.text == "First part. Third part." && loader.asked == (AiLocalPrompt.TRANSCRIBE_SYSTEM to AiLocalPrompt.TRANSCRIBE), "a recording in pieces, joined, empty pieces left out")
+    ok(loader.media.takeLast(3).map { m -> m.map { it.kind } } == List(3) { listOf("audio") } && loader.seen.takeLast(3).map { it[0].toInt() } == listOf(1, 2, 3), "each piece once, in order")
+    ok(files.askedMax == AiLocalAudio.MAX_SECONDS && files.made.size == 3 && files.made.none { it.exists() }, "at most 5 minutes; the pieces are deleted after")
+    loader.answers = null
+    files.problem = AiError("too_large", "memo.m4a is longer than 5 minutes.")
+    ok(code("long") { provider.transcribe(AiPart("audio", "audio/mp4", "memo.m4a", ByteArray(10)), null, 5000) } == "too_large", "a recording that is too long: too_large")
+    files.problem = null
+    files.pieces = 1
     ok(code("talk") { provider.complete("s", listOf(AiMessage.User("p"), AiMessage.Assistant("a", emptyList()), AiMessage.User("q")), emptyList(), 5000) } == "local_unsupported", "a conversation: not yet")
 
     // The time limit stops the answer itself.
@@ -277,13 +341,66 @@ private suspend fun providers() {
     loader.takes = 0
 
     // Through Ask JotDrop's own code: a fixed request works, a free question with tools says why not.
-    val once = AiAssistant.once("Summarize", emptyList(), provider = { provider }, secrets = emptyList()) { ai, time -> ai.complete("s", listOf(AiMessage.User("p")), emptyList(), time) }
-    ok(once.stop == "done" && once.answer == "Fine.", "AiAssistant.once with the phone")
+    var given = 0L
+    val once = AiAssistant.once("Summarize", emptyList(), provider = { provider }, secrets = emptyList(), timeoutMs = AiLocalModels.TIMEOUT_MS) { ai, time ->
+        given = time; ai.complete("s", listOf(AiMessage.User("p")), emptyList(), time)
+    }
+    ok(once.stop == "done" && once.answer == "Fine." && given == AiLocalModels.TIMEOUT_MS && once.timeoutMs == AiLocalModels.TIMEOUT_MS, "AiAssistant.once with the phone, with the phone's time")
+    val editor = AiAssistant.run("Summarize the note", listOf(AiNote("n1", "Plan", "Text")), emptyList(), emptyList(), AiLocalPrompt.system("Dutch", "2026-11-14 Saturday", "Europe/Madrid"),
+        provider = { provider }, executor = emptyMap(), confirm = { false }, timeoutMs = AiLocalModels.TIMEOUT_MS, maxChars = AiLocalModels.MAX_CHARS,
+        chosen = AiContext.selectNotes(listOf(AiNote("n1", "Plan", "Text")), "", maxChars = AiLocalModels.MAX_CHARS, pinned = listOf("n1")).notes)
+    ok(editor.stop == "done" && editor.answer == "Fine." && editor.sent.map { it.id } == listOf("n1") && loader.asked?.first?.contains("nothing leaves it") == true, "AiAssistant.run without tools: a fixed action with the note")
     val free = AiAssistant.run("What is on my list?", emptyList(), emptyList(), listOf(tool), "system", provider = { provider }, executor = emptyMap(), confirm = { false })
     ok(free.stop == "error" && free.error?.code == "local_unsupported", "AiAssistant.run with tools: local_unsupported")
     val missing = AiAssistant.once("Summarize", emptyList(), provider = { throw AiError("model_missing") }, secrets = emptyList()) { ai, time -> ai.complete("s", emptyList(), emptyList(), time) }
     ok(missing.stop == "error" && missing.error?.code == "model_missing", "no model yet: model_missing")
+    // The phone's limits: the note list and the week take less text at once.
+    val notes = (1..4).map { AiNote("n$it", "Note $it", "word ".repeat(1000)) }
+    val plan = AiAsk.plan(notes, "word", maxChars = AiLocalModels.MAX_CHARS)
+    ok(plan.chosen.sumOf { it.title.length + it.text.length } <= AiLocalModels.MAX_CHARS && plan.chosen.size == 2 && plan.chosen.last().truncated &&
+        AiAsk.plan(notes, "word").chosen.size == 4, "the list of what goes along keeps to the phone's limit")
+    val long = AiNote("n9", "Long", "x".repeat(AiContext.MAX_NOTE_CHARS + 500))
+    ok(AiAsk.plan(listOf(long), "", pinned = "n9", target = true, summarize = true, maxChars = AiLocalModels.MAX_CHARS).chosen.single().truncated,
+        "a long note is cut (the phone's screen then says it is too long, so Replace never loses text)")
     scope.cancel()
+}
+
+/** The sound for the model: rate and channels, the pieces and the WAV header. */
+private fun audio() {
+    val rate = AiLocalAudio.RATE
+    // Already 16 kHz mono: unchanged, also over several chunks.
+    val same = AiLocalAudio.Resampler(rate, 1)
+    val input = ShortArray(1000) { (it * 7 - 3000).toShort() }
+    val through = same.feed(input.copyOfRange(0, 333)) + same.feed(input.copyOfRange(333, 1000))
+    ok(through.contentEquals(input), "16 kHz mono stays as it is")
+    // 48 kHz stereo: a third of the frames, both channels averaged.
+    val stereo = AiLocalAudio.Resampler(48_000, 2)
+    val frames = 48_000
+    val pcm = ShortArray(frames * 2) { if (it % 2 == 0) 1000 else 3000 }
+    val out = (0 until 4).map { stereo.feed(pcm.copyOfRange(it * frames / 2, (it + 1) * frames / 2)) }.reduce { a, b -> a + b }
+    ok(out.size in 15_999..16_001 && out.all { it.toInt() == 2000 }, "48 kHz stereo: one second becomes 16,000 samples, channels averaged (${out.size})")
+    // 22.05 kHz: a rising line stays a rising line across chunks.
+    val odd = AiLocalAudio.Resampler(22_050, 1)
+    val ramp = ShortArray(22_050) { it.toShort() }
+    val rose = odd.feed(ramp.copyOfRange(0, 10_001)) + odd.feed(ramp.copyOfRange(10_001, 22_050))
+    ok(rose.size in 15_999..16_001 && (1 until rose.size).all { rose[it] > rose[it - 1] }, "22.05 kHz: the right length, no jump between chunks")
+
+    // Pieces: short stays one piece; long is cut at the quiet moment in the last 5 seconds of each 30.
+    ok(AiLocalAudio.pieces(ShortArray(rate * 20)) == listOf(0 to rate * 20), "20 seconds: one piece")
+    val loud = ShortArray(rate * 70) { if (it % 2 == 0) 8000 else -8000 }
+    val quiet = rate * 27
+    for (i in quiet until quiet + rate / 10) loud[i] = 0
+    val cut = AiLocalAudio.pieces(loud)
+    ok(cut.first() == 0 to quiet + rate / 20 && cut.zipWithNext().all { (a, b) -> a.second == b.first } && cut.last().second == loud.size, "70 seconds: cut in the quiet moment, no gaps")
+    ok(cut.all { it.second - it.first <= rate * AiLocalAudio.PIECE_SECONDS } && cut.size == 3, "every piece at most 30 seconds")
+    ok(AiLocalAudio.pieces(ShortArray(rate * 30)).size == 1 && AiLocalAudio.pieces(ShortArray(0)).isEmpty(), "exactly 30 seconds: one piece; nothing: no piece")
+
+    // WAV: a 44-byte header for 16-bit mono at 16 kHz, then the samples, little-endian.
+    val wav = AiLocalAudio.wav(shortArrayOf(1, -2, 3, 4), 1, 3)
+    val head = java.nio.ByteBuffer.wrap(wav).order(java.nio.ByteOrder.LITTLE_ENDIAN)
+    ok(String(wav, 0, 4) == "RIFF" && String(wav, 8, 8) == "WAVEfmt " && String(wav, 36, 4) == "data", "WAV header")
+    ok(head.getInt(4) == 36 + 4 && head.getShort(22).toInt() == 1 && head.getInt(24) == rate && head.getShort(34).toInt() == 16 && head.getInt(40) == 4, "WAV sizes, mono, 16 kHz, 16 bit")
+    ok(wav.size == 48 && head.getShort(44).toInt() == -2 && head.getShort(46).toInt() == 3, "WAV samples")
 }
 
 fun main() = runBlocking {
@@ -291,6 +408,8 @@ fun main() = runBlocking {
     val root = Files.createTempDirectory("jotdrop-ai-local").toFile()
     try { downloads(root) } finally { root.deleteRecursively() }
     engines()
-    providers()
-    println("PASS: Ask JotDrop on this phone: models, download, engine and provider ($passed checks)")
+    val files = Files.createTempDirectory("jotdrop-ai-local-files").toFile()
+    try { providers(files) } finally { files.deleteRecursively() }
+    audio()
+    println("PASS: Ask JotDrop on this phone: models, download, engine, provider and sound ($passed checks)")
 }
