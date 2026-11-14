@@ -318,6 +318,24 @@ def check_ai(browser, url, token):
         page.locator("#ai-use-replace").click()
         draft = page.locator("#note-content").input_value()
         assert draft == f"# Wifi at grandma\n\nThe wifi code at grandma's is {SECRET}.\n", repr(draft)
+        # A draft the AI would see shortened is not rewritten: Replace text would lose the rest. Summarize still goes.
+        long_draft = "# Wifi at grandma\n\n" + " ".join(f"word{i}" for i in range(1300)) + "\n"
+        page.locator("#note-content").fill(long_draft)
+        for button in ("#ai-rewrite", "#ai-checklist"):
+            before_calls = len(fake.calls)
+            page.locator(button).click()
+            page.locator("#ai-status").filter(has_text="too long for this AI button").wait_for()
+            assert len(fake.calls) == before_calls, "nothing goes out"
+            assert page.locator("#ai-use-replace").is_hidden()
+            page.locator("#ai-close").click()
+        before_calls = len(fake.calls)
+        page.locator("#ai-summarize").click()
+        answer()
+        assert len(fake.calls) == before_calls + 1 and "[...]" in json.loads(fake.calls[-1]["body"])["messages"][0]["content"]
+        assert page.locator("#ai-use-replace").is_hidden()
+        page.locator("#ai-close").click()
+        assert page.locator("#note-content").input_value() == long_draft
+        page.locator("#note-content").fill(draft)
         page.locator("#close-editor").click()
 
         # --- The card menu asks about one note: it goes first.

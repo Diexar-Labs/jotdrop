@@ -336,6 +336,7 @@ private fun AskScreen(
                     if (now.missing) { missing = true; return@launch }
                     now.notes to now.chosen
                 }
+                if (draft != null && AiNoteEdits.draftTooLong(kind, chosen)) { notice = R.string.ai_draft_too_long; return@launch }
                 val (tools, prompt) = withContext(Dispatchers.IO) { AiAssets.get(context) }
                 val day = SimpleDateFormat("yyyy-MM-dd EEEE", Locale.US).format(Date())
                 val system = AiPrompt.system(prompt, language, day, TimeZone.getDefault().id, executor.labels)

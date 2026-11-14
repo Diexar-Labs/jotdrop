@@ -4946,6 +4946,8 @@ async function sendAi() {
   // A merge replaces the newer note's text: the AI must see all of both notes, or the merged text loses the rest.
   if (aiScope.kind === 'merge' && picks.length < 2) { $('ai-status').textContent = 'Both notes must go along to merge them. Tick both, or search for duplicates again.'; return; }
   if (aiScope.kind === 'merge' && picks.some((note) => note.truncated)) { $('ai-status').textContent = 'These notes are too long to merge with AI: the AI would not see all of their text. Compare them and merge them yourself.'; return; }
+  // Rewrite and checklist end in "Replace text": the AI must see the whole draft, or the rest of the note is lost.
+  if (aiScope.editor && aiScope.kind !== 'summarize' && picks.some((note) => note.truncated)) { $('ai-status').textContent = 'This note is too long for this AI button: the AI would see only its first part, so replacing the text would lose the rest. Split it into shorter notes first.'; return; }
   const first = new Set(picks.map((note) => note.id));
   const before = new Map(notes.filter((note) => files.has(note.id)).map((note) => [note.id, noteText(files.get(note.id).file)]));
   const chosen = (aiScope.files ?? []).filter((file) => aiFilesOn.has(file.id) && !aiFileProblem(file));

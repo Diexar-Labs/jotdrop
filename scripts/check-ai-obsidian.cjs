@@ -761,6 +761,7 @@ function fakeVault(TFile, initial) {
   assert.match(ask, /request = this\.fixedRequest\(\)|readOnly = this\.fixedRequest\(\)/, "the request of the week and of a merge cannot be edited");
   assert.match(ask, /if \(request && !showList\) void this\.send\(\)/, "the week and a merge wait for Send: the list comes first");
   assert.match(ask, /merge && picks\.some\(\(note\) => note\.truncated\)/, "a note that would be shortened is never merged");
+  assert.match(ask, /^    if \(editor && editor\.kind !== "summarize" && picks\.some\(\(note\) => note\.truncated\)\) \{ this\.el\.status\.setText\("This note is too long for this AI button[^"]*"\); return; \}/m, "a draft the AI would see shortened is never rewritten");
   assert.match(ask, /report\.sent = digest\.notes\.map/, "the report says which notes of the digest went");
   assert.match(ask, /Move it to the trash[\s\S]*void trash\(older\)/, "the older note goes to the trash only when the user selects it");
   assert.match(ask, /digestRequest\(\{ language: this\.language\(\)/);

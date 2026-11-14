@@ -714,6 +714,14 @@ fun main(arguments: Array<String>) = runBlocking {
     }
     for (case in edits.items("labels").map { it.obj()!! }) same(AiNoteEdits.cleanLabels(case["labels"] as List<String>), case["expect"], "labels ${case["labels"]}")
     for (case in edits.items("editor").map { it.obj()!! }) same(AiNoteEdits.editorRequest(case.str("kind")!!, case.str("title")!!), case["expect"], "editor ${case["kind"]}")
+    // A draft longer than one note may hold goes to the AI shortened: rewrite and checklist would lose the rest at "Replace text".
+    val longDraft = AiContext.selectNotes(listOf(AiNote("draft", "Long", "x".repeat(AiContext.MAX_NOTE_CHARS + 500))), "", pinned = listOf("draft")).notes
+    val shortDraft = AiContext.selectNotes(listOf(AiNote("draft", "Short", "x".repeat(200))), "", pinned = listOf("draft")).notes
+    for (kind in listOf("rewrite", "checklist")) {
+        same(AiNoteEdits.draftTooLong(kind, longDraft), true, "draft too long for $kind")
+        same(AiNoteEdits.draftTooLong(kind, shortDraft), false, "short draft for $kind")
+    }
+    same(AiNoteEdits.draftTooLong("summarize", longDraft), false, "a summary of a long draft replaces nothing")
     for (case in edits.items("search").map { it.obj()!! }) {
         val found = AiContext.searchNotes(case.items("notes").map(::note), case.str("query")!!)
         same(found.map { it.json() }, case["expect"], "search ${case["query"]}")
