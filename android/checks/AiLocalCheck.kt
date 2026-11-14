@@ -79,7 +79,8 @@ private fun models() {
         ok(AiLocalModels.byId(model.id) == model, "${model.id} by id")
     }
     val gib = 1024L * 1024 * 1024
-    ok(AiLocalModels.default(11 * gib + gib / 4) == AiLocalModels.E4B, "a 12 GB phone gets E4B")
+    ok(AiLocalModels.default(11 * gib + gib / 4) == AiLocalModels.E2B, "a 12 GB phone gets E2B")
+    ok(AiLocalModels.default(15 * gib) == AiLocalModels.E4B, "a 16 GB phone gets E4B")
     ok(AiLocalModels.default(7 * gib + gib / 2) == AiLocalModels.E2B, "an 8 GB phone gets E2B")
     ok(AiLocalModels.tooLittleMemory(5 * gib + gib / 2) && !AiLocalModels.tooLittleMemory(7 * gib), "little memory below 6 GiB")
     ok(AiLocalModels.byId("") == null && AiLocalModels.byId("claude-haiku-5-5") == null, "an unknown id is no model")

@@ -171,6 +171,13 @@ for (const file of readdirSync(kotlin).filter((name) => /^Ai.*\.kt$/.test(name))
   if (/\(\?[a-zA-Z]*U/.test(readFileSync(path.join(kotlin, file), 'utf8'))) throw new Error(`${file}: Android's ICU regex does not take the U flag`);
 }
 
+// 14 Nov 2026, Eric's phone: the model on this phone loaded but every answer failed with "Can not find OpenCL library":
+// since Android 12 an app reaches the vendor's OpenCL only when its manifest names it.
+const manifest = readFileSync(path.join(root, 'android/app/src/main/AndroidManifest.xml'), 'utf8');
+for (const library of ['libOpenCL.so', 'libOpenCL-car.so', 'libOpenCL-pixel.so', 'libvndksupport.so']) {
+  if (!manifest.includes(`<uses-native-library android:name="${library}" android:required="false" />`)) throw new Error(`AndroidManifest.xml: uses-native-library ${library} (not required) is missing`);
+}
+
 // 10 Nov 2026, Eric's phone: "Summarize with AI" sent only the request. The screen kept the card's note id from a
 // composition before the notes were read, and the automatic send used that old, empty value. What goes along must
 // be decided by AiAsk.plan when it is needed, and the request must carry exactly that choice.

@@ -97,11 +97,8 @@ internal fun AiLocalBlock(model: String, onModel: (String) -> Unit, say: (String
         for (option in AiLocalModels.ALL) {
             Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().selectable(selected = option == chosen, enabled = !running && !trying, role = Role.RadioButton) { onModel(option.id) }) {
                 RadioButton(selected = option == chosen, onClick = null, enabled = !running && !trying)
-                Column(Modifier.padding(start = 8.dp)) {
-                    Text(stringResource(R.string.ai_local_option, option.name, size(context, option.bytes)) +
-                        if (option == recommended) " · " + stringResource(R.string.ai_local_recommended) else "")
-                    Text(stringResource(if (option == AiLocalModels.E4B) R.string.ai_local_e4b_help else R.string.ai_local_e2b_help), style = MaterialTheme.typography.bodySmall)
-                }
+                Text(stringResource(R.string.ai_local_option, option.name, size(context, option.bytes)) +
+                    if (option == recommended) " · " + stringResource(R.string.ai_local_recommended) else "", Modifier.padding(start = 8.dp))
             }
         }
 

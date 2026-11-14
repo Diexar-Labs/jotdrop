@@ -249,8 +249,6 @@
     <string name="ai_local_model">Modell</string>
     <string name="ai_local_option">%1$s (%2$s)</string>
     <string name="ai_local_recommended">für dieses Telefon empfohlen</string>
-    <string name="ai_local_e4b_help">Bessere Antworten. Braucht ein Telefon mit viel Arbeitsspeicher.</string>
-    <string name="ai_local_e2b_help">Schneller und leichter, mit etwas mehr Fehlern.</string>
     <string name="ai_local_wifi">Der Download ist %1$s groß. Nutze WLAN und lass diesen Bildschirm offen, bis er fertig ist: Der Bildschirm bleibt so lange an.</string>
     <string name="ai_local_low_memory">Dieses Telefon hat wenig Arbeitsspeicher. Das Modell läuft vielleicht langsam oder gar nicht.</string>
     <string name="ai_local_unsupported">Dieses Telefon kann das Modell nicht ausführen: Es braucht einen 64-Bit-Prozessor.</string>

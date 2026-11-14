@@ -45,10 +45,11 @@ object AiLocalModels {
     fun byId(id: String) = ALL.firstOrNull { it.id == id }
 
     /**
-     * The larger model where the phone can carry it (it takes about 3.8 GB while it works), the light one below.
-     * Android reports a 12 GB phone as about 11 GiB, so the line is at 10 GiB.
+     * The larger model only from 16 GB: in the app it takes about 6 GB while it works, and on Eric's 12 GB phone
+     * (14 Nov 2026) E2B was twice as fast with nearly the same answers. Android reports a 12 GB phone as about
+     * 11 GiB and a 16 GB phone as about 15 GiB, so the line is at 14 GiB.
      */
-    fun default(totalMemory: Long) = if (totalMemory >= 10 * GIB) E4B else E2B
+    fun default(totalMemory: Long) = if (totalMemory >= 14 * GIB) E4B else E2B
 
     /** What goes to the model at once, in characters: its window (AiLiteRtLoader.MAX_TOKENS) holds the answer too. */
     const val MAX_CHARS = 10_000

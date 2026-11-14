@@ -249,8 +249,6 @@
     <string name="ai_local_model">Modèle</string>
     <string name="ai_local_option">%1$s (%2$s)</string>
     <string name="ai_local_recommended">recommandé pour ce téléphone</string>
-    <string name="ai_local_e4b_help">De meilleures réponses. Demande un téléphone avec beaucoup de mémoire.</string>
-    <string name="ai_local_e2b_help">Plus rapide et plus léger, avec un peu plus d\'erreurs.</string>
     <string name="ai_local_wifi">Le téléchargement fait %1$s. Utilise le Wi-Fi et garde cet écran ouvert jusqu\'à la fin : l\'écran reste allumé pendant ce temps.</string>
     <string name="ai_local_low_memory">Ce téléphone a peu de mémoire. Le modèle risque d\'être lent ou de ne pas marcher.</string>
     <string name="ai_local_unsupported">Ce téléphone ne peut pas faire tourner le modèle : il faut un processeur 64 bits.</string>

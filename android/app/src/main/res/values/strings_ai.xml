@@ -249,8 +249,6 @@
     <string name="ai_local_model">Model</string>
     <string name="ai_local_option">%1$s (%2$s)</string>
     <string name="ai_local_recommended">recommended for this phone</string>
-    <string name="ai_local_e4b_help">Better answers. Needs a phone with plenty of memory.</string>
-    <string name="ai_local_e2b_help">Faster and lighter, with a few more mistakes.</string>
     <string name="ai_local_wifi">The download is %1$s. Use Wi-Fi, and keep this screen open until it is done: the screen stays on meanwhile.</string>
     <string name="ai_local_low_memory">This phone has little memory. The model may run slowly or not at all.</string>
     <string name="ai_local_unsupported">This phone cannot run the model: it needs a 64-bit processor.</string>

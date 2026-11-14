@@ -42,6 +42,12 @@
         android:supportsRtl="true"
         android:enableOnBackInvokedCallback="false"
         android:theme="@style/Theme.JotDrop">
+        <!-- Ask JotDrop on this phone: LiteRT-LM uses the phone's OpenCL for the GPU. Since Android 12 an app reaches
+             these vendor libraries only when it names them here; without them the model loads but cannot answer. -->
+        <uses-native-library android:name="libOpenCL.so" android:required="false" />
+        <uses-native-library android:name="libOpenCL-car.so" android:required="false" />
+        <uses-native-library android:name="libOpenCL-pixel.so" android:required="false" />
+        <uses-native-library android:name="libvndksupport.so" android:required="false" />
 
         <activity
             android:name=".NotesListActivity"

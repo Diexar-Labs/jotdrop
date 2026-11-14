@@ -249,8 +249,6 @@
     <string name="ai_local_model">Model</string>
     <string name="ai_local_option">%1$s (%2$s)</string>
     <string name="ai_local_recommended">aangeraden voor deze telefoon</string>
-    <string name="ai_local_e4b_help">Betere antwoorden. Vraagt een telefoon met veel geheugen.</string>
-    <string name="ai_local_e2b_help">Sneller en lichter, met iets meer fouten.</string>
     <string name="ai_local_wifi">De download is %1$s. Gebruik wifi en houd dit scherm open tot hij klaar is: het scherm blijft zolang aan.</string>
     <string name="ai_local_low_memory">Deze telefoon heeft weinig geheugen. Het model kan traag zijn of niet werken.</string>
     <string name="ai_local_unsupported">Deze telefoon kan het model niet draaien: er is een 64-bits processor nodig.</string>
