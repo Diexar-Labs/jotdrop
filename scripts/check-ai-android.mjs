@@ -186,7 +186,7 @@ if (!/if \(!fixed && target == null && !phone\) OutlinedButton\(onClick = \{ con
 // A free question on this phone goes with the tools and the executor, like any service; a fixed action goes without.
 {
   const activity = readFileSync(path.join(kotlin, 'AiActivity.kt'), 'utf8');
-  if (/phone && !fixed\)/.test(activity)) throw new Error('AiActivity.kt: a free question on this phone must not be blocked');
+  if (/if \(phone && !fixed\) return|!\(phone && !fixed\)/.test(activity)) throw new Error('AiActivity.kt: a free question on this phone must not be blocked');
   if (!activity.includes('tools = if (phone && fixed) emptyList() else tools,')) throw new Error('AiActivity.kt: a free question on this phone must get the tools');
   if (!activity.includes('executor = if (draft != null || (phone && fixed)) emptyMap() else executor.tools,')) throw new Error('AiActivity.kt: a free question on this phone must get the executor');
 }

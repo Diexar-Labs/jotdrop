@@ -271,7 +271,8 @@ private fun AskScreen(
 
     // What goes along, decided from the notes as they are now: the list on screen and the request use the same plan.
     fun plan(text: String, unticked: Set<String>): AiPlan = AiAsk.plan(executor.notes, text, unticked,
-        pinned = target?.let(executor::idOf), target = target != null, summarize = summarize, includeShared = settings.includeShared, maxChars = maxChars)
+        pinned = target?.let(executor::idOf), target = target != null, summarize = summarize, includeShared = settings.includeShared, maxChars = maxChars,
+        newestWhenNone = phone && !fixed)
 
     // Why a file cannot go with this service, in words, or null. The size is known before reading; a photo is made small first.
     fun fileProblem(file: AiFileRef): String? {

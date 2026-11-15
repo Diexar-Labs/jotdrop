@@ -386,7 +386,7 @@ private suspend fun providers(root: File) {
     val second = loader.talks.last().second
     ok(second.size == 3 && (second[1] as AiMessage.Assistant).toolCalls.single().name == "create_note" &&
         (second[2] as AiMessage.Tool).results.single().let { it.name == "create_note" && !it.isError }, "the second round gets the call and its result")
-    ok(loader.talks.last().first == freeSystem && freeSystem.contains("create_note") && freeSystem.contains("Shopping") && freeSystem.contains("one or two key words") && freeSystem.contains("then answer in theirs") &&
+    ok(loader.talks.last().first == freeSystem && freeSystem.contains("create_note") && freeSystem.contains("Shopping") && freeSystem.contains("one or two key words") && freeSystem.contains("same language as the user's request") && !freeSystem.contains("Dutch") &&
         !AiLocalPrompt.system("Dutch", "2026-11-15 Sunday", "Europe/Madrid").contains("create_note"), "the tool rules go with a free question only")
     var asked = 0
     loader.replies = mutableListOf(AiLocalReply("", listOf("replace_note_text" to mapOf("id" to "n1", "text" to "New"))), AiLocalReply("Left as it is.", emptyList()))
@@ -409,6 +409,15 @@ private suspend fun providers(root: File) {
     val plan = AiAsk.plan(notes, "word", maxChars = AiLocalModels.MAX_CHARS)
     ok(plan.chosen.sumOf { it.title.length + it.text.length } <= AiLocalModels.MAX_CHARS && plan.chosen.size == 2 && plan.chosen.last().truncated &&
         AiAsk.plan(notes, "word").chosen.size == 4, "the list of what goes along keeps to the phone's limit")
+    // A free question on the phone that no note matches takes the newest notes along (15 Nov 2026: "Wat moet ik kopen?" sent none).
+    val kept = listOf(AiNote("old", "Oud", "melk", updatedAt = "2026-11-01T10:00:00Z"), AiNote("new", "Boodschappen", "boter, kaas", updatedAt = "2026-11-15T09:00:00Z"),
+        AiNote("shared", "Gedeeld", "brood", updatedAt = "2026-11-16T09:00:00Z", shared = true))
+    ok(AiAsk.plan(kept, "Wat moet ik kopen?", newestWhenNone = true).chosen.map { it.id } == listOf("new", "old") &&
+        AiAsk.plan(kept, "Wat moet ik kopen?").chosen.isEmpty(), "no match: the newest notes go along on the phone only, shared ones kept out")
+    ok(AiAsk.plan(kept, "Wat moet ik kopen?", includeShared = true, newestWhenNone = true).chosen.first().id == "shared" &&
+        AiAsk.plan(kept, "boter", newestWhenNone = true).chosen.map { it.id } == listOf("new") &&
+        AiAsk.plan(kept, "Wat moet ik kopen?", excluded = setOf("new"), newestWhenNone = true).chosen.map { it.id } == listOf("old"),
+        "with shared notes allowed, a match, or an unticked note, the list stays right")
     val long = AiNote("n9", "Long", "x".repeat(AiContext.MAX_NOTE_CHARS + 500))
     ok(AiAsk.plan(listOf(long), "", pinned = "n9", target = true, summarize = true, maxChars = AiLocalModels.MAX_CHARS).chosen.single().truncated,
         "a long note is cut (the phone's screen then says it is too long, so Replace never loses text)")
