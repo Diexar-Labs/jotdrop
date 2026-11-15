@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { buildWebClipperBundle } from "./build-web-clipper.mjs";
 import { CLOUD_ORIGIN, clipMarkdown } from "../chrome-extension/cloud.mjs";
-import { MAX_PAGE_CHARS, SERVICES, SUMMARY_SYSTEM, clearConfig, cleanConfig, getMeta, isUnlocked, lock, openConfig, pageForAi, saveConfig, serviceOrigin, summarize, summaryLine } from "../chrome-extension/ai.mjs";
+import { MAX_PAGE_CHARS, SERVICES, SUMMARY_SYSTEM, clearConfig, cleanConfig, getMeta, isUnlocked, listModels, lock, openConfig, pageForAi, saveConfig, serviceOrigin, summarize, summaryLine } from "../chrome-extension/ai.mjs";
 
 const require = createRequire(import.meta.url);
 const proto = require("../chrome-extension/protocol.js");
@@ -217,6 +217,33 @@ test("an empty page and a failing service say so without the key", async () => {
     return true;
   });
   await assert.rejects(() => summarize({ provider: "openai", key: KEY }, page, { fetcher: async () => reply({ choices: [{ message: { content: "  " }, finish_reason: "stop" }] }) }), (error) => error.code === "bad_response");
+});
+
+test("the settings page can load the model list from the service, with the key only in a header", async () => {
+  const seen = [];
+  const lists = {
+    openai: { data: [{ id: "gpt-6-luna" }, { id: "text-embedding-9" }, { id: "gpt-6-sol" }] },
+    openrouter: { data: [{ id: "zed/model", name: "Zed", supported_parameters: ["tools"], pricing: { prompt: "0.000002", completion: "0.000004" } }, { id: "acme/small", name: "Acme Small", supported_parameters: ["tools"], pricing: { prompt: "0.000001", completion: "0.000001" } }] },
+  };
+  const fetcher = async (url, init) => {
+    seen.push(url);
+    assert.equal(String(init?.body ?? "").includes(KEY), false, "the key is never in a body");
+    if (url.endsWith("/key")) return reply({ data: { label: "ok" } });
+    return reply(lists[url.includes("openrouter") ? "openrouter" : "openai"]);
+  };
+  const openai = await listModels("openai", ` ${KEY} `, { fetcher });
+  assert.deepEqual(openai.models.map((m) => m.id), ["gpt-6-luna", "gpt-6-sol"], "no embedding models, sorted");
+  assert.equal(openai.suggested, "gpt-6-luna");
+  const router = await listModels("openrouter", KEY, { fetcher });
+  assert.deepEqual(router.models.map((m) => m.id), ["acme/small", "zed/model"]);
+  assert.equal(router.suggested, "acme/small", "OpenRouter has no fixed default: the cheapest model that works");
+  assert.ok(seen.some((url) => url === "https://openrouter.ai/api/v1/key"), "OpenRouter's key is checked first");
+  await assert.rejects(() => listModels("openai", KEY, { fetcher: async () => reply({ error: { message: `Incorrect API key provided: ${KEY}` } }, 401) }), (error) => error.code === "auth" && !`${error.message} ${error.detail}`.includes(KEY));
+  await assert.rejects(() => listModels("openai", "", { fetcher: async () => assert.fail("nothing goes out") }), /Paste your key/);
+  const options = extension("options/options.js");
+  assert.match(options, /ai\.hasAccess\(provider\) \|\| await ai\.requestAccess\(provider\)[\s\S]*ai\.listModels\(provider, aiEls\.key\.value\)/, "access is asked in the click, then the list is loaded");
+  assert.match(extension("options/options.html"), /id="aiLoadModels"[\s\S]*id="aiModelFilter"[\s\S]*<select id="aiModelList"/);
+  assert.equal(/<datalist/.test(extension("options/options.html")), false, "a datalist narrows itself to the filled-in model and hid the rest (15 Nov 2026)");
 });
 
 test("the page text is read only after the click, and the popup shows where it goes", () => {

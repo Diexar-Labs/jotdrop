@@ -174,7 +174,7 @@ def run(channel, extension_dir, workdir):
             # The clipper's settings: Obsidian by default; choose JotDrop Cloud and pair.
             options = page(f"{origin}/options/options.html")
             manifest = options.evaluate("chrome.runtime.getManifest()")
-            assert manifest["version"] == "0.3.0", manifest["version"]
+            assert manifest["version"] == "0.3.1", manifest["version"]
             assert manifest["optional_host_permissions"] == ["https://app.jotdrop.net/*", "https://api.anthropic.com/*", "https://api.openai.com/*", "https://generativelanguage.googleapis.com/*", "https://openrouter.ai/*"], manifest
             assert manifest["host_permissions"] == ["http://127.0.0.1/*", "http://localhost/*"], manifest
             assert sorted(manifest["permissions"]) == ["activeTab", "scripting", "storage"], manifest

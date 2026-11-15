@@ -228,8 +228,9 @@ function aiMessage(text, ok) {
 
 function aiFields() {
   const provider = aiEls.provider.value;
-  aiEls.model.placeholder = provider ? (AI_MODELS[provider] || "Type a model name") : "";
-  for (const el of [aiEls.key, aiEls.model, aiEls.passphrase, aiEls.repeat, $("aiKeep"), $("aiSave")]) el.disabled = !provider;
+  aiEls.model.placeholder = provider ? (AI_MODELS[provider] || "Press Load models, or type a name") : "";
+  for (const el of [aiEls.key, aiEls.model, aiEls.passphrase, aiEls.repeat, $("aiKeep"), $("aiSave"), $("aiLoadModels")]) el.disabled = !provider;
+  aiShowModels([]);
 }
 
 async function loadAi() {
@@ -272,7 +273,53 @@ async function removeAi() {
   }
 }
 
+// "Load models": the browser asks for access to this one service in the click, then the service's own list fills a
+// searchable list. (Not a datalist: Chrome narrows that to what is already in the field, so a filled-in model hid the rest.)
+let aiModelsLoaded = [];
+const AI_LIST_MAX = 400;
+
+function aiShowModels(models) {
+  aiModelsLoaded = models;
+  $("aiModelPicker").hidden = !models.length;
+  $("aiModelFilter").value = "";
+  aiRenderModels();
+}
+
+function aiRenderModels() {
+  const words = $("aiModelFilter").value.toLowerCase().split(/\s+/).filter(Boolean);
+  const match = aiModelsLoaded.filter((m) => words.every((w) => `${m.name} ${m.id}`.toLowerCase().includes(w)));
+  const list = $("aiModelList");
+  list.replaceChildren(...match.slice(0, AI_LIST_MAX).map((m) => {
+    const option = document.createElement("option");
+    option.value = m.id;
+    option.textContent = m.name !== m.id ? `${m.name} (${m.id})` : m.id;
+    option.selected = m.id === aiEls.model.value.trim();
+    return option;
+  }));
+  if (match.length > AI_LIST_MAX) aiMessage(`${match.length} models match: showing the first ${AI_LIST_MAX}. Type more to narrow the list.`);
+  else if (aiModelsLoaded.length) aiMessage(`${match.length} of ${aiModelsLoaded.length} models shown.`);
+}
+
+async function loadAiModels() {
+  const provider = aiEls.provider.value;
+  if (!provider) return;
+  try {
+    if (!aiEls.key.value.trim()) throw new Error("Paste your key first, then press Load models.");
+    const allowed = await ai.hasAccess(provider) || await ai.requestAccess(provider);
+    if (!allowed) throw new Error(`Without access to ${ai.serviceName(provider)} the list cannot be loaded. You can also type a model name.`);
+    aiMessage("Loading the models...");
+    const { models, suggested } = await ai.listModels(provider, aiEls.key.value);
+    if (!aiEls.model.value.trim() && suggested) aiEls.model.value = suggested;
+    aiShowModels(models);
+  } catch (error) {
+    aiMessage(error.message || "Could not load the models.", false);
+  }
+}
+
 aiEls.provider.addEventListener("change", aiFields);
+$("aiLoadModels").addEventListener("click", () => { void loadAiModels(); });
+$("aiModelFilter").addEventListener("input", aiRenderModels);
+$("aiModelList").addEventListener("change", () => { aiEls.model.value = $("aiModelList").value; });
 $("aiSave").addEventListener("click", () => { void saveAi(); });
 $("aiRemove").addEventListener("click", () => { void removeAi(); });
 void loadAi();

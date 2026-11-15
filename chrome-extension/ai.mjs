@@ -6,7 +6,7 @@
 // key is sealed with a passphrase of the person's choice (AES-GCM, as the cloud keys of this clipper) and kept in
 // chrome.storage.local, never in the storage Chrome syncs between computers. "Stay unlocked" keeps an open copy in
 // chrome.storage.session, which lives in memory only and is gone when the browser closes.
-import { AiError, PROVIDERS, createProvider } from '../cloud/shared/ai/providers.mjs';
+import { AiError, PROVIDERS, createProvider, pickDefaultModel } from '../cloud/shared/ai/providers.mjs';
 import { sealLocal, unsealLocal } from '../cloud/shared/crypto.mjs';
 
 /** The four services with a fixed https address; the manifest lists exactly these origins as optional access. */
@@ -65,6 +65,18 @@ export async function summarize(config, page, { signal, fetcher } = {}) {
   const text = String(answer.text ?? '').trim();
   if (!text) throw new AiError('bad_response');
   return { text, service: serviceName(clean.provider), model: clean.model };
+}
+
+/**
+ * The model list of the service, for the settings page: { models: [{ id, name }] by name, suggested }. One GET to the
+ * service with the person's key (OpenRouter's key is checked first); nothing is stored. Throws an AiError or an Error.
+ */
+export async function listModels(provider, key, { signal, fetcher } = {}) {
+  const { key: clean } = cleanConfig({ provider, key, model: 'list' });
+  const models = await createProvider({ provider, key: clean, model: 'list' }, fetcher).listModels({ signal });
+  if (!models.length) throw new AiError('bad_response');
+  const shown = models.map(({ id, name }) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+  return { models: shown, suggested: pickDefaultModel(provider, models) };
 }
 
 /** The line under a summary in the note. */
@@ -134,5 +146,5 @@ export async function requestAccess(provider, permissions = globalThis.chrome?.p
 
 // The pages use it as a global (a classic script, as the cloud client). Under Node the checks import the exports instead.
 if (typeof chrome !== 'undefined' && chrome.storage?.local) {
-  globalThis.JotDropAi = { MAX_PAGE_CHARS, MIN_PASSPHRASE, SERVICES, serviceName, serviceOrigin, cleanConfig, summarize, summaryLine, getMeta, isUnlocked, saveConfig, openConfig, lock, clearConfig, hasAccess, requestAccess };
+  globalThis.JotDropAi = { MAX_PAGE_CHARS, MIN_PASSPHRASE, SERVICES, serviceName, serviceOrigin, cleanConfig, summarize, listModels, summaryLine, getMeta, isUnlocked, saveConfig, openConfig, lock, clearConfig, hasAccess, requestAccess };
 }
