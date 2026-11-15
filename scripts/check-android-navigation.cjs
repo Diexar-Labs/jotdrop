@@ -220,4 +220,13 @@ assert(manifest.includes('android.permission.WAKE_LOCK'));
 // that is tested on an Android 16 device.
 const application = manifest.slice(manifest.indexOf('<application'), manifest.indexOf('>', manifest.indexOf('<application')));
 assert(application.includes('android:enableOnBackInvokedCallback="false"'), 'Back must close dropdown menus on Android 16 (old Compose popups)');
+// The pin must not wait for the write: noteWriteMutex is shared with list scans and sync, and a tap took 8 to 10 seconds
+// to move the card (Eric, 15 Nov 2026). The card changes first; the write follows, survives leaving the screen, and a
+// later tap wins over an older result.
+const pinToggle = list.slice(list.indexOf('private fun togglePin('), list.indexOf('private fun toggleChecklist('));
+assert(pinToggle.includes('updateLoadedNotes'), 'togglePin must show the new state at once');
+assert(pinToggle.indexOf('updateLoadedNotes') < pinToggle.indexOf('Storage.noteWriteMutex'), 'The card must change before the write waits for the mutex');
+assert(pinToggle.includes('NonCancellable'), 'A pin write must survive closing or turning the screen');
+assert(pinToggle.includes('pinEpochs[note.uri] != epoch'), 'An older pin result must not undo a later tap');
+assert(pinToggle.includes('pinned = note.meta.pinned'), 'A failed pin write must put the card back');
 console.log('Android navigation and recording safety wiring checks passed');
