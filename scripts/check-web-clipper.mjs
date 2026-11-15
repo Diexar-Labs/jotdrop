@@ -242,7 +242,8 @@ test("the settings page can load the model list from the service, with the key o
   await assert.rejects(() => listModels("openai", "", { fetcher: async () => assert.fail("nothing goes out") }), /Paste your key/);
   const options = extension("options/options.js");
   assert.match(options, /ai\.hasAccess\(provider\) \|\| await ai\.requestAccess\(provider\)[\s\S]*ai\.listModels\(provider, aiEls\.key\.value\)/, "access is asked in the click, then the list is loaded");
-  assert.match(extension("options/options.html"), /id="aiLoadModels"[\s\S]*<datalist id="aiModelList">/);
+  assert.match(extension("options/options.html"), /id="aiLoadModels"[\s\S]*id="aiModelFilter"[\s\S]*<select id="aiModelList"/);
+  assert.equal(/<datalist/.test(extension("options/options.html")), false, "a datalist narrows itself to the filled-in model and hid the rest (15 Nov 2026)");
 });
 
 test("the page text is read only after the click, and the popup shows where it goes", () => {

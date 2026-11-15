@@ -130,14 +130,20 @@
     <label class="field">
       <span>Model</span>
       <div class="row">
-        <input id="aiModel" type="text" list="aiModelList" autocomplete="off" spellcheck="false" />
+        <input id="aiModel" type="text" autocomplete="off" spellcheck="false" />
         <button id="aiLoadModels" class="btn-secondary" type="button">Load models</button>
       </div>
-      <datalist id="aiModelList"></datalist>
     </label>
+    <div id="aiModelPicker" hidden>
+      <label class="field">
+        <span>Search the list</span>
+        <input id="aiModelFilter" type="search" autocomplete="off" spellcheck="false" placeholder="For example: claude, gpt, qwen" />
+      </label>
+      <select id="aiModelList" size="8" aria-label="Models from your AI service" style="width: 100%;"></select>
+    </div>
     <p class="hint">
-      Paste your key, then press "Load models": the list comes straight from your AI service and you pick from it. Type
-      to narrow the list down.
+      Paste your key, then press "Load models": the list comes straight from your AI service. Search it, click a model and
+      it is filled in above. You can also type a model name yourself.
     </p>
 
     <label class="field">
