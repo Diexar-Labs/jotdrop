@@ -278,8 +278,7 @@
     <string name="ai_error_local_failed">El modelo de este teléfono se detuvo con un error. Inténtalo de nuevo.</string>
     <string name="ai_error_local_unsupported">El modelo de este teléfono todavía no puede hacer esto. Elige un servicio de IA con clave para ello.</string>
     <string name="ai_local_stays">Se queda en este teléfono, modelo %1$s. No sale nada.</string>
-    <string name="ai_local_fixed_only">En este teléfono, Ask JotDrop solo hace tareas fijas: \"Resumir con IA\", \"Transcribir con IA\", \"Leer foto con IA\" y \"Recibo a la Paper drawer\" en el menú de una tarjeta y los botones de IA del editor. Para preguntas libres y \"Esta semana\" hace falta un servicio de IA con clave.</string>
-    <string name="ai_local_no_merge">Para combinar hace falta un servicio de IA con clave: el modelo de este teléfono no cambia notas.</string>
+    <string name="ai_local_no_merge">Para combinar hace falta un servicio de IA con clave.</string>
     <string name="ai_local_too_long">Esta nota es demasiado larga para el modelo de este teléfono (como mucho unos 6.000 caracteres de una nota a la vez). Un servicio de IA con clave sí puede.</string>
     <string name="ai_local_working">Trabajando en este teléfono. Puede tardar unos minutos; puedes parar cuando quieras.</string>
     <string name="ai_local_sent">Leído en este teléfono, no salió nada: %1$s</string>

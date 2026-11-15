@@ -16,7 +16,10 @@ import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
 import com.google.ai.edge.litertlm.Message
 import com.google.ai.edge.litertlm.MessageCallback
+import com.google.ai.edge.litertlm.OpenApiTool
 import com.google.ai.edge.litertlm.SamplerConfig
+import com.google.ai.edge.litertlm.ToolCall
+import com.google.ai.edge.litertlm.tool
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -142,42 +145,77 @@ class AiLiteRtLoader(private val cacheDir: String) : AiLocalLoader {
             maxNumTokens = MAX_TOKENS, cacheDir = cacheDir))
         try { engine.initialize() } catch (error: Throwable) { runCatching { engine.close() }; throw error }
         Log.i("AskJotDrop", "Phone model loaded on $backend in ${SystemClock.elapsedRealtime() - started} ms")
-        return object : AiLocalRunner {
-            override suspend fun generate(system: String, prompt: String, media: List<AiLocalMedia>): String = withContext(Dispatchers.IO) {
-                val asked = SystemClock.elapsedRealtime()
-                val conversation = engine.createConversation(ConversationConfig(systemInstruction = Contents.of(system),
-                    samplerConfig = SamplerConfig(topK = 40, topP = 0.95, temperature = 0.3)))
-                val text = StringBuilder()
-                var first = 0L
-                val finished = CompletableDeferred<Throwable?>()
-                val contents = media.map { if (it.kind == "audio") Content.AudioFile(it.path) else Content.ImageFile(it.path) } + Content.Text(prompt)
-                conversation.sendMessageAsync(Contents.of(contents), object : MessageCallback {
-                    override fun onMessage(message: Message) {
-                        synchronized(text) {
-                            if (first == 0L) first = SystemClock.elapsedRealtime()
-                            for (part in message.contents.contents) if (part is Content.Text) text.append(part.text)
-                        }
-                    }
-                    override fun onDone() { finished.complete(null) }
-                    override fun onError(throwable: Throwable) { finished.complete(throwable) }
-                })
-                var quiet = true
-                try {
-                    finished.await()?.let { throw AiError("local_failed", it.javaClass.simpleName) }
+        val sampler = SamplerConfig(topK = 40, topP = 0.95, temperature = 0.3)
+        fun files(media: List<AiLocalMedia>) = media.map { if (it.kind == "audio") Content.AudioFile(it.path) else Content.ImageFile(it.path) }
+
+        // One message to a new conversation: its words and tool calls, streamed. Only counts and times go to the log.
+        suspend fun send(config: ConversationConfig, message: Message, files: Int, chars: Int): AiLocalReply = withContext(Dispatchers.IO) {
+            val asked = SystemClock.elapsedRealtime()
+            val conversation = engine.createConversation(config)
+            val text = StringBuilder()
+            val calls = mutableListOf<Pair<String, Map<String, Any?>>>()
+            var first = 0L
+            val finished = CompletableDeferred<Throwable?>()
+            conversation.sendMessageAsync(message, object : MessageCallback {
+                override fun onMessage(message: Message) {
                     synchronized(text) {
-                        val now = SystemClock.elapsedRealtime()
-                        Log.i("AskJotDrop", "Phone model answered on $backend: ${media.size} files, ${prompt.length} chars in, ${text.length} chars out, " +
-                            "first words after ${if (first > 0) first - asked else -1} ms, done after ${now - asked} ms")
-                        text.toString()
+                        if (first == 0L) first = SystemClock.elapsedRealtime()
+                        for (part in message.contents.contents) if (part is Content.Text) text.append(part.text)
+                        // The arguments as JotDrop's own JSON values, so AiTools.validateInput reads them as from any service.
+                        for (call in message.toolCalls) calls.add(call.name to (AiJson.parse(AiJson.stringify(call.arguments)).obj() ?: emptyMap()))
                     }
-                } catch (error: CancellationException) {
-                    // Stop: the model ends its answer; the conversation closes only once it has, never under it.
-                    runCatching { conversation.cancelProcess() }
-                    quiet = withContext(NonCancellable) { withTimeoutOrNull(10_000) { finished.await(); true } } == true
-                    throw error
-                } finally {
-                    if (quiet) runCatching { conversation.close() }
                 }
+                override fun onDone() { finished.complete(null) }
+                override fun onError(throwable: Throwable) { finished.complete(throwable) }
+            })
+            var quiet = true
+            try {
+                finished.await()?.let { throw AiError("local_failed", it.javaClass.simpleName) }
+                synchronized(text) {
+                    val now = SystemClock.elapsedRealtime()
+                    Log.i("AskJotDrop", "Phone model answered on $backend: $files files, $chars chars in, ${text.length} chars and ${calls.size} tool calls out, " +
+                        "first words after ${if (first > 0) first - asked else -1} ms, done after ${now - asked} ms")
+                    AiLocalReply(text.toString(), calls.toList())
+                }
+            } catch (error: CancellationException) {
+                // Stop: the model ends its answer; the conversation closes only once it has, never under it.
+                runCatching { conversation.cancelProcess() }
+                quiet = withContext(NonCancellable) { withTimeoutOrNull(10_000) { finished.await(); true } } == true
+                throw error
+            } finally {
+                if (quiet) runCatching { conversation.close() }
+            }
+        }
+
+        return object : AiLocalRunner {
+            override suspend fun generate(system: String, prompt: String, media: List<AiLocalMedia>): String =
+                send(ConversationConfig(systemInstruction = Contents.of(system), samplerConfig = sampler),
+                    Message.user(Contents.of(files(media) + Content.Text(prompt))), media.size, prompt.length).text
+
+            override suspend fun converse(system: String, messages: List<AiMessage>, tools: List<AiTool>, media: List<AiLocalMedia>): AiLocalReply {
+                // The whole conversation again each round (the earlier turns as history): the provider keeps no state.
+                val turns = messages.mapIndexed { i, message ->
+                    when (message) {
+                        is AiMessage.User -> Message.user(Contents.of((if (i == 0) files(media) else emptyList()) + Content.Text(message.text)))
+                        is AiMessage.Assistant -> Message.model(Contents.of(message.text), message.toolCalls.map { ToolCall(it.name, it.input ?: emptyMap()) }, emptyMap())
+                        is AiMessage.Tool -> Message.tool(Contents.of(message.results.map { Content.ToolResponse(it.name, it.content) }))
+                    }
+                }
+                // LiteRT-LM writes the tools into Gemma's own format; it never runs them (automaticToolCalling off).
+                val described = tools.map { tool ->
+                    tool(object : OpenApiTool {
+                        override fun getToolDescriptionJsonString() =
+                            AiJson.stringify(linkedMapOf("name" to tool.name, "description" to tool.description, "parameters" to tool.inputSchema))
+                        override fun execute(paramsJsonString: String): String = throw IllegalStateException("JotDrop runs the tools")
+                    })
+                }
+                val config = ConversationConfig(systemInstruction = Contents.of(system), initialMessages = turns.dropLast(1), tools = described,
+                    samplerConfig = sampler, automaticToolCalling = false)
+                return send(config, turns.last(), media.size, messages.sumOf { m -> when (m) {
+                    is AiMessage.User -> m.text.length
+                    is AiMessage.Assistant -> m.text.length
+                    is AiMessage.Tool -> m.results.sumOf { it.content.length }
+                } })
             }
 
             override fun close() = engine.close()

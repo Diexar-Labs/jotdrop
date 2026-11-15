@@ -182,6 +182,15 @@ for (const library of ['libOpenCL.so', 'libOpenCL-car.so', 'libOpenCL-pixel.so',
 // facts, so "This week" is offered only with an AI service with a key.
 if (!/if \(!fixed && target == null && !phone\) OutlinedButton\(onClick = \{ context\.startActivity\(AskActivity\.weekIntent/.test(readFileSync(path.join(kotlin, 'AiActivity.kt'), 'utf8'))) throw new Error('AiActivity.kt: "This week" must stay hidden for the model on this phone');
 
+// 15 Nov 2026, Eric's phone: "a card with four boxes: butter, cheese, eggs and cigarettes" did nothing, Send stayed grey.
+// A free question on this phone goes with the tools and the executor, like any service; a fixed action goes without.
+{
+  const activity = readFileSync(path.join(kotlin, 'AiActivity.kt'), 'utf8');
+  if (/phone && !fixed\)/.test(activity)) throw new Error('AiActivity.kt: a free question on this phone must not be blocked');
+  if (!activity.includes('tools = if (phone && fixed) emptyList() else tools,')) throw new Error('AiActivity.kt: a free question on this phone must get the tools');
+  if (!activity.includes('executor = if (draft != null || (phone && fixed)) emptyMap() else executor.tools,')) throw new Error('AiActivity.kt: a free question on this phone must get the executor');
+}
+
 // 10 Nov 2026, Eric's phone: "Summarize with AI" sent only the request. The screen kept the card's note id from a
 // composition before the notes were read, and the automatic send used that old, empty value. What goes along must
 // be decided by AiAsk.plan when it is needed, and the request must carry exactly that choice.

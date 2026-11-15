@@ -192,6 +192,9 @@ private class FakeLoader(val fails: Set<String> = emptySet(), var answer: String
     // What each file held when the model got it (the provider deletes them afterwards).
     val seen = mutableListOf<ByteArray>()
     var answers: MutableList<String>? = null
+    // Free questions: what each round got (system, the conversation, the tool names) and the replies to give.
+    val talks = mutableListOf<Triple<String, List<AiMessage>, List<String>>>()
+    var replies: MutableList<AiLocalReply>? = null
     override fun load(path: String, backend: String): AiLocalRunner {
         loads.add(path to backend)
         // Loading blocks and cannot be interrupted, as LiteRT-LM's.
@@ -204,6 +207,13 @@ private class FakeLoader(val fails: Set<String> = emptySet(), var answer: String
                 media.forEach { seen.add(File(it.path).readBytes()) }
                 try { delay(takes) } catch (error: CancellationException) { cancelled++; throw error }
                 return answers?.removeFirstOrNull() ?: answer
+            }
+            override suspend fun converse(system: String, messages: List<AiMessage>, tools: List<AiTool>, media: List<AiLocalMedia>): AiLocalReply {
+                talks.add(Triple(system, messages.toList(), tools.map { it.name }))
+                this@FakeLoader.media.add(media)
+                media.forEach { seen.add(File(it.path).readBytes()) }
+                try { delay(takes) } catch (error: CancellationException) { cancelled++; throw error }
+                return replies?.removeFirstOrNull() ?: AiLocalReply(answer, emptyList())
             }
             override fun close() { closed++ }
         }
@@ -310,8 +320,13 @@ private suspend fun providers(root: File) {
     ok(provider.complete("s", listOf(AiMessage.User("p")), emptyList(), 5000).text == "", "an empty answer stays empty")
     loader.answer = "Fine."
 
+    // A free question (15 Nov 2026): the tools go to the model, which only names the call; the ids tie each call to its result.
     val tool = AiTool("search_notes", "read", "Search", emptyMap<String, Any?>())
-    ok(code("tools") { provider.complete("s", listOf(AiMessage.User("p")), listOf(tool), 5000) } == "local_unsupported", "tools: not yet")
+    loader.replies = mutableListOf(AiLocalReply(" Looking. ", listOf("search_notes" to mapOf("query" to "milk"))))
+    val asks = provider.complete("s", listOf(AiMessage.User("p")), listOf(tool), 5000)
+    ok(asks.text == "Looking." && asks.stop == "tool_use" && asks.toolCalls == listOf(AiToolCall("phone-1-0", "search_notes", mapOf("query" to "milk"))) &&
+        loader.talks.last().third == listOf("search_notes"), "tools: the model's call comes back as a tool call")
+    loader.replies = null
     // A photo goes to the model as a file, which is gone afterwards.
     val photo = byteArrayOf(1, 2, 3)
     val read = provider.complete(AiParts.PHOTO_SYSTEM, listOf(AiMessage.User("Write out the text.", listOf(AiPart("image", "image/jpeg", "a.jpg", photo)))), emptyList(), 5000)
@@ -333,7 +348,8 @@ private suspend fun providers(root: File) {
     ok(code("long") { provider.transcribe(AiPart("audio", "audio/mp4", "memo.m4a", ByteArray(10)), null, 5000) } == "too_large", "a recording that is too long: too_large")
     files.problem = null
     files.pieces = 1
-    ok(code("talk") { provider.complete("s", listOf(AiMessage.User("p"), AiMessage.Assistant("a", emptyList()), AiMessage.User("q")), emptyList(), 5000) } == "local_unsupported", "a conversation: not yet")
+    val talk = listOf(AiMessage.User("p"), AiMessage.Assistant("a", emptyList()), AiMessage.User("q"))
+    ok(provider.complete("s", talk, emptyList(), 5000).text == "Fine." && loader.talks.last().second == talk, "a conversation: the whole of it goes to the model")
 
     // The time limit stops the answer itself.
     loader.takes = 5000
@@ -351,8 +367,41 @@ private suspend fun providers(root: File) {
         provider = { provider }, executor = emptyMap(), confirm = { false }, timeoutMs = AiLocalModels.TIMEOUT_MS, maxChars = AiLocalModels.MAX_CHARS,
         chosen = AiContext.selectNotes(listOf(AiNote("n1", "Plan", "Text")), "", maxChars = AiLocalModels.MAX_CHARS, pinned = listOf("n1")).notes)
     ok(editor.stop == "done" && editor.answer == "Fine." && editor.sent.map { it.id } == listOf("n1") && loader.asked?.first?.contains("nothing leaves it") == true, "AiAssistant.run without tools: a fixed action with the note")
-    val free = AiAssistant.run("What is on my list?", emptyList(), emptyList(), listOf(tool), "system", provider = { provider }, executor = emptyMap(), confirm = { false })
-    ok(free.stop == "error" && free.error?.code == "local_unsupported", "AiAssistant.run with tools: local_unsupported")
+    // Eric's request of 15 Nov 2026 through Ask JotDrop's own loop: the model calls create_note, JotDrop makes the note,
+    // the result goes back, and the model says what it did. A change to an existing note still waits for the user's yes.
+    val create = AiTool("create_note", "create", "Make a new note.", mapOf("type" to "object", "required" to listOf("title"), "properties" to mapOf(
+        "title" to mapOf("type" to "string"), "items" to mapOf("type" to "array", "items" to mapOf("type" to "string")))))
+    val replace = AiTool("replace_note_text", "confirm", "Replace a note's text.", mapOf("type" to "object", "required" to listOf("id", "text"), "properties" to mapOf(
+        "id" to mapOf("type" to "string"), "text" to mapOf("type" to "string"))))
+    val made = mutableListOf<Map<String, Any?>>()
+    val freeSystem = AiLocalPrompt.system("Dutch", "2026-11-15 Sunday", "Europe/Madrid", labels = listOf("Shopping"))
+    loader.replies = mutableListOf(
+        AiLocalReply("", listOf("create_note" to mapOf("title" to "Boodschappen", "items" to listOf("boter", "kaas", "eieren", "sigaretten")))),
+        AiLocalReply("De kaart Boodschappen staat klaar.", emptyList()))
+    val card = AiAssistant.run("Ik wil een kaart met vier vakjes: boter, kaas, eieren en sigaretten", emptyList(), listOf("Shopping"), listOf(create, replace), freeSystem,
+        provider = { provider }, executor = mapOf<String, suspend (Map<String, Any?>) -> Any?>("create_note" to { input -> made.add(input); mapOf("id" to "new1") }), confirm = { false },
+        timeoutMs = AiLocalModels.TIMEOUT_MS, maxChars = AiLocalModels.MAX_CHARS)
+    ok(card.stop == "done" && card.answer == "De kaart Boodschappen staat klaar." && card.actions.single().let { it.tool == "create_note" && it.status == "done" } &&
+        made.single()["items"] == listOf("boter", "kaas", "eieren", "sigaretten"), "a free question on the phone makes the checklist note")
+    val second = loader.talks.last().second
+    ok(second.size == 3 && (second[1] as AiMessage.Assistant).toolCalls.single().name == "create_note" &&
+        (second[2] as AiMessage.Tool).results.single().let { it.name == "create_note" && !it.isError }, "the second round gets the call and its result")
+    ok(loader.talks.last().first == freeSystem && freeSystem.contains("create_note") && freeSystem.contains("Shopping") && freeSystem.contains("one or two key words") && freeSystem.contains("then answer in theirs") &&
+        !AiLocalPrompt.system("Dutch", "2026-11-15 Sunday", "Europe/Madrid").contains("create_note"), "the tool rules go with a free question only")
+    var asked = 0
+    loader.replies = mutableListOf(AiLocalReply("", listOf("replace_note_text" to mapOf("id" to "n1", "text" to "New"))), AiLocalReply("Left as it is.", emptyList()))
+    val change = AiAssistant.run("Rewrite my plan", listOf(AiNote("n1", "Plan", "Text")), emptyList(), listOf(create, replace), freeSystem,
+        provider = { provider }, executor = mapOf<String, suspend (Map<String, Any?>) -> Any?>("replace_note_text" to { _ -> error("must not run") }), confirm = { asked++; false }, timeoutMs = AiLocalModels.TIMEOUT_MS)
+    ok(asked == 1 && change.actions.single().status == "declined" && change.answer == "Left as it is.", "a change to an existing note asks the user first; a no is final")
+    // A photo with a free question: it goes with the first message in every round, and its file is gone afterwards.
+    files.made.clear()
+    loader.replies = mutableListOf(AiLocalReply("", listOf("create_note" to mapOf("title" to "Receipt"))), AiLocalReply("Done.", emptyList()))
+    val shot = AiAssistant.run("Make a note of this", emptyList(), emptyList(), listOf(create), freeSystem, provider = { provider },
+        executor = mapOf<String, suspend (Map<String, Any?>) -> Any?>("create_note" to { _ -> mapOf("id" to "new2") }), confirm = { false }, timeoutMs = AiLocalModels.TIMEOUT_MS,
+        parts = listOf(AiPart("image", "image/jpeg", "a.jpg", photo)))
+    ok(shot.stop == "done" && loader.media.takeLast(2).all { m -> m.map { it.kind } == listOf("image") } && files.made.size == 2 && files.made.none { it.exists() },
+        "a photo goes along in each round and is deleted after each")
+    loader.replies = null
     val missing = AiAssistant.once("Summarize", emptyList(), provider = { throw AiError("model_missing") }, secrets = emptyList()) { ai, time -> ai.complete("s", emptyList(), emptyList(), time) }
     ok(missing.stop == "error" && missing.error?.code == "model_missing", "no model yet: model_missing")
     // The phone's limits: the note list and the week take less text at once.
