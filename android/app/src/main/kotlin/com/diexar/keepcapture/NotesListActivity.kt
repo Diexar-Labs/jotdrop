@@ -274,6 +274,7 @@ class NotesListActivity : ThemedComponentActivity() {
     private var loadJob: Job? = null
     private var stateEpoch = 0L
     private val checklistEpochs = mutableMapOf<Uri, Long>()
+    private val pinEpochs = mutableMapOf<Uri, Long>()
     private var pendingCameraUri: Uri? = null
     private var pendingCameraFile: File? = null
     // OCR-modus blijft staan tot de capture-flow afgerond is. Met deze flag weet
@@ -832,25 +833,34 @@ class NotesListActivity : ThemedComponentActivity() {
     }
 
     private fun togglePin(note: NoteSummary) {
+        val newMeta = note.meta.copy(pinned = !note.meta.pinned)
+        val epoch = (pinEpochs[note.uri] ?: 0L) + 1L
+        pinEpochs[note.uri] = epoch
         stateEpoch++
+        // The card jumps on this frame. The write waits for noteWriteMutex, which a list scan or a sync can hold for seconds,
+        // so the screen must not wait for it (same approach as the checklist ticks).
+        updateLoadedNotes { notes -> notes.map { if (it.uri == note.uri) it.copy(meta = newMeta) else it } }
+        val tappedAt = SystemClock.elapsedRealtime()
         lifecycleScope.launch {
-            val newMeta = note.meta.copy(pinned = !note.meta.pinned)
-            val result = withContext(Dispatchers.IO) {
+            // Not cancellable: the card already shows the new state, so closing or turning the screen must not drop the write.
+            val result = withContext(NonCancellable + Dispatchers.IO) {
                 Storage.noteWriteMutex.withLock {
-                    Storage.updateNoteMeta(this@NotesListActivity, note.uri, newMeta)
+                    val gotLockAt = SystemClock.elapsedRealtime()
+                    val written = Storage.updateNoteMeta(this@NotesListActivity, note.uri, newMeta)
                         .map { Storage.lastModified(this@NotesListActivity, note.uri, note.lastModified) }
+                    // Timing only, no note text: shows whether a tap waited for the lock or the write itself was slow.
+                    Log.i("JotDropPin", "lock_wait_ms=${gotLockAt - tappedAt}; write_ms=${SystemClock.elapsedRealtime() - gotLockAt}")
+                    written
                 }
             }
+            // A later tap owns the card now; never put its state back with this older result.
+            if (pinEpochs[note.uri] != epoch) return@launch
             result.onSuccess { lastModified ->
-                updateLoadedNotes { notes -> notes.map {
-                    if (it.uri == note.uri) it.copy(
-                        meta = newMeta,
-                        lastModified = lastModified,
-                    )
-                    else it
-                } }
+                updateLoadedNotes { notes -> notes.map { if (it.uri == note.uri) it.copy(lastModified = lastModified) else it } }
             }.onFailure { err ->
                 Toast.makeText(this@NotesListActivity, err.message ?: getString(R.string.error_generic), Toast.LENGTH_SHORT).show()
+                // The file did not change, so the card goes back to what the file says.
+                updateLoadedNotes { notes -> notes.map { if (it.uri == note.uri) it.copy(meta = it.meta.copy(pinned = note.meta.pinned)) else it } }
             }
         }
     }
