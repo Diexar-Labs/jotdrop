@@ -21,6 +21,27 @@
     <textarea id="selection" rows="3" placeholder="Highlight text on the page, then reopen this popup."></textarea>
   </label>
 
+  <section id="aiBox" class="ai-box" aria-label="Summarize with AI" hidden>
+    <div class="cloud-actions">
+      <button id="aiSummarize" class="btn-secondary" type="button">Summarize with AI</button>
+    </div>
+    <p id="aiNote" class="cloud-note"></p>
+    <p id="aiMessage" class="cloud-note" role="status" aria-live="polite"></p>
+    <label class="field" id="aiUnlockField" hidden>
+      <span>Passphrase for your AI key</span>
+      <input id="aiUnlock" type="password" autocomplete="current-password" />
+    </label>
+    <label class="field field-inline" id="aiKeepField" hidden>
+      <input id="aiKeep" type="checkbox" checked />
+      <span>Stay unlocked until the browser closes</span>
+    </label>
+    <p id="aiUnlocked" class="cloud-note" hidden>AI key unlocked until the browser closes. <button id="aiLock" class="btn-link" type="button">Lock now</button></p>
+    <label class="field" id="aiSummaryField" hidden>
+      <span>Summary (goes into the note, you can edit it)</span>
+      <textarea id="aiSummary" rows="5"></textarea>
+    </label>
+  </section>
+
   <label class="field">
     <span>Tags</span>
     <div id="tagsBox" class="tags-box">
@@ -75,6 +96,7 @@
   </footer>
 
   <script src="../cloud-client.js"></script>
+  <script src="../ai-client.js"></script>
   <script src="../protocol.js"></script>
   <script src="popup.js"></script>
 </body>

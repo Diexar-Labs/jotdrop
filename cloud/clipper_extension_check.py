@@ -6,7 +6,9 @@ an encrypted clip, and the web app shows it as a note. Then "both" and "Obsidian
 Obsidian plugin's clip server, the CORS rule production needs, and disconnecting.
 
 Only the active-tab lookup of the popup is pointed at the test article, because a popup opened as a tab would
-otherwise clip itself; storage, permissions, page reading and every request are the browser's own.
+otherwise clip itself; storage, page reading and every request are the browser's own. The one exception is the
+browser's own permission dialog for an AI service, which no test can click: it is answered "yes" for the AI test,
+and the AI service itself is a stand-in (the request is caught and answered).
 With an extension ZIP (the store package) that is what gets loaded; otherwise chrome-extension/ as committed.
 """
 from contextlib import closing
@@ -31,6 +33,9 @@ PASSPHRASE = "synthetic clipper e2e passphrase"
 CLIP_TOKEN = secrets.token_urlsafe(24)
 ARTICLE_TITLE = "Clipper e2e article"
 SELECTION = "Selected words with a #hashtag that must stay text"
+AI_KEY = "sk-clipper-e2e-SECRET-0123456789"
+AI_SUMMARY = "A stand-in summary of the article."
+AI_PASSPHRASE = "synthetic ai key passphrase"
 
 
 def shot(page, name):
@@ -121,6 +126,13 @@ def run(channel, extension_dir, workdir):
             ext = extension_id(context, channel)
             origin = f"chrome-extension://{ext}"
             # Popup pages opened as tabs: clip the article tab, as the real popup would after a toolbar click.
+            # The browser's own permission dialog for an AI service cannot be clicked by a test: answered "yes" here.
+            context.add_init_script("""(() => {
+              if (location.protocol !== 'chrome-extension:') return;
+              chrome.permissions.contains = async () => true;
+              chrome.permissions.request = async () => true;
+              chrome.permissions.remove = async () => true;
+            })();""")
             context.add_init_script("""(() => {
               if (location.protocol !== 'chrome-extension:' || !location.pathname.endsWith('/popup/popup.html')) return;
               const query = chrome.tabs.query.bind(chrome.tabs);
@@ -162,8 +174,8 @@ def run(channel, extension_dir, workdir):
             # The clipper's settings: Obsidian by default; choose JotDrop Cloud and pair.
             options = page(f"{origin}/options/options.html")
             manifest = options.evaluate("chrome.runtime.getManifest()")
-            assert manifest["version"] == "0.2.0", manifest["version"]
-            assert manifest["optional_host_permissions"] == ["https://app.jotdrop.net/*"], manifest
+            assert manifest["version"] == "0.3.0", manifest["version"]
+            assert manifest["optional_host_permissions"] == ["https://app.jotdrop.net/*", "https://api.anthropic.com/*", "https://api.openai.com/*", "https://generativelanguage.googleapis.com/*", "https://openrouter.ai/*"], manifest
             assert manifest["host_permissions"] == ["http://127.0.0.1/*", "http://localhost/*"], manifest
             assert sorted(manifest["permissions"]) == ["activeTab", "scripting", "storage"], manifest
             assert options.locator("#destObsidian").is_checked()
@@ -268,6 +280,103 @@ def run(channel, extension_dir, workdir):
             count = web.evaluate("async credentials => { const { CloudClient } = await import('/shared/client.mjs'); return (await new CloudClient(credentials).listChanges()).changes.length; }", credentials)
             assert count == 2, count
 
+            # Summarize with AI (0.3): the person's own key in the settings; the page text goes to the chosen service only
+            # after the click; the summary, as edited, lands in the Obsidian clip; the key stays in local storage only.
+            ai_requests = []
+
+            def fake_ai(route):
+                request = route.request
+                cors = {"access-control-allow-origin": "*", "access-control-allow-headers": "*", "access-control-allow-methods": "POST, OPTIONS"}
+                if request.method == "OPTIONS":
+                    route.fulfill(status=204, headers=cors)
+                    return
+                ai_requests.append({"url": request.url, "authorization": request.headers.get("authorization"), "body": request.post_data})
+                route.fulfill(status=200, headers={**cors, "content-type": "application/json"}, body=json.dumps({
+                    "choices": [{"message": {"role": "assistant", "content": AI_SUMMARY}, "finish_reason": "stop"}], "usage": {"prompt_tokens": 1, "completion_tokens": 1}}))
+
+            context.route("https://api.openai.com/**", fake_ai)
+            options.reload(wait_until="networkidle")
+            assert options.locator("#aiSection").is_visible() and options.locator("#aiSave").is_disabled(), "off until a service is chosen"
+            popup = page(f"{origin}/popup/popup.html")
+            popup.locator("#status").filter(has_text="Ready").wait_for()
+            assert popup.locator("#aiBox").is_hidden(), "no key, no button"
+            options.locator("#aiProvider").select_option("openai")
+            options.locator("#aiKey").fill(AI_KEY)
+            options.locator("#aiModel").fill("gpt-e2e")
+            options.locator("#aiPassphrase").fill(AI_PASSPHRASE)
+            options.locator("#aiRepeat").fill(AI_PASSPHRASE + "x")
+            options.locator("#aiSave").click()
+            options.locator("#aiStatus").filter(has_text="not the same").wait_for()
+            assert options.evaluate("chrome.storage.local.get('aiConfig')") == {}, "nothing saved while the passphrases differ"
+            options.locator("#aiRepeat").fill(AI_PASSPHRASE)
+            options.locator("#aiKeep").uncheck()
+            options.locator("#aiSave").click()
+            options.locator("#aiStatus").filter(has_text="Saved and encrypted.").wait_for()
+            ai_stored = options.evaluate("chrome.storage.local.get('aiConfig')")["aiConfig"]
+            assert set(ai_stored) == {"provider", "model", "sealed"} and ai_stored["provider"] == "openai" and ai_stored["model"] == "gpt-e2e", ai_stored
+            assert set(ai_stored["sealed"]) == {"v", "salt", "iterations", "envelope"}, ai_stored
+            everything = json.dumps([options.evaluate("chrome.storage.local.get(null)"), options.evaluate("chrome.storage.session.get(null)"), options.evaluate("chrome.storage.sync.get(null)")])
+            assert AI_KEY not in everything and AI_PASSPHRASE not in everything, "the key and the passphrase are in no storage, in readable form"
+            assert options.evaluate("chrome.storage.sync.get(null)") == {}
+            assert AI_KEY not in options.evaluate("document.body.innerText"), "the key is not shown again"
+            shot(options, "5-settings-ai")
+            # Locked: the passphrase opens the key; nothing goes out before the click and a wrong passphrase sends nothing.
+            popup = page(f"{origin}/popup/popup.html")
+            popup.locator("#status").filter(has_text="Ready").wait_for()
+            popup.locator("#aiBox").wait_for(state="visible")
+            assert popup.locator("#aiUnlockField").is_visible() and popup.locator("#aiUnlocked").is_hidden()
+            assert "The text of this page goes to OpenAI, model gpt-e2e" in popup.locator("#aiNote").inner_text()
+            assert not ai_requests, "nothing goes out before the click"
+            popup.locator("#aiSummarize").click()
+            popup.locator("#aiMessage").filter(has_text="Enter the passphrase for your AI key.").wait_for()
+            popup.locator("#aiUnlock").fill(AI_PASSPHRASE + "wrong")
+            popup.locator("#aiSummarize").click()
+            popup.locator("#aiMessage").filter(has_text="Wrong passphrase.").wait_for()
+            assert not ai_requests, "a locked key sends nothing"
+            assert "The text of this page goes to OpenAI, model gpt-e2e" in popup.locator("#aiNote").inner_text(), "the disclosure stays in view after an error"
+            shot(popup, "6-popup-ai-locked")
+            popup.locator("#aiUnlock").fill(AI_PASSPHRASE)
+            popup.locator("#aiSummarize").click()
+            popup.locator("#aiSummaryField").wait_for(state="visible")
+            assert popup.locator("#aiSummary").input_value() == AI_SUMMARY
+            assert popup.locator("#aiUnlocked").is_visible() and popup.locator("#aiUnlock").input_value() == ""
+            assert len(ai_requests) == 1, ai_requests
+            sent = ai_requests[0]
+            assert sent["url"] == "https://api.openai.com/v1/chat/completions" and sent["authorization"] == f"Bearer {AI_KEY}", sent
+            assert ARTICLE_TITLE in sent["body"] and SELECTION in sent["body"] and AI_KEY not in sent["body"] and "tools" not in sent["body"], sent["body"]
+            assert "Summary by OpenAI, model gpt-e2e" in popup.locator("#aiMessage").inner_text()
+            assert "The text of this page goes to OpenAI, model gpt-e2e" in popup.locator("#aiNote").inner_text(), "the disclosure stays in view"
+            shot(popup, "7-popup-ai-summary")
+            popup.locator("#aiSummary").fill(AI_SUMMARY + " Edited.")
+            popup.locator("#saveBtn").click()
+            popup.locator("#status").filter(has_text="Saved ✓").wait_for()
+            assert len(FakeObsidian.clips) == 3 and "summary" not in FakeObsidian.clips[2]["payload"], FakeObsidian.clips[2]
+            assert FakeObsidian.clips[2]["payload"]["selection"] == f"{SELECTION}\n\n{AI_SUMMARY} Edited.\n\nSummary by OpenAI, model gpt-e2e", FakeObsidian.clips[2]["payload"]
+            # Open for this browser session: no passphrase now. An emptied summary stays out of the note.
+            popup = page(f"{origin}/popup/popup.html")
+            popup.locator("#status").filter(has_text="Ready").wait_for()
+            popup.locator("#aiUnlocked").wait_for(state="visible")
+            assert popup.locator("#aiUnlockField").is_hidden()
+            popup.locator("#aiSummarize").click()
+            popup.locator("#aiSummaryField").wait_for(state="visible")
+            popup.locator("#aiSummary").fill("")
+            popup.locator("#saveBtn").click()
+            popup.locator("#status").filter(has_text="Saved ✓").wait_for()
+            assert len(FakeObsidian.clips) == 4 and FakeObsidian.clips[3]["payload"]["selection"] == SELECTION, FakeObsidian.clips[3]
+            # Lock now closes the key again; removing it leaves nothing behind.
+            popup = page(f"{origin}/popup/popup.html")
+            popup.locator("#aiUnlocked").wait_for(state="visible")
+            popup.locator("#aiLock").click()
+            popup.locator("#aiUnlockField").wait_for(state="visible")
+            assert "aiSession" not in options.evaluate("chrome.storage.session.get(null)")
+            options.locator("#aiRemove").click()
+            options.locator("#aiStatus").filter(has_text="removed").wait_for()
+            assert options.evaluate("chrome.storage.local.get('aiConfig')") == {} and "aiSession" not in options.evaluate("chrome.storage.session.get(null)")
+            popup = page(f"{origin}/popup/popup.html")
+            popup.locator("#status").filter(has_text="Ready").wait_for()
+            assert popup.locator("#aiBox").is_hidden()
+            assert len(ai_requests) == 2, "one request per click, nothing else"
+
             # The clipper is a device of the cloud (it takes one of the Free plan's places).
             with closing(sqlite3.connect((data_dir / "cloud.db").as_uri() + "?mode=ro", uri=True)) as database:
                 devices = database.execute("SELECT name, revoked FROM devices ORDER BY createdAt").fetchall()
@@ -291,7 +400,7 @@ def run(channel, extension_dir, workdir):
             assert revoked == 401, revoked
             web.locator(".note-card").filter(has_text=ARTICLE_TITLE).first.wait_for()
             assert not errors, errors
-            return {"extension_loaded": ext, "paired_from_web_app": True, "clip_in_web_app": True, "markdown_and_hashtags": True, "keys_sealed_in_local_storage": True, "stay_unlocked_session_only": True, "both_destinations": True, "obsidian_background_unchanged": True, "clipper_is_a_device": True, "cors_allowlist_required": True, "disconnect_signs_out": True}
+            return {"extension_loaded": ext, "paired_from_web_app": True, "clip_in_web_app": True, "markdown_and_hashtags": True, "keys_sealed_in_local_storage": True, "stay_unlocked_session_only": True, "both_destinations": True, "obsidian_background_unchanged": True, "clipper_is_a_device": True, "cors_allowlist_required": True, "disconnect_signs_out": True, "summarize_with_ai": True}
         finally:
             context.close()
             for process in servers:

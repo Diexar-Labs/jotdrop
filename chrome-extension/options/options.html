@@ -103,6 +103,64 @@
     <p id="cloudMessage" class="hint" role="status" aria-live="polite"></p>
   </section>
 
+  <section id="aiSection" class="panel" aria-labelledby="aiHeading">
+    <h2 id="aiHeading">Summarize with AI (optional)</h2>
+    <p class="lead">
+      Adds a "Summarize with AI" button to the clipper. It uses an AI service you choose, with your own key. When you press
+      the button, the text of the page goes straight from this browser to that service; JotDrop never sees it. You pay your
+      AI service yourself.
+    </p>
+
+    <label class="field">
+      <span>AI service</span>
+      <select id="aiProvider">
+        <option value="">Off</option>
+        <option value="anthropic">Claude (Anthropic)</option>
+        <option value="openai">OpenAI</option>
+        <option value="gemini">Gemini (Google)</option>
+        <option value="openrouter">OpenRouter</option>
+      </select>
+    </label>
+
+    <label class="field">
+      <span>Your key</span>
+      <input id="aiKey" type="password" autocomplete="off" spellcheck="false" />
+    </label>
+
+    <label class="field">
+      <span>Model</span>
+      <input id="aiModel" type="text" autocomplete="off" spellcheck="false" />
+    </label>
+
+    <label class="field">
+      <span>Passphrase to protect the key</span>
+      <input id="aiPassphrase" type="password" autocomplete="new-password" />
+    </label>
+
+    <label class="field">
+      <span>Repeat the passphrase</span>
+      <input id="aiRepeat" type="password" autocomplete="new-password" />
+    </label>
+
+    <label class="field field-inline">
+      <input id="aiKeep" type="checkbox" checked />
+      <span>Stay unlocked until the browser closes</span>
+    </label>
+
+    <p class="hint">
+      Your key is encrypted in this browser with a passphrase of your choice (at least 12 characters). The passphrase is never
+      stored: you enter it once per browser session. Chrome does not sync the key to your other computers and JotDrop Cloud
+      never gets it. To change the service, the model or the key, enter the key and a passphrase again. Set a spending limit
+      at your AI service.
+    </p>
+
+    <div class="row">
+      <button id="aiSave" class="btn-primary" type="button">Save</button>
+      <button id="aiRemove" class="btn-secondary" type="button">Remove key and turn off</button>
+    </div>
+    <p id="aiStatus" class="hint" role="status" aria-live="polite" style="margin-top: 12px;"></p>
+  </section>
+
   <section id="obsidianSection" class="panel" aria-labelledby="obsidianHeading" hidden>
     <h2 id="obsidianHeading">Obsidian: background connection (optional)</h2>
     <p class="lead">
@@ -137,6 +195,7 @@
   </section>
 
   <script src="../cloud-client.js"></script>
+  <script src="../ai-client.js"></script>
   <script src="options.js"></script>
 </body>
 </html>

@@ -214,3 +214,65 @@ $("cloudLockNow").addEventListener("click", async () => { await cloud.lock(); cl
 $("cloudDisconnect").addEventListener("click", () => { void disconnectCloud(); });
 
 void loadDestination();
+
+// --- Summarize with AI (0.3.0): the person's own service, key and model; the key is sealed with a passphrase ---
+
+const ai = globalThis.JotDropAi;
+const aiEls = { provider: $("aiProvider"), key: $("aiKey"), model: $("aiModel"), passphrase: $("aiPassphrase"), repeat: $("aiRepeat"), status: $("aiStatus") };
+const AI_MODELS = { anthropic: "claude-haiku-5-5", openai: "gpt-6-luna", gemini: "gemini-3.5-flash-lite", openrouter: "" };
+
+function aiMessage(text, ok) {
+  aiEls.status.textContent = text;
+  aiEls.status.style.color = ok === false ? "var(--danger-border)" : "var(--muted)";
+}
+
+function aiFields() {
+  const provider = aiEls.provider.value;
+  aiEls.model.placeholder = provider ? (AI_MODELS[provider] || "Type a model name") : "";
+  for (const el of [aiEls.key, aiEls.model, aiEls.passphrase, aiEls.repeat, $("aiKeep"), $("aiSave")]) el.disabled = !provider;
+}
+
+async function loadAi() {
+  if (!ai) { aiMessage("AI support is missing from this build.", false); aiEls.provider.disabled = true; return; }
+  const meta = await ai.getMeta();
+  aiEls.provider.value = meta?.provider ?? "";
+  aiEls.model.value = meta?.model ?? "";
+  aiEls.key.value = aiEls.passphrase.value = aiEls.repeat.value = "";
+  aiEls.key.placeholder = meta ? "Key saved and encrypted. Paste it again to change something." : "Paste your key";
+  aiFields();
+  $("aiRemove").disabled = !meta;
+}
+
+async function saveAi() {
+  const provider = aiEls.provider.value;
+  if (!provider) { await removeAi(); return; }
+  try {
+    if (aiEls.passphrase.value !== aiEls.repeat.value) throw new Error("The two passphrases are not the same.");
+    const saved = await ai.saveConfig({ provider, key: aiEls.key.value, model: aiEls.model.value }, aiEls.passphrase.value, { keepUnlocked: $("aiKeep").checked });
+    // The browser's own dialog for this one AI service, in this click.
+    const allowed = await ai.hasAccess(provider) || await ai.requestAccess(provider);
+    aiMessage(allowed
+      ? `Saved and encrypted. "Summarize with AI" now shows in the clipper (${ai.serviceName(saved.provider)}, model ${saved.model}).`
+      : `Saved and encrypted. The browser will ask for access to ${ai.serviceName(provider)} when you press the button.`);
+    await loadAi();
+  } catch (error) {
+    aiMessage(error.message || "Could not save.", false);
+  }
+}
+
+async function removeAi() {
+  try {
+    const meta = await ai.getMeta();
+    await ai.clearConfig();
+    if (meta) await chrome.permissions.remove({ origins: [ai.serviceOrigin(meta.provider)] }).catch(() => {});
+    aiMessage("The key is removed and Summarize with AI is off.");
+    await loadAi();
+  } catch (error) {
+    aiMessage(error.message || "Could not remove the key.", false);
+  }
+}
+
+aiEls.provider.addEventListener("change", aiFields);
+$("aiSave").addEventListener("click", () => { void saveAi(); });
+$("aiRemove").addEventListener("click", () => { void removeAi(); });
+void loadAi();

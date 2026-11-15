@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "JotDrop Web Clipper",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Clip any page into JotDrop, the Google Keep alternative: Markdown in Obsidian, or your end-to-end encrypted JotDrop Cloud.",
   "permissions": [
     "activeTab",
@@ -13,7 +13,11 @@
     "http://localhost/*"
   ],
   "optional_host_permissions": [
-    "https://app.jotdrop.net/*"
+    "https://app.jotdrop.net/*",
+    "https://api.anthropic.com/*",
+    "https://api.openai.com/*",
+    "https://generativelanguage.googleapis.com/*",
+    "https://openrouter.ai/*"
   ],
   "icons": {
     "16": "icons/icon16.png",

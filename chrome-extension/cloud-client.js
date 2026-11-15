@@ -540,11 +540,18 @@
     const metadata = ["---", `tags: ${JSON.stringify(tags)}`, `pinned: ${payload.pinned === true}`, `color: ${color}`, "---"];
     const linkTitle = title.replace(/[\\\[\]]/g, "\\$&");
     const href = url.href.replace(/\(/g, "%28").replace(/\)/g, "%29").replace(/</g, "%3C").replace(/>/g, "%3E");
+    const summaryText = typeof payload.summary?.text === "string" ? payload.summary.text.replace(/\r\n?/g, "\n").trim().slice(0, 4e3) : "";
+    const summaryLabel = String(payload.summary?.label ?? "").replace(/[\r\n*_`]+/g, " ").trim().slice(0, 300);
+    const summary = summaryText ? `${summaryText}
+
+${summaryLabel ? `*${summaryLabel}*
+
+` : ""}` : "";
     const body = `# ${title}
 
 ${selection ? `> ${selection.replace(/\r?\n/g, "\n> ")}
 
-` : ""}[${linkTitle}](<${href}>)
+` : ""}${summary}[${linkTitle}](<${href}>)
 `;
     return `${metadata.join("\n")}
 

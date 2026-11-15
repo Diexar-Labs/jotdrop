@@ -92,6 +92,7 @@ async function init() {
   const settings = await getSettings();
   cloudWanted = settings.destination !== "obsidian";
   $("destinationName").textContent = DESTINATION_NAMES[settings.destination];
+  void initAi();
   const cloud = await refreshCloud().catch(() => null);
   if (cloudWanted && !cloud?.connected) {
     setStatus("Cloud: connect in Settings", "idle");
@@ -106,6 +107,76 @@ async function init() {
     setStatus("Ready", "idle");
   }
 }
+
+// --- Summarize with AI (0.3.0): the person's own key; the page text goes to their AI service only after the click ---
+
+let aiMeta = null;
+let aiResult = null;
+let aiBusy = false;
+
+/** The passphrase field and "Lock now" follow whether the key is open for this browser session. */
+async function refreshAi() {
+  const open = await JotDropAi.isUnlocked().catch(() => false);
+  $("aiUnlockField").hidden = open;
+  $("aiKeepField").hidden = open;
+  $("aiUnlocked").hidden = !open;
+}
+
+async function initAi() {
+  if (!globalThis.JotDropAi) return;
+  aiMeta = await JotDropAi.getMeta().catch(() => null);
+  $("aiBox").hidden = !aiMeta;
+  if (!aiMeta) return;
+  $("aiNote").textContent = `The text of this page goes to ${JotDropAi.serviceName(aiMeta.provider)}, model ${aiMeta.model}, when you press the button. Nothing else is sent.`;
+  await refreshAi();
+}
+
+async function readPageText(tabId) {
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: (limit) => (document.body ? document.body.innerText : "").slice(0, limit),
+    args: [JotDropAi.MAX_PAGE_CHARS],
+  });
+  return result || "";
+}
+
+async function summarizeWithAi() {
+  if (!activeTab || !aiMeta || aiBusy) return;
+  aiBusy = true;
+  $("aiSummarize").disabled = true;
+  const message = $("aiMessage");
+  const passphrase = $("aiUnlock");
+  try {
+    // The key opens with the passphrase, or is already open for this browser session.
+    const config = await JotDropAi.openConfig(passphrase.value, { keepUnlocked: $("aiKeep").checked });
+    passphrase.value = "";
+    await refreshAi();
+    // Asked once, in this click: the browser shows its own dialog for this one AI service.
+    if (!(await JotDropAi.hasAccess(config.provider)) && !(await JotDropAi.requestAccess(config.provider))) {
+      throw new Error(`Allow access to ${JotDropAi.serviceName(config.provider)} in the browser dialog to use this service.`);
+    }
+    message.textContent = "Reading the page and asking the AI service…";
+    const text = await readPageText(activeTab.id);
+    const result = await JotDropAi.summarize(config, { title: els.title.textContent, url: activeTab.url, text }, { signal: AbortSignal.timeout(60000) });
+    aiResult = result;
+    $("aiSummary").value = result.text;
+    $("aiSummaryField").hidden = false;
+    message.textContent = `${JotDropAi.summaryLine(result)}. Check it before you rely on it. It goes into the note when you save.`;
+  } catch (error) {
+    message.textContent = error?.message || "Summarizing failed.";
+    if (error?.code === "locked" && !$("aiUnlockField").hidden) passphrase.focus();
+  } finally {
+    aiBusy = false;
+    $("aiSummarize").disabled = false;
+  }
+}
+
+$("aiSummarize").addEventListener("click", () => { void summarizeWithAi(); });
+$("aiLock").addEventListener("click", async () => {
+  await JotDropAi.lock();
+  await refreshAi();
+  $("aiMessage").textContent = "AI key locked. Enter the passphrase to summarize.";
+});
 
 async function getSettings() {
   const defaults = { port: 27124, token: "" };
@@ -216,6 +287,9 @@ async function save() {
     color: els.color.value,
     pinned: els.pinned.checked,
   };
+  // The summary as the person left it; emptied, it stays out of the note.
+  const summary = $("aiSummary").value.trim();
+  if (aiResult && summary) payload.summary = { text: summary, label: JotDropAi.summaryLine(aiResult) };
 
   const settings = await getSettings();
 
@@ -246,7 +320,9 @@ async function save() {
  * with a token the plugin's clip server on 127.0.0.1, falling back to the link when it cannot be reached.
  * Returns "saved" (clip server), "opened" (link) or false (the error is already shown).
  */
-async function sendToObsidian(payload, settings) {
+async function sendToObsidian(clip, settings) {
+  // Obsidian's clip route knows a selection only: a summary goes into it (the cloud keeps it apart).
+  const payload = JotDropProtocol.foldSummary(clip);
   // Zero-config: no token → open the clip URI directly; Obsidian creates the card.
   if (JotDropProtocol.pickRoute(settings) === "direct") {
     return openObsidianUri(payload) ? "opened" : false;
