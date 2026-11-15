@@ -37,6 +37,19 @@ const JotDropProtocol = {
   },
 
   /**
+   * The Obsidian plugin's clip route knows a selection and nothing else, so a summary ("Summarize with AI", 0.3.0)
+   * goes into the selection: after the selected text, with the line that names the AI service. The result has no
+   * `summary` of its own. Used for the Obsidian route only; JotDrop Cloud puts the summary under the quote.
+   */
+  foldSummary(payload) {
+    const { summary, ...rest } = payload;
+    const text = summary && typeof summary.text === "string" ? summary.text.trim() : "";
+    if (!text) return rest;
+    const label = typeof summary.label === "string" ? summary.label.replace(/[\r\n]+/g, " ").trim() : "";
+    return { ...rest, selection: [payload.selection, text, label].filter(Boolean).join("\n\n") };
+  },
+
+  /**
    * Serializes a clip for the direct route, refusing URIs over the safe
    * length limit rather than silently truncating the selection.
    * Returns { ok: true, uri } or { ok: false, reason: "uri-too-long", length }.

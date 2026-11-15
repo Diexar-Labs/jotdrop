@@ -275,7 +275,8 @@ textarea { resize: vertical; }
   border: 1px dashed var(--field-line);
   border-radius: 10px;
 }
-.cloud-box input[type="password"] {
+.cloud-box input[type="password"],
+.ai-box input[type="password"] {
   padding: 6px 8px;
   border-radius: 8px;
   border: 1.5px solid var(--field-line);
@@ -285,6 +286,11 @@ textarea { resize: vertical; }
   font-size: 13px;
 }
 .cloud-box progress { width: 100%; margin: 0 0 8px; }
+/* "Summarize with AI": the same dashed frame as the cloud box. */
+.ai-box { margin: 0 0 8px; padding: 8px 10px 2px; border: 1px dashed var(--field-line); border-radius: 10px; }
+.ai-box[hidden] { display: none; }
+.ai-box .cloud-actions { display: flex; }
+.ai-box textarea { width: 100%; box-sizing: border-box; }
 .cloud-note { margin: 0 0 8px; font-size: 12px; }
 .cloud-actions { display: flex; gap: 8px; margin-bottom: 8px; }
 .cloud-actions:not(:has(button:not([hidden]))) { display: none; }

@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { buildWebClipperBundle } from "./build-web-clipper.mjs";
+import { buildWebClipperBundle, bundles } from "./build-web-clipper.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const staging = path.join(root, "release-staging");
@@ -28,6 +28,7 @@ const required = [
   "options/options.html",
   "options/options.js",
   "cloud-client.js",
+  "ai-client.js",
   "icons/icon16.png",
   "icons/icon48.png",
   "icons/icon128.png",
@@ -37,19 +38,21 @@ if (missing.length > 0) {
   throw new Error(`Missing required files in committed chrome-extension: ${missing.join(", ")}`);
 }
 
-// The committed cloud bundle must be the build of the committed source.
-const committedBundle = execFileSync("git", ["show", "HEAD:chrome-extension/cloud-client.js"], { cwd: root, encoding: "utf8" });
-if (committedBundle.replace(/\r\n/g, "\n") !== await buildWebClipperBundle()) {
-  throw new Error("Committed chrome-extension/cloud-client.js is not a fresh build. Run npm run build:web-clipper and commit.");
+// The committed bundles (cloud and AI) must be the builds of the committed sources.
+for (const { source, output } of bundles) {
+  const committedBundle = execFileSync("git", ["show", `HEAD:chrome-extension/${output}`], { cwd: root, encoding: "utf8" });
+  if (committedBundle.replace(/\r\n/g, "\n") !== await buildWebClipperBundle(source)) {
+    throw new Error(`Committed chrome-extension/${output} is not a fresh build. Run npm run build:web-clipper and commit.`);
+  }
 }
 
 // Package the committed subtree so the archive root is the extension root and
-// the contents match the tagged source exactly. cloud.mjs is only the source of
-// cloud-client.js (it imports ../cloud/shared, which is not in the package).
+// the contents match the tagged source exactly. cloud.mjs and ai.mjs are only the sources of
+// cloud-client.js and ai-client.js (they import ../cloud/shared, which is not in the package).
 fs.mkdirSync(staging, { recursive: true });
 execFileSync(
   "git",
-  ["archive", "--format=zip", `--output=${zipPath}`, "HEAD:chrome-extension", "--", ".", ":(exclude)cloud.mjs"],
+  ["archive", "--format=zip", `--output=${zipPath}`, "HEAD:chrome-extension", "--", ".", ":(exclude)cloud.mjs", ":(exclude)ai.mjs"],
   { cwd: root },
 );
 
@@ -68,7 +71,7 @@ function zipEntries(file) {
   return names;
 }
 const listed = zipEntries(zipPath);
-if (listed.includes("cloud.mjs") || !listed.includes("cloud-client.js") || !listed.includes("manifest.json")) {
+if (listed.includes("cloud.mjs") || listed.includes("ai.mjs") || !listed.includes("cloud-client.js") || !listed.includes("ai-client.js") || !listed.includes("manifest.json")) {
   throw new Error(`Unexpected package contents: ${listed.join(", ")}`);
 }
 const size = fs.statSync(zipPath).size;

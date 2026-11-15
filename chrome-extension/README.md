@@ -21,6 +21,23 @@ and choose under **Where clips go**:
 - **Both**: JotDrop Cloud and Obsidian. Only useful when your vault does not
   already sync with JotDrop Cloud, otherwise every clip arrives twice.
 
+## Summarize with AI (optional)
+
+With your own AI key, the popup gets a **Summarize with AI** button. In the clipper
+settings, under **Summarize with AI**, choose Claude, OpenAI, Gemini or OpenRouter,
+paste your key, pick a model and choose a passphrase that protects the key. The key is
+encrypted in your browser and never leaves it, except as the authorization of your own
+request to that service.
+
+- Only when you press the button, the page title, URL and text (at most 30,000
+  characters) go straight from your browser to the AI service you chose. JotDrop
+  receives nothing.
+- The summary shows in a box you can edit. It goes into the note when you save, under
+  the quote, with the line "Summary by <service>, model <model>". With Obsidian it
+  goes into the selected text of the clip.
+- The AI cannot make or change anything: the request has no tools.
+- You pay your AI service yourself. Set a spending limit there.
+
 ## Obsidian: zero-config quick start
 
 No token, no port, no options page needed:
@@ -107,14 +124,17 @@ handling enabled in JotDrop, the page's preview image is embedded.
   `chrome.storage.local`, sealed with your unlock passphrase. "Stay unlocked"
   keeps the unsealed keys only in `chrome.storage.session`, in memory, until the
   browser closes.
+- Summarize with AI: your AI key is encrypted with a passphrase you choose and kept in
+  `chrome.storage.local`. The page text goes to the AI service you chose, only when you
+  press the button, and to nobody else.
 - Nothing is stored in `chrome.storage.sync` or sent to any other server.
 
 The full privacy policy is in [privacy-policy.html](privacy-policy.html).
 
 ## For developers
 
-`cloud-client.js` is generated from `cloud.mjs` and `../cloud/shared` with
-`npm run build:web-clipper`; commit both. `npm run package:web-clipper` builds
+`cloud-client.js` and `ai-client.js` are generated from `cloud.mjs`, `ai.mjs` and
+`../cloud/shared` with `npm run build:web-clipper`; commit all of them. `npm run package:web-clipper` builds
 the store ZIP from the committed tree and refuses a stale bundle. Checks:
 `npm run check:web-clipper`, `node --test cloud/clipper.test.mjs`,
 `npm run check:web-clipper-cloud` (popup against a local cloud) and

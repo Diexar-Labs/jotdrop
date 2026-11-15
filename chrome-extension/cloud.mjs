@@ -63,7 +63,11 @@ export function clipMarkdown(payload) {
   const metadata = ['---', `tags: ${JSON.stringify(tags)}`, `pinned: ${payload.pinned === true}`, `color: ${color}`, '---'];
   const linkTitle = title.replace(/[\\\[\]]/g, '\\$&');
   const href = url.href.replace(/\(/g, '%28').replace(/\)/g, '%29').replace(/</g, '%3C').replace(/>/g, '%3E');
-  const body = `# ${title}\n\n${selection ? `> ${selection.replace(/\r?\n/g, '\n> ')}\n\n` : ''}[${linkTitle}](<${href}>)\n`;
+  // "Summarize with AI" (0.3.0): the person's own, edited summary goes under the quote, with the line that names the service.
+  const summaryText = typeof payload.summary?.text === 'string' ? payload.summary.text.replace(/\r\n?/g, '\n').trim().slice(0, 4000) : '';
+  const summaryLabel = String(payload.summary?.label ?? '').replace(/[\r\n*_`]+/g, ' ').trim().slice(0, 300);
+  const summary = summaryText ? `${summaryText}\n\n${summaryLabel ? `*${summaryLabel}*\n\n` : ''}` : '';
+  const body = `# ${title}\n\n${selection ? `> ${selection.replace(/\r?\n/g, '\n> ')}\n\n` : ''}${summary}[${linkTitle}](<${href}>)\n`;
   return `${metadata.join('\n')}\n\n${neutralizeInlineHashtags(body)}`;
 }
 

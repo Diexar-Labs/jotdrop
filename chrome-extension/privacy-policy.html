@@ -71,13 +71,13 @@
   <div class="container">
 
     <h1>JotDrop - Privacy Policy</h1>
-    <p class="meta">Effective date: 2026-11-06 &nbsp;|&nbsp; Publisher: DiexarLabs &nbsp;|&nbsp; License: MIT</p>
+    <p class="meta">Effective date: 2026-11-15 &nbsp;|&nbsp; Publisher: DiexarLabs &nbsp;|&nbsp; License: MIT</p>
 
-    <p>JotDrop Web Clipper is a Chrome extension that saves the current browser tab as a JotDrop note. You choose where clips go: to the JotDrop plugin in Obsidian on your own computer, to your end-to-end encrypted JotDrop Cloud, or to both. This page explains exactly what the extension does and does not do with your data.</p>
+    <p>JotDrop Web Clipper is a Chrome extension that saves the current browser tab as a JotDrop note. You choose where clips go: to the JotDrop plugin in Obsidian on your own computer, to your end-to-end encrypted JotDrop Cloud, or to both. If you add your own AI key, it can also write a short summary of the page for you. This page explains exactly what the extension does and does not do with your data.</p>
 
     <h2>1. Data collected by us</h2>
     <div class="none-box">None.</div>
-    <p>The extension has no analytics, no telemetry, no crash reporting and no advertising. In Obsidian mode it contacts no server at all. In JotDrop Cloud mode it sends your clips to your own JotDrop Cloud only in encrypted form, which we cannot read (see section 4), and it tells that server that it is the JotDrop Web Clipper and which version, so that you can see your devices and their versions in your cloud.</p>
+    <p>The extension has no analytics, no telemetry, no crash reporting and no advertising. In Obsidian mode it contacts no server at all. In JotDrop Cloud mode it sends your clips to your own JotDrop Cloud only in encrypted form, which we cannot read (see section 4), and it tells that server that it is the JotDrop Web Clipper and which version, so that you can see your devices and their versions in your cloud. If you turn on Summarize with AI, the text of a page goes from your browser straight to the AI service you chose, and not to us (see section 4).</p>
 
     <h2>2. What the extension reads from your browser</h2>
     <p>When you open the extension, it reads:</p>
@@ -85,6 +85,7 @@
       <li>The current tab's <strong>title</strong> and <strong>URL</strong></li>
       <li>Any <strong>text you have selected</strong> on the page (if any)</li>
     </ul>
+    <p>Only if you press <strong>Summarize with AI</strong>, it also reads the <strong>text of the page</strong> (at most 30,000 characters).</p>
     <p>This information is read on demand only, not continuously and not in the background. Nothing is saved until you press Save.</p>
 
     <h2>3. What is stored on this device</h2>
@@ -94,8 +95,9 @@
       <li>For Obsidian (optional): the <strong>port number</strong> of the JotDrop plugin's clip server and the <strong>bearer token</strong> that authenticates requests to it</li>
       <li>For JotDrop Cloud: the <strong>cloud keys</strong> of this browser (a device token and the key that encrypts your notes), <strong>sealed with an unlock passphrase</strong> you choose. The passphrase itself is never stored.</li>
       <li>For JotDrop Cloud: <strong>encrypted clips</strong> that are waiting to be uploaded, for example after a lost connection. They are encrypted before they are stored.</li>
+      <li>For Summarize with AI (optional): the <strong>AI service</strong> and <strong>model</strong> you chose, and <strong>your own AI key</strong>, sealed with a passphrase you choose (AES-GCM, the same way as the cloud keys). The passphrase itself is never stored.</li>
     </ul>
-    <p>If you tick "Stay unlocked until the browser closes", the unsealed cloud keys are kept in <code>chrome.storage.session</code>, which lives in memory only and is cleared when the browser closes or when you choose Lock now. "Disconnect this browser" in the settings removes the cloud keys and any waiting clips from this device.</p>
+    <p>If you tick "Stay unlocked until the browser closes", the unsealed cloud keys, or the unsealed AI key, are kept in <code>chrome.storage.session</code>, which lives in memory only and is cleared when the browser closes or when you choose Lock now. "Disconnect this browser" in the settings removes the cloud keys and any waiting clips from this device. "Remove key and turn off" removes the AI key.</p>
 
     <h2>4. Where your data goes</h2>
     <p><strong>Obsidian mode.</strong> Your clip never leaves your computer. It travels over one of two local routes:</p>
@@ -104,20 +106,24 @@
       <li><strong>Direct mode (default):</strong> the extension opens a local <code>obsidian://jotdrop-clip</code> link that is handled by the JotDrop plugin in Obsidian on your computer. The bearer token is never included in it.</li>
     </ul>
     <p><strong>JotDrop Cloud mode.</strong> The extension turns the clip into a Markdown note and encrypts it in your browser with your cloud key (AES-GCM) before it is sent. Only the encrypted note goes to <code>https://app.jotdrop.net</code>, the JotDrop Cloud you paired with, together with the device token that proves this browser is one of your devices. The server stores the encrypted note and technical data such as its size and time, but it cannot read the title, URL, selection or tags. Your cloud account and the cloud itself are covered by the JotDrop Cloud privacy policy at <a href="https://app.jotdrop.net/privacy">app.jotdrop.net/privacy</a>.</p>
+    <p><strong>Summarize with AI (optional, off until you add a key).</strong> Only when you press the button, the extension sends the page title, the page URL and the page text (at most 30,000 characters), together with a fixed request for a short summary, over HTTPS and straight from your browser to the address of the AI service you chose: <code>api.anthropic.com</code> (Claude), <code>api.openai.com</code> (OpenAI), <code>generativelanguage.googleapis.com</code> (Gemini) or <code>openrouter.ai</code> (OpenRouter). Your own key goes along as the authorization. The request passes no server of ours, and we receive nothing. The request has no tools, so the AI cannot make or change anything.</p>
+    <p>The answer appears in a box you can edit. It goes into your note only when you press Save, with a line that names the AI service and the model. In Obsidian mode it goes along in the selected text of the clip. What the AI service does with the text is set by its own terms and privacy policy, which you accepted when you made your account there. Page text can contain private or personal information: do not summarize a page you would not want to send to that service.</p>
     <p>Pairing uses a one-time code that you create yourself in the JotDrop web app. Connecting adds this browser as a device of your cloud, which is shown in the web app under Devices &amp; recovery, where you can also sign it out.</p>
 
     <h2>5. Third parties</h2>
-    <div class="none-box">None.</div>
-    <p>JotDrop shares no data with any third party. There are no embedded SDKs, no tracking pixels and no external scripts. All code runs from the extension package.</p>
+    <div class="none-box">None, unless you add your own AI key.</div>
+    <p>JotDrop shares no data with any third party. The one exception is the AI service you choose yourself for Summarize with AI: it receives the page text, title and URL when you press the button (section 4). We have no agreement with it and receive no data from it. There are no embedded SDKs, no tracking pixels and no external scripts. All code runs from the extension package.</p>
+    <p>JotDrop's use of information received from the browser adheres to the Chrome Web Store User Data Policy, including the Limited Use requirements. The text of a page is used only to make the summary you ask for. It is not sold, not used for advertising or to judge creditworthiness, and neither JotDrop nor anyone at JotDrop sees or reads it.</p>
 
     <h2>6. Permissions used</h2>
     <p>The extension requests only the permissions it needs:</p>
     <ul>
       <li><strong>activeTab</strong> - to read the title and URL of the current tab, only after you open the extension</li>
-      <li><strong>scripting</strong> - for a one-time read of the text you selected on the active tab when you open the extension</li>
-      <li><strong>storage</strong> - to keep the settings, sealed cloud keys and waiting encrypted clips described in section 3 on this device</li>
+      <li><strong>scripting</strong> - for a one-time read of the text you selected on the active tab when you open the extension, and, only when you press Summarize with AI, of the text of the page</li>
+      <li><strong>storage</strong> - to keep the settings, sealed cloud keys, the sealed AI key and waiting encrypted clips described in section 3 on this device</li>
       <li><strong>localhost host permissions</strong> (<code>http://127.0.0.1/*</code>, <code>http://localhost/*</code>) - to send clips only to the JotDrop plugin running on this computer</li>
       <li><strong>optional access to <code>https://app.jotdrop.net/*</code></strong> - requested only when you connect JotDrop Cloud, to pair with your cloud and upload encrypted clips. You can remove it at any time in Chrome's extension settings.</li>
+      <li><strong>optional access to the address of one AI service</strong> (<code>https://api.anthropic.com/*</code>, <code>https://api.openai.com/*</code>, <code>https://generativelanguage.googleapis.com/*</code> or <code>https://openrouter.ai/*</code>) - requested only for the service you choose when you save your key, to send the page text to that service and receive the summary. "Remove key and turn off" gives the access back.</li>
     </ul>
 
     <h2>7. Open source</h2>
