@@ -351,6 +351,12 @@ Content-Type: ${file.mime}\r
     if (provider === "openrouter") return (json?.data ?? []).map((m) => ({ id: m.id, name: m.name || m.id, tools: (m.supported_parameters ?? []).includes("tools"), price: Number(m.pricing?.prompt ?? 0) + Number(m.pricing?.completion ?? 0), ...Array.isArray(m.architecture?.input_modalities) ? { inputs: m.architecture.input_modalities } : {} }));
     return (json?.data ?? []).filter((m) => provider !== "openai" || !NOT_CHAT.test(m.id)).map((m) => ({ id: m.id, name: m.id, tools: null }));
   }
+  function pickDefaultModel(provider, models) {
+    const spec = PROVIDERS[provider];
+    if (spec?.defaultModel && models.some((m) => m.id === spec.defaultModel)) return spec.defaultModel;
+    if (provider === "openrouter") return models.filter((m) => m.tools && m.price > 0).sort((a, b) => a.price - b.price)[0]?.id ?? null;
+    return spec?.defaultModel ? models[0]?.id ?? null : null;
+  }
   function readError(status, json, text, secrets) {
     const info = json?.error ?? {};
     const message = typeof info === "string" ? info : info.message ?? (json ? "" : text);
@@ -522,6 +528,13 @@ ${escape(body)}
     if (!text) throw new AiError("bad_response");
     return { text, service: serviceName(clean.provider), model: clean.model };
   }
+  async function listModels(provider, key, { signal, fetcher } = {}) {
+    const { key: clean } = cleanConfig({ provider, key, model: "list" });
+    const models = await createProvider({ provider, key: clean, model: "list" }, fetcher).listModels({ signal });
+    if (!models.length) throw new AiError("bad_response");
+    const shown = models.map(({ id, name }) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+    return { models: shown, suggested: pickDefaultModel(provider, models) };
+  }
   var summaryLine = ({ service, model }) => `Summary by ${service}, model ${model}`;
   var local = () => globalThis.chrome?.storage?.local;
   var memory = () => globalThis.chrome?.storage?.session;
@@ -582,6 +595,6 @@ ${escape(body)}
     return permissions.request({ origins: [serviceOrigin(provider)] });
   }
   if (typeof chrome !== "undefined" && chrome.storage?.local) {
-    globalThis.JotDropAi = { MAX_PAGE_CHARS, MIN_PASSPHRASE, SERVICES, serviceName, serviceOrigin, cleanConfig, summarize, summaryLine, getMeta, isUnlocked, saveConfig, openConfig, lock, clearConfig, hasAccess, requestAccess };
+    globalThis.JotDropAi = { MAX_PAGE_CHARS, MIN_PASSPHRASE, SERVICES, serviceName, serviceOrigin, cleanConfig, summarize, listModels, summaryLine, getMeta, isUnlocked, saveConfig, openConfig, lock, clearConfig, hasAccess, requestAccess };
   }
 })();

@@ -228,8 +228,9 @@ function aiMessage(text, ok) {
 
 function aiFields() {
   const provider = aiEls.provider.value;
-  aiEls.model.placeholder = provider ? (AI_MODELS[provider] || "Type a model name") : "";
-  for (const el of [aiEls.key, aiEls.model, aiEls.passphrase, aiEls.repeat, $("aiKeep"), $("aiSave")]) el.disabled = !provider;
+  aiEls.model.placeholder = provider ? (AI_MODELS[provider] || "Press Load models, or type a name") : "";
+  for (const el of [aiEls.key, aiEls.model, aiEls.passphrase, aiEls.repeat, $("aiKeep"), $("aiSave"), $("aiLoadModels")]) el.disabled = !provider;
+  $("aiModelList").replaceChildren();
 }
 
 async function loadAi() {
@@ -272,7 +273,26 @@ async function removeAi() {
   }
 }
 
+// "Load models": the browser asks for access to this one service in the click, then the service's own list fills the field.
+async function loadAiModels() {
+  const provider = aiEls.provider.value;
+  if (!provider) return;
+  try {
+    if (!aiEls.key.value.trim()) throw new Error("Paste your key first, then press Load models.");
+    const allowed = await ai.hasAccess(provider) || await ai.requestAccess(provider);
+    if (!allowed) throw new Error(`Without access to ${ai.serviceName(provider)} the list cannot be loaded. You can also type a model name.`);
+    aiMessage("Loading the models...");
+    const { models, suggested } = await ai.listModels(provider, aiEls.key.value);
+    $("aiModelList").replaceChildren(...models.map((m) => { const option = document.createElement("option"); option.value = m.id; if (m.name !== m.id) option.label = m.name; return option; }));
+    if (!aiEls.model.value.trim() && suggested) aiEls.model.value = suggested;
+    aiMessage(`${models.length} models loaded from ${ai.serviceName(provider)}. Click the Model field to see them, type to narrow the list.`);
+  } catch (error) {
+    aiMessage(error.message || "Could not load the models.", false);
+  }
+}
+
 aiEls.provider.addEventListener("change", aiFields);
+$("aiLoadModels").addEventListener("click", () => { void loadAiModels(); });
 $("aiSave").addEventListener("click", () => { void saveAi(); });
 $("aiRemove").addEventListener("click", () => { void removeAi(); });
 void loadAi();

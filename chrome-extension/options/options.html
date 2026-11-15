@@ -129,8 +129,16 @@
 
     <label class="field">
       <span>Model</span>
-      <input id="aiModel" type="text" autocomplete="off" spellcheck="false" />
+      <div class="row">
+        <input id="aiModel" type="text" list="aiModelList" autocomplete="off" spellcheck="false" />
+        <button id="aiLoadModels" class="btn-secondary" type="button">Load models</button>
+      </div>
+      <datalist id="aiModelList"></datalist>
     </label>
+    <p class="hint">
+      Paste your key, then press "Load models": the list comes straight from your AI service and you pick from it. Type
+      to narrow the list down.
+    </p>
 
     <label class="field">
       <span>Passphrase to protect the key</span>
