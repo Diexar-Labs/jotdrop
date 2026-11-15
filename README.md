@@ -114,7 +114,7 @@ Step-by-step instructions for each part are under [Install](#install).
 - **Checklists** that you tick right on the card.
 - **Photos, voice memos and files** inside a note, with a full-screen photo view, a player and a chip for every other file.
 - **Excalidraw drawings** show as a picture on the card in Obsidian. JotDrop uses the picture the Excalidraw plugin saves next to the drawing, or asks the plugin to draw it. It only reads your drawings and never changes them.
-- **Ask JotDrop**, an optional AI assistant with your own key: ask about your notes, add to a list, summarize a note or tidy up a draft. In Obsidian, the web app and Android it can also write out a voice memo, read the text on a photo or put a receipt in the Paper drawer, with a file you point at. In the web app, on Android and in Obsidian, "This week" writes a short overview of your week, "Merge with AI" combines two notes that look alike, and "Find duplicates" finds notes that look alike, on your device and without AI. A change to a note waits until you apply it. See [Network use, accounts and payments](#network-use-accounts-and-payments).
+- **Ask JotDrop**, an optional AI assistant with your own key: ask about your notes, add to a list, summarize a note or tidy up a draft. In Obsidian, the web app and Android it can also write out a voice memo, read the text on a photo or put a receipt in the Paper drawer, with a file you point at. In the web app, on Android and in Obsidian, "This week" writes a short overview of your week, "Merge with AI" combines two notes that look alike, and "Find duplicates" finds notes that look alike, on your device and without AI. On Android it can also run without a key: "On this phone (no key)" downloads Gemma 4 from Google once and then works on the phone itself. A change to a note waits until you apply it. See [Network use, accounts and payments](#network-use-accounts-and-payments).
 - **Markdown help** for headings, lists, links, quotes, code and tables, while the card itself shows clean text without Markdown signs.
 - **Saves as you go**, and a note changed elsewhere is never silently overwritten.
 
@@ -214,7 +214,7 @@ Notes go to the `Mini Notes` folder of your vault; you can choose another folder
 
 ### Android app
 
-1. Install [JotDrop from Google Play](https://play.google.com/store/apps/details?id=com.diexar.keepcapture), or download [`jotdrop.apk` for Android 0.28.50](https://github.com/Diexar-Labs/jotdrop/releases/download/v0.28.50/jotdrop.apk), open the file on your phone and allow installs from this source when Android asks.
+1. Install [JotDrop from Google Play](https://play.google.com/store/apps/details?id=com.diexar.keepcapture), or download the latest [`jotdrop.apk`](https://github.com/Diexar-Labs/jotdrop/releases/latest/download/jotdrop.apk), open the file on your phone and allow installs from this source when Android asks.
 2. Open JotDrop. Choose **Continue with Google** for a free JotDrop Cloud, or **Use without cloud** and pick a folder for your notes (for example the vault folder you sync to your computer).
 3. From now on, the share menu of every app includes JotDrop.
 
@@ -344,6 +344,9 @@ No, unless you turn on "Use this key on all my devices", which is part of JotDro
 
 **Can Ask JotDrop read my photos, PDFs and voice memos?**
 Yes, in Obsidian, the web app and Android, but only a file you point at. Ask JotDrop never picks a file by itself, and a plain question about a note leaves its files at home. What a service can read differs: Claude reads photos and PDFs but cannot listen to recordings, Gemini and OpenAI can write out a recording, and a local model may or may not read photos. When a service cannot read a file, Ask JotDrop tells you before anything is sent. Drawings from the drawing editor do not go along. Joplin on the desktop can send files too; Joplin for Android cannot.
+
+**Can Ask JotDrop work without a key?**
+Yes, on Android. Choose "On this phone (no key)" in the Ask JotDrop settings. JotDrop downloads Gemma 4 from Google once, straight from Hugging Face (2.6 GB for E2B, 3.7 GB for E4B), and after that your notes, photos and voice memos stay on your phone. It can make a note when you ask, summarize, rewrite, make a checklist, read a photo or a receipt and write out a recording of up to 5 minutes. "This week" and "Merge with AI" need an AI service with a key. The phone needs at least 6 GB of memory, and a small model can get things wrong, so check what it made. The [Android privacy policy](docs/android-privacy-policy.md) explains the download.
 
 **Does Find duplicates send my notes anywhere?**
 No. Find duplicates compares your notes on your device, without AI, in the web app, on Android and in Obsidian. Only "Merge with AI", which you start yourself for one pair, sends those two notes to your AI service. In Obsidian the pairs you keep with "Keep both" are remembered on that computer only, outside your vault, and they do not sync.
