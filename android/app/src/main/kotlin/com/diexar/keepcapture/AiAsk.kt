@@ -67,6 +67,8 @@ object AiAsk {
     fun plan(
         notes: List<AiNote>, request: String, excluded: Set<String> = emptySet(), pinned: String? = null, target: Boolean = false,
         summarize: Boolean = false, includeShared: Boolean = false, maxNotes: Int = AiContext.MAX_NOTES, maxChars: Int = AiContext.MAX_CHARS,
+        // The model on this phone (15 Nov 2026): it seldom searches by itself, so a question no note matches takes the newest notes along.
+        newestWhenNone: Boolean = false,
     ): AiPlan {
         if (target && pinned == null) return AiPlan(emptyList(), emptyList(), emptyList(), missing = true)
         if (summarize) {
@@ -77,7 +79,10 @@ object AiAsk {
         // Something new needs no notes up front; the AI can still search for one.
         val question = if (pinned == null && isCreate(request)) "" else matchText(request)
         // Chosen from all notes, so that an unticked note leaves its place empty instead of letting another one in unseen.
-        val candidates = AiContext.selectNotes(notes, question, maxNotes = maxNotes, maxChars = maxChars, includeShared = includeShared, pinned = listOfNotNull(pinned)).notes
+        val matched = AiContext.selectNotes(notes, question, maxNotes = maxNotes, maxChars = maxChars, includeShared = includeShared, pinned = listOfNotNull(pinned)).notes
+        val newest = if (!newestWhenNone || matched.isNotEmpty() || pinned != null || question.isBlank()) null
+            else notes.filter { includeShared || !it.shared }.sortedByDescending { it.updatedAt ?: "" }.map { it.id }
+        val candidates = if (newest == null) matched else AiContext.selectNotes(notes, "", maxNotes = maxNotes, maxChars = maxChars, pinned = newest).notes
         val byId = notes.associateBy { it.id }
         val shown = candidates.mapNotNull { byId[it.id] } + notes.filter { it.id in excluded && candidates.none { c -> c.id == it.id } }
         return AiPlan(notes.filter { it.id !in excluded }, candidates.filter { it.id !in excluded }, shown, missing = false)

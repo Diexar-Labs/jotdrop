@@ -271,7 +271,8 @@ private fun AskScreen(
 
     // What goes along, decided from the notes as they are now: the list on screen and the request use the same plan.
     fun plan(text: String, unticked: Set<String>): AiPlan = AiAsk.plan(executor.notes, text, unticked,
-        pinned = target?.let(executor::idOf), target = target != null, summarize = summarize, includeShared = settings.includeShared, maxChars = maxChars)
+        pinned = target?.let(executor::idOf), target = target != null, summarize = summarize, includeShared = settings.includeShared, maxChars = maxChars,
+        newestWhenNone = phone && !fixed)
 
     // Why a file cannot go with this service, in words, or null. The size is known before reading; a photo is made small first.
     fun fileProblem(file: AiFileRef): String? {
@@ -286,13 +287,14 @@ private fun AskScreen(
     fun send() {
         val text = request.trim()
         if (text.isEmpty() || job != null) return
-        // On this phone a free question (it needs tools) cannot be sent; a merge replaces a note's text with a tool.
-        if (phone && !fixed) return
+        // On this phone a merge cannot be sent: it replaces a note's text with a tool, and the fixed actions have none.
         if (phone && merge != null) { notice = R.string.ai_local_no_merge; return }
         val sending = files.filter { it.name in filesOn && fileProblem(it) == null }
         if (action != null && (keptOut || sending.isEmpty())) { chooseFile = !keptOut; return }
         chooseFile = false
         asked = text
+        // A typed or spoken question leaves the field once sent (it stays in the answer as "asked"), so the next one can go in at once.
+        if (!fixed) request = ""
         report = null
         savedNote = false
         addedBelow = false
@@ -364,22 +366,23 @@ private fun AskScreen(
                     now.notes to now.chosen
                 }
                 if (draft != null && AiNoteEdits.draftTooLong(kind, chosen)) { notice = R.string.ai_draft_too_long; return@launch }
-                // On this phone the whole text goes, or nothing: "Replace text" must never lose the rest of a note.
-                if (phone && chosen.any { it.truncated }) { notice = R.string.ai_local_too_long; return@launch }
+                // On this phone a fixed action gets the whole text, or nothing: "Replace text" must never lose the rest of a note.
+                if (phone && fixed && chosen.any { it.truncated }) { notice = R.string.ai_local_too_long; return@launch }
                 val (tools, prompt) = withContext(Dispatchers.IO) { AiAssets.get(context) }
                 val day = SimpleDateFormat("yyyy-MM-dd EEEE", Locale.US).format(Date())
-                val system = if (phone) AiLocalPrompt.system(language, day, TimeZone.getDefault().id)
+                val system = if (phone) AiLocalPrompt.system(language, day, TimeZone.getDefault().id, labels = if (fixed) null else executor.labels)
                     else AiPrompt.system(prompt, language, day, TimeZone.getDefault().id, executor.labels)
                 report = AiAssistant.run(
                     request = text,
                     notes = notes,
                     labels = executor.labels,
-                    // The model on this phone answers in words only: no tools, so it never makes or changes a note.
-                    tools = if (phone) emptyList() else tools,
+                    // A fixed action on this phone is words only: no tools, so it never makes or changes a note. A free
+                    // question has the tools, as with any service: a new note at once, a change only after the user's yes.
+                    tools = if (phone && fixed) emptyList() else tools,
                     system = system,
                     provider = ::ai,
                     // The draft is not saved yet, so the AI changes nothing: the answer waits for Replace or Add below.
-                    executor = if (draft != null || phone) emptyMap() else executor.tools,
+                    executor = if (draft != null || (phone && fixed)) emptyMap() else executor.tools,
                     confirm = if (draft != null) { _ -> false } else { change -> val answer = CompletableDeferred<Boolean>(); pending = Pending(change, answer); answer.await().also { pending = null } },
                     includeShared = settings.includeShared,
                     secrets = listOf(settings.key),
@@ -544,7 +547,7 @@ private fun AskScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     if (job == null) {
                         if (!fixed) OutlinedButton(onClick = { dictate() }) { Icon(Icons.Filled.Mic, contentDescription = null); Text(" " + stringResource(R.string.ai_dictate)) }
-                        Button(onClick = { send() }, enabled = request.isNotBlank() && (action == null || (loaded && !keptOut && files.isNotEmpty())) && !(phone && !fixed)) { Text(stringResource(R.string.ai_send)) }
+                        Button(onClick = { send() }, enabled = request.isNotBlank() && (action == null || (loaded && !keptOut && files.isNotEmpty()))) { Text(stringResource(R.string.ai_send)) }
                         // Only from the plain ask screen, as on the web: not about one card, not from the editor. Not on this
                         // phone: the local models left notes out and mixed up facts in the week overview (14 Nov 2026).
                         if (!fixed && target == null && !phone) OutlinedButton(onClick = { context.startActivity(AskActivity.weekIntent(context)); onClose() }) { Text(stringResource(R.string.ai_week)) }
@@ -553,9 +556,7 @@ private fun AskScreen(
                     }
                 }
                 Text(if (phone) stringResource(R.string.ai_local_stays, model) else stringResource(R.string.ai_goes_to, provider, model.ifEmpty { "?" }),
-                    style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
-                if (phone && !fixed) Text(stringResource(R.string.ai_local_fixed_only), modifier = Modifier.padding(top = 8.dp))
-            }
+                    style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))            }
             if (!loaded) item {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
                 Text(stringResource(R.string.ai_reading_notes), style = MaterialTheme.typography.bodySmall)
@@ -727,8 +728,9 @@ private fun AiResult(
             "max_rounds" -> Text(stringResource(R.string.ai_problem, stringResource(R.string.ai_stop_max_rounds)), color = MaterialTheme.colorScheme.error)
             "refusal" -> Text(stringResource(R.string.ai_stop_refusal))
         }
-        // An answer without words (a silent recording, a blank page) says so, as the web app does.
-        if (report.stop == "done" && report.answer.isBlank()) Text(stringResource(R.string.ai_no_answer))
+        // An answer without words (a silent recording, a blank page) says so, as the web app does. Not after an action:
+        // the model on this phone often ends silently after making a note (15 Nov 2026), and "What happened" says it.
+        if (report.stop == "done" && report.answer.isBlank() && report.actions.isEmpty()) Text(stringResource(R.string.ai_no_answer))
         // A receipt the app could read shows as the receipt screen, not as the AI's raw answer.
         if (report.answer.isNotBlank() && !hideAnswer) Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

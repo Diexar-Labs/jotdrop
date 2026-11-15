@@ -278,8 +278,7 @@
     <string name="ai_error_local_failed">Das Modell auf diesem Telefon hat mit einem Fehler aufgehört. Versuche es erneut.</string>
     <string name="ai_error_local_unsupported">Das Modell auf diesem Telefon kann das noch nicht. Wähle dafür einen KI-Dienst mit Schlüssel.</string>
     <string name="ai_local_stays">Bleibt auf diesem Telefon, Modell %1$s. Nichts geht hinaus.</string>
-    <string name="ai_local_fixed_only">Auf diesem Telefon erledigt Ask JotDrop nur feste Aufgaben: \"Mit KI zusammenfassen\", \"Mit KI abschreiben\", \"Foto mit KI lesen\" und \"Beleg in die Paper drawer\" im Menü einer Karte und die KI-Knöpfe im Editor. Für freie Fragen und \"Diese Woche\" brauchst du einen KI-Dienst mit Schlüssel.</string>
-    <string name="ai_local_no_merge">Zusammenführen geht nur mit einem KI-Dienst mit Schlüssel: Das Modell auf diesem Telefon ändert keine Notizen.</string>
+    <string name="ai_local_no_merge">Zusammenführen geht nur mit einem KI-Dienst mit Schlüssel.</string>
     <string name="ai_local_too_long">Diese Notiz ist zu lang für das Modell auf diesem Telefon (höchstens etwa 6.000 Zeichen einer Notiz auf einmal). Ein KI-Dienst mit Schlüssel kann es.</string>
     <string name="ai_local_working">Läuft auf diesem Telefon. Das kann ein paar Minuten dauern; du kannst jederzeit stoppen.</string>
     <string name="ai_local_sent">Auf diesem Telefon gelesen, nichts hat es verlassen: %1$s</string>
