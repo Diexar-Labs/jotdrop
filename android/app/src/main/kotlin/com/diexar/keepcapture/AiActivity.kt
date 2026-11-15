@@ -293,6 +293,8 @@ private fun AskScreen(
         if (action != null && (keptOut || sending.isEmpty())) { chooseFile = !keptOut; return }
         chooseFile = false
         asked = text
+        // A typed or spoken question leaves the field once sent (it stays in the answer as "asked"), so the next one can go in at once.
+        if (!fixed) request = ""
         report = null
         savedNote = false
         addedBelow = false

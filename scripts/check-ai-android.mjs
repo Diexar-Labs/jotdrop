@@ -187,6 +187,8 @@ if (!/if \(!fixed && target == null && !phone\) OutlinedButton\(onClick = \{ con
 {
   const activity = readFileSync(path.join(kotlin, 'AiActivity.kt'), 'utf8');
   if (/if \(phone && !fixed\) return|!\(phone && !fixed\)/.test(activity)) throw new Error('AiActivity.kt: a free question on this phone must not be blocked');
+  // 15 Nov 2026, Eric: what was typed or spoken stayed in the field after Send; it must leave so the next question can go in at once.
+  if (!/asked = text\s*\n\s*\/\/[^\n]*\n\s*if \(!fixed\) request = ""/.test(activity)) throw new Error('AiActivity.kt: a typed or spoken question must leave the field after Send');
   if (!activity.includes('tools = if (phone && fixed) emptyList() else tools,')) throw new Error('AiActivity.kt: a free question on this phone must get the tools');
   if (!activity.includes('executor = if (draft != null || (phone && fixed)) emptyMap() else executor.tools,')) throw new Error('AiActivity.kt: a free question on this phone must get the executor');
 }
