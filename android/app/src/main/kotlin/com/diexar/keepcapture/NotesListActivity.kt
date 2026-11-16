@@ -2444,7 +2444,7 @@ private fun applyFilters(
     return notes.filter { note ->
         val matchesQuery = q.isEmpty() ||
             note.title.lowercase().contains(q) ||
-            note.snippet.lowercase().contains(q) ||
+            Storage.plainSnippet(note.snippet).lowercase().contains(q) ||
             note.meta.allTags.any { it.lowercase().contains(q) }
         // OR-semantiek binnen tags: notitie matcht als 'ie minstens één van de gekozen tags heeft.
         // Sparse handmatige tags maken AND-mode (vrijwel) altijd leeg, daarom OR.
@@ -2740,7 +2740,7 @@ private fun repeatIndicatorLabel(repeat: String?): String? {
     }
 }
 
-private data class PreviewLayoutRow(val source: PreviewTaskRow, val text: AnnotatedString, val lines: Int, val height: Int)
+private data class PreviewLayoutRow(val source: PreviewTaskRow, val text: AnnotatedString, val lines: Int, val height: Int, val table: FormatCore.Table? = null)
 private data class PreviewLayout(val rows: List<PreviewLayoutRow>, val tasks: Int, val more: Int, val checked: Int, val hidden: Boolean)
 
 private const val MAX_CARD_TASKS = 10
@@ -2759,12 +2759,75 @@ internal fun previewIsChecklist(rows: List<PreviewTaskRow>): Boolean {
     return content.isNotEmpty() && content.all { it.checklistIndex != null }
 }
 
+// On a card a table is small (design opmaak-editor, part 9): 3 columns, the header and 3 rows, the rest in words.
+private const val CARD_TABLE_COLUMNS = 3
+private const val CARD_TABLE_ROWS = 3
+
+/** The card rows with each table as one row (its text: the table in words), and the tables by row. */
+private fun previewRowsWithTables(snippet: String): Pair<List<PreviewTaskRow>, Map<Int, FormatCore.Table>> {
+    val rows = previewTaskRows(snippet)
+    val runs = if ('|' in snippet) FormatCore.blocks(snippet).filter { it.kind == "table" } else emptyList()
+    if (runs.isEmpty()) return rows to emptyMap()
+    val lines = snippet.split("\n")
+    val out = mutableListOf<PreviewTaskRow>()
+    val tables = HashMap<Int, FormatCore.Table>()
+    var line = 0
+    for (run in runs) {
+        while (line < run.fromLine) out += rows[line++]
+        val own = lines.subList(run.fromLine, run.toLine + 1)
+        tables[out.size] = FormatCore.parseTable(own)
+        out += PreviewTaskRow(Storage.plainSnippet(own.joinToString("\n")), null)
+        line = run.toLine + 1
+    }
+    while (line < rows.size) out += rows[line++]
+    return out to tables
+}
+
+@Composable
+private fun CardTable(table: FormatCore.Table, style: TextStyle, foreground: Color, rowHeight: Dp, moreHeight: Dp) {
+    val columns = minOf(CARD_TABLE_COLUMNS, table.header.size)
+    val line = foreground.copy(alpha = 0.14f)
+    @Composable
+    fun cells(sources: List<String>, header: Boolean, shade: Boolean) {
+        Row(Modifier.fillMaxWidth().height(rowHeight)
+            .then(if (shade) Modifier.background(foreground.copy(alpha = 0.06f)) else Modifier)
+            .drawBehind {
+                val width = (if (header) 1.5.dp else 1.dp).toPx()
+                drawLine(if (header) foreground.copy(alpha = 0.6f) else line, Offset(0f, size.height - width / 2), Offset(size.width, size.height - width / 2), width)
+            },
+            verticalAlignment = Alignment.CenterVertically) {
+            for (i in 0 until columns) {
+                Text(Storage.cardCellText(sources[i]), style = if (header) style.copy(fontWeight = FontWeight.Bold) else style,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(horizontal = 4.dp),
+                    textAlign = when (table.align[i]) { "center" -> TextAlign.Center; "right" -> TextAlign.End; else -> TextAlign.Start })
+            }
+        }
+    }
+    // TalkBack reads the table as one item, cell by cell.
+    Column(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}) {
+        cells(table.header, header = true, shade = false)
+        table.rows.take(CARD_TABLE_ROWS).forEachIndexed { index, row -> cells(row, header = false, shade = index % 2 == 1) }
+        val moreColumns = table.header.size - columns
+        val moreRows = table.rows.size - CARD_TABLE_ROWS
+        if (moreColumns > 0 || moreRows > 0) {
+            val parts = buildList {
+                if (moreColumns > 0) add(pluralStringResource(R.plurals.card_table_more_columns, moreColumns, moreColumns))
+                if (moreRows > 0) add(pluralStringResource(R.plurals.card_table_more_rows, moreRows, moreRows))
+            }
+            Text(parts.joinToString(" · "), style = style, color = foreground.copy(alpha = 0.7f), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 2.dp).height(moreHeight))
+        }
+    }
+}
+
 @Composable
 private fun CompactNotePreview(
     snippet: String, accent: Color, foreground: Color, style: TextStyle, boardHeight: Dp,
     onOpen: () -> Unit, onTask: (Int) -> Unit, onUrl: (String) -> Unit,
 ) {
-    val rows = remember(snippet) { previewTaskRows(snippet) }
+    val withTables = remember(snippet) { previewRowsWithTables(snippet) }
+    val rows = withTables.first
+    val tables = withTables.second
     val checklist = remember(rows) { previewIsChecklist(rows) }
     // A task ticked here keeps its place until the pen has struck it through, then joins the checked ones.
     val checkedNow = remember(rows) { rows.filter { it.checklistIndex != null && checkedTaskRow.containsMatchIn(it.text) }.mapNotNull { it.checklistIndex }.toSet() }
@@ -2784,6 +2847,8 @@ private fun CompactNotePreview(
         val width = with(density) { maxWidth.roundToPx() }
         val touchHeight = with(density) { 32.dp.roundToPx() }
         val taskStyle = style.copy(lineHeight = 2.2.em)
+        var tableRowPx = 0
+        var tableLinePx = 0
         fun measure(): PreviewLayout {
             val visible = mutableListOf<PreviewLayoutRow>()
             var used = 0
@@ -2808,8 +2873,21 @@ private fun CompactNotePreview(
             }
             val budget = with(density) { minOf(200.dp, boardHeight * .4f).roundToPx() }
             val oneLine = measurer.measure(AnnotatedString("Ag"), style, constraints = Constraints(maxWidth = width)).size.height.coerceAtLeast(1)
+            tableRowPx = oneLine + with(density) { 4.dp.roundToPx() }
+            tableLinePx = oneLine
             var hidden = false
-            for (row in rows) {
+            for ((index, row) in rows.withIndex()) {
+                val table = tables[index]
+                if (table != null) {
+                    // A table is on the card whole or not at all; its height is known before it is drawn.
+                    val shown = minOf(CARD_TABLE_ROWS, table.rows.size)
+                    val more = table.header.size > CARD_TABLE_COLUMNS || table.rows.size > CARD_TABLE_ROWS
+                    val height = (1 + shown) * tableRowPx + (if (more) oneLine + with(density) { 2.dp.roundToPx() } else 0)
+                    if (used + height > budget) { hidden = true; break }
+                    visible += PreviewLayoutRow(row, AnnotatedString(""), 0, height, table)
+                    used += height
+                    continue
+                }
                 val maxLines = ((budget - used) / oneLine).coerceAtMost(1000)
                 if (maxLines <= 0) { hidden = true; break }
                 val annotated = renderPreviewAnnotated(row.text, accent, checklists = false)
@@ -2824,7 +2902,9 @@ private fun CompactNotePreview(
         val chosen = measure()
         Column(Modifier.fillMaxWidth()) {
             chosen.rows.forEachIndexed { rowIndex, row ->
-                androidx.compose.runtime.key(if (checklist) row.source.checklistIndex ?: "text-$rowIndex" else "text-$rowIndex") {
+                if (row.table != null) androidx.compose.runtime.key("table-$rowIndex") {
+                    CardTable(row.table, style, foreground, with(density) { tableRowPx.toDp() }, with(density) { tableLinePx.toDp() })
+                } else androidx.compose.runtime.key(if (checklist) row.source.checklistIndex ?: "text-$rowIndex" else "text-$rowIndex") {
                     val index = if (checklist) row.source.checklistIndex else null
                     val checked = index != null && checkedTaskRow.containsMatchIn(row.source.text)
                     val ticked = remember(row.text) { if (index == null) emptyMap() else tickedTasks(row.text) }

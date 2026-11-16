@@ -1996,22 +1996,75 @@ object Storage {
             else if (lines.size > 1) lines.drop(1).joinToString("\n")
             else "",
         )
+        val restLines = rest.split("\n")
+        val runs = FormatCore.blocks(rest)
+        // A table stays as Markdown, so the card can draw it as a table (design opmaak-editor, part 9).
+        if (runs.none { it.kind == "table" }) return snippetLimit(snippetPlain(rest))
+        val parts = mutableListOf<Pair<String, Boolean>>()
+        var from = 0
+        for (run in runs.filter { it.kind == "table" }) {
+            if (run.fromLine > from) parts += snippetPlain(restLines.subList(from, run.fromLine).joinToString("\n")) to false
+            parts += cardTableSource(restLines.subList(run.fromLine, run.toLine + 1)) to true
+            from = run.toLine + 1
+        }
+        if (from < restLines.size) parts += snippetPlain(restLines.subList(from, restLines.size).joinToString("\n")) to false
+        val whole = parts.filter { it.first.isNotEmpty() }
+        val joined = whole.joinToString("\n") { it.first }
+        if (snippetTask.containsMatchIn(joined)) return joined
+        // The 280 characters count text only and never cut a table: it is on the card whole or not at all.
+        val out = StringBuilder()
+        var used = 0
+        for ((text, table) in whole) {
+            val separator = if (out.isEmpty()) "" else "\n"
+            if (table) { if (used >= 280) break; out.append(separator).append(text); continue }
+            val room = 280 - used - separator.length
+            if (room <= 0) break
+            out.append(separator).append(text.take(room))
+            used += separator.length + minOf(room, text.length)
+        }
+        return out.toString()
+    }
+
+    /**
+     * A table as the card needs it: the header, the delimiter and 3 rows as they are, every further row as `||`, so the
+     * card can still count it ("+ 12 rows") without carrying the whole table in the list.
+     */
+    private fun cardTableSource(lines: List<String>): String =
+        lines.mapIndexed { index, line -> if (index < 5) line else "||" }.joinToString("\n")
+
+    private fun snippetPlain(text: String): String =
         // URLs strippen — die worden als chips onderaan getoond (plugin-pariteit).
         // Markdown-link-syntax behoudt het label, losse URLs verdwijnen volledig.
         // Daarna opmaaktekens weg (plugin-pariteit), en `\#tag` zonder backslash.
-        val stripped = CardText.plain(rest
-            // Geen Markdown-tekens op de kaart (Eric): elke link toont alleen zijn label.
-            .replace(snippetMdLink, "$1")
-            .replace(snippetWikiLink) { m ->
-                m.groupValues[2].ifEmpty { m.groupValues[1].substringBefore('#') }
-            }
-            .replace(snippetUrl, ""))
+        CardText.plain(cardLinks(text))
             .lineSequence()
             .map { it.trimEnd() }
             .joinToString("\n")
             .trimEnd()
-        // Every task stays on the card, however many: they tick from the overview (Eric, 7 nov).
-        return if (snippetTask.containsMatchIn(stripped)) stripped else stripped.take(280)
+
+    // Geen Markdown-tekens op de kaart (Eric): elke link toont alleen zijn label.
+    private fun cardLinks(text: String): String = text
+        .replace(snippetMdLink, "$1")
+        .replace(snippetWikiLink) { m ->
+            m.groupValues[2].ifEmpty { m.groupValues[1].substringBefore('#') }
+        }
+        .replace(snippetUrl, "")
+
+    // Every task stays on the card, however many: they tick from the overview (Eric, 7 nov).
+    private fun snippetLimit(stripped: String) = if (snippetTask.containsMatchIn(stripped)) stripped else stripped.take(280)
+
+    /** A table cell on a card: one line of plain text, links as their label. */
+    fun cardCellText(source: String): String =
+        CardText.plain(cardLinks(FormatCore.cellText(source)).replace('\n', ' ')).replace(Regex("\\s+"), " ").trim()
+
+    /** A card text as plain text for search and the widget: a table in it becomes its rows with " · ", as before. */
+    fun plainSnippet(snippet: String): String {
+        if ('|' !in snippet) return snippet
+        val lines = snippet.split("\n")
+        return FormatCore.blocks(snippet).joinToString("\n") { run ->
+            val own = lines.subList(run.fromLine, run.toLine + 1).joinToString("\n")
+            if (run.kind == "table") CardText.plain(own).lines().filter { it.isNotBlank() }.joinToString("\n") else own
+        }
     }
 
     /** A heading further down keeps its words on the card, without the `#` signs; code in a fence stays as it is. */

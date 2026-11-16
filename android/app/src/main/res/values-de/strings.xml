@@ -5,6 +5,14 @@
         <item quantity="one">Notiz öffnen - noch %d Aufgabe</item>
         <item quantity="other">Notiz öffnen - noch %d Aufgaben</item>
     </plurals>
+    <plurals name="card_table_more_columns">
+        <item quantity="one">+ %d Spalte</item>
+        <item quantity="other">+ %d Spalten</item>
+    </plurals>
+    <plurals name="card_table_more_rows">
+        <item quantity="one">+ %d Zeile</item>
+        <item quantity="other">+ %d Zeilen</item>
+    </plurals>
     <plurals name="card_preview_checked">
         <item quantity="one">+ %d erledigtes Element</item>
         <item quantity="other">+ %d erledigte Elemente</item>

@@ -1,6 +1,8 @@
 import { CloudClient, identifyClient } from '/shared/client.mjs';
 import { mergeNote } from '/shared/merge.mjs';
 import { cardPreview, checklistOnly, tagOnly } from '/shared/card-preview.mjs';
+import { blocks, parseTable } from '/shared/format.mjs';
+import { cardTable } from '/shared/format-dom.mjs';
 import { diffLines, foldUnchanged } from '/shared/diff.mjs';
 import { findDuplicates, pairKey } from '/shared/similar.mjs';
 import { digestRequest, weekDigest } from '/shared/ai/digest.mjs';
@@ -821,22 +823,34 @@ function render() {
         const path = attachmentPath(target, entry.file.path, available.map((item) => item.file.path));
         return Boolean(path && mediaType(path) && available.some((item) => item.file.path === path));
       };
-      const flush = () => {
-        // Media show below the text, so their links go; any other link shows only its label (Eric: no Markdown signs on a card).
-        // A heading keeps its words without the # signs, like in Obsidian and on Android.
-        const value = plainPreviewText(text.join('\n').replace(/^\s{0,3}#{1,6}[ \t]+/gm, '').replace(/!\[\[[^\]]+\]\]|!\[[^\]]*\]\([^)]+\)/g, '')
+      // Media show below the text, so their links go; any other link shows only its label (Eric: no Markdown signs on a card).
+      // A heading keeps its words without the # signs, like in Obsidian and on Android.
+      const cardText = (value) => plainPreviewText(value.replace(/^\s{0,3}#{1,6}[ \t]+/gm, '').replace(/!\[\[[^\]]+\]\]|!\[[^\]]*\]\([^)]+\)/g, '')
           .replace(/\[([^\]\n]+)\]\(([^)\n]+)\)/g, (_link, label, target) => (!/^https?:/i.test(target) && shownAsMedia(target) ? '' : label))
           .replace(/\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\]/g, (_link, name, alias) => alias || name.replace(/#.*$/, ''))
           // A bare web address shows as a link chip below the text, like the plugin and Android.
           .replace(/https?:\/\/[^\s)<>"']+/g, '').replace(/[ \t]{2,}/g, ' ').replace(/[ \t]+([.,;:!?])/g, '$1'))
           .replace(/\n{3,}/g, '\n\n').trim();
+      const flush = () => {
+        const value = cardText(text.join('\n'));
         if (value) previewRows.push({ text: value });
         text = [];
       };
       // Like Keep: only a note of nothing but tasks is a checklist card; in any other note a task reads as ☐/☑ text.
+      // A table is a row of its own: a small real table (design opmaak-editor, part 9).
+      const tables = new Map(blocks(parts.body).filter((run) => run.kind === 'table').map((run) => [run.fromLine, run]));
       const build = (asText) => {
         previewRows.length = 0; text = []; fence = undefined;
+        let inTable = -1;
         parts.body.split('\n').forEach((line, bodyIndex) => {
+          if (bodyIndex <= inTable) return;
+          const table = tables.get(bodyIndex);
+          if (table) {
+            flush();
+            previewRows.push({ table: parseTable(bodyLines.slice(table.fromLine, table.toLine + 1)) });
+            inTable = table.toLine;
+            return;
+          }
           if (bodyIndex === titleLine) return;
           const marker = /^\s{0,3}(`{3,}|~{3,})/.exec(line)?.[1];
           if (marker) { if (!fence) fence = marker; else if (marker[0] === fence[0] && marker.length >= fence.length) fence = undefined; }
@@ -852,6 +866,7 @@ function render() {
       build(false);
       if (previewRows.some(isTask) && !checklistOnly(previewRows, isTask, isMeta)) build(true);
       const renderRow = (rowData) => {
+        if (rowData.table) return cardTable(document, rowData.table, { plain: cardText });
         if (!rowData.task) return paragraph(rowData.text, 'note-preview');
         const { task, bodyIndex } = rowData;
         const row = document.createElement('label'); row.className = 'task-row';
@@ -879,7 +894,7 @@ function render() {
         return row;
       };
       const previewControl = cardPreview(preview, previewRows, {
-        isTask, isMeta, render: renderRow,
+        isTask, isMeta, render: renderRow, atomic: (row) => Boolean(row.table),
         isChecked: (row) => row.task[1] !== ' ',
         // A task ticked here keeps its place until the pen has struck it through.
         lingering: (row) => justStruck?.key === `${entry.file.path}:${row.bodyIndex}` ? Math.max(0, STRIKE_MS - (performance.now() - justStruck.at)) : 0,

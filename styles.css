@@ -695,6 +695,15 @@
 }
 .jotdrop-card-preview { display: flex; flex-direction: column; gap: 4px; }
 .jotdrop-preview-line, .jotdrop-preview-task { flex: none; }
+/* A table on a card (design opmaak-editor, part 9): 3 columns, the header and 3 rows, the rest in words. */
+.jotdrop-card-preview .jd-card-table { flex: none; min-width: 0; color: var(--text-muted); }
+.jotdrop-card-preview .jd-card-table table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: .9em; margin: 0; }
+.jotdrop-card-preview .jd-card-table th, .jotdrop-card-preview .jd-card-table td { padding: 2px 4px; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; border: none; border-bottom: 1px solid var(--background-modifier-border); }
+.jotdrop-card-preview .jd-card-table th { font-weight: var(--font-semibold); color: var(--text-normal); border-bottom: 1.5px solid var(--text-muted); }
+.jotdrop-card-preview .jd-card-table tbody tr:nth-child(even) > * { background: var(--background-modifier-hover); }
+.jotdrop-card-preview .jd-card-table .jd-align-center { text-align: center; }
+.jotdrop-card-preview .jd-card-table .jd-align-right { text-align: right; }
+.jotdrop-card-preview .jd-table-more { margin: 2px 0 0; font-size: .85em; color: var(--text-faint); }
 .jotdrop-preview-task { display: flex; align-items: flex-start; }
 .jotdrop-preview-task .jotdrop-task-text { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .jotdrop-card .compact-preview-controls { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 8px; margin-top: 6px; }

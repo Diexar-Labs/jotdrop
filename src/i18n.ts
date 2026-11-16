@@ -22,6 +22,7 @@ const EN: Record<string, string> = {
   preview_open: "Open note",
   preview_checked_one: "+ {0} checked item", preview_checked_many: "+ {0} checked items",
   preview_open_one: "Open note - {0} more task", preview_open_many: "Open note - {0} more tasks",
+  table_more_column: "+ {0} column", table_more_columns: "+ {0} columns", table_more_row: "+ {0} row", table_more_rows: "+ {0} rows",
   preview_changed: "This checklist changed. The card will refresh; try again.",
   // App / commands
   open_jotdrop: "Open JotDrop",
@@ -508,6 +509,7 @@ const NL: Record<string, string> = {
   preview_open: "Open notitie",
   preview_checked_one: "+ {0} afgevinkt item", preview_checked_many: "+ {0} afgevinkte items",
   preview_open_one: "Open notitie - nog {0} taak", preview_open_many: "Open notitie - nog {0} taken",
+  table_more_column: "+ {0} kolom", table_more_columns: "+ {0} kolommen", table_more_row: "+ {0} rij", table_more_rows: "+ {0} rijen",
   preview_changed: "Deze checklist is veranderd. De kaart wordt vernieuwd; probeer het opnieuw.",
   checklist_mark_unchecked: "Checklist-item als niet voltooid markeren",
   action_new_note: "Nieuwe notitie",

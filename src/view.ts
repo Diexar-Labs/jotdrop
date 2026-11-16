@@ -1,7 +1,8 @@
 import { App, ItemView, Menu, Modal, Notice, TFile, WorkspaceLeaf, normalizePath, setIcon } from "obsidian";
 import { PAPER_DRAWER, drawerLabel, drawerName, inDrawer, isPaperDrawer } from "../cloud/shared/paper.mjs";
 import { cardPreview, tagOnly } from "../cloud/shared/card-preview.mjs";
-import { checklistPreviewRows, wrapTaskText } from "./metadata";
+import { cardTable } from "../cloud/shared/format-dom.mjs";
+import { type CardTable, checklistPreviewRows, previewPlain, wrapTaskText } from "./metadata";
 import type JotDropPlugin from "./main";
 import { QuickCaptureModal, createNoteInFolder } from "./capture";
 import { AttachmentPreviewHint, EditNoteModal } from "./edit";
@@ -2170,7 +2171,7 @@ export class JotDropView extends ItemView {
     const previewRows = isDrawing ? [] : checklistPreviewRows(content);
     const fullPreview = previewRows.map((row) => row.text).join("\n");
     const plainTruncated = !previewRows.some((row) => row.index !== undefined) && previewText !== fullPreview;
-    if (!previewRows.some((row) => row.index !== undefined) && previewText) previewRows.splice(0, previewRows.length, { text: previewText });
+    if (!previewRows.some((row) => row.index !== undefined || row.table) && previewText) previewRows.splice(0, previewRows.length, { text: previewText });
     const urls = isDrawing ? [] : extractUrls(content);
 
     const body = cardEl.createDiv({ cls: "jotdrop-card-body" });
@@ -2294,7 +2295,17 @@ export class JotDropView extends ItemView {
         // Like Keep: only a note of nothing but tasks is a checklist card; elsewhere a task reads as ☐/☑ text.
         isChecked: (row: { checked?: boolean }) => Boolean(row.checked),
         isMeta: (row: { text: string }) => tagOnly(row.text),
-        render: (row: { text: string; index?: number; checked?: boolean }, asText: boolean) => {
+        atomic: (row: { table?: CardTable }) => Boolean(row.table),
+        render: (row: { text: string; index?: number; checked?: boolean; table?: CardTable }, asText: boolean) => {
+          if (row.table) {
+            return cardTable(preview.ownerDocument, row.table, {
+              plain: previewPlain,
+              more: (columns: number, rows: number) => [
+                columns ? t(columns === 1 ? "table_more_column" : "table_more_columns", String(columns)) : "",
+                rows ? t(rows === 1 ? "table_more_row" : "table_more_rows", String(rows)) : "",
+              ].filter(Boolean).join(" · "),
+            });
+          }
           const el = createDiv({ cls: row.index === undefined || asText ? "jotdrop-preview-line" : "jotdrop-preview-task" });
           if (row.index === undefined || asText) el.setText(row.text);
           else {
