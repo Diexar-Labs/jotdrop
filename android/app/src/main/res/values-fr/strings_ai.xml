@@ -19,6 +19,8 @@
     <string name="ai_model">Modèle</string>
     <string name="ai_load_models">Tester et charger les modèles</string>
     <string name="ai_pick_model">Choisir un modèle</string>
+    <string name="ai_search_models">Rechercher dans la liste</string>
+    <string name="ai_models_match">%1$d modèles sur %2$d</string>
     <string name="ai_models_loaded">Connecté : %1$d modèles. Choisi : %2$s.</string>
     <string name="ai_all_models">Tous les modèles</string>
     <string name="ai_no_tools">Ne peut pas utiliser d\'outils : réponses seulement, aucun changement</string>

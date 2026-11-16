@@ -19,6 +19,8 @@
     <string name="ai_model">Model</string>
     <string name="ai_load_models">Test en laad modellen</string>
     <string name="ai_pick_model">Kies een model</string>
+    <string name="ai_search_models">Zoek in de lijst</string>
+    <string name="ai_models_match">%1$d van %2$d modellen</string>
     <string name="ai_models_loaded">Verbonden: %1$d modellen. Gekozen: %2$s.</string>
     <string name="ai_all_models">Alle modellen</string>
     <string name="ai_no_tools">Kan geen gereedschap gebruiken: alleen antwoorden, geen wijzigingen</string>
