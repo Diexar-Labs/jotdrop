@@ -14,6 +14,8 @@ from contextlib import closing
 from pathlib import Path
 
 from playwright.sync_api import expect, sync_playwright
+sys.dont_write_bytecode = True
+from browser_check import fill_body  # noqa: E402
 
 PASSWORD = "synthetic sharing passphrase"
 HOSTILE = '<img src=x onerror="window.__xss=1"> <script>window.__xss=1</script> [click](javascript:window.__xss=1) ![pic](javascript:window.__xss=1)'
@@ -56,7 +58,7 @@ def check_sharing(browser, url, codes, directory):
     def new_note(page, title, body):
         page.locator("#new-note").click()
         page.locator("#note-title").fill(title)
-        page.locator("#note-body").fill(body)
+        fill_body(page, body)
         page.locator('#editor-form button[type="submit"]').click()
         page.locator("#editor").wait_for(state="hidden")
 
@@ -208,7 +210,7 @@ def check_sharing(browser, url, codes, directory):
     # --- The free plan shares one note; the app says so.
     ana.locator("#new-note").click()
     ana.locator("#note-title").fill("Second")
-    ana.locator("#note-body").fill("Second note")
+    fill_body(ana, "Second note")
     ana.locator('#editor-form button[type="submit"]').click()
     ana.locator("#editor-message").filter(has_text="free plan").wait_for()
     ana.locator("#editor").evaluate("(dialog) => dialog.close()")
@@ -305,7 +307,7 @@ def check_sharing(browser, url, codes, directory):
     menu_target = card(ana, "Groceries")
     menu_target.hover()
     menu_target.get_by_role("button", name="Open note").click()
-    ana.locator("#note-body").fill(f"- [ ] milk\n{HOSTILE}\nhttps://example.com/x\n")
+    fill_body(ana, f"- [ ] milk\n{HOSTILE}\nhttps://example.com/x\n")
     ana.locator('#editor-form button[type="submit"]').click()
     ana.locator("#editor").wait_for(state="hidden")
     ana.locator("#sync-status").filter(has_text="up to date").wait_for()
@@ -454,7 +456,7 @@ def check_sharing(browser, url, codes, directory):
         target = card(page, "Trip")
         target.hover()
         target.get_by_role("button", name="Open note").click()
-        page.locator("#note-body").fill(f"{text}\n\n![](../attachments/photo.png)")
+        fill_body(page, f"{text}\n\n![](../attachments/photo.png)")
         page.locator('#editor-form button[type="submit"]').click()
         page.locator("#editor").wait_for(state="hidden")
         page.locator("#sync-status").filter(has_text=re.compile("up to date|changed in two places")).wait_for()
@@ -469,7 +471,7 @@ def check_sharing(browser, url, codes, directory):
     target = card(eric, "Packing for two")
     target.hover()
     target.get_by_role("button", name="Open note").click()
-    eric.locator("#note-body").fill("Packing unsent\n\n![](../attachments/photo.png)")
+    fill_body(eric, "Packing unsent\n\n![](../attachments/photo.png)")
     eric.locator('#editor-form button[type="submit"]').click()
     eric.locator("#editor").wait_for(state="hidden")
     card(eric, "Packing unsent").wait_for()

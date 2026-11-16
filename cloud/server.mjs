@@ -1719,10 +1719,13 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   // The house fonts (SIL Open Font License), served from here like everything else the page loads.
   for (const name of ['instrument-sans.woff2', 'bricolage-grotesque.woff2', 'caveat.woff2']) assets.set(`/fonts/${name}`, [join(webRoot, 'fonts', name), 'font/woff2']);
   assets.set('/import.mjs', [join(webRoot, 'import.mjs'), 'text/javascript']);
+  // The formatted editor (npm run build:cloud-editor) and its style; the page loads them only when the editor is needed.
+  assets.set('/editor.mjs', [join(webRoot, 'editor.mjs'), 'text/javascript']);
+  assets.set('/editor.css', [join(webRoot, 'editor.css'), 'text/css']);
   // An invitation link opens the app on its own path: /# is for the way back from Google or GitHub.
   assets.set('/join', [join(webRoot, 'index.html'), 'text/html']);
   assets.set('/family', [join(webRoot, 'index.html'), 'text/html']);
-  for (const name of ['account.mjs', 'words.mjs', 'merge.mjs', 'diff.mjs', 'spaces.mjs', 'links.mjs', 'drawing.mjs', 'drawing-editor.mjs', 'mail.mjs', 'paper.mjs', 'expiry.mjs', 'list-links.mjs', 'similar.mjs', 'format.mjs', 'format-dom.mjs']) assets.set(`/shared/${name}`, [join(directory, 'shared', name), 'text/javascript']);
+  for (const name of ['account.mjs', 'words.mjs', 'merge.mjs', 'diff.mjs', 'spaces.mjs', 'links.mjs', 'drawing.mjs', 'drawing-editor.mjs', 'mail.mjs', 'paper.mjs', 'expiry.mjs', 'list-links.mjs', 'similar.mjs', 'format.mjs', 'format-dom.mjs', 'table-grid.mjs']) assets.set(`/shared/${name}`, [join(directory, 'shared', name), 'text/javascript']);
   assets.set('/vendor/hash-wasm.mjs', [join(directory, '../node_modules/hash-wasm/dist/index.esm.min.js'), 'text/javascript']);
   // The page's only inline script is its import map; allow exactly that content.
   const importMap = /<script type="importmap">([^<]*)<\/script>/.exec(readFileSync(join(webRoot, 'index.html'), 'utf8'))?.[1];

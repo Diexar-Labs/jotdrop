@@ -242,6 +242,45 @@ def check_browser(browser, url, enrollment_token):
         second_context.close()
 
 
+# The note's text in the simple editor view is the formatted editor (cloud/web/editor.mjs, design opmaak-editor) once it
+# has loaded, which the page does on its own when it is idle; the plain #note-body text box is its safety net.
+BODY_EDITOR = "#note-editor .cm-content"
+# The text part of #note-content, as splitNote in cloud/web/note.mjs takes it: no front matter, no # title line.
+BODY_JS = r"""() => {
+  const text = document.getElementById('note-content').value;
+  const front = /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/.exec(text)?.[0] || '';
+  const rest = text.slice(front.length);
+  const heading = /^#[ \t]+(.*?)[ \t]*(?:\r?\n|$)(?:[ \t]*\r?\n)?/.exec(rest);
+  return heading ? rest.slice(heading[0].length) : rest;
+}"""
+
+
+def body_editor(page):
+    """The formatted note editor, after it has loaded."""
+    box = page.locator(BODY_EDITOR)
+    box.wait_for(state="visible")
+    return box
+
+
+def fill_body(page, text):
+    """Replaces the note's text in the formatted editor, as typing or pasting would."""
+    body_editor(page).click()
+    page.keyboard.press("ControlOrMeta+a")
+    if text:
+        page.keyboard.insert_text(text)
+    else:
+        page.keyboard.press("Delete")
+
+
+def body_text(page):
+    """The note's text as the editor holds it (the source, with its Markdown signs)."""
+    return page.evaluate(BODY_JS)
+
+
+def body_has_focus(page):
+    return page.evaluate("Boolean(document.activeElement?.closest('#note-editor'))")
+
+
 def use_markdown_editor(browser):
     """Most checks type whole Markdown files, so open the editor in its Markdown view.
     The simple title/text view has its own check (editor_browser_check.py)."""
@@ -268,7 +307,12 @@ def main(check=check_browser, history_limit=5, camera=False, with_data=False):
             line = process.stdout.readline()
             assert "JotDrop Cloud listening" in line, "Local test server did not start."
             with sync_playwright() as playwright:
-                browser = playwright.chromium.launch(headless=True, channel=sys.argv[1] if len(sys.argv) > 1 else "msedge", args=["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"] if camera else [])
+                # The first argument is a Chromium channel (default msedge), or "firefox" or "webkit" for Playwright's own builds.
+                choice = sys.argv[1] if len(sys.argv) > 1 else "msedge"
+                if choice in ("firefox", "webkit"):
+                    browser = getattr(playwright, choice).launch(headless=True)
+                else:
+                    browser = playwright.chromium.launch(headless=True, channel=choice, args=["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"] if camera else [])
                 use_markdown_editor(browser)
                 try:
                     result = check(browser, f"http://127.0.0.1:{port}", token, *([Path(directory)] if with_data else []))

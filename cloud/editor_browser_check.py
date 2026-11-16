@@ -2,7 +2,7 @@
 import re
 import sys
 sys.dont_write_bytecode = True
-from browser_check import main
+from browser_check import body_has_focus, body_text, fill_body, main
 from playwright.sync_api import expect
 
 
@@ -36,7 +36,7 @@ def check_editor(browser, url, token):
         assert page.locator("#markdown-editor").is_hidden() and page.locator("#note-title").is_visible()
         assert page.evaluate("document.activeElement.id") == "note-title"
         page.locator("#note-title").fill("Pasta recipe")
-        page.locator("#note-body").fill("Boil water.")
+        fill_body(page, "Boil water.")
         page.locator('#editor-form button[type="submit"]').click()
         synced()
         recipe = page.locator(".note-card").filter(has_text="Pasta recipe")
@@ -45,17 +45,18 @@ def check_editor(browser, url, token):
         page.locator("#new-note").click()
         page.locator("#note-title").fill("Groceries")
         page.locator("#note-title").press("Enter")
-        assert page.evaluate("document.activeElement.id") == "note-body"
+        assert body_has_focus(page)
         page.keyboard.type("milk")
         page.locator("#insert-checklist").click()
-        assert page.locator("#note-body").input_value() == "- [ ] milk"
+        assert body_text(page) == "- [ ] milk", body_text(page)
         page.locator("#insert-checklist").click()
-        assert page.locator("#note-body").input_value() == "- [x] milk"
-        page.locator("#note-body").press("End")
+        assert body_text(page) == "- [x] milk", body_text(page)
+        page.keyboard.press("End")
+        # Enter in a list starts the next item, as in Obsidian and Android.
         page.keyboard.type("\nsee ")
         page.locator("#insert-link").click()
         page.get_by_role("menu").get_by_role("menuitem", name="Pasta recipe").click()
-        assert page.locator("#note-body").input_value().endswith("see [[" + recipe.get_attribute("data-path")[6:-3] + "]]"), page.locator("#note-body").input_value()
+        assert body_text(page) == "- [x] milk\n- [ ] see [[" + recipe.get_attribute("data-path")[6:-3] + "]]", body_text(page)
 
         # Color, pin, labels and tags are buttons and chips, not raw YAML.
         colors = page.locator("#note-colors").get_by_role("radio")
@@ -88,7 +89,7 @@ def check_editor(browser, url, token):
         times.fill("3")
         times.press("Tab")
         text = raw()
-        for expected in ["# Groceries\n\n- [x] milk", 'color: "pink"', "pinned: true", 'jotdrop_labels: ["Home"]', 'tags: ["errands"]', 'reminder: "2028-10-16T14:30"', 'reminder_repeat: "weekly:1,3"', "reminder_limit: 3"]:
+        for expected in ["# Groceries\n\n- [x] milk\n- [ ] see [[", 'color: "pink"', "pinned: true", 'jotdrop_labels: ["Home"]', 'tags: ["errands"]', 'reminder: "2028-10-16T14:30"', 'reminder_repeat: "weekly:1,3"', "reminder_limit: 3"]:
             assert expected in text, (expected, text)
         page.locator("#repeat-type").select_option("ordinal")
         page.locator("#repeat-editor").get_by_label("Which week").select_option("5")
@@ -115,10 +116,10 @@ def check_editor(browser, url, token):
         # The Markdown view shows the whole file; edits there show up in the simple view.
         page.locator("#markdown-mode").click()
         assert page.locator("#markdown-mode").get_attribute("aria-pressed") == "true" and page.locator("#note-content").is_visible()
-        page.locator("#note-content").fill(raw().replace("- [x] milk", "- [x] milk\n- [ ] bread"))
+        page.locator("#note-content").fill(raw().replace("- [x] milk\n", "- [x] milk\n- [ ] bread\n"))
         page.locator("#markdown-mode").click()
         assert page.locator("#note-title").input_value() == "Groceries"
-        assert "- [ ] bread" in page.locator("#note-body").input_value()
+        assert "- [ ] bread" in body_text(page)
         page.locator('#editor-form button[type="submit"]').click()
         synced()
         card = page.locator(".note-card").filter(has_text="Groceries")
@@ -128,18 +129,18 @@ def check_editor(browser, url, token):
         # Previous/next follow the card order and save edits first.
         card.locator("h3").click()
         assert page.locator("#note-prev").is_disabled() and not page.locator("#note-next").is_disabled()
-        page.locator("#note-body").fill(page.locator("#note-body").input_value() + "\n- [ ] eggs")
+        fill_body(page, body_text(page) + "\n- [ ] eggs")
         page.locator("#note-next").click()
         expect(page.locator("#note-title")).to_have_value("Pasta recipe")
         page.keyboard.press("Alt+ArrowLeft")
         expect(page.locator("#note-title")).to_have_value("Groceries")
-        assert "- [ ] eggs" in page.locator("#note-body").input_value()
+        assert "- [ ] eggs" in body_text(page)
         page.locator("#close-editor").click()
         synced()
 
         # Like the plugin and Android: a note without a heading has its first line as title, not its filename, and not twice.
         page.locator("#new-note").click()
-        page.locator("#note-body").fill("Just a quick thought")
+        fill_body(page, "Just a quick thought")
         page.locator('#editor-form button[type="submit"]').click()
         synced()
         thought = page.locator(".note-card").filter(has_text="Just a quick thought")

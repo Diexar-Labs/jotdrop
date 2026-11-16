@@ -1,0 +1,65 @@
+/* The formatted note editor (editor.mjs) and its table grid. This sheet is loaded inside the editor's shadow root, so
+   style.css does not reach in here; the house colors come through the custom properties, which do. */
+:host { display: block; }
+[hidden] { display: none !important; }
+.jd-editor { color: var(--ink); }
+/* Like the plain text box it replaces: same field, line and corners. */
+.jd-editor .cm-editor { border: 1.5px solid var(--field-line); border-radius: 10px; background: var(--field); min-height: calc(12 * 1.55em + 1.4rem); max-height: 62vh; }
+.jd-editor .cm-editor.cm-focused { outline: 3px solid var(--focus); outline-offset: 3px; }
+.jd-editor .cm-editor .cm-scroller { font-family: inherit; line-height: 1.55; overflow: auto; }
+/* min-width 0: a wide table must not stretch the editor; it scrolls inside its own frame instead. */
+.jd-editor .cm-editor .cm-content { padding: .7rem; caret-color: var(--accent); min-height: calc(12 * 1.55em); min-width: 0; max-width: 100%; }
+.jd-editor .cm-editor .cm-line { padding: 0; }
+.jd-editor .cm-editor .cm-placeholder { color: var(--muted); }
+.jd-editor .cm-editor ::selection, .jd-editor .cm-editor .cm-content ::selection { background: var(--selected); }
+
+/* A sign shows only where you type, in a muted tint (the rule of Obsidian's Live Preview). */
+.cm-jd-sign { color: var(--muted); opacity: .75; }
+.cm-jd-bold { font-weight: 700; }
+.cm-jd-italic { font-style: italic; }
+.cm-jd-strike { text-decoration: line-through; }
+/* The marker pen: yellow in light, a darker amber in dark, with the text color kept readable. */
+.cm-jd-mark { background: light-dark(#fde68a, #6b5413); border-radius: 3px; }
+.cm-jd-code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .92em; background: color-mix(in srgb, var(--ink) 8%, transparent); border-radius: 4px; padding: 0 .15em; }
+.cm-jd-link { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.cm-jd-h { font-family: var(--heading); font-weight: 700; }
+.cm-jd-h1 { font-size: 1.45em; }
+.cm-jd-h2 { font-size: 1.3em; }
+.cm-jd-h3 { font-size: 1.15em; }
+.cm-jd-h4, .cm-jd-h5, .cm-jd-h6 { font-size: 1.05em; }
+.cm-jd-quote { border-left: 3px solid var(--line); padding-left: .7rem !important; font-style: italic; color: color-mix(in srgb, var(--ink) 85%, var(--muted)); }
+.cm-jd-bullet { display: inline-block; min-width: .6em; font-size: 1.2em; line-height: 1; font-weight: 700; color: var(--ink); }
+.cm-jd-number { font-variant-numeric: tabular-nums; }
+.cm-jd-box { cursor: pointer; font-size: 1.1em; line-height: 1; user-select: none; }
+.cm-jd-done { color: var(--muted); }
+.cm-jd-rule .cm-jd-hr { display: inline-block; width: 100%; vertical-align: middle; border-top: 2px solid var(--line); }
+.cm-jd-codeblock { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .92em; background: color-mix(in srgb, var(--ink) 6%, transparent); }
+.cm-jd-fence { color: var(--muted); }
+
+/* The table grid (table-grid.mjs), as the read-only table in style.css: bold header with a line under it, light
+   lines between rows, every other row a little darker. Wide tables scroll inside their own frame; the first column
+   stays put. A column is at most about 220 px; longer text wraps inside the cell. */
+.jd-grid-block { padding: .35rem 0; }
+.jd-table { max-width: 100%; }
+.jd-grid { overflow-x: auto; }
+.jd-grid table { border-collapse: collapse; width: max-content; max-width: none; }
+.jd-grid th, .jd-grid td { padding: 0; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); min-width: 56px; max-width: 220px; }
+.jd-grid th { font-weight: 700; border-bottom: 1.5px solid currentColor; }
+.jd-grid tbody tr:nth-child(even) > * { background: color-mix(in srgb, var(--ink) 6%, var(--field)); }
+.jd-grid th:first-child, .jd-grid td:first-child { position: sticky; left: 0; z-index: 1; background: var(--field); }
+.jd-grid tbody tr:nth-child(even) > :first-child { background: color-mix(in srgb, var(--ink) 6%, var(--field)); }
+.jd-grid .jd-align-center { text-align: center; }
+.jd-grid .jd-align-right { text-align: right; }
+.jd-cell { min-height: 1.55em; padding: .25rem .45rem; overflow-wrap: anywhere; white-space: normal; cursor: text; }
+.jd-cell:focus-visible, .jd-cell.jd-editing { outline: 2px solid var(--focus); outline-offset: -2px; }
+.jd-cell-input { display: block; width: 100%; min-width: 0; margin: 0; padding: 0; border: 0; resize: none; overflow: hidden; background: transparent; color: inherit; font: inherit; text-align: inherit; line-height: 1.55; outline: none; }
+.jd-bold { font-weight: 700; }
+.jd-italic { font-style: italic; }
+.jd-strike { text-decoration: line-through; }
+.jd-mark { background: light-dark(#fde68a, #6b5413); border-radius: 3px; }
+.jd-code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .92em; }
+.jd-link { color: var(--accent); text-decoration: underline; }
+/* A tap strip above or below a table at the very start or end of the note, to write text there. */
+.jd-grid-strip { display: block; width: 100%; margin: .2rem 0; padding: .3rem .5rem; border: 1px dashed var(--field-line); border-radius: 8px; background: transparent; color: var(--muted); font: inherit; font-size: .85em; text-align: left; cursor: text; }
+.jd-grid-strip:hover { color: var(--ink); border-color: var(--edge); }
+.jd-grid-strip:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }

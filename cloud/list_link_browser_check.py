@@ -11,6 +11,8 @@ import threading
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
+sys.dont_write_bytecode = True
+from browser_check import fill_body  # noqa: E402
 
 PASSWORD = "synthetic list link passphrase"
 
@@ -61,7 +63,7 @@ def check_list_link(browser, url, codes):
         owner.locator("#secure-later").click()
         owner.locator("#new-note").click()
         owner.locator("#note-title").fill("Groceries")
-        owner.locator("#note-body").fill("- [ ] milk\n- [ ] eggs\n- [ ] bread\n")
+        fill_body(owner, "- [ ] milk\n- [ ] eggs\n- [ ] bread\n")
         owner.locator('#editor-form button[type="submit"]').click()
         owner.locator("#editor").wait_for(state="hidden")
         owner.locator("#sync-status").filter(has_text="Cloud copy up to date").wait_for()
