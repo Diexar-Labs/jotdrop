@@ -4348,7 +4348,18 @@ function renderAiSettings() {
 }
 // The service's models as a plain list in groups. A suggestion list (datalist) showed only the models matching what
 // was already in the field, so after the default was filled in it showed one family only (Eric, 9 Nov 2026).
+let aiModelsLoaded = { models: [], preferred: undefined };
 function showAiModels(models, preferred) {
+  aiModelsLoaded = { models, preferred };
+  $('ai-model-filter').value = '';
+  renderAiModelList();
+  $('ai-model-pick').hidden = !models.length;
+}
+// The search words must all occur in the name or the id; the groups stay, with only the matching models in them.
+function renderAiModelList() {
+  const { models: all, preferred } = aiModelsLoaded;
+  const words = $('ai-model-filter').value.toLowerCase().split(/\s+/).filter(Boolean);
+  const models = all.filter((model) => words.every((word) => `${model.name} ${model.id}`.toLowerCase().includes(word)));
   const label = (model) => model.name === model.id ? model.id : `${model.name} (${model.id})`;
   const groups = modelGroups($('ai-provider').value, models, preferred).map((group) => {
     const element = document.createElement('optgroup');
@@ -4356,10 +4367,10 @@ function showAiModels(models, preferred) {
     element.append(...group.models.map((model) => new Option(label(model), model.id)));
     return element;
   });
-  $('ai-model-list').replaceChildren(new Option(`Choose one of ${models.length} models`, ''), ...groups);
+  $('ai-model-list').replaceChildren(new Option(words.length ? `${models.length} of ${all.length} models match` : `Choose one of ${all.length} models`, ''), ...groups);
   $('ai-model-list').value = models.some((model) => model.id === $('ai-model').value) ? $('ai-model').value : '';
-  $('ai-model-pick').hidden = !models.length;
 }
+$('ai-model-filter').addEventListener('input', renderAiModelList);
 function aiSay(text, problem = false) {
   $('ai-message').textContent = problem && text ? `Problem: ${text}` : text;
   $('ai-message').classList.toggle('message', problem);

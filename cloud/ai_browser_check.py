@@ -196,6 +196,14 @@ def check_ai(browser, url, token):
         suggested = page.locator('#ai-model-list optgroup[label="Suggested"] option').all_inner_texts()
         assert suggested == ["Claude Haiku 5.5 (anthropic/claude-haiku-5.5)", "Mistral Nemo (mistralai/mistral-nemo)"], suggested
         assert page.locator("#ai-model-list option").first.inner_text() == "Choose one of 3 models"
+        # Searching narrows the list to the models that have every word in the name or id; the groups stay.
+        page.locator("#ai-model-filter").fill("mistral nemo")
+        assert page.locator("#ai-model-list option").first.inner_text() == "1 of 3 models match"
+        assert page.locator("#ai-model-list option").all_inner_texts() == ["1 of 3 models match", "Mistral Nemo (mistralai/mistral-nemo)", "Mistral Nemo (mistralai/mistral-nemo)"]
+        page.locator("#ai-model-filter").fill("zzz")
+        assert page.locator("#ai-model-list option").all_inner_texts() == ["0 of 3 models match"]
+        page.locator("#ai-model-filter").fill("")
+        assert page.locator("#ai-model-list option").first.inner_text() == "Choose one of 3 models"
         page.locator("#ai-model-list").select_option("anthropic/claude-haiku-5.5")
         assert page.locator("#ai-model").input_value() == "anthropic/claude-haiku-5.5"
         assert openrouter_calls and openrouter_calls[-1].get("x-title") == "JotDrop"
