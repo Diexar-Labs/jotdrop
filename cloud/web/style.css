@@ -507,3 +507,8 @@ html { scrollbar-color: color-mix(in srgb, var(--ink) 35%, transparent) transpar
 .ai-report { border: 1px solid var(--line); border-radius: 8px; padding: .6rem .8rem; margin-top: .6rem; }
 .ai-editor-row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin: .8rem 0; }
 .ai-editor-row > span { font-weight: 600; margin-right: .3rem; }
+.legal-foot { max-width: 72ch; margin: 0 auto; padding: 0 1.5rem 2.5rem; }
+.legal-foot nav { font-size: .85rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: .4rem 1.4rem; border-top: 1px solid var(--line); padding-top: 1rem; }
+.legal-foot a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; }
+.legal-foot a[aria-current="page"] { color: var(--muted); font-weight: 700; text-decoration: none; }
+.note-link-page .legal-foot { max-width: 42rem; padding-inline: 1rem; }
