@@ -69,7 +69,14 @@ private val DarkColors = darkColorScheme(
 @OptIn(ExperimentalTextApi::class)
 private fun variable(resource: Int, weight: Int) = Font(resource, FontWeight(weight), variationSettings = FontVariation.Settings(FontVariation.weight(weight)))
 private val Display = FontFamily(listOf(500, 600, 700, 800).map { variable(R.font.bricolage_grotesque, it) })
-private val Text = FontFamily(listOf(400, 500, 600, 700).map { variable(R.font.instrument_sans, it) })
+// Text as fixed weights (instances of the variable font, made with fontTools): on Android 16 the weight setting of a
+// variable font did not come through, so bold in the editor showed as regular (Eric's phone, 16 Nov).
+private val Text = FontFamily(
+    Font(R.font.instrument_sans_regular, FontWeight.Normal),
+    Font(R.font.instrument_sans_medium, FontWeight.Medium),
+    Font(R.font.instrument_sans_semibold, FontWeight.SemiBold),
+    Font(R.font.instrument_sans_bold, FontWeight.Bold),
+)
 
 private val HouseTypography = Typography().run {
     fun TextStyle.display(weight: Int) = copy(fontFamily = Display, fontWeight = FontWeight(weight))

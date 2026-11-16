@@ -104,4 +104,27 @@
     <string name="theme_system">System (wie das Telefon)</string>
     <string name="theme_light">Hell</string>
     <string name="theme_dark">Dunkel</string>
+    <!-- Formatting bar of the editor (design opmaak-editor, phase 3) -->
+    <string name="format_bold">Fett</string>
+    <string name="format_italic">Kursiv</string>
+    <string name="format_heading">Überschrift</string>
+    <string name="format_bullet">Aufzählung</string>
+    <string name="format_numbered">Nummerierte Liste</string>
+    <string name="format_highlight">Markieren</string>
+    <string name="format_emoji">Emoji</string>
+    <string name="format_more">Weitere Formatierung</string>
+    <string name="format_strike">Durchstreichen</string>
+    <string name="format_quote">Zitat</string>
+    <string name="format_code">Code</string>
+    <string name="format_rule">Linie</string>
+    <string name="format_markdown">Markdown</string>
+    <string name="format_emoji_more">Mehr Emoji: über die Emoji-Taste deiner Tastatur.</string>
+    <string name="emoji_recent">Zuletzt verwendet</string>
+    <string name="emoji_smileys">Smileys</string>
+    <string name="emoji_hands">Hände</string>
+    <string name="emoji_hearts">Herzen</string>
+    <string name="emoji_ticks">Haken und Sterne</string>
+    <string name="emoji_food">Essen</string>
+    <string name="emoji_travel">Reisen</string>
+    <string name="emoji_symbols">Symbole</string>
 </resources>

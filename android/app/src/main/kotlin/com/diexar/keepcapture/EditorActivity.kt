@@ -55,6 +55,14 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
+import androidx.compose.material3.LocalTextStyle
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -136,6 +144,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -281,6 +290,9 @@ private fun EditorScreen(
         mutableStateOf(TextFieldValue(""))
     }
     val staleBody = remember { StaleField() }
+    // The Markdown switch (design opmaak-editor 5.1): off shows the formatting, on the raw text; kept per device.
+    var markdownMode by remember { mutableStateOf(EditorPrefs.markdown(context)) }
+    var bodyFocused by remember { mutableStateOf(false) }
     var originalBody by rememberSaveable { mutableStateOf("") }
     var bodyEditing by rememberSaveable { mutableStateOf(initialUri == null) }
     // Expliciete titel (de eerste `# kop`-regel). Leeg → de kaart leidt zoals
@@ -533,6 +545,26 @@ private fun EditorScreen(
         bodyEditing = true
     }
 
+    /** A formatting button (shared core, format.mjs and FormatCore.kt): one small replacement in the body. */
+    fun applyBodyFormat(command: String) {
+        val current = bodyText
+        val next = current.withFormat(command) ?: return
+        // The keyboard may still send a change on the text from before the button: it is replayed on ours.
+        staleBody.settle(current.text, next.text)
+        bodyText = next
+        bodyEditing = true
+    }
+
+    fun insertEmoji(emoji: String) {
+        val current = bodyText
+        val start = current.selection.min.coerceIn(0, current.text.length)
+        val end = current.selection.max.coerceIn(0, current.text.length)
+        val next = TextFieldValue(current.text.replaceRange(start, end, emoji), TextRange(start + emoji.length))
+        staleBody.settle(current.text, next.text)
+        bodyText = next
+        bodyEditing = true
+    }
+
     fun insertText(text: String) {
         if (text.isEmpty()) return
         val current = bodyText
@@ -711,7 +743,7 @@ private fun EditorScreen(
     }
 
     // Na een mislukte load (bv. naar een geparkeerde notitie gebladerd) hoort de oude editor-state bij geen notitie meer.
-    val isDirty = loaded && loadError == null && (bodyText.text != originalBody || titleText != originalTitle || embedLines.toList() != originalEmbeds)
+    val isDirty = loaded && loadError == null && (bodyText.withoutEmptyPair().text != originalBody || titleText != originalTitle || embedLines.toList() != originalEmbeds)
     val isExisting = currentUri != null
     val bg = noteBackground(color, dark)
     val fg = contentColorOn(color, dark)
@@ -765,6 +797,7 @@ private fun EditorScreen(
     }
 
     fun closeWithSaveIfNeeded() {
+        bodyText = bodyText.withoutEmptyPair()
         val reminderAtSave = reminder
         attemptSaveAndClose(
             scope = scope,
@@ -825,6 +858,7 @@ private fun EditorScreen(
             scope.launch { loadInto(navUris[target]) }
         }
         if (isDirty && currentUri != null) {
+            bodyText = bodyText.withoutEmptyPair()
             val reminderAtSave = reminder
             attemptSaveAndClose(
                 scope = scope,
@@ -1065,6 +1099,7 @@ private fun EditorScreen(
                         IconButton(
                             enabled = !saving && (bodyText.text.isNotBlank() || titleText.isNotBlank() || embedLines.isNotEmpty()) && (isDirty || !isExisting),
                             onClick = {
+                                bodyText = bodyText.withoutEmptyPair()
                                 val reminderAtSave = reminder
                                 attemptSaveAndClose(
                                     scope = scope,
@@ -1201,11 +1236,11 @@ private fun EditorScreen(
                         val current = bodyText
                         // Right after a list edit the field can still send changes on the text from before it.
                         val replayed = staleBody.replay(current.text, field.text)
-                        val next = if (replayed == null) field else TextFieldValue(
+                        val next = (if (replayed == null) field else TextFieldValue(
                             text = replayed.text,
                             selection = TextRange(replayed.map(field.selection.start), replayed.map(field.selection.end)),
                             composition = field.composition?.let { TextRange(replayed.map(it.start), replayed.map(it.end)) },
-                        )
+                        )).let { current.backspacing(it, !markdownMode) }
                         val start = current.selection.min
                         val end = current.selection.max
                         // Only a committed single newline; leave bulk edits and IME composition alone.
@@ -1227,9 +1262,14 @@ private fun EditorScreen(
                                 selection = TextRange(changed.second),
                             )
                             else -> next
-                        }
+                        }.let { current.leavingEmptyPair(it) }
                         staleBody.settle(field.text, shown.text)
                         bodyText = shown
+                    },
+                    formatted = !markdownMode,
+                    onBodyFocus = { focused ->
+                        bodyFocused = focused
+                        if (!focused) bodyText = bodyText.withoutEmptyPair()
                     },
                     bodyEditing = bodyEditing,
                     onEditBody = { bodyEditing = true },
@@ -1303,6 +1343,24 @@ private fun EditorScreen(
                     foreground = fg,
                 )
             }
+            }
+            if (bodyFocused && loaded && loadError == null && parkedUri == null) {
+                val active = remember(bodyText.text, bodyText.selection) {
+                    if (bodyText.text.length > FORMAT_RAW_ABOVE) emptyList()
+                    else FormatCore.activeFormats(bodyText.text, bodyText.selection.min, bodyText.selection.max)
+                }
+                FormatBar(
+                    active = active,
+                    markdown = markdownMode,
+                    foreground = fg,
+                    onFormat = ::applyBodyFormat,
+                    onChecklist = { toggleOrInsertChecklist() },
+                    onEmoji = ::insertEmoji,
+                    onMarkdown = {
+                        markdownMode = !markdownMode
+                        EditorPrefs.setMarkdown(context, markdownMode)
+                    },
+                )
             }
         }
     }
@@ -1490,7 +1548,7 @@ private fun EditorScreen(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 private fun EditorBody(
     showReminder: Boolean = true,
@@ -1498,6 +1556,8 @@ private fun EditorBody(
     onValueChange: (TextFieldValue) -> Unit,
     bodyEditing: Boolean,
     onEditBody: () -> Unit,
+    formatted: Boolean = true,
+    onBodyFocus: (Boolean) -> Unit = {},
     title: String,
     onTitleChange: (String) -> Unit,
     embedItems: List<Pair<String, Uri>>,
@@ -1686,29 +1746,58 @@ private fun EditorBody(
                 },
             )
         } else {
-            TextField(
+            // Material's TextField, built from its parts so the caret's place is known: typing on at the bottom then
+            // scrolls the note, instead of going on under the keyboard and the formatting bar (Eric, 16 Nov).
+            val bodyColors = TextFieldDefaults.colors(
+                focusedContainerColor = Color.Transparent,
+                unfocusedContainerColor = Color.Transparent,
+                focusedTextColor = foreground,
+                unfocusedTextColor = foreground,
+                cursorColor = foreground,
+                focusedIndicatorColor = Color.Transparent,
+                unfocusedIndicatorColor = Color.Transparent,
+            )
+            // Formatting drawn over the source; the signs stay in the text but take no room (FormatTransformation).
+            val transformation = remember(formatted, foreground, value.text, value.selection) {
+                val pair = if (formatted) FormatCore.emptyPair(value.text, value.selection.min, value.selection.max) else null
+                FormatTransformation(formatted, foreground, pair?.from ?: -1, pair?.to ?: -1)
+            }
+            val interaction = remember { MutableInteractionSource() }
+            val focused by interaction.collectIsFocusedAsState()
+            val caretView = remember { BringIntoViewRequester() }
+            var bodyLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
+            val margin = with(LocalDensity.current) { 24.dp.toPx() }
+            LaunchedEffect(value.text, value.selection, bodyLayout, focused) {
+                val layout = bodyLayout
+                if (!focused || layout == null) return@LaunchedEffect
+                val caret = layout.getCursorRect(value.selection.end.coerceIn(0, layout.layoutInput.text.length))
+                caretView.bringIntoView(caret.copy(top = caret.top - margin, bottom = caret.bottom + margin))
+            }
+            BasicTextField(
                 value = value,
                 onValueChange = onValueChange,
-                visualTransformation = androidx.compose.ui.text.input.VisualTransformation { source ->
-                    androidx.compose.ui.text.input.TransformedText(
-                        androidx.compose.ui.text.AnnotatedString(renderListBullets(source.text)),
-                        androidx.compose.ui.text.input.OffsetMapping.Identity,
-                    )
-                },
+                visualTransformation = transformation,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(min = 200.dp),
-                placeholder = { Text(stringResource(R.string.editor_hint), color = foreground.copy(alpha = 0.5f)) },
+                    .heightIn(min = 200.dp)
+                    .onFocusChanged { onBodyFocus(it.isFocused) },
+                textStyle = LocalTextStyle.current.merge(TextStyle(color = foreground)),
+                cursorBrush = SolidColor(foreground),
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                colors = TextFieldDefaults.colors(
-                    focusedContainerColor = Color.Transparent,
-                    unfocusedContainerColor = Color.Transparent,
-                    focusedTextColor = foreground,
-                    unfocusedTextColor = foreground,
-                    cursorColor = foreground,
-                    focusedIndicatorColor = Color.Transparent,
-                    unfocusedIndicatorColor = Color.Transparent,
-                ),
+                interactionSource = interaction,
+                onTextLayout = { bodyLayout = it },
+                decorationBox = { innerTextField ->
+                    TextFieldDefaults.DecorationBox(
+                        value = value.text,
+                        innerTextField = { Box(Modifier.bringIntoViewRequester(caretView)) { innerTextField() } },
+                        enabled = true,
+                        singleLine = false,
+                        visualTransformation = transformation,
+                        interactionSource = interaction,
+                        placeholder = { Text(stringResource(R.string.editor_hint), color = foreground.copy(alpha = 0.5f)) },
+                        colors = bodyColors,
+                    )
+                },
             )
         }
     }

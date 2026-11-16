@@ -13,8 +13,7 @@
 .jd-editor .cm-editor .cm-placeholder { color: var(--muted); }
 .jd-editor .cm-editor ::selection, .jd-editor .cm-editor .cm-content ::selection { background: var(--selected); }
 
-/* A sign shows only where you type, in a muted tint (the rule of Obsidian's Live Preview). */
-.cm-jd-sign { color: var(--muted); opacity: .75; }
+/* Signs are never shown here (decorations in md-editor.mjs hide them); the Markdown switch shows the raw text. */
 .cm-jd-bold { font-weight: 700; }
 .cm-jd-italic { font-style: italic; }
 .cm-jd-strike { text-decoration: line-through; }

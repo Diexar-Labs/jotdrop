@@ -51,19 +51,9 @@ private fun nextFence(line: String, fence: String?): String? {
 
 internal data class ListEnterEdit(val from: Int, val to: Int, val insert: String)
 
-internal fun listEnterEdit(text: String, start: Int, end: Int = start): ListEnterEdit? {
-    val lineStart = text.substring(0, start).lastIndexOf('\n') + 1
-    val lineEnd = text.indexOf('\n', start).let { if (it < 0) text.length else it }
-    val marker = listMarker.find(text.substring(lineStart, lineEnd)) ?: return null
-    if (start < lineStart + marker.value.length || end > lineEnd) return null
-    var fence: String? = null
-    for (line in text.substring(0, lineStart).split('\n')) fence = nextFence(line, fence)
-    if (fence != null) return null
-    val remaining = text.substring(lineStart + marker.value.length, start) + text.substring(end, lineEnd)
-    if (remaining.isBlank()) return ListEnterEdit(lineStart, lineEnd, "")
-    val checkbox = if (marker.groups[3] == null) "" else "[ ] "
-    return ListEnterEdit(start, end, "\n${marker.groupValues[1]}- $checkbox")
-}
+/** Enter in a list, by the shared formatting core (the same cases as the web app), numbered lists included. */
+internal fun listEnterEdit(text: String, start: Int, end: Int = start): ListEnterEdit? =
+    FormatCore.listEnterEdit(text, start, end)?.let { ListEnterEdit(it.from, it.to, it.insert) }
 
 /**
  * The keyboard pressed Enter: [next] has exactly one new line break, just before its collapsed

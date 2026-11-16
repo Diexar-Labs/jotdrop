@@ -417,4 +417,27 @@
     <string name="scan_save_drawer_name">Naam van het laatje</string>
     <string name="scan_save_expires">Verloopt %1$s. Herinner me een week vooraf.</string>
     <string name="scan_save_no_expiry">Geen vervaldatum gevonden op dit papier. Je kunt er later een toevoegen via het kaartmenu.</string>
+    <!-- Formatting bar of the editor (design opmaak-editor, phase 3) -->
+    <string name="format_bold">Vet</string>
+    <string name="format_italic">Cursief</string>
+    <string name="format_heading">Kop</string>
+    <string name="format_bullet">Opsomming</string>
+    <string name="format_numbered">Genummerde lijst</string>
+    <string name="format_highlight">Markeren</string>
+    <string name="format_emoji">Emoji</string>
+    <string name="format_more">Meer opmaak</string>
+    <string name="format_strike">Doorhalen</string>
+    <string name="format_quote">Citaat</string>
+    <string name="format_code">Code</string>
+    <string name="format_rule">Lijn</string>
+    <string name="format_markdown">Markdown</string>
+    <string name="format_emoji_more">Meer emoji: gebruik de emojitoets van je toetsenbord.</string>
+    <string name="emoji_recent">Laatst gebruikt</string>
+    <string name="emoji_smileys">Smileys</string>
+    <string name="emoji_hands">Handen</string>
+    <string name="emoji_hearts">Harten</string>
+    <string name="emoji_ticks">Vinkjes en sterren</string>
+    <string name="emoji_food">Eten</string>
+    <string name="emoji_travel">Reizen</string>
+    <string name="emoji_symbols">Symbolen</string>
 </resources>

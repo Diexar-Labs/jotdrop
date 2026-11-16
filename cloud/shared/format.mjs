@@ -254,6 +254,44 @@ const SIGNS = { bold: '**', italic: '*', strike: '~~', highlight: '==', code: '`
 // A letter's accent belongs to its word; an emoji's variation selector does not make it one.
 const WORD = /[\p{L}\p{N}_'’]|(?![︎️])\p{M}/u;
 const SPACE = /\s/;
+const SIGN_KIND = { '**': 'bold', '*': 'italic', '~~': 'strike', '==': 'highlight', '`': 'code' };
+const PAIR_SIGN = /[*~=`]/;
+
+/** The signs of the left half of an empty pair, outer first (`***` is bold around italic), or null. */
+function pairSigns(run) {
+  const signs = [];
+  for (let i = 0; i < run.length;) {
+    const two = run.slice(i, i + 2);
+    const sign = ['**', '~~', '=='].includes(two) ? two : ['*', '`'].includes(run[i]) ? run[i] : null;
+    if (!sign || signs.some((other) => SIGN_KIND[other] === SIGN_KIND[sign])) return null;
+    signs.push(sign);
+    i += sign.length;
+  }
+  return signs;
+}
+
+/**
+ * An empty pair around the caret: a button pressed before typing (Eric, 16 nov: "first the button, then type", as in a
+ * word processor; selecting is awkward on a phone). `**¦**`, `***¦***` (bold and italic), `~~¦~~`. The editors hide its
+ * signs and show the buttons as on; what is typed lands between the signs. { from, to, signs (outer first), kinds },
+ * or null. Signs right against a word are the end of one span and the start of the next, not a pair.
+ */
+export function emptyPair(text, selFrom, selTo = selFrom) {
+  text = String(text);
+  if (selFrom !== selTo) return null;
+  let from = selFrom, to = selFrom;
+  while (from > 0 && PAIR_SIGN.test(text[from - 1])) from--;
+  while (to < text.length && PAIR_SIGN.test(text[to])) to++;
+  if (from === selFrom || to === selFrom || WORD.test(text[from - 1] ?? '') || WORD.test(text[to] ?? '')) return null;
+  const signs = pairSigns(text.slice(from, selFrom));
+  if (!signs || [...signs].reverse().join('') !== text.slice(selFrom, to)) return null;
+  return { from, to, signs, kinds: signs.map((sign) => SIGN_KIND[sign]) };
+}
+
+/** The text with an empty pair's signs as spaces: the same positions, but `****` is no rule and `~~~~` no code fence. */
+function maskPair(text, pair) {
+  return pair ? text.slice(0, pair.from) + ' '.repeat(pair.to - pair.from) + text.slice(pair.to) : text;
+}
 
 /** The kind of run (text, code, table) each line is in. */
 function lineKinds(text) {
@@ -290,15 +328,21 @@ function inlinePlan(text, selFrom, selTo, kind) {
   const sign = SIGNS[kind];
   const table = lineTable(text), kinds = lineKinds(text);
   if (selFrom === selTo) {
-    const index = table.at(selFrom);
-    if (kinds[index] === 'code') return null;
     const caret = selFrom;
-    const before = text.slice(caret - sign.length, caret), after = text.slice(caret, caret + sign.length);
-    // An empty pair around the caret goes when the button is pressed again.
-    if (caret >= sign.length && before === sign && after === sign && text[caret - sign.length - 1] !== sign[0] && text[caret + sign.length] !== sign[0]) {
-      return { remove: true, edits: [{ from: caret - sign.length, to: caret + sign.length, insert: '' }], caret };
+    const pair = emptyPair(text, caret);
+    if (pair) {
+      // In an empty pair a button that is on takes its own signs away; another one adds its signs inside.
+      const at = pair.kinds.indexOf(kind);
+      if (at < 0) return { remove: false, edits: [{ from: caret, to: caret, insert: sign }, { from: caret, to: caret, insert: sign }], caret };
+      const offset = pair.signs.slice(0, at).join('').length, left = pair.from + offset, right = pair.to - offset - sign.length;
+      return { remove: true, edits: [{ from: left, to: left + sign.length, insert: '' }, { from: right, to: right + sign.length, insert: '' }], caret };
     }
+    const index = table.at(caret);
+    if (kinds[index] === 'code') return null;
     const spans = spansOfLine(table, index), own = holder(spans, kind, caret, caret);
+    // At the end of the formatted words the button stops the formatting there, as in a word processor: the caret steps
+    // over the closing sign and what is typed next is plain. Elsewhere in the words it takes the formatting away.
+    if (own && caret === own.closeFrom && own.closeFrom > own.openTo) return { remove: true, step: own.to, edits: [], caret };
     if (own) return { remove: true, edits: [{ from: own.from, to: own.openTo, insert: '' }, { from: own.closeFrom, to: own.to, insert: '' }], caret };
     // No signs inside code, a web address or a link to a note.
     if (spans.some((span) => ['code', 'url', 'wikilink'].includes(span.kind) && span.from < caret && caret < span.to)) return null;
@@ -342,6 +386,8 @@ function inlinePlan(text, selFrom, selTo, kind) {
 function inlineFormat(text, selFrom, selTo, kind) {
   const plan = inlinePlan(text, selFrom, selTo, kind);
   if (!plan) return null;
+  // Stepping out changes no text: an empty replacement that only moves the caret.
+  if (plan.step !== undefined) return { from: plan.caret, to: plan.caret, insert: '', selFrom: plan.step, selTo: plan.step };
   const { text: out, map } = applyEdits(text, plan.edits);
   if (plan.caret !== undefined) {
     // The caret stays in the same place in the words: behind the opening sign that is added in front of it.
@@ -458,14 +504,14 @@ export function applyFormat(text, selFrom, selTo, command) {
 export function activeFormats(text, selFrom, selTo) {
   text = String(text);
   const from = Math.max(0, Math.min(selFrom, selTo, text.length)), to = Math.min(text.length, Math.max(selFrom, selTo));
-  const table = lineTable(text), kinds = lineKinds(text), index = table.at(from);
+  // An empty pair (a button pressed before typing) is on; its signs count as spaces for everything else.
+  const pair = emptyPair(text, from, to), plain = maskPair(text, pair);
+  const table = lineTable(plain), kinds = lineKinds(plain), index = table.at(from);
   if (kinds[index] === 'code') return ['codeblock'];
   const on = [];
   if (kinds[index] === 'table') on.push('table');
   for (const kind of Object.keys(SIGNS)) {
-    const plan = inlinePlan(text, from, to, kind);
-    // An empty pair around the caret does not count as formatted text.
-    if (plan?.remove && !(from === to && plan.edits.length === 1)) on.push(kind);
+    if (pair?.kinds.includes(kind) || inlinePlan(plain, from, to, kind)?.remove) on.push(kind);
   }
   const prefix = linePrefix(table.lines[index]);
   const line = { heading: 'heading', bullet: 'bullet', ordered: 'ordered', task: 'checklist', quote: 'quote' }[prefix.kind];
@@ -473,11 +519,43 @@ export function activeFormats(text, selFrom, selTo) {
   return on.sort();
 }
 
+/**
+ * Backspace with the caret right behind signs that the formatted view hides (`hidden`: [from, to] ranges from the
+ * editor's own display). As in a word processor it takes the last visible letter before them (`**hello**¦` becomes
+ * `**hell**¦`), not half a sign that would then show. Right behind a heading's hidden `## ` the line becomes plain
+ * text; behind hidden signs at the start of a line it joins the line above. In an empty pair the whole pair goes.
+ * Null: an ordinary Backspace.
+ */
+export function backspaceEdit(text, caret, hidden) {
+  text = String(text);
+  const pair = emptyPair(text, caret);
+  if (pair) return { from: pair.from, to: pair.to, insert: '', selFrom: pair.from, selTo: pair.from };
+  let start = caret;
+  for (let run; (run = hidden.find(([from, to]) => to === start && from < start));) start = run[0];
+  if (start === caret) return null;
+  const at = (from, to = start) => ({ from, to, insert: '', selFrom: caret - (to - from), selTo: caret - (to - from) });
+  const lineStart = start === 0 ? 0 : text.lastIndexOf('\n', start - 1) + 1;
+  const next = text.indexOf('\n', lineStart), prefix = linePrefix(text.slice(lineStart, next < 0 ? text.length : next));
+  if (prefix.kind === 'heading' && start === lineStart + prefix.markFrom && caret >= lineStart + prefix.markTo) return at(lineStart + prefix.markFrom, lineStart + prefix.markTo);
+  if (start === lineStart) return start === 0 ? at(caret, caret) : at(start >= 2 && text[start - 2] === '\r' ? start - 2 : start - 1);
+  const pairStart = start >= 2 && /[\uDC00-\uDFFF]/.test(text[start - 1]) && /[\uD800-\uDBFF]/.test(text[start - 2]);
+  const from = pairStart ? start - 2 : start - 1;
+  // The last letter of formatted words: its signs go with it, so no `****` is left to see.
+  const left = emptyPair(text.slice(0, from) + text.slice(start), from);
+  return left ? at(left.from, left.to + (start - from)) : at(from);
+}
+
 const LIST_ITEM = /^([ \t]*)(?:([-*+])|(\d{1,9})([.)]))[ \t]+(?:\[([ xX])\](?:[ \t]+|$))?/;
+
+const CARRIED = new Set(['bold', 'italic', 'strike', 'highlight', 'code']);
 
 /**
  * Enter in a list, as in src/listEditor.ts and ListEditing.kt, plus numbered lists: the next item gets the same sign
- * (a bullet, the next number, an empty box), and Enter on an empty item takes its sign away. Null: an ordinary Enter.
+ * (a bullet, the next number, an empty box), and Enter on an empty item takes its sign away.
+ * On any text line, Enter inside bold, italic, strike, highlight or code goes on in it, as in a word processor (Eric,
+ * 16 nov): the line is closed before the break and opened again after it (`**hel¦lo**` becomes `**hel**` and
+ * `**¦lo**`), so no sign is carried to the next line on its own. An empty pair (a button pressed, nothing typed) moves
+ * to the next line as it is. Null: an ordinary Enter.
  */
 export function listEnterEdit(text, from, to = from) {
   text = String(text);
@@ -485,18 +563,42 @@ export function listEnterEdit(text, from, to = from) {
   const next = text.indexOf('\n', from);
   const lineEnd = next < 0 ? text.length : next;
   const line = text.slice(lineStart, lineEnd);
-  const marker = LIST_ITEM.exec(line);
-  if (!marker || from < lineStart + marker[0].length || to > lineEnd) return null;
+  if (to > lineEnd) return null;
   const table = lineTable(text);
   if (lineKinds(text)[table.at(lineStart)] !== 'text') return null;
   // A CRLF line keeps its `\r`, and the new line gets one too.
   const cr = line.endsWith('\r') ? '\r' : '', contentEnd = lineEnd - cr.length;
   from = Math.min(from, contentEnd); to = Math.min(to, contentEnd);
-  const remaining = text.slice(lineStart + marker[0].length, from) + text.slice(to, contentEnd);
-  if (!remaining.trim()) return { from: lineStart, to: contentEnd, insert: '', selFrom: lineStart, selTo: lineStart };
-  const sign = marker[2] ? '-' : `${Number(marker[3]) + 1}${marker[4]}`;
-  const insert = `${cr}\n${marker[1]}${sign} ${marker[5] === undefined ? '' : '[ ] '}`;
-  return { from, to, insert, selFrom: from + insert.length, selTo: from + insert.length };
+  const marker = LIST_ITEM.exec(line);
+  const list = marker && from >= lineStart + marker[0].length ? marker : null;
+
+  // The formatting the caret is in: `at` is where the break goes, before signs right in front of the caret.
+  let at = from, close = '', open = '', before = '', after = '';
+  const pair = from === to ? emptyPair(text, from) : null;
+  if (pair) at = pair.from;
+  else if (from === to) {
+    const offset = lineStart + linePrefix(line).markTo;
+    const spans = inlineSpans(text.slice(offset, contentEnd)).filter((span) => CARRIED.has(span.kind))
+      .map((span) => ({ from: span.from + offset, to: span.to + offset, openTo: span.openTo + offset, closeFrom: span.closeFrom + offset }));
+    for (let back; (back = spans.find((span) => span.openTo === at && span.from < at));) at = back.from;
+    const inside = spans.filter((span) => span.openTo < at && at <= span.closeFrom);
+    close = inside.map((span) => text.slice(span.closeFrom, span.to)).reverse().join('');
+    open = inside.map((span) => text.slice(span.from, span.openTo)).join('');
+    // Formatting cannot start or end on a space: spaces at the break stay outside the signs.
+    if (inside.length) {
+      while (at - before.length > lineStart && SPACE.test(text[at - before.length - 1])) before = text[at - before.length - 1] + before;
+      if (at === from) while (SPACE.test(text[at + after.length] ?? '') && at + after.length < contentEnd) after += text[at + after.length];
+    }
+  }
+  if (list) {
+    const plain = maskPair(text, pair);
+    const remaining = plain.slice(lineStart + list[0].length, from) + plain.slice(to, contentEnd);
+    if (!remaining.trim()) return { from: lineStart, to: contentEnd, insert: '', selFrom: lineStart, selTo: lineStart };
+  } else if (at === from && !close) return null;
+  const sign = list ? `${list[1]}${list[2] ? '-' : `${Number(list[3]) + 1}${list[4]}`} ${list[5] === undefined ? '' : '[ ] '}` : '';
+  const start = at - before.length;
+  const insert = `${close}${before}${cr}\n${sign}${after}${open}${text.slice(at, from)}`;
+  return { from: start, to: to + after.length, insert, selFrom: start + insert.length, selTo: start + insert.length };
 }
 
 // --- Tables ------------------------------------------------------------------------------------------------------

@@ -11,7 +11,7 @@
 import { EditorSelection, EditorState, Prec, StateEffect, StateField } from '@codemirror/state';
 import { Decoration, EditorView, WidgetType, keymap, placeholder } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
-import { activeFormats, applyFormat, blocks, inlineSpans, linePrefix, listEnterEdit, parseTable, tableEdit } from '/shared/format.mjs';
+import { activeFormats, applyFormat, backspaceEdit, blocks, emptyPair, inlineSpans, linePrefix, listEnterEdit, parseTable, tableEdit } from '/shared/format.mjs';
 import { createTableGrid } from '/shared/table-grid.mjs';
 
 // Above this many characters the note shows raw, for speed.
@@ -87,15 +87,29 @@ class TableWidget extends WidgetType {
   get estimatedHeight() { return (this.source.split('\n').length - 1) * 34 + 8; }
 }
 
-/** The decorations: signs hidden unless the selection touches them, lines styled, tables as grids. */
+/**
+ * The decorations: signs always hidden (Eric, 16 nov: a heading or bold text must never show its codes, not even at
+ * the caret or in a selection; the Markdown switch is for seeing them), lines styled, tables as grids. `atomic` lists
+ * the hidden ranges, so the caret and Backspace treat a hidden sign as one step instead of landing inside it.
+ */
 function decorate(state, formatted, host) {
-  const text = state.doc.toString();
-  if (!formatted || text.length > RAW_ABOVE) return Decoration.none;
-  const ranges = state.selection.ranges;
-  const touches = (from, to) => ranges.some((range) => range.from <= to && range.to >= from);
-  const out = [];
-  const hide = (from, to) => { if (to > from) out.push(Decoration.replace({}).range(from, to)); };
-  const sign = (from, to) => { if (to > from) out.push(Decoration.mark({ class: 'cm-jd-sign' }).range(from, to)); };
+  const none = { decorations: Decoration.none, atomic: Decoration.none, signs: [] };
+  const source = state.doc.toString();
+  if (!formatted || source.length > RAW_ABOVE) return none;
+  const out = [], hidden = [];
+  // A button pressed before typing leaves an empty pair at the caret: hidden, and read as spaces, so `****` is no rule
+  // and `~~~~` no code fence while the caret waits in it.
+  const { main } = state.selection, pair = emptyPair(source, main.from, main.to);
+  const text = pair ? source.slice(0, pair.from) + ' '.repeat(pair.to - pair.from) + source.slice(pair.to) : source;
+  const lineText = (line) => text.slice(line.from, line.to);
+  // `signs`: only what is hidden outright (no widget), for Backspace (format.mjs, backspaceEdit).
+  const signs = [];
+  const hide = (from, to) => { if (to > from) { const range = Decoration.replace({}).range(from, to); out.push(range); hidden.push(range); signs.push([from, to]); } };
+  const replaceWith = (widget, from, to) => { const range = Decoration.replace({ widget }).range(from, to); out.push(range); hidden.push(range); };
+  if (pair) {
+    hide(pair.from, main.from);
+    hide(main.from, pair.to);
+  }
   for (const run of blocks(text)) {
     if (run.kind === 'table') {
       const source = text.slice(run.from, run.to);
@@ -106,33 +120,32 @@ function decorate(state, formatted, host) {
     for (let number = run.fromLine; number <= run.toLine; number++) {
       const line = state.doc.line(number + 1);
       if (run.kind === 'code') {
-        const fence = number === run.fromLine || (number === run.toLine && /^ {0,3}(`{3,}|~{3,})/.test(line.text));
+        const fence = number === run.fromLine || (number === run.toLine && /^ {0,3}(`{3,}|~{3,})/.test(lineText(line)));
         out.push(Decoration.line({ class: fence ? 'cm-jd-codeblock cm-jd-fence' : 'cm-jd-codeblock' }).range(line.from));
         continue;
       }
-      const prefix = linePrefix(line.text), on = touches(line.from, line.to);
+      const prefix = linePrefix(lineText(line));
       const at = (offset) => line.from + offset;
       switch (prefix.kind) {
         case 'heading':
           out.push(Decoration.line({ class: `cm-jd-h cm-jd-h${prefix.level}` }).range(line.from));
-          (on ? sign : hide)(at(prefix.markFrom), at(prefix.markTo));
+          hide(at(prefix.markFrom), at(prefix.markTo));
           break;
         case 'quote':
           out.push(Decoration.line({ class: 'cm-jd-quote' }).range(line.from));
-          (on ? sign : hide)(at(prefix.markFrom), at(prefix.markTo));
+          hide(at(prefix.markFrom), at(prefix.markTo));
           break;
         case 'rule':
-          if (!on) { out.push(Decoration.line({ class: 'cm-jd-rule' }).range(line.from)); out.push(Decoration.replace({ widget: new RuleWidget() }).range(at(prefix.markFrom), line.to)); }
-          else sign(at(prefix.markFrom), line.to);
+          out.push(Decoration.line({ class: 'cm-jd-rule' }).range(line.from));
+          replaceWith(new RuleWidget(), at(prefix.markFrom), line.to);
           continue;
         case 'bullet':
-          out.push(Decoration.replace({ widget: new BulletWidget() }).range(at(prefix.markFrom), at(prefix.markFrom + 1)));
+          replaceWith(new BulletWidget(), at(prefix.markFrom), at(prefix.markFrom + 1));
           break;
         case 'task': {
-          const close = line.text.indexOf(']', prefix.markFrom) + 1;
+          const close = lineText(line).indexOf(']', prefix.markFrom) + 1;
           if (prefix.checked) out.push(Decoration.line({ class: 'cm-jd-done' }).range(line.from));
-          if (touches(at(prefix.markFrom), at(close))) sign(at(prefix.markFrom), at(close));
-          else out.push(Decoration.replace({ widget: new BoxWidget(prefix.checked, host.labels.done) }).range(at(prefix.markFrom), at(close)));
+          replaceWith(new BoxWidget(prefix.checked, host.labels.done), at(prefix.markFrom), at(close));
           break;
         }
         case 'ordered':
@@ -142,16 +155,16 @@ function decorate(state, formatted, host) {
       }
       // Inline signs after the line's own sign, so a bullet star is never read as italic.
       const offset = line.from + prefix.markTo;
-      for (const span of inlineSpans(line.text.slice(prefix.markTo))) {
+      for (const span of inlineSpans(lineText(line).slice(prefix.markTo))) {
         const from = offset + span.from, to = offset + span.to, openTo = offset + span.openTo, closeFrom = offset + span.closeFrom;
-        if (touches(from, to)) { sign(from, openTo); sign(closeFrom, to); }
-        else { hide(from, openTo); hide(closeFrom, to); }
+        hide(from, openTo);
+        hide(closeFrom, to);
         const name = MARK_CLASS[span.kind];
         if (name && closeFrom > openTo) out.push(Decoration.mark({ class: name }).range(openTo, closeFrom));
       }
     }
   }
-  return Decoration.set(out, true);
+  return { decorations: Decoration.set(out, true), atomic: Decoration.set(hidden, true), signs };
 }
 
 /**
@@ -244,14 +257,17 @@ export function createBodyEditor({ parent, value = '', formatted = true, labels:
   }
 
   const formatField = StateField.define({
-    create: (state) => ({ formatted, decorations: decorate(state, formatted, host) }),
+    create: (state) => ({ formatted, ...decorate(state, formatted, host) }),
     update(field, tr) {
       let next = field.formatted;
       for (const effect of tr.effects) if (effect.is(setFormatted)) next = effect.value;
       if (!tr.docChanged && !tr.selection && next === field.formatted) return field;
-      return { formatted: next, decorations: decorate(tr.state, next, host) };
+      return { formatted: next, ...decorate(tr.state, next, host) };
     },
-    provide: (field) => EditorView.decorations.from(field, (value) => value.decorations),
+    provide: (field) => [
+      EditorView.decorations.from(field, (value) => value.decorations),
+      EditorView.atomicRanges.of((view) => view.state.field(field).atomic),
+    ],
   });
 
   const keys = Prec.high(keymap.of([
@@ -262,6 +278,18 @@ export function createBodyEditor({ parent, value = '', formatted = true, labels:
         const edit = listEnterEdit(target.state.doc.toString(), from, to);
         if (!edit) return false;
         target.dispatch({ changes: { from: edit.from, to: edit.to, insert: edit.insert }, selection: { anchor: edit.selFrom }, userEvent: 'input', scrollIntoView: true });
+        return true;
+      },
+    },
+    // Backspace right behind hidden signs takes the last letter you see, not half a sign (shared with Android).
+    {
+      key: 'Backspace',
+      run: (target) => {
+        const { main } = target.state.selection, field = target.state.field(formatField);
+        if (!main.empty || !field.formatted) return false;
+        const edit = backspaceEdit(target.state.doc.toString(), main.head, field.signs);
+        if (!edit) return false;
+        target.dispatch({ changes: { from: edit.from, to: edit.to, insert: edit.insert }, selection: { anchor: edit.selFrom }, userEvent: 'delete.backward', scrollIntoView: true });
         return true;
       },
     },
@@ -280,6 +308,19 @@ export function createBodyEditor({ parent, value = '', formatted = true, labels:
     placeholder(labels.placeholder),
     EditorView.contentAttributes.of({ spellcheck: 'true', autocapitalize: 'sentences', autocorrect: 'on', 'aria-label': labels.note }),
     formatField,
+    // An empty pair the caret leaves without typing in it (a button pressed, then the caret moved on) goes again, so
+    // no `****` stays behind in the note.
+    EditorState.transactionFilter.of((tr) => {
+      if (!tr.selection && !tr.docChanged) return tr;
+      const before = tr.startState.selection.main;
+      const pair = emptyPair(tr.startState.doc.toString(), before.from, before.to);
+      if (!pair) return tr;
+      const from = tr.changes.mapPos(pair.from, 1), to = tr.changes.mapPos(pair.to, -1);
+      const signs = tr.startState.doc.sliceString(pair.from, pair.to), after = tr.newSelection.main;
+      if (to - from !== signs.length || tr.newDoc.sliceString(from, to) !== signs) return tr;
+      if (after.empty && emptyPair(tr.newDoc.toString(), after.from)?.from === from) return tr;
+      return [tr, { changes: { from, to }, sequential: true }];
+    }),
     // Typing over a selection is CodeMirror's replacement, not the browser's: after deleting formatted text Chrome
     // tries to keep its look with a style attribute, which the page's CSP blocks (and reports). Backspace, Delete,
     // paste and cut already go through CodeMirror; a caret without a selection types as usual.
@@ -315,7 +356,12 @@ export function createBodyEditor({ parent, value = '', formatted = true, labels:
     return activeFormats(view.state.doc.toString(), from, to);
   }
 
-  function flush() { for (const dom of grids) dom.jdGrid?.flush(); }
+  function flush() {
+    for (const dom of grids) dom.jdGrid?.flush();
+    // Saving or closing right after a button press: the empty pair is not kept.
+    const { main } = view.state.selection, pair = emptyPair(view.state.doc.toString(), main.from, main.to);
+    if (pair) view.dispatch({ changes: { from: pair.from, to: pair.to }, selection: { anchor: pair.from }, userEvent: 'delete' });
+  }
 
   function replace(edit) {
     if (!edit) return false;

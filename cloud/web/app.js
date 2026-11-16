@@ -2192,20 +2192,68 @@ function toggleChecklist(area) {
 }
 $('insert-checklist').addEventListener('click', () => toggleChecklist(editArea()));
 
-// Insert link: a [[wikilink]] to another note, by its name when that is unique (Obsidian's convention).
-$('insert-link').addEventListener('click', () => {
-  const notes = [...files.values()].filter((entry) => !entry.deleted && isMarkdown(entry.file.path) && entry.file.path !== $('note-path').value);
+// Insert link: type a web address (a [text](address) link), or search your notes for a [[wikilink]], which uses the
+// note's name when that is unique (Obsidian's convention). The old menu listed every note and covered the screen.
+const NOTE_RESULTS = 8;
+let urlDialog;
+// A typed address becomes a Markdown link: a bare "example.com" gets https://, and the characters that would end the
+// link early are written as %-codes. Returns '' when there is nothing usable.
+function linkTarget(raw) {
+  const text = raw.trim();
+  if (!text) return '';
+  const full = /^[a-z][a-z0-9+.-]*:/i.test(text) || text.startsWith('#') || text.startsWith('/') ? text : `https://${text}`;
+  return full.replace(/[\s()<>]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`);
+}
+function closeUrlDialog() { $('url-dialog').close(); }
+function putLink(link) {
+  const { area, start, end } = urlDialog;
+  closeUrlDialog();
+  area.replace({ from: start, to: end, insert: link, selFrom: start + link.length });
+}
+function showUrlNotes() {
+  const query = $('url-note').value.trim().toLowerCase(), list = $('url-notes');
+  list.replaceChildren();
+  list.hidden = !query;
+  if (!query) return;
   const name = (path) => path.split('/').pop().replace(/\.md$/i, '');
+  const notes = [...files.values()].filter((entry) => !entry.deleted && isMarkdown(entry.file.path) && entry.file.path !== $('note-path').value);
+  const found = notes.map((entry) => ({ entry, title: noteParts(noteText(entry.file), entry.file.path).title }))
+    .filter((item) => item.title.toLowerCase().includes(query) || item.entry.file.path.toLowerCase().includes(query))
+    .sort((a, b) => a.title.localeCompare(b.title));
+  for (const { entry, title } of found.slice(0, NOTE_RESULTS)) {
+    const item = document.createElement('li'), button = Object.assign(document.createElement('button'), { type: 'button', textContent: title || name(entry.file.path) });
+    button.addEventListener('click', () => {
+      const unique = notes.filter((other) => name(other.file.path) === name(entry.file.path)).length === 1;
+      putLink(`[[${unique ? name(entry.file.path) : entry.file.path.replace(/\.md$/i, '')}]]`);
+    });
+    item.append(button);
+    list.append(item);
+  }
+  const hint = (textContent) => list.append(Object.assign(document.createElement('li'), { className: 'editor-hint', textContent }));
+  if (!found.length) hint('No note found.');
+  else if (found.length > NOTE_RESULTS) hint(`${found.length - NOTE_RESULTS} more: type more letters to narrow it down.`);
+}
+$('insert-link').addEventListener('click', () => {
   const area = editArea();
   const { from: start, to: end } = area.getSelection();
-  showMenu($('insert-link'), notes.length ? notes.map((entry) => ({
-    label: noteParts(noteText(entry.file), entry.file.path).title,
-    action: () => {
-      const unique = notes.filter((other) => name(other.file.path) === name(entry.file.path)).length === 1;
-      const link = `[[${unique ? name(entry.file.path) : entry.file.path.replace(/\.md$/i, '')}]]`;
-      area.replace({ from: start, to: end, insert: link, selFrom: start + link.length });
-    },
-  })).sort((a, b) => a.label.localeCompare(b.label)) : [{ label: 'No other notes yet', action: () => {} }]);
+  const selected = area.getValue().slice(start, end);
+  $('url-address').value = '';
+  $('url-text').value = /\n/.test(selected) ? '' : selected;
+  $('url-note').value = '';
+  $('url-message').textContent = '';
+  urlDialog = { area, start, end };
+  showUrlNotes();
+  $('url-dialog').showModal();
+  $('url-address').focus();
+});
+$('url-note').addEventListener('input', showUrlNotes);
+$('url-cancel').addEventListener('click', closeUrlDialog);
+$('url-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const target = linkTarget($('url-address').value);
+  if (!target) { $('url-message').textContent = 'Type a web address first.'; $('url-address').focus(); return; }
+  const text = ($('url-text').value.trim() || $('url-address').value.trim()).replace(/([\\\[\]])/g, '\\$1');
+  putLink(`[${text}](${target})`);
 });
 
 // Previous/next follow the card order, like the plugin; unsaved edits are saved first.

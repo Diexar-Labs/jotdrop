@@ -126,4 +126,547 @@ internal object FormatCore {
 
     /** A cell's display text back as source: `|` becomes `\|`, a line break `<br>`, no spaces at the edges. */
     fun cellSource(text: String): String = jsTrim(text).replace("|", "\\|").replace(Regex("\\r?\\n"), "<br>")
+
+    // -----------------------------------------------------------------------------------------------------------
+    // The editor (phase 3): the same functions as the second half of format.mjs. Every one reads the text and gives at
+    // most one replacement: from/to/insert in positions of the text it was given, the selection in the text after it.
+    // JavaScript's \s, \w, . and $ differ from Java's, so they are written out here as JavaScript reads them.
+
+    data class Span(val kind: String, val from: Int, val to: Int, val openTo: Int, val closeFrom: Int, val href: String? = null, val target: String? = null)
+    data class Prefix(val kind: String, val indent: Int, val markFrom: Int, val markTo: Int, val level: Int = 0, val number: Long = 0, val delimiter: String = "", val checked: Boolean = false)
+    data class Edit(val from: Int, val to: Int, val insert: String, val selFrom: Int, val selTo: Int = selFrom)
+    data class EmptyPair(val from: Int, val to: Int, val signs: List<String>, val kinds: List<String>)
+
+    /** JavaScript's \s as a character class body. */
+    private const val SP = """\t\n\u000B\f\r \u00A0\u1680\u2000-\u200A\u2028\u2029\u202F\u205F\u3000\uFEFF"""
+    private const val DOT = """[^\n\r\u2028\u2029]"""
+    private val inlinePattern = java.util.regex.Pattern.compile(
+        """\\(?<esc>[!-/:-@\[-`{-~])|(?<ticks>`+)(?<code>[^`\n]+?)\k<ticks>|(?<embed>!?)\[\[(?<target>[^\]\n|]+)(?:\|(?<alias>[^\]\n]+))?\]\]""" +
+            """|(?<image>!?)\[(?<label>[^\]\n]+)\]\((?<href>[^()$SP]+)\)|(?<url>https?://[^$SP<>"'`]*[^$SP<>"'`.,;:!?)\]}])""" +
+            """|(?<mark>\*{3}|_{3}|\*\*|__|~~|==)(?=[^$SP])(?<marked>$DOT*?[^$SP])\k<mark>""" +
+            """|(?<starLead>^|[^\w*])\*(?=[^$SP*])(?<star>[^*\n]*?[^$SP*])\*(?!\*)|(?<underLead>^|[^\w_])_(?=[^${SP}_])(?<under>[^_\n]*?[^${SP}_])_(?!\w)""",
+    )
+    private val markKind = mapOf("**" to "bold", "__" to "bold", "~~" to "strike", "==" to "highlight")
+
+    private fun isSpace(c: Char) = c in "\t\n\u000B\u000C\r \u00A0\u1680\u2028\u2029\u202F\u205F\u3000\uFEFF" || c in '\u2000'..'\u200A'
+
+    private val wordTypes = setOf(
+        Character.UPPERCASE_LETTER, Character.LOWERCASE_LETTER, Character.TITLECASE_LETTER, Character.MODIFIER_LETTER, Character.OTHER_LETTER,
+        Character.DECIMAL_DIGIT_NUMBER, Character.LETTER_NUMBER, Character.OTHER_NUMBER,
+    ).map { it.toInt() }.toSet()
+    private val markTypes = setOf(Character.NON_SPACING_MARK, Character.ENCLOSING_MARK, Character.COMBINING_SPACING_MARK).map { it.toInt() }.toSet()
+
+    /** A letter, digit, `_` or apostrophe; a letter's accent belongs to its word, an emoji's variation selector not. */
+    private fun isWord(c: Char?): Boolean {
+        if (c == null) return false
+        if (c == '_' || c == '\'' || c == '’') return true
+        val type = Character.getType(c)
+        return type in wordTypes || (type in markTypes && c != '\uFE0E' && c != '\uFE0F')
+    }
+
+    private fun scanInline(text: String, offset: Int, out: MutableList<Span>) {
+        val match = inlinePattern.matcher(text)
+        while (match.find()) {
+            val start = offset + match.start()
+            val end = offset + match.end()
+            fun group(name: String): String? = match.group(name)
+            when {
+                group("esc") != null -> out += Span("escape", start, end, start + 1, end)
+                group("code") != null -> {
+                    val ticks = group("ticks")!!.length
+                    out += Span("code", start, end, start + ticks, end - ticks)
+                }
+                group("target") != null -> {
+                    // An embed (![[file]]) stays as it is written.
+                    val target = group("target")!!
+                    if (group("embed")!!.isEmpty()) {
+                        out += Span("wikilink", start, end, if (group("alias") == null) start + 2 else start + 3 + target.length, end - 2, target = target)
+                    }
+                }
+                group("href") != null -> {
+                    // So does an image (![alt](file)).
+                    if (group("image")!!.isEmpty()) {
+                        val label = group("label")!!
+                        out += Span("link", start, end, start + 1, start + 1 + label.length, href = group("href"))
+                        scanInline(label, start + 1, out)
+                    }
+                }
+                group("url") != null -> out += Span("url", start, end, start, end, href = group("url"))
+                group("mark") != null -> {
+                    val sign = group("mark")!!
+                    if (sign.length == 3) {
+                        out += Span("bold", start, end, start + 2, end - 2)
+                        out += Span("italic", start + 2, end - 2, start + 3, end - 3)
+                    } else out += Span(markKind.getValue(sign), start, end, start + 2, end - 2)
+                    scanInline(group("marked")!!, start + sign.length, out)
+                }
+                else -> {
+                    val lead = (group("starLead") ?: group("underLead"))!!.length
+                    val inner = (group("star") ?: group("under"))!!
+                    out += Span("italic", start + lead, end, start + lead + 1, end - 1)
+                    scanInline(inner, start + lead + 1, out)
+                }
+            }
+        }
+    }
+
+    /** The formatting in one line, outer spans first: bold, italic, strike, highlight, code, link, wikilink, url, escape. */
+    fun inlineSpans(line: String): List<Span> {
+        val out = mutableListOf<Span>()
+        scanInline(line, 0, out)
+        return out.sortedWith(compareBy<Span> { it.from }.thenByDescending { it.to })
+    }
+
+    private val rule = Regex("""^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*\z""")
+    private val heading = Regex("""^( {0,3})(#{1,6})(?:[ \t]+|\z)""")
+    private val quote = Regex("""^([ \t]*)>[ \t]?""")
+    private val task = Regex("""^([ \t]*)([-*+])[ \t]+\[([ xX])\](?:[ \t]+|\z)""")
+    private val bullet = Regex("""^([ \t]*)([-*+])[ \t]+""")
+    private val ordered = Regex("""^([ \t]*)(\d{1,9})([.)])[ \t]+""")
+    private val leadingIndent = Regex("""^[ \t]*""")
+
+    /** How a line starts: bullet, ordered, task, quote, heading, rule or "" (nothing); the sign runs markFrom to markTo. */
+    fun linePrefix(line: String): Prefix {
+        val text = withoutCr(line)
+        val indent = leadingIndent.find(text)!!.value.length
+        if (rule.containsMatchIn(text)) return Prefix("rule", indent, indent, text.length)
+        heading.find(text)?.let { return Prefix("heading", indent, it.groupValues[1].length, it.value.length, level = it.groupValues[2].length) }
+        quote.find(text)?.let { return Prefix("quote", indent, it.groupValues[1].length, it.value.length) }
+        task.find(text)?.let { return Prefix("task", indent, it.groupValues[1].length, it.value.length, checked = it.groupValues[3] != " ") }
+        bullet.find(text)?.let { return Prefix("bullet", indent, it.groupValues[1].length, it.value.length) }
+        ordered.find(text)?.let {
+            return Prefix("ordered", indent, it.groupValues[1].length, it.value.length, number = it.groupValues[2].toLong(), delimiter = it.groupValues[3])
+        }
+        return Prefix("", indent, indent, indent)
+    }
+
+    private val signs = linkedMapOf("bold" to "**", "italic" to "*", "strike" to "~~", "highlight" to "==", "code" to "`")
+    private val signKind = mapOf("**" to "bold", "*" to "italic", "~~" to "strike", "==" to "highlight", "`" to "code")
+    private fun isPairSign(c: Char?) = c == '*' || c == '~' || c == '=' || c == '`'
+
+    /** The signs of the left half of an empty pair, outer first (`***` is bold around italic), or null. */
+    private fun pairSigns(run: String): List<String>? {
+        val found = mutableListOf<String>()
+        var i = 0
+        while (i < run.length) {
+            val two = run.substring(i, minOf(i + 2, run.length))
+            val sign = when {
+                two == "**" || two == "~~" || two == "==" -> two
+                run[i] == '*' || run[i] == '`' -> run[i].toString()
+                else -> return null
+            }
+            if (found.any { signKind[it] == signKind[sign] }) return null
+            found += sign
+            i += sign.length
+        }
+        return found
+    }
+
+    /**
+     * An empty pair around the caret: a button pressed before typing (`**¦**`, `***¦***`, `~~¦~~`). The editor hides its
+     * signs and shows the buttons as on; what is typed lands between the signs. Signs against a word are no pair.
+     */
+    fun emptyPair(text: String, selFrom: Int, selTo: Int = selFrom): EmptyPair? {
+        if (selFrom != selTo || selFrom < 0 || selFrom > text.length) return null
+        var from = selFrom
+        var to = selFrom
+        while (from > 0 && isPairSign(text[from - 1])) from--
+        while (to < text.length && isPairSign(text[to])) to++
+        if (from == selFrom || to == selFrom || isWord(text.getOrNull(from - 1)) || isWord(text.getOrNull(to))) return null
+        val found = pairSigns(text.substring(from, selFrom)) ?: return null
+        if (found.reversed().joinToString("") != text.substring(selFrom, to)) return null
+        return EmptyPair(from, to, found, found.map { signKind.getValue(it) })
+    }
+
+    /** The text with an empty pair's signs as spaces: the same positions, but `****` is no rule and `~~~~` no fence. */
+    fun maskPair(text: String, pair: EmptyPair?): String =
+        if (pair == null) text else text.substring(0, pair.from) + " ".repeat(pair.to - pair.from) + text.substring(pair.to)
+
+    /** One replacement that turns [before] into [after]: the common start and end stay out of it. */
+    private fun replacement(before: String, after: String, selFrom: Int, selTo: Int = selFrom): Edit? {
+        if (before == after) return null
+        val max = minOf(before.length, after.length)
+        var from = 0
+        while (from < max && before[from] == after[from]) from++
+        var end = 0
+        while (end < max - from && before[before.length - 1 - end] == after[after.length - 1 - end]) end++
+        return Edit(from, before.length - end, after.substring(from, after.length - end), selFrom, selTo)
+    }
+
+    private data class Change(val from: Int, val to: Int, val insert: String)
+
+    private class Applied(val text: String, private val sorted: List<Change>) {
+        /** Where [pos] lands. At an insertion [after] puts it behind the inserted text; in a removed range it goes to its start. */
+        fun map(pos: Int, after: Boolean = false): Int {
+            var delta = 0
+            for (edit in sorted) {
+                val insertion = edit.from == edit.to
+                if (pos < edit.from || (insertion && pos == edit.from && !after)) break
+                if (insertion && pos == edit.from) return pos + delta + edit.insert.length
+                if (!insertion && pos <= edit.to) return edit.from + delta + if (pos == edit.to && after) edit.insert.length else 0
+                delta += edit.insert.length - (edit.to - edit.from)
+            }
+            return pos + delta
+        }
+    }
+
+    private fun applyEdits(text: String, edits: List<Change>): Applied {
+        val sorted = edits.filter { it.from != it.to || it.insert.isNotEmpty() }.sortedWith(compareBy<Change> { it.from }.thenBy { it.to })
+        val out = StringBuilder()
+        var last = 0
+        for (edit in sorted) { out.append(text, last, edit.from).append(edit.insert); last = edit.to }
+        out.append(text, last, text.length)
+        return Applied(out.toString(), sorted)
+    }
+
+    private class Lines(text: String) {
+        val lines = text.split('\n')
+        val starts = IntArray(lines.size).also { starts ->
+            var offset = 0
+            for ((i, line) in lines.withIndex()) { starts[i] = offset; offset += line.length + 1 }
+        }
+
+        /** The line [pos] is on. */
+        fun at(pos: Int): Int {
+            var lo = 0
+            var hi = lines.size - 1
+            while (lo < hi) {
+                val mid = (lo + hi + 1) shr 1
+                if (starts[mid] <= pos) lo = mid else hi = mid - 1
+            }
+            return lo
+        }
+    }
+
+    private fun blank(line: String?) = line == null || jsTrim(line).isEmpty()
+
+    /** The kind of run (text, code, table) each line is in. */
+    private fun lineKinds(text: String): Array<String> {
+        val runs = blocks(text)
+        val kinds = Array(runs.last().toLine + 1) { "text" }
+        for (run in runs) for (line in run.fromLine..run.toLine) kinds[line] = run.kind
+        return kinds
+    }
+
+    /** The lines a selection touches; a selection that ends at the very start of a line leaves that line out. */
+    private fun touchedLines(table: Lines, from: Int, to: Int): kotlin.Pair<Int, Int> {
+        val first = table.at(from)
+        var last = table.at(to)
+        if (to > from && last > first && to == table.starts[last]) last--
+        return first to last
+    }
+
+    private fun spansOfLine(table: Lines, index: Int): List<Span> {
+        val start = table.starts[index]
+        return inlineSpans(table.lines[index]).map { it.copy(from = it.from + start, to = it.to + start, openTo = it.openTo + start, closeFrom = it.closeFrom + start) }
+    }
+
+    private val onlySigns = Regex("^[*_~=`]*$")
+
+    /** The span of [kind] that holds the selection (signs included); a caret must be strictly inside. */
+    private fun holder(spans: List<Span>, kind: String, a: Int, b: Int, text: String? = null): Span? = spans.firstOrNull { span ->
+        span.kind == kind && if (a == b) span.from < a && a < span.to
+        else (span.from <= a && b <= span.to) ||
+            (a <= span.from && span.to <= b && text != null && onlySigns.matches(text.substring(a, span.from) + text.substring(span.to, b)))
+    }
+
+    private class Segment(val a: Int, val b: Int, val spans: List<Span>, val own: Span?)
+    private class Plan(val remove: Boolean, val edits: List<Change>, val caret: Int? = null, val a: Int = 0, val b: Int = 0, val step: Int? = null)
+
+    /** The analysis behind an inline button: what it would take away, or where it would add its signs. */
+    private fun inlinePlan(text: String, selFrom: Int, selTo: Int, kind: String): Plan? {
+        val sign = signs.getValue(kind)
+        val table = Lines(text)
+        val kinds = lineKinds(text)
+        if (selFrom == selTo) {
+            val caret = selFrom
+            val pair = emptyPair(text, caret)
+            if (pair != null) {
+                // In an empty pair a button that is on takes its own signs away; another one adds its signs inside.
+                val at = pair.kinds.indexOf(kind)
+                if (at < 0) return Plan(false, listOf(Change(caret, caret, sign), Change(caret, caret, sign)), caret)
+                val offset = pair.signs.take(at).sumOf { it.length }
+                val left = pair.from + offset
+                val right = pair.to - offset - sign.length
+                return Plan(true, listOf(Change(left, left + sign.length, ""), Change(right, right + sign.length, "")), caret)
+            }
+            val index = table.at(caret)
+            if (kinds[index] == "code") return null
+            val spans = spansOfLine(table, index)
+            val own = holder(spans, kind, caret, caret)
+            // At the end of the formatted words the button stops the formatting there, as in a word processor.
+            if (own != null && caret == own.closeFrom && own.closeFrom > own.openTo) return Plan(true, emptyList(), caret, step = own.to)
+            if (own != null) return Plan(true, listOf(Change(own.from, own.openTo, ""), Change(own.closeFrom, own.to, "")), caret)
+            // No signs inside code, a web address or a link to a note.
+            if (spans.any { it.kind in setOf("code", "url", "wikilink") && it.from < caret && caret < it.to }) return null
+            val lineStart = table.starts[index]
+            val lineEnd = lineStart + withoutCr(table.lines[index]).length
+            var a = caret
+            var b = caret
+            // A caret in a word formats that word: selecting is awkward on a phone.
+            while (a > lineStart && isWord(text[a - 1])) a--
+            while (b < lineEnd && isWord(text[b])) b++
+            return Plan(false, listOf(Change(a, a, sign), Change(b, b, sign)), caret)
+        }
+        val (first, last) = touchedLines(table, selFrom, selTo)
+        val segments = mutableListOf<Segment>()
+        for (index in first..last) {
+            if (kinds[index] == "code") continue
+            val lineStart = table.starts[index]
+            val line = withoutCr(table.lines[index])
+            var a = maxOf(selFrom, lineStart + linePrefix(line).markTo)
+            var b = minOf(selTo, lineStart + line.length)
+            // Spaces at the edges of the selection do not count.
+            while (a < b && isSpace(text[a])) a++
+            while (b > a && isSpace(text[b - 1])) b--
+            if (a >= b) continue
+            val spans = spansOfLine(table, index)
+            segments += Segment(a, b, spans, holder(spans, kind, a, b, text))
+        }
+        if (segments.isEmpty()) return null
+        val remove = segments.all { it.own != null }
+        val edits = mutableListOf<Change>()
+        for (segment in segments) {
+            val own = segment.own
+            if (remove && own != null) {
+                edits += Change(own.from, own.openTo, "")
+                edits += Change(own.closeFrom, own.to, "")
+            } else if (own == null) {
+                // The same formatting inside the selection goes, so it is not doubled.
+                for (span in segment.spans) {
+                    if (span.kind == kind && segment.a <= span.from && span.to <= segment.b) {
+                        edits += Change(span.from, span.openTo, "")
+                        edits += Change(span.closeFrom, span.to, "")
+                    }
+                }
+                edits += Change(segment.a, segment.a, sign)
+                edits += Change(segment.b, segment.b, sign)
+            }
+        }
+        return Plan(remove, edits, a = segments.first().a, b = segments.last().b)
+    }
+
+    private fun inlineFormat(text: String, selFrom: Int, selTo: Int, kind: String): Edit? {
+        val plan = inlinePlan(text, selFrom, selTo, kind) ?: return null
+        val caret = plan.caret
+        // Stepping out changes no text: an empty replacement that only moves the caret.
+        if (plan.step != null && caret != null) return Edit(caret, caret, "", plan.step)
+        val applied = applyEdits(text, plan.edits)
+        if (caret != null) {
+            // The caret stays in the same place in the words: behind the opening sign that is added in front of it.
+            return replacement(text, applied.text, if (plan.remove) applied.map(caret) else caret + signs.getValue(kind).length)
+        }
+        return replacement(text, applied.text, applied.map(plan.a, true), applied.map(plan.b, false))
+    }
+
+    /** The lines a line button works on: every touched line, blank ones left out when there are several. */
+    private fun lineTargets(table: Lines, kinds: Array<String>, selFrom: Int, selTo: Int): List<Int> {
+        val (first, last) = touchedLines(table, selFrom, selTo)
+        return (first..last).filter { kinds[it] == "text" && !(first != last && blank(table.lines[it])) }
+    }
+
+    private fun lineFormat(text: String, selFrom: Int, selTo: Int, command: String): Edit? {
+        val table = Lines(text)
+        val kinds = lineKinds(text)
+        val targets = lineTargets(table, kinds, selFrom, selTo)
+        if (targets.isEmpty()) return null
+        val prefixes = targets.map { linePrefix(table.lines[it]) }
+        val edits = mutableListOf<Change>()
+        fun set(index: Int, from: Int, to: Int, insert: String) { edits += Change(table.starts[index] + from, table.starts[index] + to, insert) }
+        when (command) {
+            "heading" -> {
+                // None, then ##, then ###, then none again. Never #: the first # heading is the note's title.
+                val level = if (prefixes[0].kind == "heading") prefixes[0].level else 0
+                val next = if (level <= 1) 2 else if (level == 2) 3 else 0
+                targets.forEachIndexed { i, index ->
+                    val prefix = prefixes[i]
+                    if (prefix.kind == "heading") set(index, prefix.markFrom, prefix.markTo, if (next > 0) "#".repeat(next) + " " else "")
+                    else if (next > 0) set(index, prefix.indent, prefix.indent, "#".repeat(next) + " ")
+                }
+            }
+            "quote" -> {
+                val all = prefixes.all { it.kind == "quote" }
+                targets.forEachIndexed { i, index ->
+                    val prefix = prefixes[i]
+                    if (all) set(index, prefix.markFrom, prefix.markTo, "") else if (prefix.kind != "quote") set(index, 0, 0, "> ")
+                }
+            }
+            else -> {
+                // A task counts as a bullet: the bullet button takes its sign away instead of turning it into a plain item.
+                fun same(prefix: Prefix) = if (command == "bullet") prefix.kind == "bullet" || prefix.kind == "task" else prefix.kind == "ordered"
+                val all = prefixes.all(::same)
+                var number = 1
+                targets.forEachIndexed { i, index ->
+                    val prefix = prefixes[i]
+                    val list = prefix.kind in setOf("bullet", "task", "ordered")
+                    val from = if (list) prefix.markFrom else prefix.indent
+                    val to = if (list) prefix.markTo else prefix.indent
+                    when {
+                        all -> set(index, prefix.markFrom, prefix.markTo, "")
+                        command == "bullet" -> if (!same(prefix)) set(index, from, to, "- ")
+                        else -> set(index, from, to, "${number++}. ")
+                    }
+                }
+            }
+        }
+        val applied = applyEdits(text, edits.filter { text.substring(it.from, it.to) != it.insert })
+        if (applied.text == text) return null
+        if (selFrom == selTo) return replacement(text, applied.text, applied.map(selFrom, true))
+        return replacement(text, applied.text, applied.map(selFrom), applied.map(selTo, true))
+    }
+
+    /** A block of whole lines (a rule, a table) on the caret's line when that is blank, else under it, with blank lines around. */
+    private fun insertBlock(text: String, pos: Int, block: List<String>, caretAfter: Boolean): Edit? {
+        val table = Lines(text)
+        val lines = table.lines
+        val index = table.at(pos)
+        val cr = if (lines[index].endsWith("\r")) "\r" else ""
+        var at = index + 1
+        var remove = 0
+        if (blank(lines[index]) && (index == 0 || blank(lines[index - 1]))) { at = index; remove = 1 }
+        val before = if (at > 0 && !blank(lines[at - 1])) listOf("") else emptyList()
+        val rest = at + remove
+        val after = if (rest < lines.size) (if (blank(lines[rest])) emptyList() else listOf("")) else if (caretAfter) listOf("") else emptyList()
+        val next = lines.subList(0, at) + (before + block + after).map { it + cr } + lines.subList(rest, lines.size)
+        val out = next.joinToString("\n")
+        val blockStart = next.subList(0, at + before.size).sumOf { it.length + 1 }
+        val lastLine = at + before.size + block.size - 1
+        // After a rule the caret goes to the start of the line right under it.
+        val caret = if (caretAfter) next.subList(0, lastLine + 1).sumOf { it.length + 1 } else blockStart
+        return replacement(text, out, minOf(caret, out.length))
+    }
+
+    /** A new table of 3 columns: the header and 2 rows, all cells empty. The selection lands at its start. */
+    fun insertTable(text: String, pos: Int): Edit? {
+        val row = "|  |  |  |"
+        return insertBlock(text, pos, listOf(row, "| --- | --- | --- |", row, row), false)
+    }
+
+    /** The formatting buttons: bold, italic, strike, highlight, code, heading, bullet, ordered, quote, rule, table. */
+    fun applyFormat(text: String, selFrom: Int, selTo: Int, command: String): Edit? {
+        val from = maxOf(0, minOf(selFrom, selTo, text.length))
+        val to = minOf(text.length, maxOf(selFrom, selTo))
+        if (command in signs) return inlineFormat(text, from, to, command)
+        if (command in setOf("heading", "bullet", "ordered", "quote")) return lineFormat(text, from, to, command)
+        if (command != "rule" && command != "table") return null
+        if (lineKinds(text)[Lines(text).at(to)] != "text") return null
+        return if (command == "rule") insertBlock(text, to, listOf("---"), true) else insertTable(text, to)
+    }
+
+    /**
+     * Which buttons are "on": exactly when pressing them would take formatting away, plus an empty pair's kinds,
+     * `checklist` on a task, `table` in a table and `codeblock` in a code block.
+     */
+    fun activeFormats(text: String, selFrom: Int, selTo: Int): List<String> {
+        val from = maxOf(0, minOf(selFrom, selTo, text.length))
+        val to = minOf(text.length, maxOf(selFrom, selTo))
+        val pair = emptyPair(text, from, to)
+        val plain = maskPair(text, pair)
+        val table = Lines(plain)
+        val kinds = lineKinds(plain)
+        val index = table.at(from)
+        if (kinds[index] == "code") return listOf("codeblock")
+        val on = mutableListOf<String>()
+        if (kinds[index] == "table") on += "table"
+        for (kind in signs.keys) if (pair?.kinds?.contains(kind) == true || inlinePlan(plain, from, to, kind)?.remove == true) on += kind
+        val line = when (linePrefix(table.lines[index]).kind) {
+            "heading" -> "heading"
+            "bullet" -> "bullet"
+            "ordered" -> "ordered"
+            "task" -> "checklist"
+            "quote" -> "quote"
+            else -> null
+        }
+        if (line != null && kinds[index] == "text") on += line
+        return on.sorted()
+    }
+
+    /**
+     * Backspace with the caret right behind signs the formatted view hides ([hidden]: from the editor's own display).
+     * As in a word processor it takes the last visible letter before them, not half a sign that would then show; right
+     * behind a heading's hidden `## ` the line becomes plain text; behind hidden signs at the start of a line it joins
+     * the line above. In an empty pair the whole pair goes. Null: an ordinary Backspace.
+     */
+    fun backspaceEdit(text: String, caret: Int, hidden: List<IntRange>): Edit? {
+        emptyPair(text, caret)?.let { return Edit(it.from, it.to, "", it.from) }
+        var start = caret
+        while (true) start = hidden.firstOrNull { it.last + 1 == start && it.first < start }?.first ?: break
+        if (start == caret) return null
+        fun at(from: Int, to: Int = start) = Edit(from, to, "", caret - (to - from))
+        val lineStart = if (start == 0) 0 else text.lastIndexOf('\n', start - 1) + 1
+        val next = text.indexOf('\n', lineStart)
+        val prefix = linePrefix(text.substring(lineStart, if (next < 0) text.length else next))
+        if (prefix.kind == "heading" && start == lineStart + prefix.markFrom && caret >= lineStart + prefix.markTo) {
+            return at(lineStart + prefix.markFrom, lineStart + prefix.markTo)
+        }
+        if (start == lineStart) return if (start == 0) at(caret, caret) else at(if (start >= 2 && text[start - 2] == '\r') start - 2 else start - 1)
+        val pairStart = start >= 2 && text[start - 1].isLowSurrogate() && text[start - 2].isHighSurrogate()
+        val from = if (pairStart) start - 2 else start - 1
+        // The last letter of formatted words: its signs go with it, so no `****` is left to see.
+        val left = emptyPair(text.removeRange(from, start), from)
+        return if (left != null) at(left.from, left.to + (start - from)) else at(from)
+    }
+
+    private val listItem = Regex("""^([ \t]*)(?:([-*+])|(\d{1,9})([.)]))[ \t]+(?:\[([ xX])\](?:[ \t]+|\z))?""")
+
+    /**
+     * Enter in a list: the next item gets the same sign (a bullet, the next number, an empty box), and Enter on an empty
+     * item takes its sign away. On any text line, Enter inside bold, italic, strike, highlight or code goes on in it:
+     * the line is closed before the break and opened again after it; an empty pair moves along. Null: an ordinary Enter.
+     */
+    fun listEnterEdit(text: String, selFrom: Int, selTo: Int = selFrom): Edit? {
+        var from = selFrom
+        var to = selTo
+        val lineStart = if (from <= 0) 0 else text.lastIndexOf('\n', from - 1) + 1
+        val next = text.indexOf('\n', from)
+        val lineEnd = if (next < 0) text.length else next
+        if (lineStart > lineEnd) return null
+        val line = text.substring(lineStart, lineEnd)
+        if (to > lineEnd) return null
+        if (lineKinds(text)[Lines(text).at(lineStart)] != "text") return null
+        // A CRLF line keeps its `\r`, and the new line gets one too.
+        val cr = if (line.endsWith("\r")) "\r" else ""
+        val contentEnd = lineEnd - cr.length
+        from = minOf(from, contentEnd)
+        to = minOf(to, contentEnd)
+        val list = listItem.find(line)?.takeIf { from >= lineStart + it.value.length }
+
+        // The formatting the caret is in: `at` is where the break goes, before signs right in front of the caret.
+        var at = from
+        var close = ""
+        var open = ""
+        var before = ""
+        var after = ""
+        val pair = if (from == to) emptyPair(text, from) else null
+        if (pair != null) at = pair.from
+        else if (from == to) {
+            val offset = lineStart + linePrefix(line).markTo
+            val spans = inlineSpans(text.substring(offset, contentEnd)).filter { it.kind in carried }
+                .map { Span(it.kind, it.from + offset, it.to + offset, it.openTo + offset, it.closeFrom + offset) }
+            while (true) at = spans.firstOrNull { it.openTo == at && it.from < at }?.from ?: break
+            val inside = spans.filter { it.openTo < at && at <= it.closeFrom }
+            close = inside.map { text.substring(it.closeFrom, it.to) }.reversed().joinToString("")
+            open = inside.joinToString("") { text.substring(it.from, it.openTo) }
+            // Formatting cannot start or end on a space: spaces at the break stay outside the signs.
+            if (inside.isNotEmpty()) {
+                while (at - before.length > lineStart && isSpace(text[at - before.length - 1])) before = "${text[at - before.length - 1]}$before"
+                if (at == from) while (at + after.length < contentEnd && isSpace(text[at + after.length])) after += text[at + after.length]
+            }
+        }
+        if (list != null) {
+            val plain = maskPair(text, pair)
+            val remaining = plain.substring(lineStart + list.value.length, from) + plain.substring(to, contentEnd)
+            if (jsTrim(remaining).isEmpty()) return Edit(lineStart, contentEnd, "", lineStart)
+        } else if (at == from && close.isEmpty()) return null
+        val sign = list?.groups?.let { groups ->
+            val number = if (groups[2] != null) "-" else "${groups[3]!!.value.toLong() + 1}${groups[4]!!.value}"
+            "${groups[1]!!.value}$number " + if (groups[5] == null) "" else "[ ] "
+        } ?: ""
+        val start = at - before.length
+        val insert = "$close$before$cr\n$sign$after$open${text.substring(at, from)}"
+        return Edit(start, to + after.length, insert, start + insert.length)
+    }
+
+    /** The formatting that goes on after Enter (Eric, 16 nov), as in format.mjs. */
+    private val carried = setOf("bold", "italic", "strike", "highlight", "code")
 }

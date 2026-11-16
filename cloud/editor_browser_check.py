@@ -54,9 +54,27 @@ def check_editor(browser, url, token):
         page.keyboard.press("End")
         # Enter in a list starts the next item, as in Obsidian and Android.
         page.keyboard.type("\nsee ")
+        # Insert link opens a small window: no list of every note, just a field for your own address and a note search.
         page.locator("#insert-link").click()
-        page.get_by_role("menu").get_by_role("menuitem", name="Pasta recipe").click()
+        assert page.locator("#url-dialog").is_visible() and page.locator("#url-notes").is_hidden()
+        assert page.evaluate("document.activeElement.id") == "url-address"
+        page.locator("#url-note").fill("pasta")
+        page.locator("#url-notes").get_by_role("button", name="Pasta recipe").click()
+        assert page.locator("#url-dialog").is_hidden()
         assert body_text(page) == "- [x] milk\n- [ ] see [[" + recipe.get_attribute("data-path")[6:-3] + "]]", body_text(page)
+        # Your own address: a bare domain gets https://, an empty address is refused, Cancel changes nothing.
+        page.keyboard.type(" and ")
+        page.locator("#insert-link").click()
+        page.locator("#url-insert").click()
+        assert page.locator("#url-dialog").is_visible() and "address" in page.locator("#url-message").inner_text()
+        page.locator("#url-cancel").click()
+        assert page.locator("#url-dialog").is_hidden() and body_text(page).endswith("]] and "), body_text(page)
+        page.locator("#insert-link").click()
+        page.locator("#url-address").fill("example.com/a b")
+        page.locator("#url-text").fill("my site")
+        page.locator("#url-address").press("Enter")
+        assert page.locator("#url-dialog").is_hidden()
+        assert body_text(page).endswith("]] and [my site](https://example.com/a%20b)"), body_text(page)
 
         # Color, pin, labels and tags are buttons and chips, not raw YAML.
         colors = page.locator("#note-colors").get_by_role("radio")
