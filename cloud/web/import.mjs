@@ -145,6 +145,10 @@ var EN = {
   preview_checked_many: "+ {0} checked items",
   preview_open_one: "Open note - {0} more task",
   preview_open_many: "Open note - {0} more tasks",
+  table_more_column: "+ {0} column",
+  table_more_columns: "+ {0} columns",
+  table_more_row: "+ {0} row",
+  table_more_rows: "+ {0} rows",
   preview_changed: "This checklist changed. The card will refresh; try again.",
   // App / commands
   open_jotdrop: "Open JotDrop",
@@ -280,6 +284,7 @@ var EN = {
   attach_more_many: "+ {0} files",
   // Ask JotDrop: AI with your own key (the window itself is in English, like the cloud screens)
   action_ask_jotdrop: "Ask JotDrop",
+  action_find_duplicates: "Find duplicates",
   action_ask_about_note: "Ask JotDrop about this note\u2026",
   action_ai_summarize: "Summarize with AI",
   action_ai_transcribe: "Transcribe with AI",
@@ -288,6 +293,7 @@ var EN = {
   action_ai_rewrite: "\u2728 Rewrite with AI",
   action_ai_checklist: "\u2728 Checklist with AI",
   cmd_ask_jotdrop: "Ask JotDrop (AI with your own key)",
+  cmd_find_duplicates: "Find duplicate notes",
   notice_ai_write_first: "Write something first.",
   notice_ai_save_to_keep: "Changes are saved only when you select Save.",
   action_edit_drawing: "Edit drawing",
@@ -747,14 +753,14 @@ function keepNoteMarkdown(note, attachmentName) {
     note.pinned ? "pinned: true" : "",
     note.labels.length ? `jotdrop_labels: ${JSON.stringify(note.labels)}` : ""
   ];
-  const blocks = [
+  const blocks2 = [
     note.title ? `# ${neutralizeInlineHashtags(note.title)}` : "",
     neutralizeInlineHashtags(note.text),
     note.items.map((item) => `- [${item.checked ? "x" : " "}] ${neutralizeInlineHashtags(item.text)}`).join("\n"),
     note.attachments.map((source) => `![[${attachmentName(source)}]]`).join("\n\n"),
     note.links.map((link) => safeMarkdownLink(link.title || link.url, link.url)).join("\n")
   ].filter(Boolean);
-  return withFrontmatter(frontmatter, blocks.join("\n\n") + "\n");
+  return withFrontmatter(frontmatter, blocks2.join("\n\n") + "\n");
 }
 function withFrontmatter(lines, body) {
   const frontmatter = lines.filter(Boolean);
@@ -1493,7 +1499,7 @@ function evernoteNoteMarkdown(note, names) {
   const extra = note.unplaced.map((key) => names.get(key)).filter((name) => !!name);
   const text = enmlToMarkdown(note.content, mediaName, note.tasks);
   const url = /^https?:\/\//i.test(note.sourceUrl) ? encodeUrl(note.sourceUrl) : "";
-  const blocks = [
+  const blocks2 = [
     note.title ? `# ${neutralizeInlineHashtags(note.title)}` : "",
     neutralizeInlineHashtags(text),
     extra.map((name) => `![[${name}]]`).join("\n\n"),
@@ -1502,7 +1508,7 @@ function evernoteNoteMarkdown(note, names) {
   return withFrontmatter([
     note.tags.length ? `tags: ${JSON.stringify(note.tags)}` : "",
     note.notebook ? `jotdrop_labels: ${JSON.stringify([note.notebook])}` : ""
-  ], blocks.join("\n\n") + "\n");
+  ], blocks2.join("\n\n") + "\n");
 }
 
 // cloud/web/import-entry.ts

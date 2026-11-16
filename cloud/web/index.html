@@ -330,12 +330,41 @@
       <!-- Like the plugin editor: title and text. The Markdown view shows the whole file. -->
       <div id="simple-editor">
         <label for="note-title">Title</label><input id="note-title" maxlength="300" placeholder="Title (optional)" autocomplete="off">
-        <label for="note-body">Note</label><textarea id="note-body" rows="12" spellcheck="true"></textarea>
+        <label for="note-body" id="note-body-label">Note</label><textarea id="note-body" rows="12" spellcheck="true"></textarea>
+        <!-- The formatted editor (editor.mjs) takes the text box's place once it has loaded; the text box is its safety net. -->
+        <div id="note-editor" hidden></div>
       </div>
       <div id="markdown-editor" hidden>
         <label for="note-path">Filename</label><input id="note-path" required maxlength="512" spellcheck="false">
         <label for="note-content">Markdown content</label><textarea id="note-content" rows="14" spellcheck="true"></textarea>
       </div>
+      <!-- Formatting buttons: each a sign plus its name (tooltip and label); "on" shows as a pressed button, not only a color. -->
+      <div id="format-bar" class="format-bar" role="toolbar" aria-label="Formatting">
+        <button type="button" data-format="bold" aria-pressed="false" aria-label="Bold" title="Bold (Ctrl+B)"><b>B</b></button>
+        <button type="button" data-format="italic" aria-pressed="false" aria-label="Italic" title="Italic (Ctrl+I)"><i>I</i></button>
+        <button type="button" data-format="heading" aria-pressed="false" aria-label="Heading" title="Heading">H</button>
+        <button type="button" data-format="bullet" aria-pressed="false" aria-label="Bulleted list" title="Bulleted list">•</button>
+        <button type="button" data-format="ordered" aria-pressed="false" aria-label="Numbered list" title="Numbered list">1.</button>
+        <button type="button" data-format="checklist" aria-pressed="false" aria-label="Checklist" title="Checklist">☑</button>
+        <button type="button" data-format="highlight" aria-pressed="false" aria-label="Highlight" title="Highlight"><span class="format-highlight">A</span></button>
+        <button type="button" data-format="table" aria-pressed="false" aria-label="Table" title="Table">▦</button>
+        <button type="button" data-format="emoji" aria-expanded="false" aria-controls="emoji-panel" aria-label="Emoji" title="Emoji (more: Windows key + . or Ctrl + Cmd + Space)">☺</button>
+        <button type="button" data-format="more" aria-haspopup="menu" aria-label="More formatting" title="More: strikethrough, quote, code, dividing line">⋯</button>
+      </div>
+      <div id="table-bar" class="format-bar" role="toolbar" aria-label="Table" hidden>
+        <button type="button" data-table="addRow">+ Row</button>
+        <button type="button" data-table="addColumn">+ Column</button>
+        <button type="button" data-table="deleteRow">− Row</button>
+        <button type="button" data-table="deleteColumn">− Column</button>
+        <button type="button" data-table="alignLeft" aria-label="Align left" title="Align left">Left</button>
+        <button type="button" data-table="alignCenter" aria-label="Align center" title="Align center">Center</button>
+        <button type="button" data-table="alignRight" aria-label="Align right" title="Align right">Right</button>
+        <button type="button" data-table="bold" aria-pressed="false" aria-label="Bold" title="Bold (Ctrl+B)"><b>B</b></button>
+        <button type="button" data-table="italic" aria-pressed="false" aria-label="Italic" title="Italic (Ctrl+I)"><i>I</i></button>
+        <button type="button" data-table="highlight" aria-pressed="false" aria-label="Highlight" title="Highlight"><span class="format-highlight">A</span></button>
+        <button type="button" data-table="deleteTable" class="danger">Delete table</button>
+      </div>
+      <div id="emoji-panel" class="emoji-panel" role="group" aria-label="Emoji" hidden></div>
       <div class="editor-tools"><button id="note-pinned" type="button" aria-pressed="false">Pin</button><button id="insert-checklist" type="button">Checklist item</button><button id="insert-link" type="button">Insert link</button><button id="markdown-help-toggle" type="button" aria-expanded="false" aria-controls="markdown-help">Markdown help</button></div>
       <section id="markdown-help" class="markdown-help" aria-label="Markdown help" hidden>
         <p>Type the code on the left to format your note. Obsidian and other Markdown apps show the result on the right; JotDrop cards show the text without the codes.</p>

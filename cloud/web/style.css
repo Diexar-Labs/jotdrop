@@ -353,6 +353,20 @@ dialog { overscroll-behavior: contain; }
 .markdown-help .help-heading { font-size: 1.2rem; }
 .markdown-help .help-quote { border-left: 3px solid var(--line); padding-left: .5rem; color: var(--muted); }
 .editor-tools button[aria-expanded="true"] { background: var(--selected); border-color: var(--accent); }
+/* The formatting bar under the note's text (design opmaak-editor, part 5.3). A button that is on is pressed in: a
+   thicker frame and a bar under it, so it never depends on seeing color. */
+.format-bar { display: flex; flex-wrap: wrap; gap: .35rem; margin-top: .6rem; }
+.format-bar button { min-width: 2.5rem; padding: .4rem .6rem; line-height: 1.2; }
+.format-bar button[aria-pressed="true"], .format-bar button[aria-expanded="true"] { border-width: 2.5px; border-color: var(--accent); background: var(--selected); box-shadow: inset 0 -3px 0 var(--accent); }
+.format-highlight { background: light-dark(#fde68a, #6b5413); padding: 0 .2em; border-radius: 3px; }
+.format-bar [data-format="bullet"] { font-size: 1.25em; line-height: 1; }
+#note-editor { min-width: 0; }
+.emoji-panel { margin-top: .5rem; padding: .6rem .7rem; border: 1.5px solid var(--edge); border-radius: 10px; background: var(--surface); max-height: 18rem; overflow-y: auto; }
+.emoji-panel h3 { margin: .4rem 0 .2rem; font-size: .85rem; color: var(--muted); font-weight: 600; }
+.emoji-row { display: flex; flex-wrap: wrap; gap: .2rem; }
+.emoji-row button { padding: .25rem .4rem; border: 0; background: transparent; font-size: 1.35rem; line-height: 1.2; border-radius: 8px; }
+.emoji-row button:hover { background: var(--selected); }
+.emoji-hint { margin: .6rem 0 0; color: var(--muted); font-size: .85rem; }
 .provider-buttons { display: grid; gap: .5rem; margin: 1rem 0 .25rem; }
 .provider-buttons button { width: 100%; display: flex; align-items: center; justify-content: center; gap: .65rem; }
 /* The providers' own button colours (Google: light or dark neutral; GitHub: near black), each with its logo and name. */

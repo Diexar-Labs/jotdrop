@@ -1,7 +1,7 @@
 import { CloudClient, identifyClient } from '/shared/client.mjs';
 import { mergeNote } from '/shared/merge.mjs';
 import { cardPreview, checklistOnly, tagOnly } from '/shared/card-preview.mjs';
-import { blocks, parseTable } from '/shared/format.mjs';
+import { activeFormats, applyFormat, blocks, parseTable } from '/shared/format.mjs';
 import { cardTable } from '/shared/format-dom.mjs';
 import { diffLines, foldUnchanged } from '/shared/diff.mjs';
 import { findDuplicates, pairKey } from '/shared/similar.mjs';
@@ -1773,10 +1773,80 @@ function openEditor(entry) {
   $('note-prev').disabled = index <= 0;
   $('note-next').disabled = index >= navOrder.length - 1;
   if (!$('editor').open) $('editor').showModal();
-  (markdownMode ? $('note-content') : entry ? $('note-body') : $('note-title')).focus();
+  void loadFormattedEditor();
+  (markdownMode ? $('note-content') : entry ? bodyEditor : $('note-title')).focus();
+  showFormatState();
 }
 
-$('editor').addEventListener('close', () => renderNoteMedia());
+$('editor').addEventListener('close', () => { renderNoteMedia(); closeEmojiPanel(); });
+
+// The note's text box as the formatting buttons see it (design opmaak-editor): the formatted editor when it has
+// loaded, else a plain text box. Both answer the same few calls, so the buttons work the same in either.
+function plainArea(area) {
+  const selection = () => ({ from: area.selectionStart ?? area.value.length, to: area.selectionEnd ?? area.value.length });
+  const replace = (edit) => {
+    if (!edit) return false;
+    area.focus();
+    area.setSelectionRange(edit.from, edit.to);
+    // insertText keeps the browser's own undo; setting the text is the fallback.
+    if (!document.execCommand('insertText', false, edit.insert)) {
+      area.setRangeText(edit.insert, edit.from, edit.to, 'end');
+      area.dispatchEvent(new Event('input'));
+    }
+    const at = edit.selFrom ?? edit.from + edit.insert.length;
+    area.setSelectionRange(at, edit.selTo ?? at);
+    showFormatState();
+    return true;
+  };
+  return {
+    element: area,
+    getValue: () => area.value,
+    setValue: (text) => { area.value = text; },
+    focus: () => area.focus(),
+    getSelection: selection,
+    setSelection: (from, to = from) => area.setSelectionRange(from, to),
+    replace,
+    insertText(text) { const { from, to } = selection(); return replace({ from, to, insert: text, selFrom: from + text.length }); },
+    apply(command) { const { from, to } = selection(); const edit = applyFormat(area.value, from, to, command); if (!edit) { area.focus(); return false; } return replace(edit); },
+    activeFormats() { const { from, to } = selection(); return activeFormats(area.value, from, to); },
+    context: () => 'text',
+    flush() {},
+  };
+}
+const rawArea = plainArea($('note-content'));
+let bodyEditor = plainArea($('note-body'));
+/** The text box the buttons work on now: the whole file in the Markdown view, else the note's text. */
+const editArea = () => (markdownMode ? rawArea : bodyEditor);
+
+// The formatted editor (CodeMirror 6, cloud/web/editor.mjs) loads when the browser has a moment, or when a note opens.
+// Until then, and whenever it cannot load, the plain text box works as before: never an empty editor.
+let formattedEditor;
+function loadFormattedEditor() {
+  formattedEditor ??= import('/editor.mjs').then(mountFormattedEditor).catch((error) => {
+    console.warn('The formatted editor did not load; the plain text box stays.', error);
+  });
+  return formattedEditor;
+}
+function mountFormattedEditor({ createBodyEditor }) {
+  const area = $('note-body'), focused = document.activeElement === area;
+  const { selectionStart, selectionEnd } = area;
+  const editor = createBodyEditor({
+    parent: $('note-editor'),
+    value: area.value,
+    labels: { note: 'Note', placeholder: 'Take a note…', done: 'Done' },
+    onChange: syncRaw,
+    onState: showFormatState,
+    // A table button or the emoji panel keeps the table bar, as long as no other place gets the focus.
+    isTableTool: (element) => $('table-bar').contains(element) || $('emoji-panel').contains(element),
+  });
+  $('note-editor').hidden = false;
+  area.hidden = true;
+  bodyEditor = editor;
+  if (focused) { editor.focus(); editor.setSelection(selectionStart, selectionEnd); }
+}
+(window.requestIdleCallback || ((run) => setTimeout(run, 1500)))(() => void loadFormattedEditor(), { timeout: 5000 });
+// The label still names the note's text box; a click on it goes to the formatted editor once that is there.
+$('note-body-label').addEventListener('click', (event) => { if (bodyEditor.element !== $('note-body')) { event.preventDefault(); bodyEditor.focus(); } });
 
 // The Markdown file in #note-content is the single source; title, text and the controls edit it.
 let markdownMode = false;
@@ -1784,12 +1854,17 @@ let pathTyped = false;
 $('note-path').addEventListener('input', () => { pathTyped = true; });
 try { markdownMode = localStorage.getItem('jotdrop-editor-mode') === 'markdown'; } catch { /* The simple editor is the default. */ }
 function setMarkdownMode(on) {
+  // A table cell that is still open goes into the text first.
+  if (on) bodyEditor.flush();
   markdownMode = on;
   $('markdown-mode').setAttribute('aria-pressed', String(on));
+  // The state is in words too, not only in a color: "Markdown" or "✓ Markdown".
+  $('markdown-mode').textContent = on ? '✓ Markdown' : 'Markdown';
   $('markdown-editor').hidden = !on;
   $('simple-editor').hidden = on;
   if (!on) syncSimple();
   try { localStorage.setItem('jotdrop-editor-mode', on ? 'markdown' : 'simple'); } catch { /* Keep the choice for this page. */ }
+  showFormatState();
 }
 setMarkdownMode(markdownMode);
 $('markdown-mode').addEventListener('click', () => setMarkdownMode(!markdownMode));
@@ -1797,15 +1872,126 @@ $('markdown-mode').addEventListener('click', () => setMarkdownMode(!markdownMode
 function syncSimple() {
   const { title, body } = splitNote($('note-content').value);
   $('note-title').value = title;
-  $('note-body').value = body;
+  bodyEditor.setValue(body);
 }
 function syncRaw() {
-  $('note-content').value = joinNote({ front: splitNote($('note-content').value).front, title: $('note-title').value, body: $('note-body').value });
+  $('note-content').value = joinNote({ front: splitNote($('note-content').value).front, title: $('note-title').value, body: bodyEditor.getValue() });
   refreshProperties();
 }
 $('note-title').addEventListener('input', syncRaw);
 $('note-body').addEventListener('input', syncRaw);
-$('note-title').addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); $('note-body').focus(); } });
+$('note-title').addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); bodyEditor.focus(); } });
+
+// The formatting bar (design opmaak-editor, part 5.3): Bold · Italic · Heading · Bulleted · Numbered · Checklist ·
+// Highlight · Table · Emoji · More. While a table cell has the focus, the table bar takes its place.
+const FORMAT_MORE = [['strike', 'Strikethrough'], ['quote', 'Quote'], ['code', 'Code'], ['rule', 'Dividing line']];
+function showFormatState(state) {
+  const area = editArea();
+  const context = state?.context ?? area.context();
+  const active = state?.active ?? area.activeFormats();
+  const table = context === 'table' && !markdownMode;
+  $('format-bar').hidden = table;
+  $('table-bar').hidden = !table;
+  for (const button of document.querySelectorAll('#format-bar [aria-pressed], #table-bar [aria-pressed]')) {
+    const name = button.dataset.format || button.dataset.table;
+    button.setAttribute('aria-pressed', String(active.includes(name)));
+  }
+}
+for (const bar of ['format-bar', 'table-bar']) {
+  // Pressing a button keeps the caret, the selection and an open table cell where they are.
+  $(bar).addEventListener('mousedown', (event) => { if (event.target.closest('button')) event.preventDefault(); });
+}
+$('format-bar').addEventListener('click', (event) => {
+  const button = event.target.closest('button[data-format]');
+  if (!button) return;
+  const command = button.dataset.format;
+  if (command === 'checklist') toggleChecklist(editArea());
+  else if (command === 'emoji') toggleEmojiPanel();
+  else if (command === 'more') showMenu(button, FORMAT_MORE.map(([name, label]) => ({ label, action: () => { editArea().apply(name); showFormatState(); } })));
+  else { editArea().apply(command); showFormatState(); }
+});
+$('table-bar').addEventListener('click', (event) => {
+  const button = event.target.closest('button[data-table]');
+  if (!button) return;
+  const command = button.dataset.table;
+  if (command === 'deleteTable' && !confirm('Delete this table? Undo with Ctrl+Z.')) return;
+  bodyEditor.apply(command);
+  showFormatState();
+});
+// The plain text boxes get the shortcuts too; the formatted editor has its own.
+for (const area of [$('note-body'), $('note-content')]) {
+  area.addEventListener('keydown', (event) => {
+    if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || !['b', 'i'].includes(event.key.toLowerCase())) return;
+    event.preventDefault();
+    editArea().apply(event.key.toLowerCase() === 'b' ? 'bold' : 'italic');
+  });
+  for (const type of ['keyup', 'mouseup', 'input', 'focus']) area.addEventListener(type, () => showFormatState());
+}
+
+// Emoji (design part 10b, Eric's choice "a button with a panel"): about 60 common ones and the last used ones. The full
+// set is the system's own: Windows key + . on Windows, Ctrl + Cmd + Space on a Mac, the keyboard on a phone.
+const EMOJI = [
+  ['Smileys', [['😀', 'grinning face'], ['😂', 'tears of joy'], ['😊', 'smiling face'], ['😍', 'heart eyes'], ['🤔', 'thinking face'], ['😎', 'sunglasses'], ['😢', 'crying face'], ['😮', 'surprised face'], ['😴', 'sleeping face'], ['🥳', 'party face']]],
+  ['Hands', [['👍', 'thumbs up'], ['👎', 'thumbs down'], ['👏', 'clapping hands'], ['🙏', 'folded hands'], ['👋', 'waving hand'], ['💪', 'flexed biceps'], ['🤝', 'handshake'], ['✌️', 'victory hand']]],
+  ['Hearts', [['❤️', 'red heart'], ['🧡', 'orange heart'], ['💛', 'yellow heart'], ['💚', 'green heart'], ['💙', 'blue heart'], ['💜', 'purple heart'], ['🖤', 'black heart'], ['💔', 'broken heart']]],
+  ['Ticks and stars', [['✅', 'check mark button'], ['✔️', 'check mark'], ['☑️', 'ticked box'], ['❌', 'cross mark'], ['⭐', 'star'], ['🌟', 'glowing star'], ['✨', 'sparkles'], ['⚡', 'lightning'], ['🔥', 'fire'], ['💯', 'hundred points']]],
+  ['Food', [['☕', 'coffee'], ['🍕', 'pizza'], ['🍎', 'apple'], ['🥗', 'salad'], ['🍰', 'cake'], ['🍷', 'wine'], ['🥖', 'bread'], ['🧀', 'cheese']]],
+  ['Travel', [['✈️', 'airplane'], ['🚗', 'car'], ['🚲', 'bicycle'], ['🏠', 'house'], ['🏖️', 'beach'], ['🗺️', 'map'], ['🧳', 'luggage'], ['⛰️', 'mountain']]],
+  ['Symbols', [['📌', 'pin'], ['📅', 'calendar'], ['⏰', 'alarm clock'], ['💡', 'light bulb'], ['📝', 'memo'], ['🎁', 'gift'], ['🎉', 'party popper'], ['⚠️', 'warning'], ['❓', 'question mark'], ['💬', 'speech balloon']]],
+];
+const emojiNames = new Map(EMOJI.flatMap(([, list]) => list));
+function recentEmoji() {
+  try { return (JSON.parse(localStorage.getItem('jotdrop-emoji-recent') || '[]')).filter((emoji) => emojiNames.has(emoji)).slice(0, 8); } catch { return []; }
+}
+function renderEmojiPanel() {
+  const panel = $('emoji-panel');
+  const group = (title, list) => {
+    const section = document.createElement('section');
+    const heading = document.createElement('h3');
+    heading.textContent = title;
+    const row = document.createElement('div');
+    row.className = 'emoji-row';
+    for (const [emoji, name] of list) {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = emoji;
+      button.title = name;
+      button.setAttribute('aria-label', name);
+      button.dataset.emoji = emoji;
+      row.append(button);
+    }
+    section.append(heading, row);
+    return section;
+  };
+  const hint = document.createElement('p');
+  hint.className = 'emoji-hint';
+  hint.textContent = 'More emoji: Windows key + . on Windows, Ctrl + Cmd + Space on a Mac, or the keyboard of your phone.';
+  const recent = recentEmoji();
+  panel.replaceChildren(...(recent.length ? [group('Recently used', recent.map((emoji) => [emoji, emojiNames.get(emoji)]))] : []), ...EMOJI.map(([title, list]) => group(title, list)), hint);
+}
+function toggleEmojiPanel() {
+  const panel = $('emoji-panel'), open = panel.hidden;
+  if (!open) { closeEmojiPanel(); return; }
+  renderEmojiPanel();
+  panel.hidden = false;
+  $('format-bar').querySelector('[data-format="emoji"]').setAttribute('aria-expanded', 'true');
+}
+function closeEmojiPanel() {
+  $('emoji-panel').hidden = true;
+  $('format-bar').querySelector('[data-format="emoji"]').setAttribute('aria-expanded', 'false');
+}
+$('emoji-panel').addEventListener('mousedown', (event) => { if (event.target.closest('button')) event.preventDefault(); });
+$('emoji-panel').addEventListener('click', (event) => {
+  const emoji = event.target.closest('button[data-emoji]')?.dataset.emoji;
+  if (!emoji) return;
+  // An emoji is plain text in the note: one insertion at the caret, as any other button.
+  editArea().insertText(emoji);
+  try { localStorage.setItem('jotdrop-emoji-recent', JSON.stringify([emoji, ...recentEmoji().filter((own) => own !== emoji)].slice(0, 8))); } catch { /* Recent emoji are a convenience. */ }
+  closeEmojiPanel();
+});
+$('editor').addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && !$('emoji-panel').hidden) { event.preventDefault(); event.stopPropagation(); closeEmojiPanel(); editArea().focus(); }
+}, true);
 $('note-content').addEventListener('input', refreshProperties);
 // Voice memos and recognized text are added to the end of the note in either view.
 function appendToNote(text) {
@@ -1996,33 +2182,28 @@ $('markdown-help-toggle').addEventListener('click', () => {
 });
 
 // Checklist button, as in the plugin and Android: toggle the line's checkbox or start one.
-$('insert-checklist').addEventListener('click', () => {
-  const area = markdownMode ? $('note-content') : $('note-body');
-  const value = area.value, caret = area.selectionStart ?? value.length;
+// The formatting bar's Checklist button runs this same code, which does not go through the formatting core.
+function toggleChecklist(area) {
+  const value = area.getValue(), caret = area.getSelection().from;
   const lineStart = value.lastIndexOf('\n', caret - 1) + 1, next = value.indexOf('\n', caret), lineEnd = next < 0 ? value.length : next;
   const line = value.slice(lineStart, lineEnd);
   const updated = /^- \[ \]/.test(line) ? `- [x]${line.slice(5)}` : /^- \[[xX]\]/.test(line) ? `- [ ]${line.slice(5)}` : `- [ ] ${line}`;
-  area.value = value.slice(0, lineStart) + updated + value.slice(lineEnd);
-  area.selectionStart = area.selectionEnd = caret + (updated.length - line.length);
-  area.focus();
-  area.dispatchEvent(new Event('input'));
-});
+  area.replace({ from: lineStart, to: lineEnd, insert: updated, selFrom: caret + (updated.length - line.length) });
+}
+$('insert-checklist').addEventListener('click', () => toggleChecklist(editArea()));
 
 // Insert link: a [[wikilink]] to another note, by its name when that is unique (Obsidian's convention).
 $('insert-link').addEventListener('click', () => {
   const notes = [...files.values()].filter((entry) => !entry.deleted && isMarkdown(entry.file.path) && entry.file.path !== $('note-path').value);
   const name = (path) => path.split('/').pop().replace(/\.md$/i, '');
-  const area = markdownMode ? $('note-content') : $('note-body');
-  const start = area.selectionStart ?? area.value.length, end = area.selectionEnd ?? start;
+  const area = editArea();
+  const { from: start, to: end } = area.getSelection();
   showMenu($('insert-link'), notes.length ? notes.map((entry) => ({
     label: noteParts(noteText(entry.file), entry.file.path).title,
     action: () => {
       const unique = notes.filter((other) => name(other.file.path) === name(entry.file.path)).length === 1;
       const link = `[[${unique ? name(entry.file.path) : entry.file.path.replace(/\.md$/i, '')}]]`;
-      area.value = area.value.slice(0, start) + link + area.value.slice(end);
-      area.selectionStart = area.selectionEnd = start + link.length;
-      area.focus();
-      area.dispatchEvent(new Event('input'));
+      area.replace({ from: start, to: end, insert: link, selFrom: start + link.length });
     },
   })).sort((a, b) => a.label.localeCompare(b.label)) : [{ label: 'No other notes yet', action: () => {} }]);
 });
@@ -2031,6 +2212,7 @@ $('insert-link').addEventListener('click', () => {
 async function navigateEditor(delta) {
   const target = files.get(navOrder[navOrder.indexOf(editing?.id) + delta]);
   if (!target) return;
+  bodyEditor.flush();
   if ($('note-content').value !== noteText(editing.file) && !await saveEditor()) return;
   openEditor(files.get(target.id) || target);
 }
@@ -2107,6 +2289,8 @@ $('retry-voice').addEventListener('click', () => { void keepVoice(); });
 $('download-voice').addEventListener('click', async () => { if (voiceJob?.blob) download(new Uint8Array(await voiceJob.blob.arrayBuffer()), voiceJob.path, voiceJob.blob.type); });
 
 function closeEditor() {
+  // An open table cell goes into the text first, so the comparison sees it.
+  bodyEditor.flush();
   const original = editing ? noteText(editing.file) : '';
   if (($('note-content').value !== original || voiceJob) && !confirm('Close without saving these edits or recording?')) return;
   discardVoice();
@@ -2964,6 +3148,7 @@ $('photo-upload').addEventListener('change', async () => {
 $('close-editor').addEventListener('click', closeEditor);
 $('editor').addEventListener('cancel', (event) => { event.preventDefault(); closeEditor(); });
 async function saveEditor() {
+  bodyEditor.flush();
   try {
     if (photoJob || voiceJob) throw new Error('Finish text recognition or keep your recording before saving the note.');
     // A new note is named like in the plugin and Android, unless a filename was typed.
@@ -2990,7 +3175,7 @@ $('editor-form').addEventListener('submit', async (event) => {
     editing = undefined;
   } finally { event.submitter.disabled = false; }
 });
-$('note-download').addEventListener('click', () => download(encoder.encode($('note-content').value), $('note-path').value, 'text/markdown'));
+$('note-download').addEventListener('click', () => { bodyEditor.flush(); download(encoder.encode($('note-content').value), $('note-path').value, 'text/markdown'); });
 $('note-delete').addEventListener('click', async () => {
   try { await deleteEntry(editing); resetPhoto(); $('editor').close(); }
   catch (error) { $('editor-message').textContent = errorText(error); }
@@ -5185,6 +5370,7 @@ $('ai-receipt-skip').addEventListener('click', () => {
 
 // The answer for the editor's draft: it replaces the text or follows it; Save note keeps it, as with any edit.
 function useForDraft(replace) {
+  bodyEditor.flush();
   const answer = aiLast?.report.answer ?? '';
   $('note-content').value = replace ? replacedText($('note-content').value, answer) : appendedText($('note-content').value, { text: answer });
   syncSimple();
@@ -5353,6 +5539,7 @@ $('ai-dictate').addEventListener('click', () => {
 
 // The editor's buttons work on the draft only: nothing else goes along, and the answer waits for Replace or Add below.
 for (const [id, kind] of [['ai-rewrite', 'rewrite'], ['ai-checklist', 'checklist'], ['ai-summarize', 'summarize']]) $(id).addEventListener('click', () => {
+  bodyEditor.flush();
   const { title, body } = splitNote($('note-content').value);
   if (!body.trim()) { $('editor-message').textContent = 'Write something first.'; return; }
   openAi({ editor: { id: 'draft', title: title || 'Untitled', text: body, labels: [], shared: false }, request: editorRequest(kind, title || 'Untitled'), send: true, kind });
@@ -5362,6 +5549,7 @@ window.addEventListener('online', () => { if (client) void sync(); });
 window.addEventListener('pagehide', () => { syncController?.abort(); resetPhoto(); discardVoice(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) { stopCamera(); if (voiceJob?.recorder?.state === 'recording') voiceJob.recorder.stop(); } });
 window.addEventListener('beforeunload', (event) => {
+  bodyEditor.flush();
   const unsaved = $('editor').open && (voiceJob || $('note-content').value !== (editing ? noteText(editing.file) : ''));
   if (unsaved) { event.preventDefault(); event.returnValue = ''; }
 });

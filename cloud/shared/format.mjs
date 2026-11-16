@@ -121,3 +121,475 @@ export function cellText(source) {
 export function cellSource(text) {
   return String(text).trim().replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>');
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Phase 2: the editor. Every function below reads the text and returns at most one replacement
+// { from, to, insert, selFrom, selTo }: from/to/insert in positions of the text it was given, the selection in the
+// text after it. Nothing is converted to a document model: a button is one small text change, the rest stays byte
+// for byte.
+
+/** One replacement that turns `before` into `after`: the common start and end stay out of it. */
+function replacement(before, after, selFrom, selTo) {
+  if (before === after) return null;
+  let from = 0;
+  const max = Math.min(before.length, after.length);
+  while (from < max && before.charCodeAt(from) === after.charCodeAt(from)) from++;
+  let end = 0;
+  while (end < max - from && before.charCodeAt(before.length - 1 - end) === after.charCodeAt(after.length - 1 - end)) end++;
+  return { from, to: before.length - end, insert: after.slice(from, after.length - end), selFrom, selTo: selTo ?? selFrom };
+}
+
+/** Several small edits ({ from, to, insert }, not overlapping) at once, with a way to follow a position. */
+function applyEdits(text, edits) {
+  const sorted = edits.filter((edit) => edit.from !== edit.to || edit.insert).sort((a, b) => a.from - b.from || a.to - b.to);
+  let out = '', last = 0;
+  for (const edit of sorted) { out += text.slice(last, edit.from) + edit.insert; last = edit.to; }
+  out += text.slice(last);
+  /** Where `pos` lands. At an insertion `after` puts it behind the inserted text; in a removed range it goes to its start. */
+  const map = (pos, after = false) => {
+    let delta = 0;
+    for (const edit of sorted) {
+      const insertion = edit.from === edit.to;
+      if (pos < edit.from || (insertion && pos === edit.from && !after)) break;
+      if (insertion && pos === edit.from) return pos + delta + edit.insert.length;
+      if (!insertion && pos <= edit.to) return edit.from + delta + (pos === edit.to && after ? edit.insert.length : 0);
+      delta += edit.insert.length - (edit.to - edit.from);
+    }
+    return pos + delta;
+  };
+  return { text: out, map };
+}
+
+/** The lines of a text with their start positions, and the line a position is on. */
+function lineTable(text) {
+  const lines = String(text).split('\n'), starts = [];
+  let offset = 0;
+  for (const line of lines) { starts.push(offset); offset += line.length + 1; }
+  const at = (pos) => {
+    let lo = 0, hi = lines.length - 1;
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (starts[mid] <= pos) lo = mid; else hi = mid - 1; }
+    return lo;
+  };
+  return { lines, starts, at };
+}
+
+const blank = (line) => line === undefined || !line.trim();
+
+// The inline signs, in the same order and with the same rules as stripInlineMarks in cloud/web/note.mjs (the card
+// text), plus links, so that the card and the editor always agree on what is bold or italic.
+const INLINE = /\\(?<esc>[!-/:-@[-`{-~])|(?<ticks>`+)(?<code>[^`\n]+?)\k<ticks>|(?<embed>!?)\[\[(?<target>[^\]\n|]+)(?:\|(?<alias>[^\]\n]+))?\]\]|(?<image>!?)\[(?<label>[^\]\n]+)\]\((?<href>[^()\s]+)\)|(?<url>https?:\/\/[^\s<>"'`]*[^\s<>"'`.,;:!?)\]}])|(?<mark>\*{3}|_{3}|\*\*|__|~~|==)(?=\S)(?<marked>.*?\S)\k<mark>|(?<starLead>^|[^\w*])\*(?=[^\s*])(?<star>[^*\n]*?[^\s*])\*(?!\*)|(?<underLead>^|[^\w_])_(?=[^\s_])(?<under>[^_\n]*?[^\s_])_(?!\w)/g;
+const MARK_KIND = { '**': 'bold', __: 'bold', '~~': 'strike', '==': 'highlight' };
+
+function scanInline(text, offset, out) {
+  for (const match of text.matchAll(INLINE)) {
+    const groups = match.groups, start = offset + match.index, end = start + match[0].length;
+    const span = (kind, from, to, openTo, closeFrom, extra) => out.push({ kind, from, to, openTo, closeFrom, ...extra });
+    if (groups.esc !== undefined) span('escape', start, end, start + 1, end);
+    else if (groups.code !== undefined) span('code', start, end, start + groups.ticks.length, end - groups.ticks.length);
+    else if (groups.target !== undefined) {
+      // An embed (![[file]]) stays as it is written.
+      if (!groups.embed) span('wikilink', start, end, groups.alias === undefined ? start + 2 : start + 3 + groups.target.length, end - 2, { target: groups.target });
+    } else if (groups.href !== undefined) {
+      // So does an image (![alt](file)).
+      if (!groups.image) {
+        span('link', start, end, start + 1, start + 1 + groups.label.length, { href: groups.href });
+        scanInline(groups.label, start + 1, out);
+      }
+    } else if (groups.url !== undefined) span('url', start, end, start, end, { href: groups.url });
+    else if (groups.mark !== undefined) {
+      const sign = groups.mark;
+      if (sign.length === 3) {
+        span('bold', start, end, start + 2, end - 2);
+        span('italic', start + 2, end - 2, start + 3, end - 3);
+      } else span(MARK_KIND[sign], start, end, start + 2, end - 2);
+      scanInline(groups.marked, start + sign.length, out);
+    } else {
+      const lead = (groups.starLead ?? groups.underLead).length, inner = groups.star ?? groups.under;
+      span('italic', start + lead, end, start + lead + 1, end - 1);
+      scanInline(inner, start + lead + 1, out);
+    }
+  }
+}
+
+/**
+ * The formatting in one line: { kind, from, to, openTo, closeFrom }, with the opening sign from `from` to `openTo`,
+ * the content up to `closeFrom` and the closing sign up to `to`. Kinds: bold, italic, strike, highlight, code, link
+ * (with href), wikilink (with target), url, escape. Nested spans are all listed, outer ones first.
+ * @param {string} line
+ */
+export function inlineSpans(line) {
+  /** @type {{ kind: string, from: number, to: number, openTo: number, closeFrom: number, href?: string, target?: string }[]} */
+  const out = [];
+  scanInline(String(line), 0, out);
+  return out.sort((a, b) => a.from - b.from || b.to - a.to);
+}
+
+const RULE = /^ {0,3}([-*_])(?:[ \t]*\1){2,}[ \t]*$/;
+const HEADING = /^( {0,3})(#{1,6})(?:[ \t]+|$)/;
+const QUOTE = /^([ \t]*)>[ \t]?/;
+const TASK = /^([ \t]*)([-*+])[ \t]+\[([ xX])\](?:[ \t]+|$)/;
+const BULLET = /^([ \t]*)([-*+])[ \t]+/;
+const ORDERED = /^([ \t]*)(\d{1,9})([.)])[ \t]+/;
+
+/**
+ * How a line starts: { kind, indent, markFrom, markTo }, kind bullet, ordered, task, quote, heading, rule or ''
+ * (nothing). The sign runs from markFrom to markTo, where the content starts. Headings carry `level`, ordered items
+ * `number` and `delimiter`, tasks `checked`.
+ * @param {string} line
+ */
+export function linePrefix(line) {
+  const text = withoutCr(String(line));
+  const indent = /^[ \t]*/.exec(text)[0].length;
+  let match;
+  if (RULE.test(text)) return { kind: 'rule', indent, markFrom: indent, markTo: text.length };
+  if ((match = HEADING.exec(text))) return { kind: 'heading', indent, markFrom: match[1].length, markTo: match[0].length, level: match[2].length };
+  if ((match = QUOTE.exec(text))) return { kind: 'quote', indent, markFrom: match[1].length, markTo: match[0].length };
+  if ((match = TASK.exec(text))) return { kind: 'task', indent, markFrom: match[1].length, markTo: match[0].length, checked: match[3] !== ' ' };
+  if ((match = BULLET.exec(text))) return { kind: 'bullet', indent, markFrom: match[1].length, markTo: match[0].length };
+  if ((match = ORDERED.exec(text))) return { kind: 'ordered', indent, markFrom: match[1].length, markTo: match[0].length, number: Number(match[2]), delimiter: match[3] };
+  return { kind: '', indent, markFrom: indent, markTo: indent };
+}
+
+const SIGNS = { bold: '**', italic: '*', strike: '~~', highlight: '==', code: '`' };
+// A letter's accent belongs to its word; an emoji's variation selector does not make it one.
+const WORD = /[\p{L}\p{N}_'’]|(?![︎️])\p{M}/u;
+const SPACE = /\s/;
+
+/** The kind of run (text, code, table) each line is in. */
+function lineKinds(text) {
+  const kinds = [];
+  for (const run of blocks(text)) for (let line = run.fromLine; line <= run.toLine; line++) kinds[line] = run.kind;
+  return kinds;
+}
+
+/** The lines a selection touches; a selection that ends at the very start of a line leaves that line out. */
+function touchedLines(table, from, to) {
+  const first = table.at(from);
+  let last = table.at(to);
+  if (to > from && last > first && to === table.starts[last]) last--;
+  return [first, last];
+}
+
+/** The spans of one line, in positions of the whole text. */
+function spansOfLine(table, index) {
+  const start = table.starts[index];
+  return inlineSpans(table.lines[index]).map((span) => ({ ...span, from: span.from + start, to: span.to + start, openTo: span.openTo + start, closeFrom: span.closeFrom + start }));
+}
+
+/**
+ * The span of `kind` that holds the selection (its signs included); a caret must be strictly inside. A selection
+ * may also reach past the span over signs only, as when `***both***` is selected whole and italic is pressed.
+ */
+function holder(spans, kind, a, b, text) {
+  return spans.find((span) => span.kind === kind && (a === b ? span.from < a && a < span.to
+    : (span.from <= a && b <= span.to) || (a <= span.from && span.to <= b && text !== undefined && /^[*_~=`]*$/.test(text.slice(a, span.from) + text.slice(span.to, b)))));
+}
+
+/** The analysis behind an inline button: what it would take away, or where it would add its signs. */
+function inlinePlan(text, selFrom, selTo, kind) {
+  const sign = SIGNS[kind];
+  const table = lineTable(text), kinds = lineKinds(text);
+  if (selFrom === selTo) {
+    const index = table.at(selFrom);
+    if (kinds[index] === 'code') return null;
+    const caret = selFrom;
+    const before = text.slice(caret - sign.length, caret), after = text.slice(caret, caret + sign.length);
+    // An empty pair around the caret goes when the button is pressed again.
+    if (caret >= sign.length && before === sign && after === sign && text[caret - sign.length - 1] !== sign[0] && text[caret + sign.length] !== sign[0]) {
+      return { remove: true, edits: [{ from: caret - sign.length, to: caret + sign.length, insert: '' }], caret };
+    }
+    const spans = spansOfLine(table, index), own = holder(spans, kind, caret, caret);
+    if (own) return { remove: true, edits: [{ from: own.from, to: own.openTo, insert: '' }, { from: own.closeFrom, to: own.to, insert: '' }], caret };
+    // No signs inside code, a web address or a link to a note.
+    if (spans.some((span) => ['code', 'url', 'wikilink'].includes(span.kind) && span.from < caret && caret < span.to)) return null;
+    const lineStart = table.starts[index], lineEnd = lineStart + withoutCr(table.lines[index]).length;
+    let a = caret, b = caret;
+    // A caret in a word formats that word: selecting is awkward on a phone.
+    while (a > lineStart && WORD.test(text[a - 1])) a--;
+    while (b < lineEnd && WORD.test(text[b])) b++;
+    return { remove: false, edits: [{ from: a, to: a, insert: sign }, { from: b, to: b, insert: sign }], caret };
+  }
+  const [first, last] = touchedLines(table, selFrom, selTo);
+  const segments = [];
+  for (let index = first; index <= last; index++) {
+    if (kinds[index] === 'code') continue;
+    const lineStart = table.starts[index], line = withoutCr(table.lines[index]);
+    let a = Math.max(selFrom, lineStart + linePrefix(line).markTo), b = Math.min(selTo, lineStart + line.length);
+    // Spaces at the edges of the selection do not count.
+    while (a < b && SPACE.test(text[a])) a++;
+    while (b > a && SPACE.test(text[b - 1])) b--;
+    if (a >= b) continue;
+    const spans = spansOfLine(table, index);
+    segments.push({ a, b, spans, own: holder(spans, kind, a, b, text) });
+  }
+  if (!segments.length) return null;
+  const remove = segments.every((segment) => segment.own);
+  const edits = [];
+  for (const segment of segments) {
+    if (remove) {
+      edits.push({ from: segment.own.from, to: segment.own.openTo, insert: '' }, { from: segment.own.closeFrom, to: segment.own.to, insert: '' });
+    } else if (!segment.own) {
+      // The same formatting inside the selection goes, so it is not doubled.
+      for (const span of segment.spans) {
+        if (span.kind === kind && segment.a <= span.from && span.to <= segment.b) edits.push({ from: span.from, to: span.openTo, insert: '' }, { from: span.closeFrom, to: span.to, insert: '' });
+      }
+      edits.push({ from: segment.a, to: segment.a, insert: sign }, { from: segment.b, to: segment.b, insert: sign });
+    }
+  }
+  return { remove, edits, a: segments[0].a, b: segments[segments.length - 1].b };
+}
+
+function inlineFormat(text, selFrom, selTo, kind) {
+  const plan = inlinePlan(text, selFrom, selTo, kind);
+  if (!plan) return null;
+  const { text: out, map } = applyEdits(text, plan.edits);
+  if (plan.caret !== undefined) {
+    // The caret stays in the same place in the words: behind the opening sign that is added in front of it.
+    return replacement(text, out, plan.remove ? map(plan.caret) : plan.caret + SIGNS[kind].length);
+  }
+  return replacement(text, out, map(plan.a, true), map(plan.b, false));
+}
+
+/** The lines a line button works on: every touched line, blank ones left out when there are several. */
+function lineTargets(table, kinds, selFrom, selTo) {
+  const [first, last] = touchedLines(table, selFrom, selTo);
+  const out = [];
+  for (let index = first; index <= last; index++) {
+    if (kinds[index] !== 'text') continue;
+    if (first !== last && blank(table.lines[index])) continue;
+    out.push(index);
+  }
+  return out;
+}
+
+function lineFormat(text, selFrom, selTo, command) {
+  const table = lineTable(text), kinds = lineKinds(text);
+  const targets = lineTargets(table, kinds, selFrom, selTo);
+  if (!targets.length) return null;
+  const prefixes = targets.map((index) => linePrefix(table.lines[index]));
+  const edits = [];
+  const set = (index, from, to, insert) => edits.push({ from: table.starts[index] + from, to: table.starts[index] + to, insert });
+  if (command === 'heading') {
+    // None, then ##, then ###, then none again. Never #: the first # heading is the note's title.
+    const level = prefixes[0].kind === 'heading' ? prefixes[0].level : 0;
+    const next = level <= 1 ? 2 : level === 2 ? 3 : 0;
+    targets.forEach((index, i) => {
+      const prefix = prefixes[i];
+      if (prefix.kind === 'heading') set(index, prefix.markFrom, prefix.markTo, next ? `${'#'.repeat(next)} ` : '');
+      else if (next) set(index, prefix.indent, prefix.indent, `${'#'.repeat(next)} `);
+    });
+  } else if (command === 'quote') {
+    const all = prefixes.every((prefix) => prefix.kind === 'quote');
+    targets.forEach((index, i) => {
+      const prefix = prefixes[i];
+      if (all) set(index, prefix.markFrom, prefix.markTo, '');
+      else if (prefix.kind !== 'quote') set(index, 0, 0, '> ');
+    });
+  } else {
+    // A task counts as a bullet: the bullet button takes its sign away instead of turning it into a plain item.
+    const same = (prefix) => (command === 'bullet' ? prefix.kind === 'bullet' || prefix.kind === 'task' : prefix.kind === 'ordered');
+    const all = prefixes.every(same);
+    let number = 1;
+    targets.forEach((index, i) => {
+      const prefix = prefixes[i], list = ['bullet', 'task', 'ordered'].includes(prefix.kind);
+      const from = list ? prefix.markFrom : prefix.indent, to = list ? prefix.markTo : prefix.indent;
+      if (all) set(index, prefix.markFrom, prefix.markTo, '');
+      else if (command === 'bullet') { if (!same(prefix)) set(index, from, to, '- '); }
+      else set(index, from, to, `${number++}. `);
+    });
+  }
+  const { text: out, map } = applyEdits(text, edits.filter((edit) => text.slice(edit.from, edit.to) !== edit.insert));
+  if (out === text) return null;
+  if (selFrom === selTo) return replacement(text, out, map(selFrom, true));
+  return replacement(text, out, map(selFrom), map(selTo, true));
+}
+
+/**
+ * A block of whole lines (a rule, a table) on the caret's line when that is blank, else under it. Always exactly one
+ * blank line before and after it, except at the start or end of the text: without the blank line before, not every
+ * app sees the block (`text` straight above `---` is a heading). `caretAfter` puts the caret on the line after it.
+ */
+function insertBlock(text, pos, block, caretAfter) {
+  const { lines, at: lineAt } = lineTable(text);
+  const index = lineAt(pos);
+  const cr = lines[index].endsWith('\r') ? '\r' : '';
+  let at = index + 1, remove = 0;
+  if (blank(lines[index]) && (index === 0 || blank(lines[index - 1]))) { at = index; remove = 1; }
+  const before = at > 0 && !blank(lines[at - 1]) ? [''] : [];
+  const rest = at + remove;
+  const after = rest < lines.length ? (blank(lines[rest]) ? [] : ['']) : caretAfter ? [''] : [];
+  const next = [...lines.slice(0, at), ...[...before, ...block, ...after].map((line) => line + cr), ...lines.slice(rest)];
+  const out = next.join('\n');
+  const blockStart = next.slice(0, at + before.length).reduce((sum, line) => sum + line.length + 1, 0);
+  const lastLine = at + before.length + block.length - 1;
+  // After a rule the caret goes to the start of the line right under it.
+  const caret = caretAfter ? next.slice(0, lastLine + 1).reduce((sum, line) => sum + line.length + 1, 0) : blockStart;
+  return replacement(text, out, Math.min(caret, out.length));
+}
+
+/** A new table of 3 columns: the header and 2 rows, all cells empty. The selection lands at its start. */
+export function insertTable(text, pos) {
+  const row = '|  |  |  |';
+  return insertBlock(String(text), pos, [row, '| --- | --- | --- |', row, row], false);
+}
+
+/**
+ * The formatting buttons: bold, italic, strike, highlight, code, heading, bullet, ordered, quote, rule, table.
+ * One replacement, or null when there is nothing to do (for example inside a code block).
+ * @param {string} text
+ * @param {number} selFrom
+ * @param {number} selTo
+ * @param {string} command
+ */
+export function applyFormat(text, selFrom, selTo, command) {
+  text = String(text);
+  const from = Math.max(0, Math.min(selFrom, selTo, text.length)), to = Math.min(text.length, Math.max(selFrom, selTo));
+  if (command in SIGNS) return inlineFormat(text, from, to, command);
+  if (['heading', 'bullet', 'ordered', 'quote'].includes(command)) return lineFormat(text, from, to, command);
+  if (command !== 'rule' && command !== 'table') return null;
+  if (lineKinds(text)[lineTable(text).at(to)] !== 'text') return null;
+  return command === 'rule' ? insertBlock(text, to, ['---'], true) : insertTable(text, to);
+}
+
+/**
+ * Which buttons are "on" for this selection: exactly when pressing them would take formatting away. Plus `checklist`
+ * on a task, `table` in a table and `codeblock` in a code block.
+ */
+export function activeFormats(text, selFrom, selTo) {
+  text = String(text);
+  const from = Math.max(0, Math.min(selFrom, selTo, text.length)), to = Math.min(text.length, Math.max(selFrom, selTo));
+  const table = lineTable(text), kinds = lineKinds(text), index = table.at(from);
+  if (kinds[index] === 'code') return ['codeblock'];
+  const on = [];
+  if (kinds[index] === 'table') on.push('table');
+  for (const kind of Object.keys(SIGNS)) {
+    const plan = inlinePlan(text, from, to, kind);
+    // An empty pair around the caret does not count as formatted text.
+    if (plan?.remove && !(from === to && plan.edits.length === 1)) on.push(kind);
+  }
+  const prefix = linePrefix(table.lines[index]);
+  const line = { heading: 'heading', bullet: 'bullet', ordered: 'ordered', task: 'checklist', quote: 'quote' }[prefix.kind];
+  if (line && kinds[index] === 'text') on.push(line);
+  return on.sort();
+}
+
+const LIST_ITEM = /^([ \t]*)(?:([-*+])|(\d{1,9})([.)]))[ \t]+(?:\[([ xX])\](?:[ \t]+|$))?/;
+
+/**
+ * Enter in a list, as in src/listEditor.ts and ListEditing.kt, plus numbered lists: the next item gets the same sign
+ * (a bullet, the next number, an empty box), and Enter on an empty item takes its sign away. Null: an ordinary Enter.
+ */
+export function listEnterEdit(text, from, to = from) {
+  text = String(text);
+  const lineStart = text.lastIndexOf('\n', from - 1) + 1;
+  const next = text.indexOf('\n', from);
+  const lineEnd = next < 0 ? text.length : next;
+  const line = text.slice(lineStart, lineEnd);
+  const marker = LIST_ITEM.exec(line);
+  if (!marker || from < lineStart + marker[0].length || to > lineEnd) return null;
+  const table = lineTable(text);
+  if (lineKinds(text)[table.at(lineStart)] !== 'text') return null;
+  // A CRLF line keeps its `\r`, and the new line gets one too.
+  const cr = line.endsWith('\r') ? '\r' : '', contentEnd = lineEnd - cr.length;
+  from = Math.min(from, contentEnd); to = Math.min(to, contentEnd);
+  const remaining = text.slice(lineStart + marker[0].length, from) + text.slice(to, contentEnd);
+  if (!remaining.trim()) return { from: lineStart, to: contentEnd, insert: '', selFrom: lineStart, selTo: lineStart };
+  const sign = marker[2] ? '-' : `${Number(marker[3]) + 1}${marker[4]}`;
+  const insert = `${cr}\n${marker[1]}${sign} ${marker[5] === undefined ? '' : '[ ] '}`;
+  return { from, to, insert, selFrom: from + insert.length, selTo: from + insert.length };
+}
+
+// --- Tables ------------------------------------------------------------------------------------------------------
+
+const indentOf = (line) => /^[ \t]*/.exec(line)[0];
+const crOf = (line) => (line.endsWith('\r') ? '\r' : '');
+/** A table line in the one form JotDrop writes: `| a | b |`, one space around each cell, indent and `\r` kept. */
+const tableLine = (like, cells) => `${indentOf(like)}| ${cells.join(' | ')} |${crOf(like)}`;
+const DASH = { '': '---', left: ':---', center: ':---:', right: '---:' };
+
+/**
+ * One change to the table that starts on line `fromLine`, rewriting as few lines as possible (sync merges per line):
+ * { type: 'setCell', row, column, text } (row 0 is the header; `text` as shown, cellSource makes it source),
+ * { type: 'addRow', after } (0 = right under the header), { type: 'deleteRow', row }, { type: 'addColumn', at },
+ * { type: 'deleteColumn', column }, { type: 'setAlign', column, align }, { type: 'deleteTable' }.
+ * Never realigns the table with padding. Null when nothing changes or the change is not allowed (the header row and
+ * the last column cannot go: that is "delete table").
+ */
+export function tableEdit(text, fromLine, op) {
+  text = String(text);
+  const run = blocks(text).find((item) => item.kind === 'table' && item.fromLine === fromLine);
+  if (!run || !op) return null;
+  const lines = text.split('\n');
+  const columns = tableCells(lines[run.fromLine]).length, rows = run.toLine - run.fromLine - 1;
+  const lineOf = (row) => (row === 0 ? run.fromLine : run.fromLine + 1 + row);
+  const cellsOf = (line) => tableCells(line).map((cell) => cell.trim());
+  const dashes = (line) => delimiterAligns(line).map((align) => DASH[align]);
+  const tableStart = run.from;
+  const done = (selection = tableStart) => replacement(text, lines.join('\n'), selection);
+  switch (op.type) {
+    case 'setCell': {
+      if (!(op.row >= 0 && op.row <= rows && op.column >= 0 && op.column < columns)) return null;
+      const index = lineOf(op.row), cells = cellsOf(lines[index]);
+      while (cells.length < columns) cells.push('');
+      const source = cellSource(op.text ?? '');
+      if (cells[op.column] === source) return null;
+      // Only this row's line is written again; extra cells past the last column stay.
+      cells[op.column] = source;
+      lines[index] = tableLine(lines[index], cells);
+      return done();
+    }
+    case 'addRow': {
+      const after = Math.max(0, Math.min(rows, op.after ?? rows));
+      const at = run.fromLine + 2 + after, cr = crOf(lines[run.fromLine]);
+      let row = tableLine(withoutCr(lines[run.fromLine]), Array(columns).fill(''));
+      // A new last line of a CRLF text: the line above gets its `\r`, the new one ends the text without one.
+      if (at === lines.length) { if (cr && !lines[at - 1].endsWith('\r')) lines[at - 1] += cr; }
+      else row += cr;
+      lines.splice(at, 0, row);
+      return done();
+    }
+    case 'deleteRow': {
+      if (!(op.row >= 1 && op.row <= rows)) return null;
+      lines.splice(lineOf(op.row), 1);
+      return done();
+    }
+    case 'addColumn': {
+      const at = Math.max(0, Math.min(columns, op.at ?? columns));
+      for (let index = run.fromLine; index <= run.toLine; index++) {
+        const cells = index === run.fromLine + 1 ? dashes(lines[index]) : cellsOf(lines[index]);
+        while (cells.length < at) cells.push('');
+        cells.splice(at, 0, index === run.fromLine + 1 ? DASH[''] : '');
+        lines[index] = tableLine(lines[index], cells);
+      }
+      return done();
+    }
+    case 'deleteColumn': {
+      if (columns <= 1 || !(op.column >= 0 && op.column < columns)) return null;
+      for (let index = run.fromLine; index <= run.toLine; index++) {
+        const cells = index === run.fromLine + 1 ? dashes(lines[index]) : cellsOf(lines[index]);
+        if (op.column < cells.length) cells.splice(op.column, 1);
+        lines[index] = tableLine(lines[index], cells);
+      }
+      return done();
+    }
+    case 'setAlign': {
+      // Only the delimiter line holds the alignment, so only that line changes.
+      if (!(op.column >= 0 && op.column < columns) || !(op.align in DASH)) return null;
+      const index = run.fromLine + 1, aligns = delimiterAligns(lines[index]);
+      if (aligns[op.column] === op.align) return null;
+      aligns[op.column] = op.align;
+      lines[index] = tableLine(lines[index], aligns.map((align) => DASH[align]));
+      return done();
+    }
+    case 'deleteTable': {
+      let from = run.fromLine, count = run.toLine - run.fromLine + 1;
+      const end = from + count;
+      // At most one blank line stays where the table was; none at the very start or end of the text.
+      if (end < lines.length && blank(lines[end]) && (from === 0 || blank(lines[from - 1]))) count++;
+      else if (end >= lines.length && from > 0 && blank(lines[from - 1])) { from--; count++; }
+      lines.splice(from, count);
+      return done(Math.min(tableStart, lines.join('\n').length));
+    }
+    default: return null;
+  }
+}
