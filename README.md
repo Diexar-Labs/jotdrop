@@ -242,6 +242,8 @@ That's the whole setup: saving works through Obsidian's own `obsidian://` link, 
 
 **With JotDrop Cloud, no Obsidian needed.** In the web app open **Devices & recovery** and create a one-time pairing code. In the clipper settings choose **JotDrop Cloud**, paste the code and pick an unlock passphrase for this browser. Clips are encrypted in the browser and show up in the web app. The clipper counts as one of your cloud devices.
 
+**Optional: Summarize with AI.** In the clipper settings, under **Summarize with AI**, pick Claude, OpenAI, Gemini or OpenRouter, paste your own key, load and pick a model, and choose a passphrase that locks the key in this browser. The popup then shows a **Summarize with AI** button. Only when you press it do the page's title, address and text (at most 30,000 characters) go from your browser straight to that service. JotDrop receives nothing. The summary appears in a box you can edit, and goes into the note when you save, with the line "Summary by <service>, model <model>". The clipper keeps its own key: "Use this key on all my devices" does not reach it. Details are in the [clipper README](chrome-extension/README.md) and its [privacy policy](chrome-extension/privacy-policy.html).
+
 **Optional: background connection.** To save silently without bringing Obsidian to the front, enable the clip server in Obsidian (Settings → JotDrop → Web clipper) and copy the token. In the clipper, open its settings, paste the token under **Obsidian: background connection** and choose **Save and test connection**. The server listens only on `127.0.0.1`, never on your network. If it cannot be reached, the clipper falls back to the direct link, so a clip is never lost.
 
 **Manual ZIP install:** download the ZIP from the [latest clipper release](https://github.com/Diexar-Labs/jotdrop/releases?q=web-clipper-v&expanded=false), extract it to a permanent folder, open `chrome://extensions` (also in Edge and Brave), turn on **Developer mode** and choose **Load unpacked**.
@@ -365,6 +367,9 @@ Yes, in the Android app, Obsidian and the web app. Use **Attach file**, drag a f
 
 **Does the Chrome clipper work without Obsidian?**
 Yes. Choose JotDrop Cloud in its settings and clips go, encrypted, straight into your cloud and the web app. With Obsidian, the desktop plugin creates the card.
+
+**Can the Chrome clipper summarize a page?**
+Yes, with your own key for Claude, OpenAI, Gemini or OpenRouter. It is off until you set it up. The page text goes to that service only when you press **Summarize with AI**, and you can edit the summary before you save. JotDrop charges nothing for it; your AI service may.
 
 **Will every saved link get a picture?**
 Not always. The website has to offer a preview picture and allow it to load.
