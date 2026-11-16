@@ -57,7 +57,7 @@ def shot(page, name):
 
 
 def visible_text(page):
-    """What the editor shows, signs hidden where the caret is not."""
+    """What the editor shows: signs are always hidden (also at the caret and in a selection)."""
     return page.locator("#note-editor .cm-content").inner_text()
 
 
@@ -97,9 +97,13 @@ def check_format_editor(browser, url, token):
         assert visible_text(page) == "Hello world", visible_text(page)
         assert button(page, "bold").get_attribute("aria-pressed") == "false"
         assert page.locator("#note-editor .cm-jd-bold").inner_text() == "world"
-        # At the caret the signs show again, in a muted tint.
+        # Signs stay hidden at the caret and in a selection (Eric, 16 nov): only the Markdown switch shows them.
         page.keyboard.press("End")
-        assert "**world**" in visible_text(page) and page.locator("#note-editor .cm-jd-sign").count() == 2
+        assert visible_text(page) == "Hello world", visible_text(page)
+        page.keyboard.press("Shift+Control+ArrowLeft")
+        assert visible_text(page) == "Hello world", visible_text(page)
+        assert page.locator("#note-editor .cm-jd-sign").count() == 0
+        page.keyboard.press("End")
         # A caret in a word formats that word; Ctrl+I is italic.
         page.keyboard.press("Home")
         page.keyboard.press("ArrowRight")
@@ -131,6 +135,11 @@ def check_format_editor(browser, url, token):
         button(page, "heading").click()
         assert body_text(page).endswith("\n## Shopping"), body_text(page)
         assert page.locator("#note-editor .cm-jd-h2").count() == 1
+        # The ## is hidden while the caret is on the heading and while its text is selected.
+        assert visible_text(page).endswith("Shopping") and "#" not in visible_text(page), visible_text(page)
+        page.keyboard.press("Shift+Home")
+        assert "#" not in visible_text(page), visible_text(page)
+        page.keyboard.press("End")
         button(page, "heading").click()
         assert body_text(page).endswith("\n### Shopping")
         button(page, "heading").click()

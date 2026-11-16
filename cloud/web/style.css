@@ -79,6 +79,12 @@ h3 { font-size: 1.05rem; }
 .label-nav .label-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sidebar nav .label-nav[aria-current="page"] { background: var(--selected); color: var(--accent); font-weight: 700; }
 .label-rows { list-style: none; margin: .5rem 0 0; padding: 0; }
+.url-dialog { width: min(480px, calc(100% - 2rem)); }
+.url-dialog input { width: 100%; box-sizing: border-box; }
+.url-dialog .field-label { display: block; margin: .9rem 0 .25rem; font-size: .85rem; color: var(--muted); }
+.url-dialog hr { margin: 1.1rem 0 0; border: 0; border-top: 1px solid var(--line); }
+.url-notes { list-style: none; margin: .5rem 0 0; padding: 0; max-height: 11rem; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; }
+.url-notes button { display: block; width: 100%; border: 0; border-radius: 0; padding: .45rem .6rem; text-align: left; font-weight: 400; background: transparent; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .label-row { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; margin-top: .75rem; }
 .label-row input { flex: 1 1 12rem; width: auto; }
 .sidebar-bottom { margin-top: auto; padding: 1.2rem .5rem 0; }

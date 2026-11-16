@@ -506,6 +506,21 @@
       <div class="dialog-actions"><button id="share-cancel" type="button">Cancel</button><button class="primary" type="submit">Share</button></div>
     </form>
   </dialog>
+  <dialog id="url-dialog" class="url-dialog" aria-labelledby="url-title">
+    <form id="url-form">
+      <div class="dialog-heading"><h2 id="url-title">Insert link</h2><button id="url-cancel" type="button">Cancel</button></div>
+      <label class="field-label" for="url-address">Web address</label>
+      <input id="url-address" type="text" inputmode="url" placeholder="https://example.com" autocomplete="off" autocapitalize="off" spellcheck="false">
+      <label class="field-label" for="url-text">Text to show (optional)</label>
+      <input id="url-text" type="text" autocomplete="off">
+      <div class="label-row"><button id="url-insert" type="submit">Insert link</button></div>
+      <hr>
+      <label class="field-label" for="url-note">Or link to one of your notes</label>
+      <input id="url-note" type="search" placeholder="Search your notes" autocomplete="off">
+      <ul id="url-notes" class="url-notes" hidden></ul>
+      <p id="url-message" class="message" role="status" aria-live="polite"></p>
+    </form>
+  </dialog>
   <dialog id="link-dialog" aria-labelledby="link-title">
     <form id="link-form">
       <h2 id="link-title">Share by link</h2>
