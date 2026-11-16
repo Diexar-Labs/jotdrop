@@ -426,4 +426,27 @@
     <string name="scan_save_drawer_name">Name of the drawer</string>
     <string name="scan_save_expires">Expires %1$s. Remind me a week before.</string>
     <string name="scan_save_no_expiry">No expiry date found on this paper. You can add one later from the card menu.</string>
+    <!-- Formatting bar of the editor (design opmaak-editor, phase 3) -->
+    <string name="format_bold">Bold</string>
+    <string name="format_italic">Italic</string>
+    <string name="format_heading">Heading</string>
+    <string name="format_bullet">Bulleted list</string>
+    <string name="format_numbered">Numbered list</string>
+    <string name="format_highlight">Highlight</string>
+    <string name="format_emoji">Emoji</string>
+    <string name="format_more">More formatting</string>
+    <string name="format_strike">Strikethrough</string>
+    <string name="format_quote">Quote</string>
+    <string name="format_code">Code</string>
+    <string name="format_rule">Line</string>
+    <string name="format_markdown">Markdown</string>
+    <string name="format_emoji_more">More emoji: use the emoji key of your keyboard.</string>
+    <string name="emoji_recent">Recently used</string>
+    <string name="emoji_smileys">Smileys</string>
+    <string name="emoji_hands">Hands</string>
+    <string name="emoji_hearts">Hearts</string>
+    <string name="emoji_ticks">Ticks and stars</string>
+    <string name="emoji_food">Food</string>
+    <string name="emoji_travel">Travel</string>
+    <string name="emoji_symbols">Symbols</string>
 </resources>

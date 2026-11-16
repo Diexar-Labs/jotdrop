@@ -112,6 +112,53 @@ def check_format_editor(browser, url, token):
         page.keyboard.press("Control+i")
         assert body_text(page) == "Hello **world**", body_text(page)
 
+        # First the button, then type (Eric, 16 nov): the button is on, no signs show, and pressing it again at the end
+        # of the words stops the formatting there.
+        fill_body(page, "Say ")
+        page.keyboard.press("Control+End")
+        button(page, "bold").click()
+        assert button(page, "bold").get_attribute("aria-pressed") == "true"
+        assert body_text(page) == "Say ****" and "*" not in visible_text(page), repr(visible_text(page))
+        page.keyboard.type("hello")
+        button(page, "bold").click()
+        assert button(page, "bold").get_attribute("aria-pressed") == "false"
+        page.keyboard.type(" there")
+        assert body_text(page) == "Say **hello** there", body_text(page)
+        assert visible_text(page) == "Say hello there", visible_text(page)
+        # A pair the caret leaves without typing goes again: no **** stays in the note.
+        page.keyboard.type(" ")
+        button(page, "bold").click()
+        assert body_text(page) == "Say **hello** there ****", body_text(page)
+        page.keyboard.press("Home")
+        assert body_text(page) == "Say **hello** there ", body_text(page)
+        # On an empty line the pair is no rule, and a strike pair no code fence.
+        fill_body(page, "a\n\nb")
+        page.keyboard.press("Control+Home")
+        page.keyboard.press("ArrowDown")
+        button(page, "bold").click()
+        assert body_text(page) == "a\n****\nb" and page.locator("#note-editor .cm-jd-hr").count() == 0, body_text(page)
+        page.keyboard.type("x")
+        assert body_text(page) == "a\n**x**\nb" and page.locator("#note-editor .cm-jd-bold").inner_text() == "x"
+        # Backspace takes a letter you see, never half a hidden sign; in an empty pair the whole pair goes.
+        page.keyboard.press("Backspace")
+        assert body_text(page) == "a\n****\nb" and button(page, "bold").get_attribute("aria-pressed") == "true", body_text(page)
+        page.keyboard.press("Backspace")
+        assert body_text(page) == "a\n\nb", body_text(page)
+        fill_body(page, "**hello** world")
+        page.keyboard.press("Control+End")
+        for _ in range(6):
+            page.keyboard.press("Backspace")
+        assert body_text(page) == "**hello**", body_text(page)
+        page.keyboard.press("Backspace")
+        assert body_text(page) == "**hell**" and "*" not in visible_text(page), body_text(page)
+        fill_body(page, "## Shop")
+        page.keyboard.press("Control+End")
+        for _ in range(4):
+            page.keyboard.press("Backspace")
+        assert body_text(page) == "## ", body_text(page)
+        page.keyboard.press("Backspace")
+        assert body_text(page) == "", body_text(page)
+
         # Lists: bullets, numbers, and Enter goes on with the next number.
         fill_body(page, "milk\neggs")
         page.keyboard.press("ControlOrMeta+a")

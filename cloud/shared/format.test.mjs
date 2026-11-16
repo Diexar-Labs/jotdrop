@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
-import { activeFormats, applyFormat, blocks, cellSource, cellText, inlineSpans, insertTable, linePrefix, listEnterEdit, parseTable, tableCells, tableEdit } from './format.mjs';
+import { activeFormats, applyFormat, backspaceEdit, blocks, cellSource, cellText, emptyPair, inlineSpans, insertTable, linePrefix, listEnterEdit, parseTable, tableCells, tableEdit } from './format.mjs';
 
 // The same cases run on Android (scripts/check-format-android.mjs), so every app sees the same tables.
 const vectors = JSON.parse(readFileSync(new URL('./format-vectors.json', import.meta.url), 'utf8'));
@@ -86,13 +86,47 @@ test('a button that is on takes its formatting away, and pressing it twice gives
   for (const vector of vectors.apply.filter((item) => ['bold', 'italic', 'strike', 'highlight', 'code', 'bullet', 'ordered', 'quote'].includes(item.command))) {
     const { text, from, to } = unmark(vector.text);
     const once = applyFormat(text, from, to, vector.command);
-    if (!once) continue;
+    // Stepping out of formatting changes no text, so there is nothing to give back.
+    if (!once || (once.from === once.to && !once.insert)) continue;
     const after = applied(text, once);
     const on = activeFormats(after, once.selFrom, once.selTo).includes(vector.command);
     const twice = applyFormat(after, once.selFrom, once.selTo, vector.command);
     // Only for plain text: on text that was partly formatted, the second press makes it all plain.
     const plain = !/[*_~=`]/.test(text) && !text.split('\n').some((line) => linePrefix(line).kind);
-    if (on && twice && plain) assert.equal(applied(after, twice), text, `${vector.name}: twice`);
+    // At the end of the words the second press steps out instead (one more case in the 'empty pair' test).
+    const steps = twice && twice.from === twice.to && !twice.insert;
+    if (on && twice && plain && !steps) assert.equal(applied(after, twice), text, `${vector.name}: twice`);
+  }
+});
+
+test('an empty pair: a button pressed before typing', () => {
+  for (const vector of vectors.pair) {
+    const { text, from, to } = unmark(vector.text);
+    const pair = emptyPair(text, from, to);
+    assert.deepEqual(pair && [pair.from, pair.to, pair.kinds], vector.expect, vector.name);
+  }
+  // First the button, then type, then the button again: the words are formatted and what follows is plain.
+  let text = 'Say ', caret = 4;
+  const press = (command) => {
+    const edit = applyFormat(text, caret, caret, command);
+    text = applied(text, edit);
+    caret = edit.selFrom;
+  };
+  const type = (words) => { text = text.slice(0, caret) + words + text.slice(caret); caret += words.length; };
+  press('bold');
+  assert.deepEqual(activeFormats(text, caret, caret), ['bold']);
+  type('hello');
+  press('bold');
+  assert.deepEqual(activeFormats(text, caret, caret), []);
+  type(' there');
+  assert.equal(text, 'Say **hello** there');
+});
+
+test('Backspace behind hidden signs takes a letter you see', () => {
+  for (const vector of vectors.backspace) {
+    const { text, from } = unmark(vector.text);
+    const edit = backspaceEdit(text, from, vector.hidden);
+    assert.equal(edit && marked(applied(text, edit), edit.selFrom, edit.selTo), vector.expect, vector.name);
   }
 });
 

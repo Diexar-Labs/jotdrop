@@ -48,7 +48,15 @@ const fs = require("node:fs");
   assert.match(android, /next\.composition == null && next\.selection\.collapsed/);
   assert.match(android, /next\.text == current\.text\.replaceRange\(start, end, "\\n"\)/);
   assert.match(android, /listEnterEdit\(current\.text, start, end\)/);
-  assert.match(android, /renderListBullets\(source\.text\)/);
-  assert.match(android, /OffsetMapping\.Identity/);
+  // The body is drawn by FormatTransformation (formatting editor, phase 3): list signs as bullets, and every source
+  // offset kept, so the list Enter above works on the same positions.
+  assert.match(android, /FormatTransformation\(formatted,/);
+  // Typing on at the bottom keeps the caret above the keyboard and the formatting bar (Eric, 16 Nov).
+  assert.match(android, /caretView\.bringIntoView\(/);
+  assert.match(android, /Modifier\.bringIntoViewRequester\(caretView\)/);
+  assert.match(android, /onTextLayout = \{ bodyLayout = it \}/);
+  const transformation = fs.readFileSync("android/app/src/main/kotlin/com/diexar/keepcapture/FormatTransformation.kt", "utf8");
+  assert.match(transformation, /renderListBullets\(source\)/);
+  assert.match(transformation, /OffsetMapping\.Identity/);
   console.log("List editor checks passed");
 })().catch((error) => { console.error(error); process.exitCode = 1; });
