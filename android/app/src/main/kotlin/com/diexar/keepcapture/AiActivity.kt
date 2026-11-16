@@ -1039,19 +1039,27 @@ private fun AiSettingsScreen(onClose: () -> Unit) {
 /** The model list in groups: per company (the part before "/"), the ones that cannot use tools at the end. */
 @Composable
 private fun AiModelDialog(provider: String, models: List<AiModel>, onPick: (String) -> Unit, onDismiss: () -> Unit) {
-    val usable = models.filter { it.tools != false }.sortedWith(compareBy({ it.name.lowercase() }, { it.id }))
-    val other = models.filter { it.tools == false }.sortedWith(compareBy({ it.name.lowercase() }, { it.id }))
+    // The search words must all occur in the name or the id; the groups stay, with only the matching models in them.
+    var search by remember { mutableStateOf("") }
+    val words = search.lowercase().split(' ').filter { it.isNotBlank() }
+    val shown = models.filter { m -> words.all { "${m.name} ${m.id}".lowercase().contains(it) } }
+    val usable = shown.filter { it.tools != false }.sortedWith(compareBy({ it.name.lowercase() }, { it.id }))
+    val other = shown.filter { it.tools == false }.sortedWith(compareBy({ it.name.lowercase() }, { it.id }))
     val groups = (if (usable.any { '/' in it.id }) usable.groupBy { it.id.substringBefore('/', "Other") }.toSortedMap().toList()
-        else listOf(stringResource(R.string.ai_all_models) to usable)) + if (other.isNotEmpty()) listOf(stringResource(R.string.ai_no_tools) to other) else emptyList()
+        else listOf(stringResource(R.string.ai_all_models) to usable)).filter { it.second.isNotEmpty() } + if (other.isNotEmpty()) listOf(stringResource(R.string.ai_no_tools) to other) else emptyList()
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.ai_pick_model)) },
         text = {
-            LazyColumn {
-                for ((group, list) in groups) {
-                    item(key = "g:$group") { Text(group, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)) }
-                    items(list, key = { "m:$group:${it.id}" }) { m ->
-                        Text(if (m.name != m.id) "${m.name} (${m.id})" else m.id, Modifier.fillMaxWidth().clickable { onPick(m.id) }.padding(vertical = 8.dp))
+            Column {
+                OutlinedTextField(value = search, onValueChange = { search = it }, singleLine = true, label = { Text(stringResource(R.string.ai_search_models)) }, modifier = Modifier.fillMaxWidth())
+                if (words.isNotEmpty()) Text(stringResource(R.string.ai_models_match, shown.size, models.size), style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 4.dp))
+                LazyColumn(Modifier.weight(1f, fill = false)) {
+                    for ((group, list) in groups) {
+                        item(key = "g:$group") { Text(group, style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(top = 12.dp, bottom = 4.dp)) }
+                        items(list, key = { "m:$group:${it.id}" }) { m ->
+                            Text(if (m.name != m.id) "${m.name} (${m.id})" else m.id, Modifier.fillMaxWidth().clickable { onPick(m.id) }.padding(vertical = 8.dp))
+                        }
                     }
                 }
             }
