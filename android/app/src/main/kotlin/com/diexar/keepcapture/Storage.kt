@@ -51,6 +51,7 @@ object Storage {
     private const val KEY_SPEECH_LANG = "speech_language"
     private const val KEY_DOWNLOAD_IMAGES = "download_images"
     private const val KEY_SORT_MODE = "sort_mode"
+    private const val KEY_ONE_COLUMN = "one_column_cards"
     private const val KEY_THEME = "app_theme"
     private const val KEY_TUTORIAL_PENDING = "first_run_tutorial_pending"
     private const val JOURNAL_SEPARATOR = '\n'.code.toByte()
@@ -205,6 +206,17 @@ object Storage {
         } catch (_: Exception) {
             NoteSortMode.MANUAL
         }
+    }
+
+    // One column of cards instead of two (a choice per device, like Keep's list view). Off by default.
+    fun getOneColumn(context: Context): Boolean =
+        PreferenceManager.getDefaultSharedPreferences(context).getBoolean(KEY_ONE_COLUMN, false)
+
+    fun saveOneColumn(context: Context, oneColumn: Boolean) {
+        PreferenceManager.getDefaultSharedPreferences(context)
+            .edit()
+            .putBoolean(KEY_ONE_COLUMN, oneColumn)
+            .apply()
     }
 
     fun saveSortMode(context: Context, mode: NoteSortMode) {
