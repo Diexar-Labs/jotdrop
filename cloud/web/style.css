@@ -442,6 +442,23 @@ html { scrollbar-color: color-mix(in srgb, var(--ink) 35%, transparent) transpar
 .note-link h1 { margin: 0 0 1rem; overflow-wrap: anywhere; }
 .note-link p, .note-link-task { overflow-wrap: anywhere; white-space: pre-wrap; margin: .3rem 0; }
 .note-link-task.done { text-decoration: line-through; color: var(--muted); }
+/* Tables (design opmaak-editor, part 9): small on a card, whole on a shared note, scrolling sideways in their own frame. */
+.jd-table table { border-collapse: collapse; }
+.jd-table th, .jd-table td { padding: .2rem .45rem; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+.jd-table th { font-weight: 700; border-bottom: 1.5px solid currentColor; }
+.jd-table tbody tr:nth-child(even) > * { background: color-mix(in srgb, currentColor 6%, transparent); }
+.jd-table .jd-align-center { text-align: center; }
+.jd-table .jd-align-right { text-align: right; }
+.jd-card-table { flex: none; min-width: 0; }
+.jd-card-table table { width: 100%; table-layout: fixed; font-size: .9em; }
+.jd-card-table th, .jd-card-table td { padding: .15rem .3rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.jd-table-more { margin: .25rem 0 0; color: var(--muted); font-size: .85em; }
+.note-link article { min-width: 0; }
+.jd-note-table { max-width: 100%; overflow-x: auto; margin: .6rem 0; }
+.jd-note-table table { width: max-content; }
+.jd-note-table th, .jd-note-table td { min-width: 3.5rem; max-width: 220px; overflow-wrap: break-word; }
+.jd-note-table th:first-child, .jd-note-table td:first-child { position: sticky; left: 0; background: var(--page); }
+.jd-note-table tbody tr:nth-child(even) > :first-child { background: color-mix(in srgb, var(--ink) 6%, var(--page)); }
 .note-link-about { border-top: 1px solid var(--line); padding-top: 1rem; color: var(--muted); }
 /* A shared list: real boxes, and who ticked what in words next to the item. */
 .list-link-task { display: flex; gap: .6rem; align-items: baseline; flex-wrap: wrap; margin: .5rem 0; font-weight: 400; overflow-wrap: anywhere; cursor: pointer; }

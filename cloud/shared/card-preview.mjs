@@ -67,6 +67,8 @@ export function cardPreview(host, rows, options) {
       const node = options.render(row, true);
       host.append(node);
       if (!fits(node, height)) {
+        // A table is whole or not there: past the card's height it goes, and "Open note" shows.
+        if (options.atomic?.(row)) { node.remove(); hidden = true; break; }
         // A partial text block becomes plain text: clipped links must not remain focusable.
         const top = node.getBoundingClientRect().top - host.getBoundingClientRect().top;
         const chars = Array.from(node.textContent || '');

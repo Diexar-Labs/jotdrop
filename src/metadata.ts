@@ -1,6 +1,7 @@
 import { App, TFile } from "obsidian";
 import { parseRepeat } from "./recurrence";
 import { expiresBadge, shortDate, validExpires } from "../cloud/shared/paper.mjs";
+import { blocks, cellText, parseTable } from "../cloud/shared/format.mjs";
 
 export type ColorName =
   | "default"
@@ -568,8 +569,25 @@ export function renderInlinePreview(parent: HTMLElement, text: string, firstChec
   if (lastIndex < src.length) parent.appendText(src.slice(lastIndex));
 }
 
-/** A display row retains the index used by the existing writer, including its code-fence counting. */
-export function checklistPreviewRows(content: string): { text: string; index?: number; checked?: boolean }[] {
+/** A card line without embeds, preview markers, heading signs, link targets or bare web addresses. */
+function previewClean(line: string): string {
+  return line.replace(/!\[\[[^\]]+\]\]|!\[[^\]]*\]\([^)]+\)/g, "")
+    .replace(/<!--\s*(?:jotdrop|diexar)-preview:.*?-->/g, "")
+    .replace(/^\s{0,3}#{1,6}[ \t]+/, "")
+    .replace(/\[([^\]\n]+)\]\(([^)\n]+)\)/g, "$1")
+    .replace(/\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\]/g, (_link, name: string, alias?: string) => alias || name.replace(/#.*$/, ""))
+    .replace(/https?:\/\/\S+/g, "");
+}
+
+/** A table cell as the card shows it: also without other Markdown marks. */
+export function previewPlain(text: string): string {
+  return plainPreviewText(previewClean(text));
+}
+
+export type CardTable = ReturnType<typeof parseTable>;
+
+/** A display row retains the index used by the existing writer, including its code-fence counting. A table is one row. */
+export function checklistPreviewRows(content: string): { text: string; index?: number; checked?: boolean; table?: CardTable }[] {
   const body = stripFrontmatter(content);
   const lines = body.split("\n");
   const first = lines.findIndex((line) => line.trim() && !/^\s*(?:!\[\[|!\[|<!--)/.test(line));
@@ -580,20 +598,25 @@ export function checklistPreviewRows(content: string): { text: string; index?: n
     const marker = match.index! + match[1].indexOf("-");
     indices.set(body.slice(0, marker).split("\n").length - 1, index++);
   }
-  const rows: { text: string; index?: number; checked?: boolean }[] = [];
+  const rows: { text: string; index?: number; checked?: boolean; table?: CardTable }[] = [];
+  const tables = new Map(blocks(body).filter((run) => run.kind === "table").map((run) => [run.fromLine, run.toLine]));
   let fence = "";
   for (let i = 0; i < lines.length; i++) {
+    const tableEnd = tables.get(i);
+    if (tableEnd !== undefined) {
+      const table = parseTable(lines.slice(i, tableEnd + 1));
+      // The text is the table in words, as plain text showed it before: cells joined with " · ".
+      const text = [table.header, ...table.rows].map((cells) => cells.map((cell) => previewPlain(cellText(cell)).trim()).filter(Boolean).join(" · ")).join("\n");
+      rows.push({ text, table });
+      i = tableEnd;
+      continue;
+    }
     const line = lines[i].replace(/\r$/, "");
     const marker = /^\s{0,3}(`{3,}|~{3,})/.exec(line)?.[1];
     if (marker) { if (!fence) fence = marker; else if (marker[0] === fence[0] && marker.length >= fence.length) fence = ""; continue; }
     if (i === first && !/^\s*(?:[-*+][ \t]|\d{1,9}[.)][ \t])/.test(line)) continue;
     const task = !fence && /^[ \t]*-[ \t]+\[([ xX])\](?:[ \t]+|$)(.*)$/.exec(line);
-    const cleaned = line.replace(/!\[\[[^\]]+\]\]|!\[[^\]]*\]\([^)]+\)/g, "")
-      .replace(/<!--\s*(?:jotdrop|diexar)-preview:.*?-->/g, "")
-      .replace(/^\s{0,3}#{1,6}[ \t]+/, "")
-      .replace(/\[([^\]\n]+)\]\(([^)\n]+)\)/g, "$1")
-      .replace(/\[\[([^\]|\n]+)(?:\|([^\]\n]+))?\]\]/g, (_link, name: string, alias?: string) => alias || name.replace(/#.*$/, ""))
-      .replace(/https?:\/\/\S+/g, "");
+    const cleaned = previewClean(line);
     const text = fence ? cleaned : plainPreviewText(cleaned);
     if (!text.trim()) continue;
     rows.push(task && indices.has(i) ? { text: checklistToGlyphs(text), index: indices.get(i), checked: task[1] !== " " } : { text: checklistToGlyphs(text) });

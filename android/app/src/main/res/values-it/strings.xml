@@ -5,6 +5,14 @@
         <item quantity="one">Apri nota - ancora %d attività</item>
         <item quantity="other">Apri nota - ancora %d attività</item>
     </plurals>
+    <plurals name="card_table_more_columns">
+        <item quantity="one">+ %d colonna</item>
+        <item quantity="other">+ %d colonne</item>
+    </plurals>
+    <plurals name="card_table_more_rows">
+        <item quantity="one">+ %d riga</item>
+        <item quantity="other">+ %d righe</item>
+    </plurals>
     <plurals name="card_preview_checked">
         <item quantity="one">+ %d elemento spuntato</item>
         <item quantity="other">+ %d elementi spuntati</item>

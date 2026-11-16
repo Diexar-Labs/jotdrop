@@ -5,6 +5,14 @@
         <item quantity="one">Abrir nota - %d tarea más</item>
         <item quantity="other">Abrir nota - %d tareas más</item>
     </plurals>
+    <plurals name="card_table_more_columns">
+        <item quantity="one">+ %d columna</item>
+        <item quantity="other">+ %d columnas</item>
+    </plurals>
+    <plurals name="card_table_more_rows">
+        <item quantity="one">+ %d fila</item>
+        <item quantity="other">+ %d filas</item>
+    </plurals>
     <plurals name="card_preview_checked">
         <item quantity="one">+ %d elemento marcado</item>
         <item quantity="other">+ %d elementos marcados</item>

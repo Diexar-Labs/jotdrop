@@ -5,6 +5,14 @@
         <item quantity="one">Ouvrir la note - encore %d tâche</item>
         <item quantity="other">Ouvrir la note - encore %d tâches</item>
     </plurals>
+    <plurals name="card_table_more_columns">
+        <item quantity="one">+ %d colonne</item>
+        <item quantity="other">+ %d colonnes</item>
+    </plurals>
+    <plurals name="card_table_more_rows">
+        <item quantity="one">+ %d ligne</item>
+        <item quantity="other">+ %d lignes</item>
+    </plurals>
     <plurals name="card_preview_checked">
         <item quantity="one">+ %d élément coché</item>
         <item quantity="other">+ %d éléments cochés</item>

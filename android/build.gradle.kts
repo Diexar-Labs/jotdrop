@@ -256,6 +256,32 @@ tasks.register<JavaExec>("checkListLinks") {
     }
 }
 
+// Tables and formatting: the same rules as cloud/shared/format.mjs (scripts/check-format-android.mjs).
+val formatClasses = layout.buildDirectory.dir("format-check")
+val formatSources = files("app/src/main/kotlin/com/diexar/keepcapture/FormatCore.kt", "checks/FormatCheck.kt")
+val formatCompile = tasks.register<JavaExec>("formatCompile") {
+    inputs.files(formatSources)
+    outputs.dir(formatClasses)
+    classpath(kotlinCompiler)
+    mainClass.set("org.jetbrains.kotlin.cli.jvm.K2JVMCompiler")
+    doFirst {
+        args("-Xdisable-default-scripting-plugin", "-no-stdlib", "-no-reflect", "-jvm-target", "17", "-classpath",
+            project(":app").configurations.getByName("debugCompileClasspath").asPath,
+            "-d", formatClasses.get().asFile.absolutePath)
+        args(formatSources.files.map { it.absolutePath })
+    }
+}
+
+tasks.register<JavaExec>("checkFormat") {
+    dependsOn(formatCompile)
+    classpath(formatClasses)
+    classpath(provider { project(":app").configurations.getByName("debugCompileClasspath") })
+    mainClass.set("com.diexar.keepcapture.FormatCheckKt")
+    doFirst {
+        args(requireNotNull(System.getenv("JOTDROP_FORMAT_INPUT")), requireNotNull(System.getenv("JOTDROP_FORMAT_OUTPUT")))
+    }
+}
+
 // Ask JotDrop: the same requests, answers, tool rules and note edits as cloud/shared/ai and cloud/web/ai-web.mjs.
 val aiClasses = layout.buildDirectory.dir("ai-check")
 val aiNames = listOf("AiJson", "AiRedact", "AiTools", "AiContext", "AiProviders", "AiAssistant", "AiNoteEdits", "AiAsk", "AiMarkdown", "CloudVersionDiff", "AiParts", "AiReceipt", "PaperDrawer", "ExpiryWords", "DrawingFormat", "Similar", "Digest", "CloudCrypto", "AiKeySync")

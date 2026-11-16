@@ -274,7 +274,7 @@ class NoteWidgetConfigureActivity : ThemedComponentActivity() {
                                         }.padding(vertical = 12.dp),
                                     ) {
                                         Text(note.title.ifBlank { note.filename.removeSuffix(".md") }, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                        if (note.snippet.isNotBlank()) Text(note.snippet.replace(Regex("(?m)^\\s*-\\s+\\[([ xX])\\]\\s*")) { if (it.groupValues[1] == " ") "☐ " else "☑ " }, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        if (note.snippet.isNotBlank()) Text(Storage.plainSnippet(note.snippet).replace(Regex("(?m)^\\s*-\\s+\\[([ xX])\\]\\s*")) { if (it.groupValues[1] == " ") "☐ " else "☑ " }, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     }
                                 }
                             }

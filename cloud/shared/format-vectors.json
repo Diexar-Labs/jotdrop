@@ -1,0 +1,68 @@
+{
+  "blocks": [
+    { "name": "plain text is one text run", "text": "Hello\nworld", "expect": [["text", 0, 1]] },
+    { "name": "empty text", "text": "", "expect": [["text", 0, 0]] },
+    { "name": "table between text", "text": "Intro\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n\nAfter", "expect": [["text", 0, 1], ["table", 2, 4], ["text", 5, 6]] },
+    { "name": "table at the very start and end", "text": "| a | b |\n|---|---|\n| 1 | 2 |", "expect": [["table", 0, 2]] },
+    { "name": "header and delimiter only", "text": "a | b\n--|--", "expect": [["table", 0, 1]] },
+    { "name": "one column with outer pipes", "text": "| a |\n| :-: |\n| 1 |", "expect": [["table", 0, 2]] },
+    { "name": "rows end at a line without a pipe", "text": "| a | b |\n|---|---|\n| 1 | 2 |\nplain line", "expect": [["table", 0, 2], ["text", 3, 3]] },
+    { "name": "rows end at a blank line", "text": "| a | b |\n|---|---|\n| 1 | 2 |\n   \n| 3 | 4 |", "expect": [["table", 0, 2], ["text", 3, 4]] },
+    { "name": "rows end where a fence starts", "text": "| a | b |\n|---|---|\n```\n| x | y |\n```", "expect": [["table", 0, 1], ["code", 2, 4]] },
+    { "name": "header and delimiter differ in cell count", "text": "| a | b | c |\n|---|---|\n| 1 | 2 | 3 |", "expect": [["text", 0, 2]] },
+    { "name": "a table in a code block is no table", "text": "```md\n| a | b |\n|---|---|\n```\nafter", "expect": [["code", 0, 3], ["text", 4, 4]] },
+    { "name": "tilde fence closes only on tildes", "text": "~~~\n```\n| a | b |\n|---|---|\n~~~", "expect": [["code", 0, 4]] },
+    { "name": "an unclosed fence runs to the end", "text": "text\n```\n| a | b |\n|---|---|", "expect": [["text", 0, 0], ["code", 1, 3]] },
+    { "name": "a closing fence with words after it does not close", "text": "```\ncode\n``` not closed\n| a | b |\n|---|---|", "expect": [["code", 0, 4]] },
+    { "name": "a table in a quote is text", "text": "> | a | b |\n> |---|---|\n> | 1 | 2 |", "expect": [["text", 0, 2]] },
+    { "name": "a table in a list item is text", "text": "- a | b\n  --|--", "expect": [["text", 0, 1]] },
+    { "name": "four spaces in is no table", "text": "    | a | b |\n    |---|---|", "expect": [["text", 0, 1]] },
+    { "name": "a tab in front is no table", "text": "\t| a | b |\n\t|---|---|", "expect": [["text", 0, 1]] },
+    { "name": "three spaces in is a table", "text": "   | a | b |\n   |---|---|", "expect": [["table", 0, 1]] },
+    { "name": "a header with only escaped pipes is no table", "text": "a \\| b\n--|--", "expect": [["text", 0, 1]] },
+    { "name": "a rule without a pipe is no delimiter", "text": "a | b\n---", "expect": [["text", 0, 1]] },
+    { "name": "a delimiter cell needs a dash", "text": "| a | b |\n| : | --- |", "expect": [["text", 0, 1]] },
+    { "name": "CRLF lines", "text": "Intro\r\n| a | b |\r\n|:--|--:|\r\n| 1 | 2 |\r\n\r\nEnd\r\n", "expect": [["text", 0, 0], ["table", 1, 3], ["text", 4, 6]] },
+    { "name": "two tables after each other", "text": "| a |\n|---|\n\n| b |\n|---|\n| 2 |", "expect": [["table", 0, 1], ["text", 2, 2], ["table", 3, 5]] },
+    { "name": "a table straight after a paragraph line", "text": "Prices\n| a | b |\n|---|---|", "expect": [["text", 0, 0], ["table", 1, 2]] }
+  ],
+  "cells": [
+    { "name": "outer pipes", "line": "| a | b |", "expect": [" a ", " b "] },
+    { "name": "no outer pipes", "line": "a | b", "expect": ["a ", " b"] },
+    { "name": "only a leading pipe", "line": "| a | b", "expect": [" a ", " b"] },
+    { "name": "empty cells stay", "line": "| a || c |", "expect": [" a ", "", " c "] },
+    { "name": "an escaped pipe stays in its cell", "line": "| a \\| b | c |", "expect": [" a \\| b ", " c "] },
+    { "name": "an escaped backslash before a pipe splits", "line": "| a \\\\| b |", "expect": [" a \\\\", " b "] },
+    { "name": "a pipe in code splits too, as in GFM", "line": "| `x | y` | z |", "expect": [" `x ", " y` ", " z "] },
+    { "name": "an escaped pipe at the end is no outer pipe", "line": "| a | b \\|", "expect": [" a ", " b \\|"] },
+    { "name": "indent, tabs and CR", "line": "  |\ta\t|\tb |\r", "expect": ["\ta\t", "\tb "] },
+    { "name": "a lone pipe", "line": "|", "expect": [""] },
+    { "name": "emoji keep their surrogate pairs", "line": "| 🎟️ Décimo | 😀 |", "expect": [" 🎟️ Décimo ", " 😀 "] }
+  ],
+  "parse": [
+    {
+      "name": "aligns and trimmed cells",
+      "lines": ["| Name | Count | Note | Price |", "|:-----|:-----:|------|------:|", "| Tea  |  2  | **hot** | 3 |"],
+      "expect": { "align": ["left", "center", "", "right"], "header": ["Name", "Count", "Note", "Price"], "rows": [["Tea", "2", "**hot**", "3"]] }
+    },
+    {
+      "name": "too few cells are filled, extra cells are not shown",
+      "lines": ["| a | b | c |", "|---|---|---|", "| 1 |", "| 1 | 2 | 3 | 4 | 5 |", "|"],
+      "expect": { "align": ["", "", ""], "header": ["a", "b", "c"], "rows": [["1", "", ""], ["1", "2", "3"], ["", "", ""]] }
+    },
+    {
+      "name": "CRLF and escaped pipes",
+      "lines": ["a | b\r", "--|--\r", "x \\| y | <br>\r"],
+      "expect": { "align": ["", ""], "header": ["a", "b"], "rows": [["x \\| y", "<br>"]] }
+    }
+  ],
+  "cellText": [
+    { "name": "escaped pipe and line breaks", "source": "a \\| b<br>c<BR/>d<br />e", "expect": "a | b\nc\nd\ne" },
+    { "name": "other Markdown stays", "source": "**bold** `x` \\*", "expect": "**bold** `x` \\*" },
+    { "name": "empty", "source": "", "expect": "" }
+  ],
+  "cellSource": [
+    { "name": "pipe and line break", "text": " a | b\nc\r\nd ", "expect": "a \\| b<br>c<br>d" },
+    { "name": "empty", "text": "   ", "expect": "" }
+  ]
+}

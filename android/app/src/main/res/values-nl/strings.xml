@@ -5,6 +5,14 @@
         <item quantity="one">Open notitie - nog %d taak</item>
         <item quantity="other">Open notitie - nog %d taken</item>
     </plurals>
+    <plurals name="card_table_more_columns">
+        <item quantity="one">+ %d kolom</item>
+        <item quantity="other">+ %d kolommen</item>
+    </plurals>
+    <plurals name="card_table_more_rows">
+        <item quantity="one">+ %d rij</item>
+        <item quantity="other">+ %d rijen</item>
+    </plurals>
     <plurals name="card_preview_checked">
         <item quantity="one">+ %d afgevinkt item</item>
         <item quantity="other">+ %d afgevinkte items</item>

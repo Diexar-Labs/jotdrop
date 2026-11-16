@@ -1,4 +1,6 @@
 import { openLink, readLinkAddress, reportLink } from '/shared/links.mjs';
+import { blocks, parseTable } from '/shared/format.mjs';
+import { noteTable } from '/shared/format-dom.mjs';
 
 // The page for a shared note. What the sender wrote is only ever put on the page as text.
 const $ = (id) => document.getElementById(id);
@@ -13,6 +15,15 @@ function line(text) {
     element.textContent = `${done ? '☑' : '☐'} ${match[2] ?? ''}`;
   } else element.textContent = text;
   return element;
+}
+
+// A table shows as a table, whole and scrolling sideways; every other line as before.
+function body(text) {
+  const lines = text.split('\n').map((value) => value.replace(/\r$/, ''));
+  return blocks(text).flatMap((run) => {
+    const own = lines.slice(run.fromLine, run.toLine + 1);
+    return run.kind === 'table' ? [noteTable(document, parseTable(own))] : own.filter((value) => value.trim()).map(line);
+  });
 }
 
 async function show() {
@@ -32,7 +43,7 @@ async function show() {
     $('note-title').textContent = note.title;
     $('note-title').hidden = !note.title;
     if (note.title) document.title = `${note.title} - JotDrop`;
-    $('note-body').replaceChildren(...note.text.split(/\r?\n/).filter((text) => text.trim()).map(line));
+    $('note-body').replaceChildren(...body(note.text));
     $('note-until').textContent = note.expiresAt ? `This link ends on ${new Date(note.expiresAt).toLocaleDateString()}.` : '';
     $('note-article').hidden = false;
     $('note-state').hidden = true;
