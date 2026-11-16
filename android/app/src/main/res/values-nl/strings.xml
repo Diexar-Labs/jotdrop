@@ -218,6 +218,9 @@
     <string name="sort_title">Sortering</string>
     <string name="sort_newest">Nieuwste eerst</string>
     <string name="sort_manual">Kaarten slepen</string>
+    <string name="view_title">Weergave</string>
+    <string name="view_two_columns">Twee kolommen</string>
+    <string name="view_one_column">Eén kolom</string>
     <string name="update_check">Check op updates</string>
     <string name="update_available">Nieuwe versie %1$s beschikbaar</string>
     <string name="update_view">Bekijken</string>

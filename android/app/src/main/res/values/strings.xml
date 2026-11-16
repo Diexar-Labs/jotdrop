@@ -227,6 +227,9 @@
     <string name="sort_title">Sort order</string>
     <string name="sort_newest">Newest first</string>
     <string name="sort_manual">Drag cards</string>
+    <string name="view_title">View</string>
+    <string name="view_two_columns">Two columns</string>
+    <string name="view_one_column">One column</string>
     <string name="update_check">Check for updates</string>
     <string name="update_available">New version %1$s available</string>
     <string name="update_view">View</string>

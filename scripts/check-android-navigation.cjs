@@ -229,4 +229,10 @@ assert(pinToggle.indexOf('updateLoadedNotes') < pinToggle.indexOf('Storage.noteW
 assert(pinToggle.includes('NonCancellable'), 'A pin write must survive closing or turning the screen');
 assert(pinToggle.includes('pinEpochs[note.uri] != epoch'), 'An older pin result must not undo a later tap');
 assert(pinToggle.includes('pinned = note.meta.pinned'), 'A failed pin write must put the card back');
+// One column of cards is a choice per device (Eric, 10 Nov 2026; Keep's list view). It is saved, offered in the
+// overflow menu with a check mark, and the grid takes its column count from it, also on a tablet or sideways.
+const gridCode = list.slice(list.indexOf('private fun NotesGrid('));
+assert(gridCode.includes('val columnCount = if (oneColumn) 1 else if (isLandscape) 4 else 2'), 'The grid must give one column when the user chose it');
+assert(list.includes('Storage.saveOneColumn(context, single)') && list.includes('Storage.getOneColumn(context)'), 'The one-column choice must be saved per device');
+assert(list.includes('R.string.view_one_column') && list.includes('R.string.view_two_columns'), 'The overflow menu must offer both views');
 console.log('Android navigation and recording safety wiring checks passed');

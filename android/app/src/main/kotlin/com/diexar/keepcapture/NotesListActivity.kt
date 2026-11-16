@@ -1024,6 +1024,7 @@ private fun NotesListScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val isPlayInstall = remember(context) { UpdateChecker.isPlayInstall(context) }
+    var oneColumn by remember { mutableStateOf(Storage.getOneColumn(context)) }
     val openTesterLink: (String) -> Unit = { url ->
         try {
             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
@@ -1432,6 +1433,30 @@ private fun NotesListScreen(
                                         onSetSortMode(NoteSortMode.MANUAL)
                                     },
                                 )
+                                // Cards in one column or two: a choice per device. The active choice has a check mark.
+                                Text(
+                                    stringResource(R.string.view_title),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                )
+                                for (single in listOf(false, true)) {
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(if (single) R.string.view_one_column else R.string.view_two_columns)) },
+                                        leadingIcon = {
+                                            if (oneColumn == single) {
+                                                Icon(Icons.Filled.Check, contentDescription = null)
+                                            } else {
+                                                Spacer(Modifier.size(24.dp))
+                                            }
+                                        },
+                                        onClick = {
+                                            overflowOpen = false
+                                            oneColumn = single
+                                            Storage.saveOneColumn(context, single)
+                                        },
+                                    )
+                                }
                                 // Find duplicates (Ask JotDrop v2, part E): on this phone, without AI, also when the AI is off.
                                 DropdownMenuItem(
                                     text = { Text(stringResource(R.string.dup_title)) },
@@ -1665,6 +1690,7 @@ private fun NotesListScreen(
                                         selectionMode = selectionMode,
                                         selectedUris = selectedNoteUris,
                                         manualMode = sortMode == NoteSortMode.MANUAL && folder != NoteFolder.TRASH,
+                                        oneColumn = oneColumn,
                                         onCardClick = onCardClick,
                                         onCardLongClick = onCardLongClick,
                                         onTogglePin = onTogglePin,
@@ -1986,6 +2012,7 @@ private fun NotesGrid(
     selectionMode: Boolean,
     selectedUris: Set<Uri>,
     manualMode: Boolean,
+    oneColumn: Boolean,
     onCardClick: (NoteSummary) -> Unit,
     onCardLongClick: (NoteSummary) -> Unit,
     onTogglePin: (NoteSummary) -> Unit,
@@ -2003,7 +2030,8 @@ private fun NotesGrid(
     // Vast 2 kolommen in portrait (Google Keep-style), 4 in landscape voor tablets/
     // brede telefoons in liggend. Geen Adaptive — consistente look ongeacht zoom.
     val isLandscape = LocalConfiguration.current.screenWidthDp >= 600
-    val columnCount = if (isLandscape) 4 else 2
+    // One column when the user chose it (also on a tablet or sideways), otherwise 2 upright and 4 sideways.
+    val columnCount = if (oneColumn) 1 else if (isLandscape) 4 else 2
 
     val gridState = rememberLazyStaggeredGridState()
     val scope = rememberCoroutineScope()
