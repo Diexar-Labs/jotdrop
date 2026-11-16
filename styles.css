@@ -2226,6 +2226,7 @@ button.jotdrop-provider-github:not(.clickable-icon):hover { background: #32383f;
 .jotdrop-ai-problem { font-weight: 600; }
 .jotdrop-ai-said { color: var(--text-muted); }
 .jotdrop-ai-models { margin-left: 8px; max-width: 100%; }
+.jotdrop-ai-model-search { margin-left: 8px; min-width: 8rem; }
 /* Version 2: a file row has an icon and its kind in words; the receipt screen's pressed keep button carries a ✓. */
 .jotdrop-ai-file { overflow-wrap: anywhere; }
 .jotdrop-ai-file-icon { display: inline-flex; align-self: center; color: var(--text-muted); }

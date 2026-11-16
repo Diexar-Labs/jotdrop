@@ -836,14 +836,23 @@ export function renderAiSettings(el: HTMLElement, plugin: JotDropPlugin): void {
       .addButton((button) => button.setButtonText("Test and load models").onClick(() => void loadModels(button.buttonEl)));
     if (models.length) {
       // A plain list in groups: 400 models in one flat list cannot be read (Eric, 9 Nov 2026).
+      const search = modelSetting.controlEl.createEl("input", { type: "search", cls: "jotdrop-ai-model-search", attr: { placeholder: "Search: claude, gpt, qwen", "aria-label": "Search the models", autocomplete: "off", spellcheck: "false" } });
       const select = modelSetting.controlEl.createEl("select", { cls: "dropdown jotdrop-ai-models", attr: { "aria-label": "Models of this service" } });
-      select.createEl("option", { text: `Choose one of ${models.length} models`, value: "" });
       const preferred = pickDefaultModel(draft.provider, models);
-      for (const group of modelGroups(draft.provider, models, preferred)) {
-        const optgroup = select.createEl("optgroup", { attr: { label: group.label === "Cannot use tools" ? "Cannot use tools: answers only, no changes" : group.label } });
-        for (const model of group.models) optgroup.createEl("option", { text: model.name === model.id ? model.id : `${model.name} (${model.id})`, value: model.id });
-      }
-      select.value = models.some((model) => model.id === draft.model) ? draft.model : "";
+      // The search words must all occur in the name or the id; the groups stay, with only the matching models in them.
+      const fill = () => {
+        const words = search.value.toLowerCase().split(/\s+/).filter(Boolean);
+        const match = models.filter((model) => words.every((word) => `${model.name} ${model.id}`.toLowerCase().includes(word)));
+        select.empty();
+        select.createEl("option", { text: words.length ? `${match.length} of ${models.length} models match` : `Choose one of ${models.length} models`, value: "" });
+        for (const group of modelGroups(draft.provider, match, preferred)) {
+          const optgroup = select.createEl("optgroup", { attr: { label: group.label === "Cannot use tools" ? "Cannot use tools: answers only, no changes" : group.label } });
+          for (const model of group.models) optgroup.createEl("option", { text: model.name === model.id ? model.id : `${model.name} (${model.id})`, value: model.id });
+        }
+        select.value = match.some((model) => model.id === draft.model) ? draft.model : "";
+      };
+      fill();
+      search.addEventListener("input", fill);
       select.addEventListener("change", () => { if (select.value) { draft.model = select.value; render(); } });
     }
     new Setting(el).setName("Also use notes from shared groups and list links")

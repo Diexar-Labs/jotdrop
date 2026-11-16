@@ -713,6 +713,7 @@ function fakeVault(TFile, initial) {
   assert.doesNotMatch(ask + ai, /innerHTML|insertAdjacentHTML|outerHTML/, "answers are built with textContent only");
   assert.match(ask, /fetcher: cloudFetch/, "the conversation goes through cloudFetch (requestUrl)");
   assert.match(ask, /createProvider\(\{[^}]*\}, cloudFetch\)\.listModels/, "the model list too");
+  assert.match(ask, /jotdrop-ai-model-search[\s\S]*words\.every\(\(word\) => `\$\{model\.name\} \$\{model\.id\}`[\s\S]*addEventListener\("input", fill\)/, "the model list has a search field");
   assert.doesNotMatch(ask + ai, /\bfetch\(|XMLHttpRequest|requestUrl\(/, "no other network path");
   assert.doesNotMatch(ask + ai, /saveData|saveSettings|settings\.ai|localStorage/, "the key never goes to data.json or localStorage");
   assert.match(ai, /new CloudStore\(`jotdrop-ai-\$\{id\}`\)/);
