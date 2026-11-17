@@ -35,6 +35,13 @@ fun main(arguments: Array<String>) {
             "enter" -> edit(FormatCore.listEnterEdit(input, fields[2].toInt(), fields[3].toInt()))
             "backspace" -> edit(FormatCore.backspaceEdit(input, fields[2].toInt(), fields.getOrElse(4) { "" }.split(';').filter { it.isNotEmpty() }
                 .map { range -> range.split('-').let { it[0].toInt() until it[1].toInt() } }))
+            "table" -> {
+                // Fields: fromLine, type, row, column, after, at, align, text (base64); `_` is a field that is not set.
+                fun number(i: Int) = fields[i].takeIf { it != "_" }?.toInt()
+                val op = FormatCore.TableOp(fields[3], row = number(4), column = number(5), after = number(6), at = number(7),
+                    align = fields[8].takeIf { it != "_" }, text = fields[9].takeIf { it != "_" }?.let(::text))
+                edit(FormatCore.tableEdit(input, fields[2].toInt(), op))
+            }
             else -> error("Unknown case ${fields[0]}")
         }
     }

@@ -24,7 +24,11 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.FormatAlignLeft
+import androidx.compose.material.icons.automirrored.filled.FormatAlignRight
 import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
+import androidx.compose.material.icons.filled.FormatAlignCenter
+import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.BorderColor
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.Code
@@ -158,9 +162,9 @@ private fun BarButton(icon: ImageVector, @StringRes label: Int, foreground: Colo
 
 /**
  * The formatting bar right above the keyboard (design part 5.3, 7.1): Bold · Italic · Heading · Bullets · Numbers ·
- * Checklist · Highlight · Emoji · More (Strikethrough, Quote, Code, Line), and at the end the Markdown switch, always in sight
- * so someone who knows Markdown switches to the raw text in one tap (Eric, 16 Nov). Tapping a button keeps the focus
- * and the keyboard in the text. Tables come with their grid (phase 4).
+ * Checklist · Highlight · Table · Emoji · More (Strikethrough, Quote, Code, Line), and at the end the Markdown switch, always
+ * in sight so someone who knows Markdown switches to the raw text in one tap (Eric, 16 Nov). Tapping a button keeps the
+ * focus and the keyboard in the text.
  */
 @Composable
 internal fun FormatBar(
@@ -195,6 +199,7 @@ internal fun FormatBar(
             BarButton(Icons.Filled.FormatListNumbered, R.string.format_numbered, foreground, "ordered" in active) { onFormat("ordered") }
             BarButton(Icons.Filled.CheckBox, R.string.action_checklist, foreground, "checklist" in active) { onChecklist() }
             BarButton(Icons.Filled.BorderColor, R.string.format_highlight, foreground, "highlight" in active) { onFormat("highlight") }
+            BarButton(Icons.Filled.GridOn, R.string.format_table, foreground) { onFormat("table") }
             BarButton(Icons.Filled.EmojiEmotions, R.string.format_emoji, foreground) { emojiOpen = !emojiOpen }
             Box {
                 BarButton(Icons.Filled.MoreHoriz, R.string.format_more, foreground) { moreOpen = true }
@@ -216,6 +221,64 @@ internal fun FormatBar(
         }
         MarkdownSwitch(markdown, foreground, onMarkdown)
         }
+    }
+}
+
+/**
+ * The table bar, in the place of the formatting bar while a cell has the focus (design 5.4): Bold, Italic and Highlight
+ * for the text in the cell, then Add row · Add column · Delete row · Delete column · Align (left, center, right) ·
+ * Delete table. The row and column buttons have words, not only an icon; an alignment that is on has a frame.
+ */
+@Composable
+internal fun TableBar(
+    cell: TableCell,
+    foreground: Color,
+    onOp: (FormatCore.TableOp) -> Unit,
+    onDeleteTable: () -> Unit,
+) {
+    Column(Modifier.fillMaxWidth()) {
+        HorizontalDivider(color = foreground.copy(alpha = 0.15f))
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp).horizontalScroll(rememberScrollState()),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            BarButton(Icons.Filled.FormatBold, R.string.format_bold, foreground, "bold" in cell.active) { cell.format("bold") }
+            BarButton(Icons.Filled.FormatItalic, R.string.format_italic, foreground, "italic" in cell.active) { cell.format("italic") }
+            BarButton(Icons.Filled.BorderColor, R.string.format_highlight, foreground, "highlight" in cell.active) { cell.format("highlight") }
+            WordButton(R.string.table_add_row, foreground) { onOp(FormatCore.TableOp("addRow", after = cell.row)) }
+            WordButton(R.string.table_add_column, foreground) { onOp(FormatCore.TableOp("addColumn", at = cell.column + 1)) }
+            WordButton(R.string.table_delete_row, foreground, enabled = cell.row > 0) { onOp(FormatCore.TableOp("deleteRow", row = cell.row)) }
+            WordButton(R.string.table_delete_column, foreground, enabled = cell.columns > 1) { onOp(FormatCore.TableOp("deleteColumn", column = cell.column)) }
+            for ((align, label, icon) in listOf(
+                Triple("left", R.string.table_align_left, Icons.AutoMirrored.Filled.FormatAlignLeft),
+                Triple("center", R.string.table_align_center, Icons.Filled.FormatAlignCenter),
+                Triple("right", R.string.table_align_right, Icons.AutoMirrored.Filled.FormatAlignRight),
+            )) {
+                // Pressing the alignment that is on takes it away again (no alignment).
+                BarButton(icon, label, foreground, cell.align == align) {
+                    onOp(FormatCore.TableOp("setAlign", column = cell.column, align = if (cell.align == align) "" else align))
+                }
+            }
+            WordButton(R.string.table_delete, foreground, onClick = onDeleteTable)
+        }
+    }
+}
+
+/** A button with its name as the label; a button that cannot be used now is faded and does nothing. */
+@Composable
+private fun WordButton(@StringRes label: Int, foreground: Color, enabled: Boolean = true, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(8.dp)
+    Box(
+        modifier = Modifier
+            .padding(horizontal = 3.dp)
+            .heightIn(min = 40.dp)
+            .clip(shape)
+            .border(1.dp, foreground.copy(alpha = if (enabled) 0.4f else 0.15f), shape)
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .padding(horizontal = 10.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(stringResource(label), color = foreground.copy(alpha = if (enabled) 1f else 0.4f), style = MaterialTheme.typography.labelLarge)
     }
 }
 
