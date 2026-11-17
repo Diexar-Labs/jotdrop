@@ -42,6 +42,10 @@ fun main(arguments: Array<String>) {
                     align = fields[8].takeIf { it != "_" }, text = fields[9].takeIf { it != "_" }?.let(::text))
                 edit(FormatCore.tableEdit(input, fields[2].toInt(), op))
             }
+            "levels" -> FormatCore.listLevels(input).joinToString(",")
+            // Fields: selection from, to, the line, move (1 or 0).
+            "tick" -> FormatCore.tickEdit(input, fields[4].toInt(), fields[5] == "1", fields[2].toInt(), fields[3].toInt())
+                ?.let { "${edit(it.edit)}:${it.line}" } ?: "null"
             else -> error("Unknown case ${fields[0]}")
         }
     }

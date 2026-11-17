@@ -274,6 +274,8 @@ class NotesListActivity : ThemedComponentActivity() {
     private var loadJob: Job? = null
     private var stateEpoch = 0L
     private val checklistEpochs = mutableMapOf<Uri, Long>()
+    // With "Move checked items to the bottom" a tick settles until the card shows the note's new order.
+    private val checklistSettling = mutableMapOf<Uri, Job>()
     private val pinEpochs = mutableMapOf<Uri, Long>()
     private var pendingCameraUri: Uri? = null
     private var pendingCameraFile: File? = null
@@ -866,15 +868,30 @@ class NotesListActivity : ThemedComponentActivity() {
     }
 
     private fun toggleChecklist(note: NoteSummary, index: Int) {
+        checklistSettling[note.uri]?.takeIf { it.isActive }?.let { settling ->
+            // The card still shows the order from before a task moved: this tap waits, then ticks the same task at its
+            // new place (otherwise the guard against an outdated card would refuse it).
+            val key = previewTaskKeys(previewTaskRows(note.snippet))[index] ?: return
+            lifecycleScope.launch {
+                settling.join()
+                val current = (notesState.value as? NotesUiState.Loaded)?.notes?.firstOrNull { it.uri == note.uri } ?: return@launch
+                val at = previewTaskKeys(previewTaskRows(current.snippet)).entries.firstOrNull { it.value == key }?.key ?: return@launch
+                toggleChecklist(current, at)
+            }
+            return
+        }
         val epoch = (checklistEpochs[note.uri] ?: 0L) + 1L
         checklistEpochs[note.uri] = epoch
         stateEpoch++
+        val move = Storage.getMoveChecked(this)
+        val tappedAt = android.os.SystemClock.uptimeMillis()
+        val shown = toggleChecklistText(note.snippet, index) ?: note.snippet
         // The card responds on this frame; durable SAF IO and cloud sync follow in the background.
         updateLoadedNotes { notes -> notes.map {
             if (it.uri == note.uri) it.copy(snippet = toggleChecklistText(it.snippet, index) ?: it.snippet)
             else it
         } }
-        lifecycleScope.launch {
+        val job = lifecycleScope.launch {
             // Not cancellable: the card already shows the tick, so closing or turning the screen must not drop the write.
             val result = withContext(NonCancellable + Dispatchers.IO) {
                 Storage.noteWriteMutex.withLock {
@@ -887,7 +904,13 @@ class NotesListActivity : ThemedComponentActivity() {
                 // A later tap owns the card now; never put its optimistic change back with this older result.
                 if (checklistEpochs[note.uri] == epoch) {
                     if (updated == null) reload()
-                    else updateLoadedNotes { notes -> notes.map { if (it.uri == note.uri) updated else it } }
+                    else {
+                        // A task that moved in the note takes its new place only after the pen has struck it through.
+                        if (move && !sameChecklistPreview(updated.snippet, shown)) {
+                            delay(STRIKE_MS + 50 - (android.os.SystemClock.uptimeMillis() - tappedAt))
+                        }
+                        if (checklistEpochs[note.uri] == epoch) updateLoadedNotes { notes -> notes.map { if (it.uri == note.uri) updated else it } }
+                    }
                 }
             }.onFailure { err ->
                 Toast.makeText(
@@ -898,6 +921,7 @@ class NotesListActivity : ThemedComponentActivity() {
                 if (checklistEpochs[note.uri] == epoch) reload()
             }
         }
+        if (move) checklistSettling[note.uri] = job
     }
 }
 
@@ -2740,24 +2764,52 @@ private fun repeatIndicatorLabel(repeat: String?): String? {
     }
 }
 
-private data class PreviewLayoutRow(val source: PreviewTaskRow, val text: AnnotatedString, val lines: Int, val height: Int, val table: FormatCore.Table? = null)
+private data class PreviewLayoutRow(val source: PreviewTaskRow, val text: AnnotatedString, val lines: Int, val height: Int,
+                                    val table: FormatCore.Table? = null, val indent: Int = 0)
 private data class PreviewLayout(val rows: List<PreviewLayoutRow>, val tasks: Int, val more: Int, val checked: Int, val hidden: Boolean)
 
 private const val MAX_CARD_TASKS = 10
+// The card shows 3 levels (design kaarten-en-lijsten, part 7); deeper items stay on the third.
+private const val CARD_LEVELS = 3
 // The pen's stroke through a ticked task (drawPenLines) lasts 350 ms.
 private const val STRIKE_MS = 350L
 private val checkedTaskRow = Regex("^[ \\t]*-[ \\t]+\\[[xX]\\]")
 private val tagOnlyRow = Regex("^\\s*(?:\\\\?#[^\\s#]+\\s*)+$")
+private val taskBoxSign = Regex("^[ \\t]*-[ \\t]+\\[[ xX]\\][ \\t]*")
+
+internal enum class PreviewMode { CHECKLIST, MIXED, TEXT }
 
 /**
  * Like Google Keep (measured 9 Nov 2026, Eric's decision): a note of nothing but tasks is a checklist card,
- * up to 10 open tasks with the ticked ones folded into "+ N checked items"; every other note is a text card
- * whose tasks read as ☐/☑ text. A blank row (a bare link, shown as a chip) or a row of only tags is no text.
+ * up to 10 open tasks with the ticked ones folded into "+ N checked items". A note with tasks and other text is a
+ * mixed card (design kaarten-en-lijsten, part 5): its rows in the note's order, tasks with the same big boxes that
+ * tick both ways, ticked ones struck through in place. A note without tasks is a text card. A blank row (a bare link,
+ * shown as a chip) or a row of only tags is no text.
  */
-internal fun previewIsChecklist(rows: List<PreviewTaskRow>): Boolean {
+internal fun previewMode(rows: List<PreviewTaskRow>): PreviewMode {
     val content = rows.filter { it.checklistIndex != null || (it.text.isNotBlank() && !tagOnlyRow.matches(it.text)) }
-    return content.isNotEmpty() && content.all { it.checklistIndex != null }
+    return when {
+        content.none { it.checklistIndex != null } -> PreviewMode.TEXT
+        content.all { it.checklistIndex != null } -> PreviewMode.CHECKLIST
+        else -> PreviewMode.MIXED
+    }
 }
+
+/**
+ * Each task's identity on the card, by checklist index: its text without the box, and the how-manieth of equal ones.
+ * It stays when "Move checked items to the bottom" moves the task in the note, so its stroke and its row follow it.
+ */
+internal fun previewTaskKeys(rows: List<PreviewTaskRow>): Map<Int, String> {
+    val seen = HashMap<String, Int>()
+    return rows.filter { it.checklistIndex != null }.associate { row ->
+        val text = row.text.replace(taskBoxSign, "")
+        row.checklistIndex!! to "$text\u0000${seen.merge(text, 1, Int::plus)}"
+    }
+}
+
+/** A list line's text without its indent: the card shows its level as a margin instead. */
+private fun PreviewTaskRow.shown() = if (level >= 0) text.trimStart(' ', '\t') else text
+private fun PreviewTaskRow.cardLevel() = level.coerceIn(0, CARD_LEVELS - 1)
 
 // On a card a table is small (design opmaak-editor, part 9): 3 columns, the header and 3 rows, the rest in words.
 private const val CARD_TABLE_COLUMNS = 3
@@ -2828,18 +2880,20 @@ private fun CompactNotePreview(
     val withTables = remember(snippet) { previewRowsWithTables(snippet) }
     val rows = withTables.first
     val tables = withTables.second
-    val checklist = remember(rows) { previewIsChecklist(rows) }
+    val mode = remember(rows) { previewMode(rows) }
+    // A task keeps its key when it moves in the note, so its stroke and its row go along with it.
+    val keys = remember(rows) { previewTaskKeys(rows) }
     // A task ticked here keeps its place until the pen has struck it through, then joins the checked ones.
-    val checkedNow = remember(rows) { rows.filter { it.checklistIndex != null && checkedTaskRow.containsMatchIn(it.text) }.mapNotNull { it.checklistIndex }.toSet() }
+    val checkedNow = remember(rows) { rows.filter { it.checklistIndex != null && checkedTaskRow.containsMatchIn(it.text) }.mapNotNull { keys[it.checklistIndex] }.toSet() }
     val seen = remember { arrayOf(checkedNow) }
-    val tickedAt = remember { mutableMapOf<Int, Long>() }
+    val tickedAt = remember { mutableMapOf<String, Long>() }
     var settled by remember { mutableIntStateOf(0) }
     val now = remember(checkedNow, settled) {
         val time = android.os.SystemClock.uptimeMillis()
         if (checkedNow != seen[0]) { (checkedNow - seen[0]).forEach { tickedAt[it] = time }; seen[0] = checkedNow }
         time
     }
-    val lingering = tickedAt.filter { (index, at) -> index in checkedNow && now - at < STRIKE_MS + 50 }.keys
+    val lingering = tickedAt.filter { (key, at) -> key in checkedNow && now - at < STRIKE_MS + 50 }.keys
     LaunchedEffect(lingering) { if (lingering.isNotEmpty()) { kotlinx.coroutines.delay(STRIKE_MS + 80); settled++ } }
     val density = LocalDensity.current
     val measurer = rememberTextMeasurer()
@@ -2847,42 +2901,99 @@ private fun CompactNotePreview(
         val width = with(density) { maxWidth.roundToPx() }
         val touchHeight = with(density) { 32.dp.roundToPx() }
         val taskStyle = style.copy(lineHeight = 2.2.em)
-        var tableRowPx = 0
-        var tableLinePx = 0
+        // Each level a margin of about 1.25 em (design kaarten-en-lijsten, part 7).
+        val levelPx = with(density) { style.fontSize.toPx() } * 1.25f
+        val oneLine = measurer.measure(AnnotatedString("Ag"), style, constraints = Constraints(maxWidth = width)).size.height.coerceAtLeast(1)
+        val tableRowPx = oneLine + with(density) { 4.dp.roundToPx() }
+        fun indentOf(row: PreviewTaskRow) = (row.cardLevel() * levelPx).roundToInt()
+        /** A task row, up to 2 lines with a touch area of at least 32 dp; true when its text is clamped. */
+        fun taskRow(row: PreviewTaskRow): Pair<PreviewLayoutRow, Boolean> {
+            val indent = indentOf(row)
+            val annotated = renderPreviewAnnotated(row.shown(), accent, firstChecklistIndex = row.checklistIndex ?: 0, checklists = true)
+            val layout = measurer.measure(annotated, taskStyle, overflow = TextOverflow.Ellipsis, maxLines = 2,
+                constraints = Constraints(maxWidth = (width - indent).coerceAtLeast(1)))
+            return PreviewLayoutRow(row, annotated, 2, maxOf(touchHeight, layout.size.height), indent = indent) to layout.hasVisualOverflow
+        }
+        /** A text row of at most [maxLines] lines; true when it is cut off. */
+        fun textRow(row: PreviewTaskRow, maxLines: Int): Pair<PreviewLayoutRow, Boolean> {
+            val indent = indentOf(row)
+            val annotated = renderPreviewAnnotated(row.shown(), accent, checklists = false)
+            val layout = measurer.measure(annotated, style, overflow = TextOverflow.Ellipsis, maxLines = maxLines,
+                constraints = Constraints(maxWidth = (width - indent).coerceAtLeast(1)))
+            return PreviewLayoutRow(row, annotated, maxLines, layout.size.height, indent = indent) to layout.hasVisualOverflow
+        }
+        /** A table is on the card whole or not at all; its height is known before it is drawn. */
+        fun tableHeight(table: FormatCore.Table): Int {
+            val more = table.header.size > CARD_TABLE_COLUMNS || table.rows.size > CARD_TABLE_ROWS
+            return (1 + minOf(CARD_TABLE_ROWS, table.rows.size)) * tableRowPx + (if (more) oneLine + with(density) { 2.dp.roundToPx() } else 0)
+        }
         fun measure(): PreviewLayout {
             val visible = mutableListOf<PreviewLayoutRow>()
             var used = 0
-            if (checklist) {
+            if (mode == PreviewMode.CHECKLIST) {
                 // Room for 10 one-line tasks; long tasks may still leave some for "Open note - N more tasks".
                 val budget = with(density) { minOf(480.dp, boardHeight * .6f).roundToPx() }
                 val tasks = rows.filter { it.checklistIndex != null }
-                val open = tasks.filter { !checkedTaskRow.containsMatchIn(it.text) || it.checklistIndex in lingering }
+                fun checked(row: PreviewTaskRow) = checkedTaskRow.containsMatchIn(row.text)
+                // A ticked task with an open sub-task under it stays, struck through, as the heading of its open sub-tasks.
+                val heads = tasks.filterIndexed { i, row ->
+                    checked(row) && tasks.drop(i + 1).takeWhile { it.cardLevel() > row.cardLevel() }.any { !checked(it) }
+                }.toSet()
+                val open = tasks.filter { !checked(it) || it in heads || keys[it.checklistIndex] in lingering }
                 var clamped = false
                 for (row in open) {
                     if (visible.size >= MAX_CARD_TASKS) break
-                    val annotated = renderPreviewAnnotated(row.text, accent, firstChecklistIndex = row.checklistIndex ?: 0, checklists = true)
-                    val layout = measurer.measure(annotated, taskStyle, overflow = TextOverflow.Ellipsis, maxLines = 2,
-                        constraints = Constraints(maxWidth = width))
-                    val height = maxOf(touchHeight, layout.size.height)
-                    if (used + height > budget) break
-                    visible += PreviewLayoutRow(row, annotated, 2, height)
-                    used += height
-                    if (layout.hasVisualOverflow) clamped = true
+                    val (shown, overflow) = taskRow(row)
+                    if (used + shown.height > budget) break
+                    visible += shown
+                    used += shown.height
+                    if (overflow) clamped = true
                 }
                 return PreviewLayout(visible, visible.size, open.size - visible.size, tasks.size - open.size, clamped)
             }
+            if (mode == PreviewMode.MIXED) {
+                // The text keeps the text card's room; up to 10 tasks come on top, the whole card as high as a checklist card.
+                val height = with(density) { minOf(480.dp, boardHeight * .6f).roundToPx() }
+                val budget = with(density) { minOf(200.dp, boardHeight * .4f).roundToPx() }
+                var text = 0
+                var tasks = 0
+                var hidden = false
+                // The card is a window on the start of the note: it ends at the first row that does not fit, never skipping one.
+                for ((index, row) in rows.withIndex()) {
+                    val table = tables[index]
+                    if (row.checklistIndex != null) {
+                        if (tasks >= MAX_CARD_TASKS) break
+                        val (shown, overflow) = taskRow(row)
+                        if (used + shown.height > height) break
+                        visible += shown
+                        used += shown.height
+                        tasks++
+                        if (overflow) hidden = true
+                    } else if (table != null) {
+                        val tableHeight = tableHeight(table)
+                        if (used + tableHeight > height || text + tableHeight > budget) { hidden = true; break }
+                        visible += PreviewLayoutRow(row, AnnotatedString(""), 0, tableHeight, table)
+                        used += tableHeight
+                        text += tableHeight
+                    } else {
+                        val maxLines = (minOf(height - used, budget - text) / oneLine).coerceAtMost(1000)
+                        if (maxLines <= 0) { hidden = true; break }
+                        val (shown, overflow) = textRow(row, maxLines)
+                        visible += shown
+                        used += shown.height
+                        text += shown.height
+                        if (overflow) { hidden = true; break }
+                    }
+                }
+                val more = rows.drop(visible.size).count { it.checklistIndex != null }
+                return PreviewLayout(visible, tasks, more, 0, hidden || visible.size < rows.size)
+            }
             val budget = with(density) { minOf(200.dp, boardHeight * .4f).roundToPx() }
-            val oneLine = measurer.measure(AnnotatedString("Ag"), style, constraints = Constraints(maxWidth = width)).size.height.coerceAtLeast(1)
-            tableRowPx = oneLine + with(density) { 4.dp.roundToPx() }
-            tableLinePx = oneLine
             var hidden = false
             for ((index, row) in rows.withIndex()) {
                 val table = tables[index]
                 if (table != null) {
-                    // A table is on the card whole or not at all; its height is known before it is drawn.
-                    val shown = minOf(CARD_TABLE_ROWS, table.rows.size)
-                    val more = table.header.size > CARD_TABLE_COLUMNS || table.rows.size > CARD_TABLE_ROWS
-                    val height = (1 + shown) * tableRowPx + (if (more) oneLine + with(density) { 2.dp.roundToPx() } else 0)
+                    val height = tableHeight(table)
                     if (used + height > budget) { hidden = true; break }
                     visible += PreviewLayoutRow(row, AnnotatedString(""), 0, height, table)
                     used += height
@@ -2890,22 +3001,20 @@ private fun CompactNotePreview(
                 }
                 val maxLines = ((budget - used) / oneLine).coerceAtMost(1000)
                 if (maxLines <= 0) { hidden = true; break }
-                val annotated = renderPreviewAnnotated(row.text, accent, checklists = false)
-                val layout = measurer.measure(annotated, style, overflow = TextOverflow.Ellipsis, maxLines = maxLines,
-                    constraints = Constraints(maxWidth = width))
-                visible += PreviewLayoutRow(row, annotated, maxLines, layout.size.height)
-                used += layout.size.height
-                if (layout.hasVisualOverflow) { hidden = true; break }
+                val (shown, overflow) = textRow(row, maxLines)
+                visible += shown
+                used += shown.height
+                if (overflow) { hidden = true; break }
             }
             return PreviewLayout(visible, 0, 0, 0, hidden || visible.size < rows.size)
         }
         val chosen = measure()
         Column(Modifier.fillMaxWidth()) {
             chosen.rows.forEachIndexed { rowIndex, row ->
+                val index = row.source.checklistIndex
                 if (row.table != null) androidx.compose.runtime.key("table-$rowIndex") {
-                    CardTable(row.table, style, foreground, with(density) { tableRowPx.toDp() }, with(density) { tableLinePx.toDp() })
-                } else androidx.compose.runtime.key(if (checklist) row.source.checklistIndex ?: "text-$rowIndex" else "text-$rowIndex") {
-                    val index = if (checklist) row.source.checklistIndex else null
+                    CardTable(row.table, style, foreground, with(density) { tableRowPx.toDp() }, with(density) { oneLine.toDp() })
+                } else androidx.compose.runtime.key(if (index != null) "task-${keys[index]}" else "text-$rowIndex") {
                     val checked = index != null && checkedTaskRow.containsMatchIn(row.source.text)
                     val ticked = remember(row.text) { if (index == null) emptyMap() else tickedTasks(row.text) }
                     var previouslyChecked by remember { mutableStateOf(checked) }
@@ -2918,8 +3027,8 @@ private fun CompactNotePreview(
                     val taskModifier = if (index == null) Modifier else Modifier
                         .heightIn(min = 32.dp)
                         .toggleable(value = checked, role = Role.Checkbox, onValueChange = { onTask(index) })
-                        .semantics { contentDescription = row.source.text.replace(Regex("^[ \\t]*-[ \\t]+\\[[ xX]\\][ \\t]*"), "") }
-                    Box(Modifier.fillMaxWidth().then(taskModifier)) {
+                        .semantics { contentDescription = row.source.text.replace(taskBoxSign, "") }
+                    Box(Modifier.fillMaxWidth().then(taskModifier).padding(start = with(density) { row.indent.toDp() })) {
                         ClickableText(text = row.text, style = if (index == null) style else taskStyle,
                             maxLines = row.lines, overflow = TextOverflow.Ellipsis, onTextLayout = { textLayout = it },
                             modifier = Modifier.fillMaxWidth().drawWithContent {

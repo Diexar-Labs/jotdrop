@@ -454,4 +454,7 @@
     <string name="emoji_food">Eten</string>
     <string name="emoji_travel">Reizen</string>
     <string name="emoji_symbols">Symbolen</string>
+    <string name="section_checklists">Checklists</string>
+    <string name="move_checked_label">Afgevinkte items naar onderen</string>
+    <string name="move_checked_hint">Als je een taak afvinkt, gaat hij onder de open taken in zijn lijst staan. Uitvinken zet hem weer terug. Dit verandert de volgorde van de regels in de notitie.</string>
 </resources>

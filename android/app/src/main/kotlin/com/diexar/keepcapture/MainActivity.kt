@@ -86,6 +86,7 @@ class MainActivity : ThemedAppCompatActivity() {
         setupThemeChoice()
         setupSpeechLangSpinner()
         setupDownloadImagesSwitch()
+        setupMoveCheckedSwitch()
     }
 
     private fun setupThemeChoice() {
@@ -138,6 +139,13 @@ class MainActivity : ThemedAppCompatActivity() {
         binding.downloadImagesSwitch.isChecked = Storage.getDownloadImages(this)
         binding.downloadImagesSwitch.setOnCheckedChangeListener { _, isChecked ->
             Storage.saveDownloadImages(this, isChecked)
+        }
+    }
+
+    private fun setupMoveCheckedSwitch() {
+        binding.moveCheckedSwitch.isChecked = Storage.getMoveChecked(this)
+        binding.moveCheckedSwitch.setOnCheckedChangeListener { _, isChecked ->
+            Storage.saveMoveChecked(this, isChecked)
         }
     }
 

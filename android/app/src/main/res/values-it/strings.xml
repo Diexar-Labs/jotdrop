@@ -141,4 +141,7 @@
     <string name="emoji_food">Cibo</string>
     <string name="emoji_travel">Viaggi</string>
     <string name="emoji_symbols">Simboli</string>
+    <string name="section_checklists">Liste di controllo</string>
+    <string name="move_checked_label">Sposta in fondo gli elementi spuntati</string>
+    <string name="move_checked_hint">Quando spunti un\'attività, scende sotto le attività aperte della sua lista. Se togli la spunta, risale. Questo cambia l\'ordine delle righe nella nota.</string>
 </resources>

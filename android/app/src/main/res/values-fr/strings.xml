@@ -141,4 +141,7 @@
     <string name="emoji_food">Nourriture</string>
     <string name="emoji_travel">Voyage</string>
     <string name="emoji_symbols">Symboles</string>
+    <string name="section_checklists">Listes de tâches</string>
+    <string name="move_checked_label">Déplacer les éléments cochés en bas</string>
+    <string name="move_checked_hint">Quand vous cochez une tâche, elle passe sous les tâches ouvertes de sa liste. Si vous la décochez, elle remonte. Cela change l\'ordre des lignes dans la note.</string>
 </resources>

@@ -7,7 +7,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { activeFormats, applyFormat, backspaceEdit, blocks, cellSource, cellText, emptyPair, inlineSpans, linePrefix, listEnterEdit, parseTable, tableCells, tableEdit } from '../cloud/shared/format.mjs';
+import { activeFormats, applyFormat, backspaceEdit, blocks, cellSource, cellText, emptyPair, inlineSpans, linePrefix, listEnterEdit, listLevels, parseTable, tableCells, tableEdit, tickEdit } from '../cloud/shared/format.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const code = (value) => Buffer.from(value, 'utf8').toString('base64');
@@ -36,6 +36,11 @@ const answer = {
     return edit(tableEdit(text, Number(fromLine), op));
   },
   backspace: (text, from, to, hidden = '') => edit(backspaceEdit(text, Number(from), hidden.split(';').filter(Boolean).map((range) => range.split('-').map(Number)))),
+  levels: (text) => listLevels(text).join(','),
+  tick: (text, from, to, line, move) => {
+    const tick = tickEdit(text, Number(line), Number(move) === 1, Number(from), Number(to));
+    return tick ? `${edit(tick)}:${tick.line}` : 'null';
+  },
 };
 // The inserted text as UTF-16 units: a random selection can cut an emoji in half, which UTF-8 cannot carry.
 const units = (value) => Array.from({ length: value.length }, (_, i) => value.charCodeAt(i).toString(16)).join('.');
@@ -67,6 +72,8 @@ for (const vector of vectors.active) cases.push(['active', ...unmark(vector.text
 for (const vector of vectors.apply) cases.push(['apply', ...unmark(vector.text), vector.command]);
 for (const vector of vectors.enter) cases.push(['enter', ...unmark(vector.text)]);
 for (const vector of vectors.backspace) cases.push(['backspace', ...unmark(vector.text), vector.hidden.map((range) => range.join('-')).join(';')]);
+for (const vector of vectors.levels) cases.push(['levels', vector.text]);
+for (const vector of vectors.tick) cases.push(['tick', ...unmark(vector.text), vector.line, vector.move ? 1 : 0]);
 // A table change as fields: fromLine, type, row, column, after, at, align, text (base64); `_` is not set.
 const tableCase = (text, fromLine, op) => ['table', text, fromLine, op.type,
   ...['row', 'column', 'after', 'at', 'align'].map((key) => (op[key] === undefined ? '_' : op[key])), op.text === undefined ? '_' : code(op.text)];
@@ -124,6 +131,30 @@ for (let i = 0; i < 1500; i++) {
     cases.push(['apply', after, once.selFrom, once.selFrom, pick(commands)], ['active', after, once.selFrom, once.selFrom], ['pair', after, once.selFrom, once.selFrom]);
   }
 }
+
+// Lists in levels and ticks (design kaarten-en-lijsten): every line of the vector texts, the nested-lists fixture and
+// random lists, ticked with and without moving, the caret somewhere at random. Tabs, 2 and 4 spaces mix, as do CRLF,
+// text between the items, code, quotes and tables.
+const listTexts = [...vectors.levels.map((vector) => vector.text), ...vectors.tick.map((vector) => unmark(vector.text)[0]),
+  readFileSync(path.join(root, 'cloud/shared/fixtures/format/nested-lists.md'), 'utf8')];
+const listPool = ['- [ ] a', '- [x] b', '- [X] c', '\t- [ ] d', '\t- [x] e', '  - [ ] f', '  - [x] g', '    - [ ] h', '\t\t- [ ] i', '      - [x] j',
+  '* [ ] k', '+ [x] l', '- m', '  - n', '1. o', '  2) p', 'text', '  more text', '\tmore', '', '   ', '# Head', '---', '```', '> - [ ] q',
+  '| a | b |', '|---|---|', '- [ ] crlf\r', '\t- [x] tab crlf\r', '- [ ] 🚆 emoji', '   - [ ] three', '- [ ]', '- [x]'];
+// Half of them only list lines, so many ticks move.
+const itemPool = listPool.filter((line) => /^[ \t]*(?:[-*+] |\d)/.test(line));
+for (let i = 0; i < 800; i++) listTexts.push(Array.from({ length: 1 + Math.floor(random() * 9) }, () => pick(i % 2 ? itemPool : listPool)).join('\n'));
+for (const text of listTexts) {
+  cases.push(['levels', text]);
+  const count = text.split('\n').length;
+  for (let line = -1; line <= count; line++) {
+    for (const move of [0, 1]) {
+      const a = Math.floor(random() * (text.length + 1)), b = random() < 0.5 ? a : Math.floor(random() * (text.length + 1));
+      cases.push(['tick', text, Math.min(a, b), Math.max(a, b), line, move]);
+    }
+  }
+}
+const moving = cases.filter(([kind, text, , , line, move]) => kind === 'tick' && move === 1 && (tickEdit(text, line, true)?.line ?? line) !== line).length;
+assert.ok(moving > 400, `the lists give enough ticks that move (${moving})`);
 
 const temporary = mkdtempSync(path.join(tmpdir(), 'jotdrop-android-format-'));
 try {
