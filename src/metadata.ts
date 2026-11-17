@@ -1,7 +1,7 @@
 import { App, TFile } from "obsidian";
 import { parseRepeat } from "./recurrence";
 import { expiresBadge, shortDate, validExpires } from "../cloud/shared/paper.mjs";
-import { blocks, cellText, parseTable } from "../cloud/shared/format.mjs";
+import { blocks, cellText, listLevels, parseTable, tickEdit } from "../cloud/shared/format.mjs";
 
 export type ColorName =
   | "default"
@@ -586,10 +586,16 @@ export function previewPlain(text: string): string {
 
 export type CardTable = ReturnType<typeof parseTable>;
 
-/** A display row retains the index used by the existing writer, including its code-fence counting. A table is one row. */
-export function checklistPreviewRows(content: string): { text: string; index?: number; checked?: boolean; table?: CardTable }[] {
+export type PreviewRow = { text: string; index?: number; checked?: boolean; table?: CardTable; level?: number };
+
+/**
+ * A display row retains the index used by the existing writer, including its code-fence counting. A table is one row.
+ * A task, bullet or numbered line carries its level (0 to 2: the card shows 3 levels) instead of its indent.
+ */
+export function checklistPreviewRows(content: string): PreviewRow[] {
   const body = stripFrontmatter(content);
   const lines = body.split("\n");
+  const levels = listLevels(body);
   const first = lines.findIndex((line) => line.trim() && !/^\s*(?:!\[\[|!\[|<!--)/.test(line));
   // Count exactly the writer's matches before any display normalization removes rows.
   const indices = new Map<number, number>();
@@ -598,7 +604,7 @@ export function checklistPreviewRows(content: string): { text: string; index?: n
     const marker = match.index! + match[1].indexOf("-");
     indices.set(body.slice(0, marker).split("\n").length - 1, index++);
   }
-  const rows: { text: string; index?: number; checked?: boolean; table?: CardTable }[] = [];
+  const rows: PreviewRow[] = [];
   const tables = new Map(blocks(body).filter((run) => run.kind === "table").map((run) => [run.fromLine, run.toLine]));
   let fence = "";
   for (let i = 0; i < lines.length; i++) {
@@ -619,9 +625,31 @@ export function checklistPreviewRows(content: string): { text: string; index?: n
     const cleaned = previewClean(line);
     const text = fence ? cleaned : plainPreviewText(cleaned);
     if (!text.trim()) continue;
-    rows.push(task && indices.has(i) ? { text: checklistToGlyphs(text), index: indices.get(i), checked: task[1] !== " " } : { text: checklistToGlyphs(text) });
+    const level = !fence && levels[i] >= 0 ? Math.min(levels[i], 2) : undefined;
+    const shown = checklistToGlyphs(level === undefined ? text : text.replace(/^[ \t]+/, ""));
+    rows.push(task && indices.has(i) ? { text: shown, index: indices.get(i), checked: task[1] !== " ", level } : { text: shown, level });
   }
   return rows;
+}
+
+/**
+ * Ticks the Nth task as `toggleChecklistItem` counts them, through the shared core: with `move` ("Move checked items to
+ * the bottom") the task also moves in the note (design kaarten-en-lijsten, part 6). A task that only this count sees
+ * (for example in a code block) is just ticked, as before. `moved`: the lines changed order.
+ */
+export function tickChecklistItem(content: string, targetIndex: number, move: boolean): { updated: string; moved: boolean } {
+  const plain = toggleChecklistItem(content, targetIndex);
+  if (plain === content) return { updated: content, moved: false };
+  const bodyStart = checklistBodyStart(content);
+  let index = 0;
+  for (const match of content.slice(bodyStart).matchAll(/^(\s*-\s+\[)([ xX])(\](?:\s|$))/gm)) {
+    if (index++ !== targetIndex) continue;
+    const line = content.slice(0, bodyStart + match.index! + match[1].indexOf("-")).split("\n").length - 1;
+    const edit = tickEdit(content, line, move);
+    if (!edit) break;
+    return { updated: content.slice(0, edit.from) + edit.insert + content.slice(edit.to), moved: edit.line !== line };
+  }
+  return { updated: plain, moved: false };
 }
 
 function checklistBodyStart(content: string): number {

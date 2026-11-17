@@ -31,8 +31,9 @@ h1 { font-size: 2.4rem; font-weight: 800; line-height: 1.02; letter-spacing: -.0
 #view-description { font-family: "Caveat", "Instrument Sans", cursive; font-weight: 600; font-size: 1.5rem; line-height: 1.2; color: var(--hand); margin: .35rem 0 0; transform: rotate(-1.5deg); transform-origin: left; }
 h2 { font-size: 1.25rem; margin-top: 2rem; }
 h3 { font-size: 1.05rem; }
-.appearance { display: flex; justify-content: flex-end; align-items: center; gap: .65rem; padding: .6rem 1rem; }
+.appearance { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: .65rem; padding: .6rem 1rem; }
 .appearance label { margin: 0; font-size: .85rem; }
+.appearance #move-checked { padding: .45rem .8rem; font-size: .85rem; }
 /* Account actions sit top right, like the account menu in Keep, so they are always in view. */
 .account-actions { display: flex; gap: .5rem; margin-right: 1rem; }
 .account-actions button { padding: .45rem .8rem; font-size: .85rem; }
@@ -128,6 +129,11 @@ main { min-width: 0; padding: 0 2rem 3rem; }
 .note-card .compact-card-preview > .note-preview { margin: 0; max-height: none; flex: none; }
 .note-card .compact-card-preview > .task-row { margin: 0; flex: none; }
 .compact-card-preview .task-text { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+/* Lists in levels on the cards (design kaarten-en-lijsten, part 7): 3 levels; a bullet or number hangs in front of its words. */
+.note-card .compact-card-preview > .list-row { padding-left: 1.1em; text-indent: -1.1em; }
+.note-card .compact-card-preview > .list-row + .list-row { margin-top: -.3rem; }
+.note-card .compact-card-preview > [data-level="1"] { margin-left: 1.25em; }
+.note-card .compact-card-preview > [data-level="2"] { margin-left: 2.5em; }
 .compact-preview-controls { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: .25rem; margin-top: .35rem; }
 .compact-preview-controls[hidden] { display: none; }
 .compact-preview-controls button { min-height: 32px; }

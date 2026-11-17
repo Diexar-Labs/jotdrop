@@ -503,6 +503,8 @@ var EN = {
   settings_card_width_desc: "Minimum width of a card in pixels.",
   settings_show_archived: "Show archive",
   settings_show_archived_desc: "Also show archived cards in the main view.",
+  settings_move_checked: "Move checked items to the bottom",
+  settings_move_checked_desc: "When you tick a task, it moves below the open tasks in its list. Unticking moves it back up. This changes the order of the lines in the note.",
   settings_download_images: "Save article images",
   settings_download_images_desc: "Download the article thumbnail and save it in your vault when capturing a URL. Turn off to save only the title and link.",
   // Companion apps (the JotDrop trio)

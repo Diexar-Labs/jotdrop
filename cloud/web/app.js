@@ -1,7 +1,7 @@
 import { CloudClient, identifyClient } from '/shared/client.mjs';
 import { mergeNote } from '/shared/merge.mjs';
-import { cardPreview, checklistOnly, tagOnly } from '/shared/card-preview.mjs';
-import { activeFormats, applyFormat, blocks, parseTable } from '/shared/format.mjs';
+import { cardPreview, tagOnly } from '/shared/card-preview.mjs';
+import { activeFormats, applyFormat, blocks, linePrefix, listLevels, parseTable, tickEdit } from '/shared/format.mjs';
 import { cardTable } from '/shared/format-dom.mjs';
 import { diffLines, foldUnchanged } from '/shared/diff.mjs';
 import { findDuplicates, pairKey } from '/shared/similar.mjs';
@@ -38,6 +38,20 @@ document.documentElement.dataset.theme = $('theme').value;
 $('theme').addEventListener('change', () => {
   document.documentElement.dataset.theme = $('theme').value;
   try { localStorage.setItem('jotdrop-theme', $('theme').value); } catch { /* Keep the selection for this page. */ }
+});
+// "Move checked items to the bottom", per device and off by default (design kaarten-en-lijsten, part 6).
+let moveChecked = false;
+try { moveChecked = localStorage.getItem('jotdrop-move-checked') === 'on'; } catch { /* Off by default. */ }
+const showMoveChecked = () => {
+  $('move-checked').setAttribute('aria-pressed', String(moveChecked));
+  // The state is in words too, not only in a color.
+  $('move-checked').textContent = moveChecked ? '✓ Move checked items to the bottom' : 'Move checked items to the bottom';
+};
+showMoveChecked();
+$('move-checked').addEventListener('click', () => {
+  moveChecked = !moveChecked;
+  showMoveChecked();
+  try { localStorage.setItem('jotdrop-move-checked', moveChecked ? 'on' : 'off'); } catch { /* Keep the choice for this page. */ }
 });
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -836,40 +850,52 @@ function render() {
         if (value) previewRows.push({ text: value });
         text = [];
       };
-      // Like Keep: only a note of nothing but tasks is a checklist card; in any other note a task reads as ☐/☑ text.
-      // A table is a row of its own: a small real table (design opmaak-editor, part 9).
+      // Rows in the note's own order (design kaarten-en-lijsten, part 5): a task with its box, a bullet or numbered line
+      // with its level, a block of text, a table. Only tasks: a checklist card; tasks and other text: a mixed card, its
+      // tasks with real boxes too. A table is a row of its own: a small real table (design opmaak-editor, part 9).
       const tables = new Map(blocks(parts.body).filter((run) => run.kind === 'table').map((run) => [run.fromLine, run]));
-      const build = (asText) => {
-        previewRows.length = 0; text = []; fence = undefined;
-        let inTable = -1;
-        parts.body.split('\n').forEach((line, bodyIndex) => {
-          if (bodyIndex <= inTable) return;
-          const table = tables.get(bodyIndex);
-          if (table) {
-            flush();
-            previewRows.push({ table: parseTable(bodyLines.slice(table.fromLine, table.toLine + 1)) });
-            inTable = table.toLine;
-            return;
-          }
-          if (bodyIndex === titleLine) return;
-          const marker = /^\s{0,3}(`{3,}|~{3,})/.exec(line)?.[1];
-          if (marker) { if (!fence) fence = marker; else if (marker[0] === fence[0] && marker.length >= fence.length) fence = undefined; }
-          const task = !marker && !fence && !entry.deleted && /^\s*[-*+] \[([ xX])\] (.*)\r?$/.exec(line);
-          if (!task) { text.push(line.replace(/\r$/, '')); return; }
-          if (asText) { text.push(`${/^\s*/.exec(line)[0]}${task[1] === ' ' ? '☐' : '☑'} ${task[2]}`); return; }
+      // The card shows 3 levels; deeper items stay on the third.
+      const levels = listLevels(parts.body).map((level) => Math.min(Math.max(level, 0), 2));
+      let inTable = -1;
+      parts.body.split('\n').forEach((line, bodyIndex) => {
+        if (bodyIndex <= inTable) return;
+        const table = tables.get(bodyIndex);
+        if (table) {
           flush();
-          previewRows.push({ task, bodyIndex });
-        });
-        flush();
-      };
+          previewRows.push({ table: parseTable(bodyLines.slice(table.fromLine, table.toLine + 1)) });
+          inTable = table.toLine;
+          return;
+        }
+        if (bodyIndex === titleLine) return;
+        const marker = /^\s{0,3}(`{3,}|~{3,})/.exec(line)?.[1];
+        if (marker) { if (!fence) fence = marker; else if (marker[0] === fence[0] && marker.length >= fence.length) fence = undefined; }
+        const plainLine = !marker && !fence;
+        const task = plainLine && /^\s*[-*+] \[([ xX])\] (.*)\r?$/.exec(line);
+        const level = levels[bodyIndex];
+        // In the trash a tap opens the note, so a task there is a ☐/☑ line without a box.
+        if (task && !entry.deleted) { flush(); previewRows.push({ task, bodyIndex, level }); return; }
+        if (task) { flush(); previewRows.push({ item: task[1] === ' ' ? '☐' : '☑', text: cardText(task[2]), level }); return; }
+        const prefix = plainLine ? linePrefix(line) : undefined;
+        if (prefix?.kind === 'bullet' || prefix?.kind === 'ordered') {
+          flush();
+          previewRows.push({ item: prefix.kind === 'bullet' ? '•' : `${prefix.number}${prefix.delimiter}`, text: cardText(line.replace(/\r$/, '').slice(prefix.markTo)), level });
+          return;
+        }
+        text.push(line.replace(/\r$/, ''));
+      });
+      flush();
       const isTask = (row) => Boolean(row.task), isMeta = (row) => tagOnly(row.text);
-      build(false);
-      if (previewRows.some(isTask) && !checklistOnly(previewRows, isTask, isMeta)) build(true);
       const renderRow = (rowData) => {
         if (rowData.table) return cardTable(document, rowData.table, { plain: cardText });
+        if (rowData.item) {
+          const node = paragraph(`${rowData.item} ${rowData.text}`, 'note-preview list-row');
+          node.dataset.level = String(rowData.level);
+          return node;
+        }
         if (!rowData.task) return paragraph(rowData.text, 'note-preview');
         const { task, bodyIndex } = rowData;
         const row = document.createElement('label'); row.className = 'task-row';
+        row.dataset.level = String(rowData.level);
         const input = document.createElement('input'); input.type = 'checkbox'; input.checked = task[1] !== ' ';
         input.setAttribute('aria-label', plainPreviewText(task[2]));
         input.disabled = entry.conflict || $('editor').open || Boolean(moment) || Boolean(activeSpace?.frozen);
@@ -878,9 +904,25 @@ function render() {
         input.addEventListener('click', (event) => { if (saving) event.preventDefault(); });
         input.addEventListener('change', async () => {
           saving = true;
-          justStruck = input.checked ? { key: `${entry.file.path}:${bodyIndex}`, at: performance.now() } : undefined;
+          const at = performance.now();
+          justStruck = input.checked ? { key: `${entry.file.path}:${bodyIndex}`, at } : undefined;
           row.classList.toggle('just-struck', input.checked);
-          try { const latest = files.get(entry.id); if (latest !== entry) throw new Error('This checklist changed. Sync and try again.'); await queueFile(entry.file.path, encoder.encode(toggleTask(noteText(entry.file), bodyOffset + bodyIndex, input.checked)), entry.revision); }
+          try {
+            const stale = () => { if (files.get(entry.id) !== entry) throw new Error('This checklist changed. Sync and try again.'); };
+            stale();
+            const before = noteText(entry.file), line = bodyOffset + bodyIndex;
+            // The core ticks the task and, with "Move checked items to the bottom", moves it (design kaarten-en-lijsten,
+            // part 6); a line only this card reads as a task is just ticked, as before.
+            const edit = tickEdit(before, line, moveChecked);
+            const after = edit ? before.slice(0, edit.from) + edit.insert + before.slice(edit.to) : toggleTask(before, line, input.checked);
+            if (edit && edit.line !== line) {
+              // The pen strikes the task in its own place first; then it moves.
+              if (input.checked) await new Promise((resolve) => { setTimeout(resolve, Math.max(0, STRIKE_MS - (performance.now() - at))); });
+              stale();
+              if (justStruck) justStruck = { key: `${entry.file.path}:${edit.line - bodyOffset}`, at };
+            }
+            await queueFile(entry.file.path, encoder.encode(after), entry.revision);
+          }
           catch (error) { input.checked = !input.checked; message(errorText(error)); }
           finally { saving = false; }
         });
@@ -895,7 +937,7 @@ function render() {
       };
       const previewControl = cardPreview(preview, previewRows, {
         isTask, isMeta, render: renderRow, atomic: (row) => Boolean(row.table),
-        isChecked: (row) => row.task[1] !== ' ',
+        isChecked: (row) => row.task[1] !== ' ', level: (row) => row.level,
         // A task ticked here keeps its place until the pen has struck it through.
         lingering: (row) => justStruck?.key === `${entry.file.path}:${row.bodyIndex}` ? Math.max(0, STRIKE_MS - (performance.now() - justStruck.at)) : 0,
         height: () => window.innerHeight - (document.querySelector('.selection-bar')?.offsetHeight || 0),

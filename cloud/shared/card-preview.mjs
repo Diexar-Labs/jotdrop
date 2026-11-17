@@ -1,8 +1,10 @@
 // Presentation only: callers retain their own parser, source identities and write path.
 //
 // Cards follow Google Keep (measured 9 Nov 2026, Eric's decision): a note whose content is only
-// tasks is a checklist card with up to 10 open tasks, the ticked ones folded into "+ N checked items";
-// every other note is a text card, its tasks shown as plain ☐/☑ text without checkboxes.
+// tasks is a checklist card with up to 10 open tasks, the ticked ones folded into "+ N checked items".
+// A note with tasks and other text is a mixed card (design kaarten-en-lijsten, part 5): its rows in the
+// note's own order, tasks with real boxes that tick both ways, ticked ones struck through in place. A note
+// without tasks is a text card.
 export const MAX_CARD_TASKS = 10;
 
 /** A line with only hashtags is metadata: the tags already show as chips on the card. */
@@ -24,25 +26,52 @@ export function cardPreview(host, rows, options) {
   host.after(controls);
   let signature = '', frame = 0, settle = 0, disposed = false, watched = [];
   const isMeta = (row) => !options.isTask(row) && Boolean(options.isMeta?.(row));
-  const fits = (node, limit) => node.getBoundingClientRect().bottom - host.getBoundingClientRect().top <= limit + .5;
+  const bottomOf = (node) => node.getBoundingClientRect().bottom - host.getBoundingClientRect().top;
+  const fits = (node, limit) => bottomOf(node) <= limit + .5;
+  const level = (row) => options.level?.(row) || 0;
+  /** A task's text past its own line clamp: the card says "Open note", and a clipped link must not stay focusable. */
+  const clampedTask = (node) => {
+    const text = node.querySelector('[data-preview-task-text]');
+    if (!text || text.scrollHeight <= text.clientHeight + 1) return false;
+    for (const link of text.querySelectorAll('a, button, [tabindex]')) link.replaceWith(doc.createTextNode(link.textContent || ''));
+    return true;
+  };
+  /** A text block that only partly fits becomes plain text ending in "…", as long as `ok` holds; false: nothing fits. */
+  const clipText = (node, ok) => {
+    const chars = Array.from(node.textContent || '');
+    let low = 0, high = chars.length;
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2);
+      node.textContent = chars.slice(0, mid).join('') + '…';
+      if (ok()) low = mid; else high = mid - 1;
+    }
+    node.textContent = chars.slice(0, low).join('') + '…';
+    return ok() && low > 0;
+  };
   const measure = () => {
     host.replaceChildren();
     const nodes = [];
-    const checklist = checklistOnly(rows, options.isTask, options.isMeta);
-    if (checklist) {
+    const mode = checklistOnly(rows, options.isTask, options.isMeta) ? 'checklist' : rows.some(options.isTask) ? 'mixed' : 'text';
+    if (mode === 'checklist') {
       // Room for 10 one-line tasks; long tasks may still leave some for "Open note - N more tasks".
       const height = Math.max(0, Math.min(480, options.height() * .6));
       host.style.maxHeight = `${height}px`;
+      // A ticked task with an open sub-task under it stays, struck through, as the heading of its open sub-tasks.
+      const all = rows.filter(options.isTask);
+      const heads = new Set(all.filter((row, i) => {
+        if (!options.isChecked(row)) return false;
+        for (let j = i + 1; j < all.length && level(all[j]) > level(row); j++) if (!options.isChecked(all[j])) return true;
+        return false;
+      }));
       // A task ticked on the card stays until its stroke is drawn, then joins the checked ones.
       let wait = 0;
-      const open = rows.filter((row) => {
-        if (!options.isTask(row)) return false;
-        if (!options.isChecked(row)) return true;
+      const open = all.filter((row) => {
+        if (!options.isChecked(row) || heads.has(row)) return true;
         const left = options.lingering?.(row) || 0;
         wait = Math.max(wait, left);
         return left > 0;
       });
-      const checked = rows.filter(options.isTask).length - open.length;
+      const checked = all.length - open.length;
       let tasks = 0, clamped = false;
       for (const row of open) {
         if (tasks >= MAX_CARD_TASKS) break;
@@ -51,14 +80,41 @@ export function cardPreview(host, rows, options) {
         if (!fits(node, height)) { node.remove(); break; }
         nodes.push(node);
         tasks++;
-        const text = node.querySelector('[data-preview-task-text]');
-        if (text && text.scrollHeight > text.clientHeight + 1) {
-          clamped = true;
-          // A line-clamped link can span invisible lines; keep only its noninteractive label.
-          for (const link of text.querySelectorAll('a, button, [tabindex]')) link.replaceWith(doc.createTextNode(link.textContent || ''));
-        }
+        if (clampedTask(node)) clamped = true;
       }
-      return { checklist, nodes, height, tasks, more: open.length - tasks, checked, wait, hidden: clamped || Boolean(options.truncated) };
+      return { mode, nodes, height, tasks, more: open.length - tasks, checked, wait, hidden: clamped || Boolean(options.truncated) };
+    }
+    if (mode === 'mixed') {
+      // The text keeps the text card's room; up to 10 tasks come on top, the whole card as high as a checklist card.
+      const height = Math.max(0, Math.min(480, options.height() * .6));
+      const budget = Math.max(0, Math.min(200, options.height() * .4));
+      host.style.maxHeight = `${height}px`;
+      let tasks = 0, text = 0, shown = 0, above = 0, hidden = false;
+      // The card is a window on the start of the note: it ends at the first row that does not fit, never skipping one.
+      for (const row of rows) {
+        const task = options.isTask(row);
+        if (task && tasks >= MAX_CARD_TASKS) break;
+        const node = options.render(row, false);
+        host.append(node);
+        const bottom = bottomOf(node);
+        if (task) {
+          if (bottom > height + .5) { node.remove(); break; }
+          tasks++;
+          if (clampedTask(node)) hidden = true;
+        } else if (bottom > height + .5 || text + bottom - above > budget + .5) {
+          hidden = true;
+          // A table is whole or not there.
+          if (options.atomic?.(row)) { node.remove(); break; }
+          if (clipText(node, () => fits(node, height) && text + bottomOf(node) - above <= budget + .5)) { nodes.push(node); shown++; }
+          else node.remove();
+          break;
+        } else text += bottom - above;
+        nodes.push(node);
+        shown++;
+        above = bottom;
+      }
+      const more = rows.slice(shown).filter(options.isTask).length;
+      return { mode, nodes, height, tasks, more, checked: 0, wait: 0, hidden: hidden || shown < rows.length || Boolean(options.truncated) };
     }
     const height = Math.max(0, Math.min(200, options.height() * .4));
     host.style.maxHeight = `${height}px`;
@@ -70,24 +126,14 @@ export function cardPreview(host, rows, options) {
         // A table is whole or not there: past the card's height it goes, and "Open note" shows.
         if (options.atomic?.(row)) { node.remove(); hidden = true; break; }
         // A partial text block becomes plain text: clipped links must not remain focusable.
-        const top = node.getBoundingClientRect().top - host.getBoundingClientRect().top;
-        const chars = Array.from(node.textContent || '');
-        let low = 0, high = chars.length;
-        const ok = () => top + node.getBoundingClientRect().height <= height + .5;
-        while (low < high) {
-          const mid = Math.ceil((low + high) / 2);
-          node.textContent = chars.slice(0, mid).join('') + '…';
-          if (ok()) low = mid; else high = mid - 1;
-        }
-        node.textContent = chars.slice(0, low).join('') + '…';
-        if (ok() && low) nodes.push(node); else node.remove();
+        if (clipText(node, () => fits(node, height))) nodes.push(node); else node.remove();
         hidden = true;
         break;
       }
       nodes.push(node);
       used++;
     }
-    return { checklist, nodes, height, tasks: 0, more: 0, checked: 0, wait: 0, hidden: hidden || used < rows.length || Boolean(options.truncated) };
+    return { mode, nodes, height, tasks: 0, more: 0, checked: 0, wait: 0, hidden: hidden || used < rows.length || Boolean(options.truncated) };
   };
   const fit = () => {
     if (disposed || !host.isConnected || !host.clientWidth) return;
@@ -101,7 +147,7 @@ export function cardPreview(host, rows, options) {
     watched = result.nodes;
     for (const node of watched) observer.observe(node);
     host.style.maxHeight = `${result.height}px`;
-    host.dataset.mode = result.checklist ? 'checklist' : 'text';
+    host.dataset.mode = result.mode;
     host.dataset.visibleTasks = String(result.tasks);
     host.dataset.hiddenTasks = String(result.more);
     host.dataset.checkedTasks = String(result.checked);

@@ -67,11 +67,80 @@ def check_compact_cards(browser, url, token):
         expected[12] = "- [x] task 13"
         assert [line for line in saved.splitlines() if line.startswith('- [')] == expected
         page.locator("#close-editor").click()
-        # A note with any other text is a plain text card: its tasks read as ☐/☑ text, without checkboxes.
+        # A note with tasks and other text is a mixed card (design kaarten-en-lijsten, part 5): its rows in the note's
+        # own order, real boxes that tick both ways, a ticked task struck through in its place.
+        def rows(card):
+            return card.locator(".compact-card-preview").evaluate("el => [...el.children].map(row => row.innerText.trim())")
+
+        def saved(card):
+            card.locator("h3").click()
+            text = page.locator("#note-content").input_value()
+            page.locator("#close-editor").click()
+            return text
+
+        def tick_card(card, name):
+            card.get_by_role("checkbox", name=name, exact=True).click()
+            page.locator("#sync-status").filter(has_text="Cloud copy up to date").wait_for()
+            page.wait_for_timeout(700)
+
         mixed = create("mixed", "Intro line\n- [ ] A\n- [x] B\nOutro")
-        assert state(mixed)["mode"] == "text" and mixed.locator('input[type="checkbox"]').count() == 0, state(mixed)
-        mixed_text = mixed.locator(".compact-card-preview").inner_text()
-        assert "☐ A" in mixed_text and "☑ B" in mixed_text and "Intro line" in mixed_text, mixed_text
+        assert state(mixed) == {"mode": "mixed", "visible-tasks": "2", "hidden-tasks": "0", "checked-tasks": "0"}, state(mixed)
+        assert rows(mixed) == ["Intro line", "A", "B", "Outro"], rows(mixed)
+        assert mixed.locator('input[type="checkbox"]').count() == 2 and mixed.get_by_role("checkbox", name="B", exact=True).is_checked()
+        # Ticked is ☑ and struck through, never only a colour.
+        assert mixed.locator(".task-row").nth(1).evaluate("row => getComputedStyle(row.querySelector('.strike')).display") != "none"
+        # The same box size as on a checklist card.
+        sizes = page.evaluate("() => [...document.querySelectorAll('.note-card')].filter(c => ['mixed', 'tasks-5'].some(n => c.dataset.path === `notes/${n}.md`)).map(c => c.querySelector('.task-row input').getBoundingClientRect().width)")
+        assert len(sizes) == 2 and abs(sizes[0] - sizes[1]) < .5, sizes
+        # With the setting off (the default) a tick only changes the box, both ways; the card stays.
+        before = mixed.bounding_box()["y"]
+        tick_card(mixed, "B")
+        tick_card(mixed, "A")
+        assert saved(mixed) == "# mixed\n\nIntro line\n- [x] A\n- [ ] B\nOutro", saved(mixed)
+        assert rows(mixed) == ["Intro line", "A", "B", "Outro"] and state(mixed)["mode"] == "mixed", rows(mixed)
+        assert abs(mixed.bounding_box()["y"] - before) < 3
+        # Bullets and numbers show as • and their number, in up to 3 levels; deeper items stay on the third.
+        levels = create("levels", "- top\n\t- middle\n\t\t- deep\n\t\t\t- deeper\n1. first\n   - [ ] sub task")
+        assert state(levels)["mode"] == "mixed", state(levels)
+        assert rows(levels) == ["• top", "• middle", "• deep", "• deeper", "1. first", "sub task"], rows(levels)
+        assert levels.locator(".compact-card-preview > *").evaluate_all("els => els.map(el => el.dataset.level)") == ["0", "1", "2", "2", "0", "1"]
+        lefts = levels.locator(".compact-card-preview > *").evaluate_all("els => els.map(el => Math.round(el.getBoundingClientRect().left))")
+        assert lefts[0] < lefts[1] < lefts[2] == lefts[3] and lefts[4] == lefts[0] and lefts[5] == lefts[1], lefts
+
+        # "Move checked items to the bottom": off by default, per device; on, a tick moves the line in the note itself.
+        switch = page.locator("#move-checked")
+        assert switch.get_attribute("aria-pressed") == "false" and switch.inner_text() == "Move checked items to the bottom"
+        switch.click()
+        assert switch.get_attribute("aria-pressed") == "true" and switch.inner_text() == "✓ Move checked items to the bottom"
+        assert page.evaluate("localStorage.getItem('jotdrop-move-checked')") == "on"
+        moving = create("moving", "Before we go:\n- [ ] one\n\t- [ ] one sub\n- [ ] two\n- [x] done\n\nAfter")
+        before = moving.bounding_box()["y"]
+        moving.get_by_role("checkbox", name="one", exact=True).click()
+        # The pen strikes the task in its own place first, then it moves.
+        page.wait_for_timeout(120)
+        assert rows(moving) == ["Before we go:", "one", "one sub", "two", "done", "After"], rows(moving)
+        assert "just-struck" in moving.locator(".task-row").first.get_attribute("class")
+        page.locator("#sync-status").filter(has_text="Cloud copy up to date").wait_for()
+        page.wait_for_timeout(700)
+        assert rows(moving) == ["Before we go:", "two", "one", "one sub", "done", "After"], rows(moving)
+        assert saved(moving) == "# moving\n\nBefore we go:\n- [ ] two\n- [x] one\n\t- [ ] one sub\n- [x] done\n\nAfter", saved(moving)
+        # Unticked, it goes back above the ticked ones: here it is already there.
+        tick_card(moving, "one")
+        tick_card(moving, "done")
+        assert saved(moving) == "# moving\n\nBefore we go:\n- [ ] two\n- [ ] one\n\t- [ ] one sub\n- [ ] done\n\nAfter", saved(moving)
+        tick_card(moving, "two")
+        assert saved(moving) == "# moving\n\nBefore we go:\n- [ ] one\n\t- [ ] one sub\n- [ ] done\n- [x] two\n\nAfter", saved(moving)
+        assert abs(moving.bounding_box()["y"] - before) < 3
+        # On a checklist card a ticked task with an open sub-task stays, struck through, above it.
+        heads = create("heads", "- [ ] pack\n\t- [x] socks\n\t- [ ] charger\n- [x] plants\n\t- [x] water\n- [ ] bread")
+        assert state(heads)["mode"] == "checklist", state(heads)
+        tick_card(heads, "pack")
+        assert saved(heads) == "# heads\n\n- [x] plants\n\t- [x] water\n- [ ] bread\n- [x] pack\n\t- [x] socks\n\t- [ ] charger", saved(heads)
+        assert rows(heads) == ["bread", "pack", "charger"], rows(heads)
+        assert heads.get_by_role("checkbox", name="pack", exact=True).is_checked()
+        assert state(heads)["checked-tasks"] == "3", state(heads)
+        switch.click()
+        assert switch.get_attribute("aria-pressed") == "false" and page.evaluate("localStorage.getItem('jotdrop-move-checked')") == "off"
         # A line of only hashtags is a tag, not text: the list stays a checklist card.
         tagged = create("tagged", "- [ ] milk\n- [ ] bread\n\\#groceries #shop")
         assert state(tagged)["mode"] == "checklist" and tagged.locator('input[type="checkbox"]').count() == 2, state(tagged)
@@ -87,6 +156,8 @@ def check_compact_cards(browser, url, token):
 
         def tick(name, done):
             box = strike_card.get_by_role("checkbox", name=name, exact=True)
+            # In view first: a click that scrolls the page would move the card on the screen.
+            box.scroll_into_view_if_needed()
             before = strike_card.bounding_box()["y"]
             page.evaluate("window.strikes.length = 0")
             box.click()
@@ -114,11 +185,20 @@ def check_compact_cards(browser, url, token):
         page.set_viewport_size({"width": 1200, "height": 1000})
         page.wait_for_timeout(500)
         assert page.evaluate("window.strikes.length") == 0, page.evaluate("window.strikes")
+        # mrjo118's case (Joplin forum 51337): much text, then 3 tasks. The text keeps the text card's room, so the card
+        # stays as high as a text card and says how many tasks are behind "Open note".
         article = create("article", ("Long article sentence. " * 300) + "\n- [ ] A\n- [x] B\n- [ ] C")
-        assert state(article)["mode"] == "text" and article.locator('input[type="checkbox"]').count() == 0
-        assert article.locator('[data-preview-action="open"]').inner_text() == "Open note"
+        assert state(article) == {"mode": "mixed", "visible-tasks": "0", "hidden-tasks": "3", "checked-tasks": "0"}, state(article)
+        assert article.locator('input[type="checkbox"]').count() == 0
+        assert article.locator('[data-preview-action="open"]').inner_text() == "Open note - 3 more tasks"
+        assert article.locator(".compact-card-preview").evaluate("el => el.getBoundingClientRect().height") <= 200.5
         intro = article.locator(".compact-card-preview").inner_text()
         assert intro.startswith("Long article sentence.") and intro.endswith("…"), intro[-80:]
+        # A short text, then 12 tasks: up to 10 tasks on top of the text, then "Open note - N more tasks".
+        many = create("many", "Before the list:\n" + "\n".join(f"- [{'x' if i == 1 else ' '}] item {i + 1}" for i in range(12)))
+        assert state(many) == {"mode": "mixed", "visible-tasks": "10", "hidden-tasks": "2", "checked-tasks": "0"}, state(many)
+        assert rows(many)[:3] == ["Before the list:", "item 1", "item 2"], rows(many)
+        assert many.locator('[data-preview-action="open"]').inner_text() == "Open note - 2 more tasks"
         long = create("long-tasks", "\n".join("- [ ] " + ("Unicode café 漢字 🙂 " * 30) for _ in range(11)))
         shots = Path(tempfile.gettempdir()) / "kilo" / "compact-card-checks"
         shots.mkdir(parents=True, exist_ok=True)
@@ -136,7 +216,7 @@ def check_compact_cards(browser, url, token):
             if width == 390:
                 page.screenshot(path=str(shots / "web-mobile.png"), full_page=True)
         assert not errors, errors
-        return {"task_counts": "1/5/10/11/12/100", "checked_folded": True, "source_index_13": True, "strike_then_fold": True, "mixed_is_text": True, "tag_line_ignored": True, "responsive": True, "screenshots": str(shots), "article_card_height": article.evaluate('el=>el.offsetHeight')}
+        return {"task_counts": "1/5/10/11/12/100", "checked_folded": True, "source_index_13": True, "strike_then_fold": True, "mixed_has_boxes": True, "levels": True, "move_checked": True, "head_with_open_sub_task": True, "tag_line_ignored": True, "responsive": True, "screenshots": str(shots), "article_card_height": article.evaluate('el=>el.offsetHeight')}
     except Exception:
         print('BROWSER DIAGNOSTICS', errors, page.locator('#sync-status').inner_text(), page.locator('#message').all_text_contents())
         raise

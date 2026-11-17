@@ -394,6 +394,9 @@ const EN: Record<string, string> = {
   settings_show_archived: "Show archive",
   settings_show_archived_desc:
     "Also show archived cards in the main view.",
+  settings_move_checked: "Move checked items to the bottom",
+  settings_move_checked_desc:
+    "When you tick a task, it moves below the open tasks in its list. Unticking moves it back up. This changes the order of the lines in the note.",
   settings_download_images: "Save article images",
   settings_download_images_desc:
     "Download the article thumbnail and save it in your vault when capturing a URL. Turn off to save only the title and link.",
@@ -806,6 +809,9 @@ const NL: Record<string, string> = {
   settings_show_archived: "Toon archief",
   settings_show_archived_desc:
     "Laat ook gearchiveerde kaartjes zien in de hoofdweergave.",
+  settings_move_checked: "Afgevinkte items naar onderen",
+  settings_move_checked_desc:
+    "Als je een taak afvinkt, gaat hij onder de open taken in zijn lijst staan. Uitvinken zet hem weer terug. Dit verandert de volgorde van de regels in de notitie.",
   settings_download_images: "Artikel-afbeeldingen opslaan",
   settings_download_images_desc:
     "Download de thumbnail van een artikel en sla die op in je vault bij het vastleggen van een URL. Zet uit om alleen titel en link op te slaan.",

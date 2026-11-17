@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
-import { activeFormats, applyFormat, backspaceEdit, blocks, cellSource, cellText, emptyPair, inlineSpans, insertTable, linePrefix, listEnterEdit, parseTable, tableCells, tableEdit } from './format.mjs';
+import { activeFormats, applyFormat, backspaceEdit, blocks, cellSource, cellText, emptyPair, inlineSpans, insertTable, linePrefix, listEnterEdit, listLevels, parseTable, tableCells, tableEdit, tickEdit } from './format.mjs';
 
 // The same cases run on Android (scripts/check-format-android.mjs), so every app sees the same tables.
 const vectors = JSON.parse(readFileSync(new URL('./format-vectors.json', import.meta.url), 'utf8'));
@@ -35,7 +35,7 @@ test('table cells, parsed tables and cell text', () => {
 });
 
 test('real notes: the tables are found and a cell goes back to its own source', () => {
-  const tables = { 'obsidian-note.md': 1, 'decimos.md': 1 };
+  const tables = { 'obsidian-note.md': 1, 'decimos.md': 1, 'nested-lists.md': 0 };
   for (const name of readdirSync(fixtures)) {
     const text = readFileSync(new URL(name, fixtures), 'utf8');
     const found = blocks(text).filter((run) => run.kind === 'table');
@@ -204,4 +204,55 @@ test('the buttons never break a surrogate pair', () => {
       }
     }
   }
+});
+
+test('lists in levels', () => {
+  for (const vector of vectors.levels) assert.deepEqual(listLevels(vector.text), vector.expect, vector.name);
+  const nested = readFileSync(new URL('nested-lists.md', fixtures), 'utf8');
+  assert.deepEqual(listLevels(nested), [-1, -1, -1, 0, 1, 1, 2, 0, 1, 2, 0, -1, 0, 1, 1, 0, -1, 0, 1, 1, 0, 1, -1, 0, 1, 1, -1, -1, -1, -1, -1, -1, -1]);
+});
+
+test('ticking a task, with and without moving it', () => {
+  for (const vector of vectors.tick) {
+    const { text, from, to } = unmark(vector.text);
+    const edit = tickEdit(text, vector.line, vector.move, from, to);
+    assert.equal(edit && marked(applied(text, edit), edit.selFrom, edit.selTo), vector.expect, vector.name);
+    if (edit) assert.equal(edit.line, vector.expectLine, `${vector.name}: the line it is on`);
+  }
+});
+
+test('a tick flips one box and moves whole lines only; every line keeps its level', () => {
+  const strip = (line) => line.replace(/\r$/, '');
+  const texts = [...vectors.levels.map((vector) => vector.text), ...vectors.tick.map((vector) => unmark(vector.text).text),
+    ...readdirSync(fixtures).map((name) => readFileSync(new URL(name, fixtures), 'utf8'))];
+  let moved = 0;
+  for (const text of texts) {
+    const lines = text.split('\n'), levels = listLevels(text);
+    lines.forEach((line, index) => {
+      for (const move of [false, true]) {
+        const name = `${JSON.stringify(text.slice(0, 40))} line ${index}${move ? ', moving' : ''}`;
+        const edit = tickEdit(text, index, move);
+        if (!edit) { assert.ok(!(linePrefix(line).kind === 'task' && levels[index] >= 0), `${name}: a task is ticked`); continue; }
+        const out = applied(text, edit), after = out.split('\n'), afterLevels = listLevels(out);
+        // The same words with the other box.
+        const was = linePrefix(line), now = linePrefix(after[edit.line]);
+        assert.equal(now.kind, 'task', name);
+        assert.equal(now.checked, !was.checked, name);
+        assert.equal(strip(after[edit.line]).replace(/\[[ xX]\]/, '[]'), strip(line).replace(/\[[ xX]\]/, '[]'), name);
+        // Only whole lines move, each with its level; the line endings stay as they were.
+        const want = lines.map((value, i) => `${strip(i === index ? after[edit.line] : value)}|${levels[i]}`).sort();
+        assert.deepEqual(after.map((value, i) => `${strip(value)}|${afterLevels[i]}`).sort(), want, name);
+        assert.equal(after.filter((value) => value.endsWith('\r')).length, lines.filter((value) => value.endsWith('\r')).length, name);
+        assert.equal(out.endsWith('\n'), text.endsWith('\n'), name);
+        if (!move) {
+          assert.equal(edit.line, index, name);
+          assert.deepEqual([edit.to - edit.from, edit.insert.length], [1, 1], `${name}: only the box changes`);
+          // Twice gives the text back; ticking writes a small x.
+          const back = tickEdit(out, index, false);
+          assert.equal(applied(out, back), lines.map((value, i) => (i === index ? value.replace('[X]', '[x]') : value)).join('\n'), `${name}: twice gives the text back`);
+        } else if (edit.line !== index) moved++;
+      }
+    });
+  }
+  assert.ok(moved >= 20, `only ${moved} moves were tried`);
 });
