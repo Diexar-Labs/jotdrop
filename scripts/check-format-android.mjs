@@ -7,7 +7,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { activeFormats, applyFormat, backspaceEdit, blocks, cellSource, cellText, emptyPair, inlineSpans, linePrefix, listEnterEdit, parseTable, tableCells } from '../cloud/shared/format.mjs';
+import { activeFormats, applyFormat, backspaceEdit, blocks, cellSource, cellText, emptyPair, inlineSpans, linePrefix, listEnterEdit, parseTable, tableCells, tableEdit } from '../cloud/shared/format.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const code = (value) => Buffer.from(value, 'utf8').toString('base64');
@@ -28,6 +28,13 @@ const answer = {
   active: (text, from, to) => activeFormats(text, Number(from), Number(to)).join(','),
   apply: (text, from, to, command) => edit(applyFormat(text, Number(from), Number(to), command)),
   enter: (text, from, to) => edit(listEnterEdit(text, Number(from), Number(to))),
+  table: (text, fromLine, type, row, column, after, at, align, cell) => {
+    const op = { type };
+    for (const [key, value] of [['row', row], ['column', column], ['after', after], ['at', at]]) if (value !== '_') op[key] = Number(value);
+    if (align !== '_') op.align = align;
+    if (cell !== '_') op.text = Buffer.from(cell, 'base64').toString('utf8');
+    return edit(tableEdit(text, Number(fromLine), op));
+  },
   backspace: (text, from, to, hidden = '') => edit(backspaceEdit(text, Number(from), hidden.split(';').filter(Boolean).map((range) => range.split('-').map(Number)))),
 };
 // The inserted text as UTF-16 units: a random selection can cut an emoji in half, which UTF-8 cannot carry.
@@ -60,6 +67,12 @@ for (const vector of vectors.active) cases.push(['active', ...unmark(vector.text
 for (const vector of vectors.apply) cases.push(['apply', ...unmark(vector.text), vector.command]);
 for (const vector of vectors.enter) cases.push(['enter', ...unmark(vector.text)]);
 for (const vector of vectors.backspace) cases.push(['backspace', ...unmark(vector.text), vector.hidden.map((range) => range.join('-')).join(';')]);
+// A table change as fields: fromLine, type, row, column, after, at, align, text (base64); `_` is not set.
+const tableCase = (text, fromLine, op) => ['table', text, fromLine, op.type,
+  ...['row', 'column', 'after', 'at', 'align'].map((key) => (op[key] === undefined ? '_' : op[key])), op.text === undefined ? '_' : code(op.text)];
+for (const vector of vectors.table) cases.push(tableCase(vector.text, vector.fromLine, vector.op));
+const tableTypes = ['setCell', 'addRow', 'deleteRow', 'addColumn', 'deleteColumn', 'setAlign', 'deleteTable'];
+const cellTexts = ['x', '', ' 1 ', 'a | b', 'two\nlines', 'cr\r\nlf', '**b**', '🎟️ é', '\\|'];
 for (let i = 0; i < 400; i++) {
   // Often a header and delimiter pair, so most notes hold a table to read (or nearly one).
   const text = Array.from({ length: 1 + Math.floor(random() * 7) }, () => (random() < 0.4
@@ -68,8 +81,15 @@ for (let i = 0; i < 400; i++) {
   const lines = text.split('\n');
   for (const run of blocks(text).filter((item) => item.kind === 'table')) cases.push(['parse', lines.slice(run.fromLine, run.toLine + 1).join('\n')]);
   cases.push(['cells', pick(pool)]);
+  // Every table change on the tables of this note, with numbers just out of range too.
+  for (const run of blocks(text).filter((item) => item.kind === 'table')) {
+    const n = () => Math.floor(random() * 6) - 1;
+    const op = { type: pick(tableTypes), row: n(), column: n(), after: n(), at: n(), align: pick(['', 'left', 'center', 'right', 'middle']), text: pick(cellTexts) };
+    cases.push(tableCase(text, run.fromLine, op), tableCase(text, run.fromLine + 1, { type: 'addRow' }));
+  }
 }
 assert.ok(cases.filter(([kind]) => kind === 'parse').length > 100, 'the random notes hold enough tables');
+assert.ok(cases.filter(([kind]) => kind === 'table').length > 200, 'the random notes give enough table changes');
 
 // Random notes for the buttons: every button at a random caret or selection, with JavaScript's own whitespace and word
 // rules in play (no-break spaces, accents, emoji, CRLF), where Java's regular expressions read text differently.

@@ -669,4 +669,110 @@ internal object FormatCore {
 
     /** The formatting that goes on after Enter (Eric, 16 nov), as in format.mjs. */
     private val carried = setOf("bold", "italic", "strike", "highlight", "code")
+
+    // --- Tables (phase 4), as tableEdit in format.mjs ---------------------------------------------------------------
+
+    /** One change to a table; the fields each type reads are as in format.mjs. */
+    data class TableOp(val type: String, val row: Int? = null, val column: Int? = null, val text: String? = null,
+                       val after: Int? = null, val at: Int? = null, val align: String? = null)
+
+    private fun indentOf(line: String) = line.takeWhile { it == ' ' || it == '\t' }
+    private fun crOf(line: String) = if (line.endsWith("\r")) "\r" else ""
+    /** A table line in the one form JotDrop writes: `| a | b |`, one space around each cell, indent and `\r` kept. */
+    private fun tableLine(like: String, cells: List<String>) = "${indentOf(like)}| ${cells.joinToString(" | ")} |${crOf(like)}"
+    private val dash = mapOf("" to "---", "left" to ":---", "center" to ":---:", "right" to "---:")
+
+    /**
+     * One change to the table that starts on line [fromLine], rewriting as few lines as possible (sync merges per line).
+     * Never realigns the table with padding. Null when nothing changes or the change is not allowed (the header row and
+     * the last column cannot go: that is "deleteTable").
+     */
+    fun tableEdit(text: String, fromLine: Int, op: TableOp?): Edit? {
+        val run = blocks(text).firstOrNull { it.kind == "table" && it.fromLine == fromLine } ?: return null
+        if (op == null) return null
+        val lines = text.split('\n').toMutableList()
+        val columns = tableCells(lines[run.fromLine]).size
+        val rows = run.toLine - run.fromLine - 1
+        fun lineOf(row: Int) = if (row == 0) run.fromLine else run.fromLine + 1 + row
+        fun cellsOf(line: String) = tableCells(line).map(::jsTrim).toMutableList()
+        fun dashes(line: String) = delimiterAligns(line)!!.map { dash.getValue(it) }.toMutableList()
+        fun done(selection: Int = run.from) = replacement(text, lines.joinToString("\n"), selection)
+        when (op.type) {
+            "setCell" -> {
+                val row = op.row ?: return null
+                val column = op.column ?: return null
+                if (row !in 0..rows || column !in 0 until columns) return null
+                val index = lineOf(row)
+                val cells = cellsOf(lines[index])
+                while (cells.size < columns) cells += ""
+                val source = cellSource(op.text ?: "")
+                if (cells[column] == source) return null
+                // Only this row's line is written again; extra cells past the last column stay.
+                cells[column] = source
+                lines[index] = tableLine(lines[index], cells)
+                return done()
+            }
+            "addRow" -> {
+                val after = maxOf(0, minOf(rows, op.after ?: rows))
+                val at = run.fromLine + 2 + after
+                val cr = crOf(lines[run.fromLine])
+                var row = tableLine(withoutCr(lines[run.fromLine]), List(columns) { "" })
+                // A new last line of a CRLF text: the line above gets its `\r`, the new one ends the text without one.
+                if (at == lines.size) { if (cr.isNotEmpty() && !lines[at - 1].endsWith("\r")) lines[at - 1] += cr }
+                else row += cr
+                lines.add(at, row)
+                return done()
+            }
+            "deleteRow" -> {
+                val row = op.row ?: return null
+                if (row !in 1..rows) return null
+                lines.removeAt(lineOf(row))
+                return done()
+            }
+            "addColumn" -> {
+                val at = maxOf(0, minOf(columns, op.at ?: columns))
+                for (index in run.fromLine..run.toLine) {
+                    val delimiter = index == run.fromLine + 1
+                    val cells = if (delimiter) dashes(lines[index]) else cellsOf(lines[index])
+                    while (cells.size < at) cells += ""
+                    cells.add(at, if (delimiter) dash.getValue("") else "")
+                    lines[index] = tableLine(lines[index], cells)
+                }
+                return done()
+            }
+            "deleteColumn" -> {
+                val column = op.column ?: return null
+                if (columns <= 1 || column !in 0 until columns) return null
+                for (index in run.fromLine..run.toLine) {
+                    val cells = if (index == run.fromLine + 1) dashes(lines[index]) else cellsOf(lines[index])
+                    if (column < cells.size) cells.removeAt(column)
+                    lines[index] = tableLine(lines[index], cells)
+                }
+                return done()
+            }
+            "setAlign" -> {
+                // Only the delimiter line holds the alignment, so only that line changes.
+                val column = op.column ?: return null
+                val align = op.align ?: return null
+                if (column !in 0 until columns || align !in dash) return null
+                val index = run.fromLine + 1
+                val aligns = delimiterAligns(lines[index])!!.toMutableList()
+                if (aligns[column] == align) return null
+                aligns[column] = align
+                lines[index] = tableLine(lines[index], aligns.map { dash.getValue(it) })
+                return done()
+            }
+            "deleteTable" -> {
+                var from = run.fromLine
+                var count = run.toLine - run.fromLine + 1
+                val end = from + count
+                // At most one blank line stays where the table was; none at the very start or end of the text.
+                if (end < lines.size && blank(lines[end]) && (from == 0 || blank(lines[from - 1]))) count++
+                else if (end >= lines.size && from > 0 && blank(lines[from - 1])) { from--; count++ }
+                repeat(count) { lines.removeAt(from) }
+                return done(minOf(run.from, lines.joinToString("\n").length))
+            }
+            else -> return null
+        }
+    }
 }

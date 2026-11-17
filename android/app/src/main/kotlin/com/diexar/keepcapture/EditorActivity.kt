@@ -129,6 +129,9 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -170,6 +173,7 @@ import com.diexar.keepcapture.ui.screenBackgroundBrush
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -293,6 +297,14 @@ private fun EditorScreen(
     // The Markdown switch (design opmaak-editor 5.1): off shows the formatting, on the raw text; kept per device.
     var markdownMode by remember { mutableStateOf(EditorPrefs.markdown(context)) }
     var bodyFocused by remember { mutableStateOf(false) }
+    // Tables in the formatted view (design 7.2): the cell with the focus (for the table bar), a cell that should get
+    // it, a table waiting for "delete?", and a counter that lays the body out in pieces again.
+    var cellFocus by remember { mutableStateOf<TableCell?>(null) }
+    var tableFocus by remember { mutableStateOf<TableFocus?>(null) }
+    var confirmTableDelete by remember { mutableStateOf<Int?>(null) }
+    var layoutKey by remember { mutableIntStateOf(0) }
+    // A focus request for a grid that never came (the note went raw) must not catch a later grid.
+    LaunchedEffect(tableFocus) { if (tableFocus != null) { delay(1500); tableFocus = null } }
     var originalBody by rememberSaveable { mutableStateOf("") }
     var bodyEditing by rememberSaveable { mutableStateOf(initialUri == null) }
     // Expliciete titel (de eerste `# kop`-regel). Leeg → de kaart leidt zoals
@@ -552,6 +564,20 @@ private fun EditorScreen(
         // The keyboard may still send a change on the text from before the button: it is replayed on ours.
         staleBody.settle(current.text, next.text)
         bodyText = next
+        bodyEditing = true
+        // A new table becomes a grid at once, with the focus in its first cell (the selection is at its start).
+        if (command == "table" && !markdownMode && next.text.length <= FORMAT_RAW_ABOVE) {
+            layoutKey++
+            tableFocus = TableFocus(FormatCore.blocks(next.text).count { it.kind == "table" && it.from < next.selection.min }, 0, 0)
+        }
+    }
+
+    /** One change to the [table]-th table of the body (FormatCore.tableEdit: only the lines it must touch). */
+    fun editTable(table: Int, op: FormatCore.TableOp) {
+        val current = bodyText
+        val run = FormatCore.blocks(current.text).filter { it.kind == "table" }.getOrNull(table) ?: return
+        val edit = FormatCore.tableEdit(current.text, run.fromLine, op) ?: return
+        bodyText = TextFieldValue(current.text.replaceRange(edit.from, edit.to, edit.insert), TextRange(edit.selFrom))
         bodyEditing = true
     }
 
@@ -1232,7 +1258,7 @@ private fun EditorScreen(
                 else -> EditorBody(
                     showReminder = Storage.spaceIdOf(initialUri) == null,
                     value = bodyText,
-                    onValueChange = { field ->
+                    onValueChange = { field, keep ->
                         val current = bodyText
                         // Right after a list edit the field can still send changes on the text from before it.
                         val replayed = staleBody.replay(current.text, field.text)
@@ -1262,11 +1288,26 @@ private fun EditorScreen(
                                 selection = TextRange(changed.second),
                             )
                             else -> next
-                        }.let { current.leavingEmptyPair(it) }
+                        }.let { current.leavingEmptyPair(it) }.let { result ->
+                            // A text piece next to a table: what the pipeline makes of its change may not reach into
+                            // the table (a Backspace that joins the line above); then it is the field's own change.
+                            if (keep == null || changedOnlyIn(current.text, result.text, keep.first, current.text.length - keep.second)) result else field
+                        }
                         staleBody.settle(field.text, shown.text)
                         bodyText = shown
                     },
                     formatted = !markdownMode,
+                    tableBackground = bg,
+                    layoutKey = layoutKey,
+                    tableFocus = tableFocus,
+                    onTableFocusDone = { tableFocus = null },
+                    onTableEdit = ::editTable,
+                    onCell = { cellFocus = it },
+                    onReplaceBody = { next ->
+                        staleBody.settle(bodyText.text, next.text)
+                        bodyText = next
+                        bodyEditing = true
+                    },
                     onBodyFocus = { focused ->
                         bodyFocused = focused
                         if (!focused) bodyText = bodyText.withoutEmptyPair()
@@ -1361,6 +1402,23 @@ private fun EditorScreen(
                         EditorPrefs.setMarkdown(context, markdownMode)
                     },
                 )
+            } else if (loaded && loadError == null && parkedUri == null) cellFocus?.let { cell ->
+                TableBar(
+                    cell = cell,
+                    foreground = fg,
+                    onOp = { op ->
+                        editTable(cell.table, op)
+                        // The focus goes with the row or column that was added, or to its neighbour when one went.
+                        tableFocus = when (op.type) {
+                            "addRow" -> TableFocus(cell.table, cell.row + 1, cell.column)
+                            "addColumn" -> TableFocus(cell.table, cell.row, cell.column + 1)
+                            "deleteRow" -> TableFocus(cell.table, cell.row - 1, cell.column)
+                            "deleteColumn" -> TableFocus(cell.table, cell.row, maxOf(0, cell.column - 1))
+                            else -> null
+                        }
+                    },
+                    onDeleteTable = { confirmTableDelete = cell.table },
+                )
             }
         }
     }
@@ -1413,6 +1471,23 @@ private fun EditorScreen(
                 bodyEditing = true
             },
             onDismiss = { showLinkPicker = false },
+        )
+    }
+
+    confirmTableDelete?.let { table ->
+        AlertDialog(
+            onDismissRequest = { confirmTableDelete = null },
+            text = { Text(stringResource(R.string.table_delete_confirm)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmTableDelete = null
+                    editTable(table, FormatCore.TableOp("deleteTable"))
+                    layoutKey++
+                }) { Text(stringResource(R.string.table_delete)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmTableDelete = null }) { Text(stringResource(R.string.action_cancel)) }
+            },
         )
     }
 
@@ -1553,11 +1628,20 @@ private fun EditorScreen(
 private fun EditorBody(
     showReminder: Boolean = true,
     value: TextFieldValue,
-    onValueChange: (TextFieldValue) -> Unit,
+    // The second value: from a text piece of a body with a table, how much of the body before and after that piece
+    // must stay as it is (null: the whole body is one field).
+    onValueChange: (TextFieldValue, kotlin.Pair<Int, Int>?) -> Unit,
     bodyEditing: Boolean,
     onEditBody: () -> Unit,
     formatted: Boolean = true,
     onBodyFocus: (Boolean) -> Unit = {},
+    tableBackground: Color = Color.Transparent,
+    layoutKey: Int = 0,
+    tableFocus: TableFocus? = null,
+    onTableFocusDone: () -> Unit = {},
+    onTableEdit: (Int, FormatCore.TableOp) -> Unit = { _, _ -> },
+    onCell: (TableCell?) -> Unit = {},
+    onReplaceBody: (TextFieldValue) -> Unit = {},
     title: String,
     onTitleChange: (String) -> Unit,
     embedItems: List<Pair<String, Uri>>,
@@ -1599,6 +1683,20 @@ private fun EditorBody(
         else renderPreviewAnnotated(value.text, foreground, underlineLinks = false)
     }
     val previewLinks = preview.getStringAnnotations("URL", 0, preview.length)
+    // A body with a table is shown in pieces (text, table, text) in the formatted view; without a table it stays one field.
+    val pieceLayout = remember { PieceLayout() }
+    var relayout by remember { mutableIntStateOf(0) }
+    var focusText by remember { mutableStateOf<Int?>(null) }
+    val pieces = if (formatted && !bodyTooTall && value.text.length <= FORMAT_RAW_ABOVE) {
+        pieceLayout.update(value.text, Triple(layoutKey, relayout, formatted))
+    } else emptyList()
+    val split = pieces.size > 1
+    // Each piece's number among its own kind: the keys text-0, table-0, text-1 keep a field's focus when only its text changes.
+    val ordinals = remember(pieces) {
+        var texts = 0
+        var tables = 0
+        pieces.map { if (it.kind == "table") tables++ else texts++ }
+    }
     val openLinkLabel = stringResource(R.string.action_open_link)
     fun openLink(url: String): Boolean {
         return try {
@@ -1726,84 +1824,218 @@ private fun EditorBody(
             TextButton(onClick = onEditBody) {
                 Text(stringResource(R.string.editor_title_edit), color = foreground)
             }
-            ClickableText(
-                text = preview,
-                style = MaterialTheme.typography.bodyLarge.copy(color = foreground),
-                modifier = Modifier.fillMaxWidth().heightIn(min = 200.dp).padding(16.dp).semantics {
-                    customActions = previewLinks.map { link ->
-                        CustomAccessibilityAction(
-                            "$openLinkLabel: ${preview.subSequence(link.start, link.end).text} (${link.item})",
-                        ) { openLink(link.item) }
+            if (!split) PreviewText(preview, foreground, openLinkLabel, ::openLink, onEditBody, Modifier.fillMaxWidth().heightIn(min = 200.dp).padding(16.dp))
+            else Column(Modifier.fillMaxWidth().heightIn(min = 200.dp).padding(16.dp)) {
+                // The same pieces as when editing: text as text with its links, a table as a grid; a tap edits.
+                for ((i, piece) in pieces.withIndex()) key(piece.kind, ordinals[i]) {
+                    val part = value.text.substring(piece.from, piece.to)
+                    if (piece.kind == "table") TableGrid(
+                        index = ordinals[i], source = part, foreground = foreground, background = tableBackground, editable = false,
+                        focus = null, onFocusDone = {}, onEdit = {}, onCell = {}, onTap = onEditBody,
+                        modifier = Modifier.padding(vertical = 8.dp),
+                    ) else {
+                        val shown = remember(part, foreground) { renderPreviewAnnotated(part, foreground, underlineLinks = false) }
+                        PreviewText(shown, foreground, openLinkLabel, ::openLink, onEditBody, Modifier.fillMaxWidth())
                     }
-                },
-                onClick = { offset ->
-                    val url = preview.getStringAnnotations("URL", offset, offset).firstOrNull()?.item
-                    if (url == null) {
-                        onEditBody()
-                    } else {
-                        openLink(url)
-                    }
-                },
-            )
-        } else {
-            // Material's TextField, built from its parts so the caret's place is known: typing on at the bottom then
-            // scrolls the note, instead of going on under the keyboard and the formatting bar (Eric, 16 Nov).
-            val bodyColors = TextFieldDefaults.colors(
-                focusedContainerColor = Color.Transparent,
-                unfocusedContainerColor = Color.Transparent,
-                focusedTextColor = foreground,
-                unfocusedTextColor = foreground,
-                cursorColor = foreground,
-                focusedIndicatorColor = Color.Transparent,
-                unfocusedIndicatorColor = Color.Transparent,
-            )
-            // Formatting drawn over the source; the signs stay in the text but take no room (FormatTransformation).
-            val transformation = remember(formatted, foreground, value.text, value.selection) {
-                val pair = if (formatted) FormatCore.emptyPair(value.text, value.selection.min, value.selection.max) else null
-                FormatTransformation(formatted, foreground, pair?.from ?: -1, pair?.to ?: -1)
+                }
             }
-            val interaction = remember { MutableInteractionSource() }
-            val focused by interaction.collectIsFocusedAsState()
-            val caretView = remember { BringIntoViewRequester() }
-            var bodyLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
-            val margin = with(LocalDensity.current) { 24.dp.toPx() }
-            LaunchedEffect(value.text, value.selection, bodyLayout, focused) {
-                val layout = bodyLayout
-                if (!focused || layout == null) return@LaunchedEffect
-                val caret = layout.getCursorRect(value.selection.end.coerceIn(0, layout.layoutInput.text.length))
-                caretView.bringIntoView(caret.copy(top = caret.top - margin, bottom = caret.bottom + margin))
-            }
-            BasicTextField(
+        } else if (!split) {
+            BodyTextField(
                 value = value,
-                onValueChange = onValueChange,
-                visualTransformation = transformation,
+                onValueChange = { onValueChange(it, null) },
+                formatted = formatted,
+                foreground = foreground,
+                placeholder = true,
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 200.dp)
                     .onFocusChanged { onBodyFocus(it.isFocused) },
-                textStyle = LocalTextStyle.current.merge(TextStyle(color = foreground)),
-                cursorBrush = SolidColor(foreground),
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                interactionSource = interaction,
-                onTextLayout = { bodyLayout = it },
-                decorationBox = { innerTextField ->
-                    TextFieldDefaults.DecorationBox(
-                        value = value.text,
-                        innerTextField = { Box(Modifier.bringIntoViewRequester(caretView)) { innerTextField() } },
-                        enabled = true,
-                        singleLine = false,
-                        visualTransformation = transformation,
-                        interactionSource = interaction,
-                        placeholder = { Text(stringResource(R.string.editor_hint), color = foreground.copy(alpha = 0.5f)) },
-                        colors = bodyColors,
-                    )
-                },
             )
+        } else {
+            // A body with a table: text fields and grids under each other (design 7.2). Each text field shows its own
+            // part of the body; its changes go back as a change of the whole body, through the same input pipeline.
+            val first = pieces.first()
+            if (first.kind == "table") EdgeStrip(R.string.table_type_above, foreground) {
+                val cr = if (value.text.substring(first.from, value.text.indexOf('\n', first.from).let { if (it < 0) first.to else it }).endsWith("\r")) "\r" else ""
+                onReplaceBody(TextFieldValue("$cr\n$cr\n" + value.text, TextRange(0)))
+                focusText = 0
+            }
+            for ((i, piece) in pieces.withIndex()) key(piece.kind, ordinals[i]) {
+                val part = value.text.substring(piece.from, piece.to)
+                if (piece.kind == "table") TableGrid(
+                    index = ordinals[i], source = part, foreground = foreground, background = tableBackground, editable = true,
+                    focus = tableFocus, onFocusDone = onTableFocusDone, onEdit = { op -> onTableEdit(ordinals[i], op) },
+                    onCell = onCell, onTap = {}, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                ) else {
+                val prefix = piece.from
+                val suffix = value.text.length - piece.to
+                fun local(at: Int) = (at - prefix).coerceIn(0, part.length)
+                val composition = value.composition?.takeIf { it.min >= piece.from && it.max <= piece.to }
+                val pieceValue = TextFieldValue(part, TextRange(local(value.selection.start), local(value.selection.end)),
+                    composition?.let { TextRange(it.start - prefix, it.end - prefix) })
+                val whole = value.text
+                var had by remember { mutableStateOf(false) }
+                val requester = remember { FocusRequester() }
+                val last = i == pieces.lastIndex
+                LaunchedEffect(focusText) {
+                    if (focusText == ordinals[i] || (focusText == Int.MAX_VALUE && last)) {
+                        withFrameNanos {}
+                        runCatching { requester.requestFocus() }
+                        focusText = null
+                    }
+                }
+                DisposableEffect(Unit) { onDispose { if (had) { pieceLayout.focused = -1; onBodyFocus(false) } } }
+                BodyTextField(
+                    value = pieceValue,
+                    onValueChange = { field ->
+                        val next = TextFieldValue(
+                            whole.substring(0, prefix) + field.text + whole.substring(whole.length - suffix),
+                            TextRange(field.selection.start + prefix, field.selection.end + prefix),
+                            field.composition?.let { TextRange(it.start + prefix, it.end + prefix) },
+                        )
+                        onValueChange(next, prefix to suffix)
+                    },
+                    formatted = true,
+                    foreground = foreground,
+                    placeholder = false,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(if (last) Modifier.heightIn(min = 120.dp) else Modifier)
+                        .focusRequester(requester)
+                        .onFocusChanged { state ->
+                            if (state.isFocused == had) return@onFocusChanged
+                            had = state.isFocused
+                            if (had) pieceLayout.focused = i
+                            else if (pieceLayout.focused == i) { pieceLayout.focused = -1; relayout++ }
+                            onBodyFocus(had)
+                        },
+                )
+                }
+            }
+            val end = pieces.last()
+            if (end.kind == "table") EdgeStrip(R.string.table_type_below, foreground) {
+                val cr = if (value.text.substring(end.from, value.text.indexOf('\n', end.from).let { if (it < 0) end.to else it }).endsWith("\r")) "\r" else ""
+                val text = value.text + "$cr\n$cr\n"
+                onReplaceBody(TextFieldValue(text, TextRange(text.length)))
+                focusText = Int.MAX_VALUE
+            }
         }
     }
     lightboxUri?.let { uri ->
         val drawing = DrawingFormat.isDrawingName(Uri.decode(uri.lastPathSegment.orEmpty()).substringAfterLast('/'))
         ImageLightbox(uri = uri, onClose = { lightboxUri = null }, onEditDrawing = if (drawing) ({ onEditDrawing(uri) }) else null)
+    }
+}
+
+/**
+ * The body's text field: Material's TextField, built from its parts so the caret's place is known: typing on at the
+ * bottom then scrolls the note, instead of going on under the keyboard and the formatting bar (Eric, 16 Nov). A body
+ * with a table has one of these per text piece.
+ */
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
+@Composable
+private fun BodyTextField(
+    value: TextFieldValue,
+    onValueChange: (TextFieldValue) -> Unit,
+    formatted: Boolean,
+    foreground: Color,
+    placeholder: Boolean,
+    modifier: Modifier,
+) {
+    val bodyColors = TextFieldDefaults.colors(
+        focusedContainerColor = Color.Transparent,
+        unfocusedContainerColor = Color.Transparent,
+        focusedTextColor = foreground,
+        unfocusedTextColor = foreground,
+        cursorColor = foreground,
+        focusedIndicatorColor = Color.Transparent,
+        unfocusedIndicatorColor = Color.Transparent,
+    )
+    // Formatting drawn over the source; the signs stay in the text but take no room (FormatTransformation).
+    val transformation = remember(formatted, foreground, value.text, value.selection) {
+        val pair = if (formatted) FormatCore.emptyPair(value.text, value.selection.min, value.selection.max) else null
+        FormatTransformation(formatted, foreground, pair?.from ?: -1, pair?.to ?: -1)
+    }
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
+    val caretView = remember { BringIntoViewRequester() }
+    var bodyLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
+    val margin = with(LocalDensity.current) { 24.dp.toPx() }
+    LaunchedEffect(value.text, value.selection, bodyLayout, focused) {
+        val layout = bodyLayout
+        if (!focused || layout == null) return@LaunchedEffect
+        val caret = layout.getCursorRect(value.selection.end.coerceIn(0, layout.layoutInput.text.length))
+        caretView.bringIntoView(caret.copy(top = caret.top - margin, bottom = caret.bottom + margin))
+    }
+    BasicTextField(
+        value = value,
+        onValueChange = onValueChange,
+        visualTransformation = transformation,
+        modifier = modifier,
+        textStyle = LocalTextStyle.current.merge(TextStyle(color = foreground)),
+        cursorBrush = SolidColor(foreground),
+        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+        interactionSource = interaction,
+        onTextLayout = { bodyLayout = it },
+        decorationBox = { innerTextField ->
+            TextFieldDefaults.DecorationBox(
+                value = value.text,
+                innerTextField = { Box(Modifier.bringIntoViewRequester(caretView)) { innerTextField() } },
+                enabled = true,
+                singleLine = false,
+                visualTransformation = transformation,
+                interactionSource = interaction,
+                placeholder = if (placeholder) ({ Text(stringResource(R.string.editor_hint), color = foreground.copy(alpha = 0.5f)) }) else null,
+                colors = bodyColors,
+            )
+        },
+    )
+}
+
+/** The read view of a note with links: the links open, a tap anywhere else edits the note. */
+@Composable
+private fun PreviewText(
+    preview: androidx.compose.ui.text.AnnotatedString,
+    foreground: Color,
+    openLinkLabel: String,
+    openLink: (String) -> Boolean,
+    onEditBody: () -> Unit,
+    modifier: Modifier,
+) {
+    val links = preview.getStringAnnotations("URL", 0, preview.length)
+    ClickableText(
+        text = preview,
+        style = MaterialTheme.typography.bodyLarge.copy(color = foreground),
+        modifier = modifier.semantics {
+            customActions = links.map { link ->
+                CustomAccessibilityAction(
+                    "$openLinkLabel: ${preview.subSequence(link.start, link.end).text} (${link.item})",
+                ) { openLink(link.item) }
+            }
+        },
+        onClick = { offset ->
+            val url = preview.getStringAnnotations("URL", offset, offset).firstOrNull()?.item
+            if (url == null) {
+                onEditBody()
+            } else {
+                openLink(url)
+            }
+        },
+    )
+}
+
+/** A strip to type above or below a table at the very start or end of the note (design 5.4). */
+@Composable
+private fun EdgeStrip(label: Int, foreground: Color, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 44.dp)
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 16.dp),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Text("+ " + stringResource(label), color = foreground.copy(alpha = 0.65f), style = MaterialTheme.typography.bodyMedium)
     }
 }
 
