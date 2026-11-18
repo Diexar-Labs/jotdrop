@@ -1565,6 +1565,13 @@
   line-height: 1.5;
 }
 
+/* A tab in a list is one level (design kaarten-en-lijsten, part 7): 4 columns, in the text and its bullet layer. */
+.jotdrop-capture-textarea,
+.jotdrop-edit-body,
+.jotdrop-list-editor-preview {
+  tab-size: 4;
+}
+
 .jotdrop-capture-textarea:focus,
 .jotdrop-edit-body:focus,
 .jotdrop-edit-taginput:focus {

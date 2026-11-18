@@ -27,9 +27,26 @@
 .cm-jd-h3 { font-size: 1.15em; }
 .cm-jd-h4, .cm-jd-h5, .cm-jd-h6 { font-size: 1.05em; }
 .cm-jd-quote { border-left: 3px solid var(--line); padding-left: .7rem !important; font-style: italic; color: color-mix(in srgb, var(--ink) 85%, var(--muted)); }
-.cm-jd-bullet { display: inline-block; min-width: .6em; font-size: 1.2em; line-height: 1; font-weight: 700; color: var(--ink); }
+.cm-jd-bullet { display: inline-block; min-width: .6em; font-size: 1.2em; line-height: 1; font-weight: 700; color: var(--ink); text-indent: 0; }
 .cm-jd-number { font-variant-numeric: tabular-nums; }
-.cm-jd-box { cursor: pointer; font-size: 1.1em; line-height: 1; user-select: none; }
+/* The box is 1.5 em, as on Android (design kaarten-en-lijsten, part 7). */
+.cm-jd-box { display: inline-block; width: .9em; cursor: pointer; font-size: 1.5em; line-height: 1; vertical-align: -.1em; user-select: none; text-indent: 0; }
+/* Lists in levels: about 1.5 em per level, up to 8; a long line wraps under its own words (the sign hangs out on the
+   left). The tab or spaces in the text are hidden. More text under an item lines up with the item's words. */
+.jd-editor .cm-editor .cm-line.cm-jd-li, .jd-editor .cm-editor .cm-line.cm-jd-more { padding-left: calc(var(--jd-level) * 1.5em + var(--jd-hang)); }
+.jd-editor .cm-editor .cm-line.cm-jd-li { text-indent: calc(-1 * var(--jd-hang)); }
+.cm-jd-li-bullet { --jd-hang: 1em; }
+.cm-jd-li-ordered { --jd-hang: 1.3em; }
+.cm-jd-li-task { --jd-hang: 1.65em; }
+.cm-jd-l0 { --jd-level: 0; }
+.cm-jd-l1 { --jd-level: 1; }
+.cm-jd-l2 { --jd-level: 2; }
+.cm-jd-l3 { --jd-level: 3; }
+.cm-jd-l4 { --jd-level: 4; }
+.cm-jd-l5 { --jd-level: 5; }
+.cm-jd-l6 { --jd-level: 6; }
+.cm-jd-l7 { --jd-level: 7; }
+.cm-jd-l8 { --jd-level: 8; }
 .cm-jd-done { color: var(--muted); }
 .cm-jd-rule .cm-jd-hr { display: inline-block; width: 100%; vertical-align: middle; border-top: 2px solid var(--line); }
 .cm-jd-codeblock { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .92em; background: color-mix(in srgb, var(--ink) 6%, transparent); }

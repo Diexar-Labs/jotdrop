@@ -69,6 +69,116 @@ def table_button(page, name):
     return page.locator(f'#table-bar [data-table="{name}"]')
 
 
+def bullet_lefts(page):
+    return page.locator("#note-editor .cm-jd-bullet").evaluate_all("dots => dots.map((dot) => dot.getBoundingClientRect().left)")
+
+
+def check_levels(page):
+    """Lists in levels (design kaarten-en-lijsten, part 7): Tab, Shift+Tab, the two buttons, Ctrl+] and Ctrl+[, Enter on
+    an empty sub-item, the indent hidden and shown as a margin, Tab off a list and after Ctrl+M leaving the text, and
+    with "Move checked items to the bottom" on a tick in the editor moving the task."""
+    fill_body(page, "- milk\n- eggs")
+    page.keyboard.press("Control+End")
+    page.keyboard.press("Tab")
+    assert body_text(page) == "- milk\n\t- eggs", repr(body_text(page))
+    assert body_has_focus(page)
+    # The tab itself is not shown; the level is a margin of about 1.5 em.
+    assert "\t" not in visible_text(page) and page.locator("#note-editor .cm-line.cm-jd-l1").count() == 1
+    lefts = bullet_lefts(page)
+    assert 18 < lefts[1] - lefts[0] < 32, lefts
+    shot(page, "levels")
+    # Enter on a sub-item goes on on its level; on an empty sub-item it goes one level back, then the sign goes.
+    page.keyboard.press("Enter")
+    page.keyboard.type("bread")
+    assert body_text(page) == "- milk\n\t- eggs\n\t- bread", repr(body_text(page))
+    page.keyboard.press("Enter")
+    page.keyboard.press("Enter")
+    assert body_text(page) == "- milk\n\t- eggs\n\t- bread\n- ", repr(body_text(page))
+    page.keyboard.press("Enter")
+    assert body_text(page) == "- milk\n\t- eggs\n\t- bread\n", repr(body_text(page))
+    # The buttons, Shift+Tab, and Ctrl+] (an item takes its sub-items along).
+    page.keyboard.press("Control+Home")
+    page.keyboard.press("ArrowDown")
+    page.keyboard.press("End")
+    button(page, "outdent").click()
+    # "bread" was a sibling of "eggs" and is now its sub-item, as in every Markdown editor.
+    assert body_text(page) == "- milk\n- eggs\n\t- bread\n", repr(body_text(page))
+    button(page, "indent").click()
+    assert body_text(page) == "- milk\n\t- eggs\n\t\t- bread\n", repr(body_text(page))
+    page.keyboard.press("Shift+Tab")
+    assert body_text(page) == "- milk\n- eggs\n\t- bread\n" and body_has_focus(page), repr(body_text(page))
+    page.keyboard.press("Control+]")
+    assert body_text(page) == "- milk\n\t- eggs\n\t\t- bread\n", repr(body_text(page))
+    page.keyboard.press("Control+[")
+    assert body_text(page) == "- milk\n- eggs\n\t- bread\n", repr(body_text(page))
+    # Backspace at the start of a sub-item's words takes it one level back.
+    page.keyboard.press("ArrowDown")
+    page.keyboard.press("End")
+    for _ in range(len("bread")):
+        page.keyboard.press("Backspace")
+    assert body_text(page) == "- milk\n- eggs\n\t- \n", repr(body_text(page))
+    page.keyboard.press("Backspace")
+    assert body_text(page) == "- milk\n- eggs\n- \n", repr(body_text(page))
+    # The first item cannot go in, but Tab stays in the text on a list line.
+    page.keyboard.press("Control+Home")
+    page.keyboard.press("Tab")
+    assert body_text(page) == "- milk\n- eggs\n- \n" and body_has_focus(page), repr(body_text(page))
+    # Ctrl+] off a list does nothing (CodeMirror's own would put two spaces before the line).
+    fill_body(page, "plain")
+    page.keyboard.press("Control+]")
+    assert body_text(page) == "plain", repr(body_text(page))
+    # Off a list Tab leaves the text, as before; on a list Ctrl+M first lets it leave.
+    page.keyboard.press("Tab")
+    assert not body_has_focus(page)
+    fill_body(page, "- a\n- b")
+    page.keyboard.press("Control+End")
+    page.keyboard.press("Control+m")
+    page.keyboard.press("Tab")
+    assert not body_has_focus(page) and body_text(page) == "- a\n- b", repr(body_text(page))
+    body_editor(page).click()
+    page.keyboard.press("Control+m")
+    page.keyboard.press("Control+End")
+    page.keyboard.press("Tab")
+    assert body_text(page) == "- a\n\t- b", repr(body_text(page))
+    # The Checklist button on an indented bullet gives it a box, no second sign.
+    button(page, "checklist").click()
+    assert body_text(page) == "- a\n\t- [ ] b", repr(body_text(page))
+
+    # With "Move checked items to the bottom" on (it sits in the page's header, so the editor closes first).
+    page.keyboard.press("Escape")
+    page.locator("#editor").wait_for(state="hidden")
+    page.locator("#move-checked").click()
+    assert page.locator("#move-checked").get_attribute("aria-pressed") == "true"
+    page.locator("#new-note").click()
+    fill_body(page, "- [ ] one\n- [ ] two\n- [ ] three")
+    page.keyboard.press("Control+End")
+    page.locator("#note-editor .cm-jd-box").first.click()
+    assert body_text(page) == "- [ ] two\n- [ ] three\n- [x] one", repr(body_text(page))
+    # Ctrl+Z gives back the tick and the move in one step.
+    page.keyboard.press("Control+z")
+    assert body_text(page) == "- [ ] one\n- [ ] two\n- [ ] three", repr(body_text(page))
+    # The caret stays in its own text: after a tick, typing goes on after "three".
+    page.keyboard.press("Control+End")
+    page.locator("#note-editor .cm-jd-box").first.click()
+    page.keyboard.type("!")
+    assert body_text(page) == "- [ ] two\n- [ ] three!\n- [x] one", repr(body_text(page))
+    fill_body(page, "- [ ] one\n- [ ] two\n- [ ] three")
+    # The Checklist button on a task ticks and moves it, the caret goes along.
+    page.keyboard.press("Control+Home")
+    button(page, "checklist").click()
+    assert body_text(page) == "- [ ] two\n- [ ] three\n- [x] one", repr(body_text(page))
+    button(page, "checklist").click()
+    assert body_text(page) == "- [ ] two\n- [ ] three\n- [ ] one", repr(body_text(page))
+    page.keyboard.press("Escape")
+    page.locator("#editor").wait_for(state="hidden")
+    page.locator("#move-checked").click()
+    assert page.locator("#move-checked").get_attribute("aria-pressed") == "false"
+    page.locator("#new-note").click()
+    body_editor(page)
+    # The rest of the check goes on in a note with the same title as before.
+    page.locator("#note-title").fill("Formatting")
+
+
 def check_format_editor(browser, url, token):
     context = new_context(browser)
     page = context.new_page()
@@ -198,6 +308,10 @@ def check_format_editor(browser, url, token):
         assert page.locator("#note-editor .cm-jd-box").count() == 1 and page.locator("#note-editor .cm-jd-box").get_attribute("aria-checked") == "false"
         page.locator("#note-editor .cm-jd-box").click()
         assert body_text(page).endswith("\n- [x] Shopping"), body_text(page)
+        # The box is 1.5 em (design kaarten-en-lijsten, part 7): about 1.5 times the text.
+        size = page.locator("#note-editor .cm-jd-box").evaluate("box => parseFloat(getComputedStyle(box).fontSize) / parseFloat(getComputedStyle(box.closest('.cm-content')).fontSize)")
+        assert 1.45 < size < 1.55, size
+        check_levels(page)
         fill_body(page, "very important")
         page.keyboard.press("Shift+Control+ArrowLeft")
         button(page, "highlight").click()
@@ -250,6 +364,20 @@ def check_format_editor(browser, url, token):
         page.locator("#note-content").press("Shift+Control+ArrowLeft")
         button(page, "bold").click()
         assert page.locator("#note-content").input_value() == "# Formatting\n\nplain **words**", page.locator("#note-content").input_value()
+        # In the Markdown view too, Tab and the buttons change a list item's level (design kaarten-en-lijsten).
+        raw = page.locator("#note-content")
+        raw.fill("# Formatting\n\n- a\n- b")
+        raw.press("Control+End")
+        raw.press("Tab")
+        assert raw.input_value() == "# Formatting\n\n- a\n\t- b" and page.evaluate("document.activeElement.id") == "note-content", repr(raw.input_value())
+        button(page, "outdent").click()
+        assert raw.input_value() == "# Formatting\n\n- a\n- b", repr(raw.input_value())
+        button(page, "checklist").click()
+        assert raw.input_value() == "# Formatting\n\n- a\n- [ ] b", repr(raw.input_value())
+        raw.fill("# Formatting\n\nplain **words**")
+        raw.press("Control+End")
+        raw.press("Tab")
+        assert page.evaluate("document.activeElement.id") != "note-content"
         page.locator("#markdown-mode").click()
         assert page.locator("#markdown-mode").inner_text() == "Markdown"
         assert body_text(page) == "plain **words**" and visible_text(page) == "plain words", visible_text(page)

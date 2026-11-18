@@ -13,7 +13,7 @@ import { buildLinkNote, detectAllUrls, fetchOg, OgPreview } from "./ogfetch";
 import { RepeatEditor } from "./repeat";
 import { t } from "./i18n";
 import { keepModalAboveKeyboard } from "./mobileKeyboard";
-import { enhanceListEditing } from "./listEditor";
+import { enhanceListEditing, toggleChecklistOnTextArea } from "./listEditor";
 
 export class QuickCaptureModal extends Modal {
   plugin: JotDropPlugin;
@@ -322,7 +322,7 @@ export class QuickCaptureModal extends Modal {
   }
 
   private toggleOrInsertChecklist(): void {
-    toggleOrInsertChecklistOnTextArea(this.textArea);
+    toggleChecklistOnTextArea(this.textArea, this.plugin.settings.moveChecked);
   }
 
   async save(): Promise<void> {
@@ -415,42 +415,6 @@ export class QuickCaptureModal extends Modal {
     this.cleanupKeyboard = null;
     this.contentEl.empty();
   }
-}
-
-/**
- * Smart checklist toggle for textarea: inspects the current line under the
- * cursor and toggles `- [ ]` ↔ `- [x]`, or inserts `- [ ] ` at the start of
- * the line if no checkbox is present yet. Mirrored with the Android editor.
- */
-export function toggleOrInsertChecklistOnTextArea(ta: HTMLTextAreaElement): void {
-  const value = ta.value;
-  const caret = ta.selectionStart ?? value.length;
-  const before = value.slice(0, caret);
-  const lineStart = before.lastIndexOf("\n") + 1;
-  const nextNewline = value.indexOf("\n", caret);
-  const lineEnd = nextNewline < 0 ? value.length : nextNewline;
-  const line = value.slice(lineStart, lineEnd);
-
-  let newLine: string;
-  let caretDelta = 0;
-  if (line.startsWith("- [ ] ")) {
-    newLine = "- [x] " + line.slice(6);
-  } else if (line.startsWith("- [ ]")) {
-    newLine = "- [x]" + line.slice(5);
-  } else if (line.startsWith("- [x] ") || line.startsWith("- [X] ")) {
-    newLine = "- [ ] " + line.slice(6);
-  } else if (line.startsWith("- [x]") || line.startsWith("- [X]")) {
-    newLine = "- [ ]" + line.slice(5);
-  } else {
-    newLine = "- [ ] " + line;
-    caretDelta = "- [ ] ".length;
-  }
-
-  ta.value = value.slice(0, lineStart) + newLine + value.slice(lineEnd);
-  const newCaret = caret + caretDelta;
-  ta.selectionStart = ta.selectionEnd = newCaret;
-  ta.focus();
-  ta.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
 async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | null> {
