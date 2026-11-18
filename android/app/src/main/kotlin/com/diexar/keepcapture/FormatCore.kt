@@ -656,7 +656,11 @@ internal object FormatCore {
         if (list != null) {
             val plain = maskPair(text, pair)
             val remaining = plain.substring(lineStart + list.value.length, from) + plain.substring(to, contentEnd)
-            if (jsTrim(remaining).isEmpty()) return Edit(lineStart, contentEnd, "", lineStart)
+            if (jsTrim(remaining).isEmpty()) {
+                // An empty item in a level goes one level back; only on level 0 its sign goes (design kaarten-en-lijsten, part 7).
+                val back = if (listLevels(text)[Lines(text).at(lineStart)] > 0) indentEdit(text, from, to, "out") else null
+                return back ?: Edit(lineStart, contentEnd, "", lineStart)
+            }
         } else if (at == from && close.isEmpty()) return null
         val sign = list?.groups?.let { groups ->
             val number = if (groups[2] != null) "-" else "${groups[3]!!.value.toLong() + 1}${groups[4]!!.value}"
@@ -938,5 +942,143 @@ internal object FormatCore {
         val a = map(selFrom)
         val b = map(selTo)
         return Tick(replacement(text, out, minOf(a, b), maxOf(a, b))!!, at)
+    }
+
+    /** The item a line belongs to: the line itself for a list line, its main item for a line of more text, else -1. */
+    private fun itemOf(structure: List<ListItem?>, line: Int): Int {
+        val item = structure.getOrNull(line) ?: return -1
+        return if (item.level >= 0) line else item.parent
+    }
+
+    /** The nearest earlier item with the same main item in the same series, or -1. */
+    private fun previousSibling(structure: List<ListItem?>, line: Int): Int {
+        val item = structure[line]!!
+        var index = line - 1
+        while (index >= 0 && index != item.parent && structure[index]?.series == item.series) {
+            val other = structure[index]!!
+            if (other.level >= 0 && other.parent == item.parent) return index
+            index--
+        }
+        return -1
+    }
+
+    private val leadingNumber = Regex("^\\d+")
+
+    /**
+     * Indent ("in") or outdent ("out") every list item the selection touches, each with the lines under it, as
+     * indentEdit in format.mjs (design kaarten-en-lijsten, part 7). Null when nothing can change.
+     */
+    fun indentEdit(text: String, selFrom: Int, selTo: Int = selFrom, direction: String = "in"): Edit? {
+        val from = maxOf(0, minOf(selFrom, selTo, text.length))
+        val to = minOf(text.length, maxOf(selFrom, selTo))
+        val table = Lines(text)
+        val original = table.lines
+        var lines = original.toMutableList()
+        var structure = listStructure(text)
+        val (first, last) = touchedLines(table, from, to)
+        val picked = mutableListOf<Int>()
+        for (index in first..last) {
+            val item = itemOf(structure, index)
+            if (item >= 0 && item !in picked) picked += item
+        }
+        // A picked item under another picked item moves along with that one.
+        val roots = picked.filter { line ->
+            var up = structure[line]!!.parent
+            var free = true
+            while (up >= 0) { if (up in picked) { free = false; break }; up = structure[up]!!.parent }
+            free
+        }
+        // One item after the other, from the top, each on the text as the items above it left it.
+        for (root in roots) {
+            structure = listStructure(lines.joinToString("\n"))
+            val item = structure[root]!!
+            val end = itemEnd(structure, root)
+            val own = indentOf(lines[root])
+            val parent: Int
+            val indent: String
+            if (direction == "in") {
+                parent = previousSibling(structure, root)
+                if (parent < 0) continue
+                var child = -1
+                for (index in parent + 1 until root) {
+                    val other = structure[index]
+                    if (other != null && other.level >= 0 && other.parent == parent) { child = index; break }
+                }
+                indent = if (child >= 0) indentOf(lines[child]) else "$own\t"
+            } else {
+                if (item.parent < 0) continue
+                parent = structure[item.parent]!!.parent
+                indent = indentOf(lines[item.parent])
+            }
+            val next = lines.toMutableList()
+            for (index in root..end) {
+                val line = next[index]
+                next[index] = if (line.startsWith(own)) indent + line.substring(own.length)
+                else indent + " ".repeat(maxOf(0, indentColumns(line) - item.column)) + line.substring(indentOf(line).length)
+            }
+            // With mixed indents the item could land somewhere else than meant; then it stays as it was.
+            val after = listStructure(next.joinToString("\n"))
+            val now = after[root]
+            if (now == null || now.level != item.level + (if (direction == "in") 1 else -1) || now.parent != parent) continue
+            val prefix = linePrefix(next[root])
+            if (prefix.kind == "ordered") {
+                val before = previousSibling(after, root)
+                val previous = if (before >= 0) linePrefix(next[before]) else null
+                val number = if (previous?.kind == "ordered") previous.number + 1 else 1L
+                next[root] = next[root].substring(0, prefix.markFrom) + leadingNumber.replaceFirst(next[root].substring(prefix.markFrom), number.toString())
+            }
+            lines = next
+        }
+        val out = lines.joinToString("\n")
+        if (out == text) return null
+        // Only the start of a line changes: a position in its words moves along, one in the old indent stays in the new one.
+        val starts = IntArray(lines.size)
+        var offset = 0
+        for ((i, line) in lines.withIndex()) { starts[i] = offset; offset += line.length + 1 }
+        fun map(pos: Int): Int {
+            val index = table.at(pos)
+            val was = original[index]
+            val now = lines[index]
+            var same = 0
+            while (same < minOf(was.length, now.length) && was[was.length - 1 - same] == now[now.length - 1 - same]) same++
+            val head = was.length - same
+            val column = pos - table.starts[index]
+            return starts[index] + if (column >= head) column + now.length - was.length else minOf(column, now.length - same)
+        }
+        return replacement(text, out, map(from), map(to))
+    }
+
+    /** The Checklist button, as checklistEdit in format.mjs (design kaarten-en-lijsten, part 7). Null in a code block or table. */
+    fun checklistEdit(text: String, selFrom: Int, selTo: Int = selFrom, move: Boolean = false): Edit? {
+        val from = maxOf(0, minOf(selFrom, selTo, text.length))
+        val to = minOf(text.length, maxOf(selFrom, selTo))
+        val table = Lines(text)
+        val kinds = lineKinds(text)
+        val (first, last) = touchedLines(table, from, to)
+        val targets = (first..last).filter { kinds[it] == "text" && !(first != last && blank(table.lines[it])) }
+        if (targets.isEmpty()) return null
+        val prefixes = targets.map { linePrefix(table.lines[it]) }
+        if (targets.size == 1 && prefixes[0].kind == "task") return tickEdit(text, targets[0], move, from, to)?.edit
+        val edits = mutableListOf<Change>()
+        val allTasks = prefixes.all { it.kind == "task" }
+        val tick = prefixes.any { !it.checked }
+        for ((i, index) in targets.withIndex()) {
+            val prefix = prefixes[i]
+            val at = table.starts[index]
+            if (allTasks) {
+                if (prefix.checked == tick) continue
+                val box = at + table.lines[index].indexOf('[', prefix.markFrom + 1) + 1
+                edits += Change(box, box + 1, if (tick) "x" else " ")
+            } else when (prefix.kind) {
+                "bullet" -> edits += Change(at + prefix.markTo, at + prefix.markTo, "[ ] ")
+                "ordered" -> edits += Change(at + prefix.markFrom, at + prefix.markTo, "- [ ] ")
+                "task" -> {}
+                else -> edits += Change(at + prefix.indent, at + prefix.indent, "- [ ] ")
+            }
+        }
+        val applied = applyEdits(text, edits)
+        if (applied.text == text) return null
+        return if (from == to) replacement(text, applied.text, applied.map(from, true))
+        else replacement(text, applied.text, applied.map(from), applied.map(to, true))
     }
 }

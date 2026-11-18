@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
-import { activeFormats, applyFormat, backspaceEdit, blocks, cellSource, cellText, emptyPair, inlineSpans, insertTable, linePrefix, listEnterEdit, listLevels, parseTable, tableCells, tableEdit, tickEdit } from './format.mjs';
+import { activeFormats, applyFormat, backspaceEdit, blocks, cellSource, cellText, checklistEdit, emptyPair, indentEdit, inlineSpans, insertTable, linePrefix, listEnterEdit, listLevels, parseTable, tableCells, tableEdit, tickEdit } from './format.mjs';
 
 // The same cases run on Android (scripts/check-format-android.mjs), so every app sees the same tables.
 const vectors = JSON.parse(readFileSync(new URL('./format-vectors.json', import.meta.url), 'utf8'));
@@ -255,4 +255,53 @@ test('a tick flips one box and moves whole lines only; every line keeps its leve
     });
   }
   assert.ok(moved >= 20, `only ${moved} moves were tried`);
+});
+
+test('Tab and Shift+Tab on list items', () => {
+  for (const vector of vectors.indent) {
+    const { text, from, to } = unmark(vector.text);
+    const edit = indentEdit(text, from, to, vector.direction);
+    assert.equal(edit && marked(applied(text, edit), edit.selFrom, edit.selTo), vector.expect, vector.name);
+  }
+});
+
+test('indenting changes only the start of lines, one level at a time, and out undoes in', () => {
+  const texts = [...vectors.levels.map((vector) => vector.text), ...vectors.indent.map((vector) => unmark(vector.text).text),
+    ...vectors.tick.map((vector) => unmark(vector.text).text), ...readdirSync(fixtures).map((name) => readFileSync(new URL(name, fixtures), 'utf8'))];
+  const words = (line) => line.replace(/^[ \t]*(?:\d+(?=[.)]))?/, '');
+  let indented = 0;
+  for (const text of texts) {
+    const lines = text.split('\n'), levels = listLevels(text);
+    let offset = 0;
+    lines.forEach((line, index) => {
+      const caret = offset + line.length - (line.endsWith('\r') ? 1 : 0);
+      offset += line.length + 1;
+      for (const direction of ['in', 'out']) {
+        const name = `${JSON.stringify(text.slice(0, 40))} line ${index} ${direction}`;
+        const edit = indentEdit(text, caret, caret, direction);
+        if (!edit) continue;
+        const out = applied(text, edit), after = out.split('\n'), afterLevels = listLevels(out);
+        assert.equal(after.length, lines.length, `${name}: every line stays a line`);
+        after.forEach((value, i) => assert.equal(words(value), words(lines[i]), `${name}: only the indent and number of line ${i} change`));
+        const item = levels[index] >= 0 ? index : null;
+        if (item !== null) assert.equal(afterLevels[item], levels[item] + (direction === 'in' ? 1 : -1), `${name}: one level`);
+        if (direction === 'in') {
+          indented++;
+          // Out right after in gives the same levels back.
+          const back = indentEdit(out, edit.selFrom, edit.selTo, 'out');
+          assert.ok(back, `${name}: out after in`);
+          assert.deepEqual(listLevels(applied(out, back)), levels, `${name}: out after in gives the levels back`);
+        }
+      }
+    });
+  }
+  assert.ok(indented >= 30, `only ${indented} indents were tried`);
+});
+
+test('the Checklist button', () => {
+  for (const vector of vectors.checklist) {
+    const { text, from, to } = unmark(vector.text);
+    const edit = checklistEdit(text, from, to, vector.move);
+    assert.equal(edit && marked(applied(text, edit), edit.selFrom, edit.selTo), vector.expect, vector.name);
+  }
 });

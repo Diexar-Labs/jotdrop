@@ -1,4 +1,36 @@
+import { checklistEdit, indentEdit, linePrefix, listEnterEdit as coreListEnterEdit, listLevels } from "../cloud/shared/format.mjs";
+
 const LIST_MARKER = /^([ \t]*)([-*+])[ \t]+(?:\[([ xX])\](?:[ \t]+|$))?/;
+const LIST_KINDS = new Set(["bullet", "ordered", "task"]);
+
+interface TextEdit { from: number; to: number; insert: string; selFrom?: number; selTo?: number }
+
+/** One edit as one native text change, so Ctrl+Z undoes it; then the selection the edit asks for. */
+export function applyTextEdit(ta: HTMLTextAreaElement, edit: TextEdit): void {
+  ta.setSelectionRange(edit.from, edit.to);
+  if (!ta.ownerDocument.execCommand("insertText", false, edit.insert)) {
+    ta.setRangeText(edit.insert, edit.from, edit.to, "end");
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+  if (edit.selFrom !== undefined) ta.setSelectionRange(edit.selFrom, edit.selTo ?? edit.selFrom);
+}
+
+/**
+ * The Checklist button, through the shared core (design kaarten-en-lijsten, part 7): a line gets `- [ ] `, a bullet or
+ * numbered line a box in place of its sign (the indent stays), a task is ticked or unticked, moving with `move`.
+ */
+export function toggleChecklistOnTextArea(ta: HTMLTextAreaElement, move: boolean): void {
+  ta.focus();
+  const edit = checklistEdit(ta.value, ta.selectionStart ?? ta.value.length, ta.selectionEnd ?? ta.value.length, move);
+  // A tick always changes the text, so the core's answer is a whole replacement or null.
+  if (edit) applyTextEdit(ta, edit as TextEdit);
+}
+
+/** Whether the selection touches a list line (task, bullet or numbered) outside code and tables. */
+function onListLine(value: string, start: number, end: number): boolean {
+  const first = value.slice(0, start).split("\n").length - 1, last = value.slice(0, end).split("\n").length - 1;
+  return listLevels(value).slice(first, last + 1).some((level: number) => level >= 0);
+}
 
 function nextFence(line: string, fence: string | null): string | null {
   const match = line.match(/^[ \t]*(`{3,}|~{3,})(.*)$/);
@@ -8,22 +40,17 @@ function nextFence(line: string, fence: string | null): string | null {
     ? null : fence;
 }
 
-/** A single replacement, so Enter remains one undoable native text edit. */
-export function listEnterEdit(value: string, start: number, end = start): {
-  from: number; to: number; insert: string;
-} | null {
+/**
+ * Enter in a list line, from the shared core (cloud/shared/format.mjs), so it is the same as on the web and Android:
+ * the next item gets the same sign (a bullet, the next number, an empty box), an empty item in a level goes one level
+ * back, and an empty item on level 0 loses its sign. A single replacement, so Enter stays one undoable native edit.
+ * On other lines this is an ordinary Enter: the raw text box does not carry formatting signs to the next line.
+ */
+export function listEnterEdit(value: string, start: number, end = start): TextEdit | null {
   const lineStart = value.slice(0, start).lastIndexOf("\n") + 1;
   const nextNewline = value.indexOf("\n", start);
-  const lineEnd = nextNewline < 0 ? value.length : nextNewline;
-  const line = value.slice(lineStart, lineEnd);
-  const marker = line.match(LIST_MARKER);
-  if (!marker || start < lineStart + marker[0].length || end > lineEnd) return null;
-  let fence: string | null = null;
-  for (const previous of value.slice(0, lineStart).split("\n")) fence = nextFence(previous, fence);
-  if (fence) return null;
-  const remaining = value.slice(lineStart + marker[0].length, start) + value.slice(end, lineEnd);
-  if (!remaining.trim()) return { from: lineStart, to: lineEnd, insert: "" };
-  return { from: start, to: end, insert: `\n${marker[1]}- ${marker[3] === undefined ? "" : "[ ] "}` };
+  if (!LIST_KINDS.has(linePrefix(value.slice(lineStart, nextNewline < 0 ? value.length : nextNewline)).kind)) return null;
+  return coreListEnterEdit(value, start, end);
 }
 
 /** Keep native textarea selection/IME, with a visual-only bullet layer underneath. */
@@ -66,8 +93,21 @@ export function enhanceListEditing(ta: HTMLTextAreaElement): () => void {
     syncScroll();
   };
   let plainEnter = false;
+  // Tab and Shift+Tab on a list line change the item's level; elsewhere, and after Ctrl+M, Tab leaves the box.
+  let tabLeaves = false;
   const keydown = (event: KeyboardEvent) => {
     plainEnter = event.key === "Enter" && (event.shiftKey || event.ctrlKey || event.metaKey || event.altKey);
+    if (event.ctrlKey && !event.metaKey && !event.altKey && event.key.toLowerCase() === "m") {
+      event.preventDefault();
+      tabLeaves = !tabLeaves;
+      return;
+    }
+    if (event.key !== "Tab" || event.ctrlKey || event.metaKey || event.altKey || tabLeaves || event.isComposing) return;
+    const start = ta.selectionStart, end = ta.selectionEnd;
+    const edit = indentEdit(ta.value, start, end, event.shiftKey ? "out" : "in");
+    if (!edit && !onListLine(ta.value, start, end)) return;
+    event.preventDefault();
+    if (edit) applyTextEdit(ta, edit);
   };
   const keyup = () => { plainEnter = false; };
   const beforeInput = (event: InputEvent) => {
@@ -78,11 +118,7 @@ export function enhanceListEditing(ta: HTMLTextAreaElement): () => void {
     const edit = listEnterEdit(ta.value, ta.selectionStart, ta.selectionEnd);
     if (!edit) return;
     event.preventDefault();
-    ta.setSelectionRange(edit.from, edit.to);
-    if (!doc.execCommand("insertText", false, edit.insert)) {
-      ta.setRangeText(edit.insert, edit.from, edit.to, "end");
-      ta.dispatchEvent(new Event("input", { bubbles: true }));
-    }
+    applyTextEdit(ta, edit);
   };
   ta.addEventListener("input", sync);
   ta.addEventListener("scroll", syncScroll);

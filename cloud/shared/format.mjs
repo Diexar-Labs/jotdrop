@@ -593,7 +593,11 @@ export function listEnterEdit(text, from, to = from) {
   if (list) {
     const plain = maskPair(text, pair);
     const remaining = plain.slice(lineStart + list[0].length, from) + plain.slice(to, contentEnd);
-    if (!remaining.trim()) return { from: lineStart, to: contentEnd, insert: '', selFrom: lineStart, selTo: lineStart };
+    if (!remaining.trim()) {
+      // An empty item in a level goes one level back; only on level 0 its sign goes (design kaarten-en-lijsten, part 7).
+      const back = listLevels(text)[table.at(lineStart)] > 0 ? indentEdit(text, from, to, 'out') : null;
+      return back || { from: lineStart, to: contentEnd, insert: '', selFrom: lineStart, selTo: lineStart };
+    }
   } else if (at === from && !close) return null;
   const sign = list ? `${list[1]}${list[2] ? '-' : `${Number(list[3]) + 1}${list[4]}`} ${list[5] === undefined ? '' : '[ ] '}` : '';
   const start = at - before.length;
@@ -854,4 +858,139 @@ export function tickEdit(text, line, move, selFrom = 0, selTo = selFrom) {
   };
   const a = map(selFrom), b = map(selTo);
   return { ...replacement(text, out, Math.min(a, b), Math.max(a, b)), line: at };
+}
+
+/** The item a line belongs to: the line itself for a list line, its main item for a line of more text, else -1. */
+function itemOf(structure, line) {
+  const item = structure[line];
+  if (!item) return -1;
+  return item.level >= 0 ? line : item.parent;
+}
+
+/** The nearest earlier item with the same main item in the same series, or -1. */
+function previousSibling(structure, line) {
+  const item = structure[line];
+  for (let index = line - 1; index >= 0 && index !== item.parent && structure[index]?.series === item.series; index--) {
+    if (structure[index].level >= 0 && structure[index].parent === item.parent) return index;
+  }
+  return -1;
+}
+
+/**
+ * Indent (`'in'`) or outdent (`'out'`) every list item the selection touches, each with the lines under it (design
+ * kaarten-en-lijsten, part 7). In: only an item with an earlier sibling, which becomes its main item; the item gets the
+ * indent of that sibling's sub-items, or one tab more than it had. Out: the item gets the indent of its main item. A
+ * numbered item gets the number that fits its new place (1, or one more than the item before it); the lines after it
+ * are not renumbered. Only indents (and that number) change, so every line stays a line. Null when nothing can change:
+ * outside a list, in a code block or table, the first item of a list, an item on level 0 going out.
+ * @param {string} text
+ * @param {number} selFrom
+ * @param {number} selTo
+ * @param {'in' | 'out'} direction
+ */
+export function indentEdit(text, selFrom, selTo = selFrom, direction = 'in') {
+  text = String(text);
+  const from = Math.max(0, Math.min(selFrom, selTo, text.length)), to = Math.min(text.length, Math.max(selFrom, selTo));
+  const table = lineTable(text), original = table.lines;
+  let lines = original.slice(), structure = listStructure(text);
+  const [first, last] = touchedLines(table, from, to);
+  const picked = [];
+  for (let index = first; index <= last; index++) {
+    const item = itemOf(structure, index);
+    if (item >= 0 && !picked.includes(item)) picked.push(item);
+  }
+  // A picked item under another picked item moves along with that one.
+  const roots = picked.filter((line) => {
+    for (let up = structure[line].parent; up >= 0; up = structure[up].parent) if (picked.includes(up)) return false;
+    return true;
+  });
+  // One item after the other, from the top, each on the text as the items above it left it.
+  for (const root of roots) {
+    structure = listStructure(lines.join('\n'));
+    const item = structure[root], end = itemEnd(structure, root), own = indentOf(lines[root]);
+    let parent, indent;
+    if (direction === 'in') {
+      parent = previousSibling(structure, root);
+      if (parent < 0) continue;
+      let child = -1;
+      for (let index = parent + 1; index < root && child < 0; index++) if (structure[index]?.level >= 0 && structure[index].parent === parent) child = index;
+      indent = child >= 0 ? indentOf(lines[child]) : `${own}\t`;
+    } else {
+      if (item.parent < 0) continue;
+      parent = structure[item.parent].parent;
+      indent = indentOf(lines[item.parent]);
+    }
+    const next = lines.slice();
+    for (let index = root; index <= end; index++) {
+      const line = next[index];
+      next[index] = line.startsWith(own) ? indent + line.slice(own.length)
+        : indent + ' '.repeat(Math.max(0, indentColumns(line) - item.column)) + line.slice(indentOf(line).length);
+    }
+    // With mixed indents the item could land somewhere else than meant; then it stays as it was.
+    let after = listStructure(next.join('\n'));
+    if (after[root]?.level !== item.level + (direction === 'in' ? 1 : -1) || after[root].parent !== parent) continue;
+    const prefix = linePrefix(next[root]);
+    if (prefix.kind === 'ordered') {
+      const before = previousSibling(after, root), previous = before >= 0 ? linePrefix(next[before]) : null;
+      const number = previous?.kind === 'ordered' ? previous.number + 1 : 1;
+      next[root] = next[root].slice(0, prefix.markFrom) + next[root].slice(prefix.markFrom).replace(/^\d+/, String(number));
+    }
+    lines = next;
+  }
+  const out = lines.join('\n');
+  if (out === text) return null;
+  // Only the start of a line changes: a position in its words moves along, one in the old indent stays in the new one.
+  const starts = [];
+  let offset = 0;
+  for (const line of lines) { starts.push(offset); offset += line.length + 1; }
+  const map = (pos) => {
+    const index = table.at(pos), was = original[index], now = lines[index];
+    let same = 0;
+    while (same < Math.min(was.length, now.length) && was[was.length - 1 - same] === now[now.length - 1 - same]) same++;
+    const head = was.length - same, column = pos - table.starts[index];
+    return starts[index] + (column >= head ? column + now.length - was.length : Math.min(column, now.length - same));
+  };
+  return replacement(text, out, map(from), map(to));
+}
+
+/**
+ * The Checklist button (design kaarten-en-lijsten, part 7), the same in every app. On one line: a line without a list
+ * sign gets `- [ ] ` after its indent, a bullet or numbered line gets a box in place of its sign (the indent stays),
+ * and a task is ticked or unticked (tickEdit, moving with `move`). On several lines: the ones that are no task yet
+ * become one; when all are tasks, all get ticked, or all unticked when they all were ticked (no moving then). Blank
+ * lines in a selection of several stay blank. Null in a code block or table.
+ * @param {string} text
+ * @param {number} selFrom
+ * @param {number} selTo
+ * @param {boolean} move
+ */
+export function checklistEdit(text, selFrom, selTo = selFrom, move = false) {
+  text = String(text);
+  const from = Math.max(0, Math.min(selFrom, selTo, text.length)), to = Math.min(text.length, Math.max(selFrom, selTo));
+  const table = lineTable(text), kinds = lineKinds(text);
+  const [first, last] = touchedLines(table, from, to);
+  const targets = [];
+  for (let index = first; index <= last; index++) {
+    if (kinds[index] !== 'text' || (first !== last && blank(table.lines[index]))) continue;
+    targets.push(index);
+  }
+  if (!targets.length) return null;
+  const prefixes = targets.map((index) => linePrefix(table.lines[index]));
+  if (targets.length === 1 && prefixes[0].kind === 'task') return tickEdit(text, targets[0], move, from, to);
+  const edits = [];
+  const allTasks = prefixes.every((prefix) => prefix.kind === 'task'), tick = prefixes.some((prefix) => !prefix.checked);
+  targets.forEach((index, i) => {
+    const prefix = prefixes[i], at = table.starts[index];
+    if (allTasks) {
+      if (prefix.checked === tick) return;
+      const box = at + table.lines[index].indexOf('[', prefix.markFrom + 1) + 1;
+      edits.push({ from: box, to: box + 1, insert: tick ? 'x' : ' ' });
+    } else if (prefix.kind === 'bullet') edits.push({ from: at + prefix.markTo, to: at + prefix.markTo, insert: '[ ] ' });
+    else if (prefix.kind === 'ordered') edits.push({ from: at + prefix.markFrom, to: at + prefix.markTo, insert: '- [ ] ' });
+    else if (prefix.kind !== 'task') edits.push({ from: at + prefix.indent, to: at + prefix.indent, insert: '- [ ] ' });
+  });
+  const { text: out, map } = applyEdits(text, edits);
+  if (out === text) return null;
+  if (from === to) return replacement(text, out, map(from, true));
+  return replacement(text, out, map(from), map(to, true));
 }

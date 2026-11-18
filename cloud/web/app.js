@@ -1,7 +1,7 @@
 import { CloudClient, identifyClient } from '/shared/client.mjs';
 import { mergeNote } from '/shared/merge.mjs';
 import { cardPreview, tagOnly } from '/shared/card-preview.mjs';
-import { activeFormats, applyFormat, blocks, linePrefix, listLevels, parseTable, tickEdit } from '/shared/format.mjs';
+import { activeFormats, applyFormat, blocks, checklistEdit, indentEdit, linePrefix, listLevels, parseTable, tickEdit } from '/shared/format.mjs';
 import { cardTable } from '/shared/format-dom.mjs';
 import { diffLines, foldUnchanged } from '/shared/diff.mjs';
 import { findDuplicates, pairKey } from '/shared/similar.mjs';
@@ -1822,6 +1822,10 @@ function openEditor(entry) {
 
 $('editor').addEventListener('close', () => { renderNoteMedia(); closeEmojiPanel(); });
 
+// How a keyboard leaves the note's text: Tab on a list line changes the item's level (design kaarten-en-lijsten).
+// Escape closes the whole editor here, so the way out is Ctrl+M, CodeMirror's own switch for Tab.
+const LIST_KEYS_HINT = 'In a list, Tab and Shift+Tab change the level of an item. To leave the note with Tab, press Ctrl+M first.';
+
 // The note's text box as the formatting buttons see it (design opmaak-editor): the formatted editor when it has
 // loaded, else a plain text box. Both answer the same few calls, so the buttons work the same in either.
 function plainArea(area) {
@@ -1849,7 +1853,13 @@ function plainArea(area) {
     setSelection: (from, to = from) => area.setSelectionRange(from, to),
     replace,
     insertText(text) { const { from, to } = selection(); return replace({ from, to, insert: text, selFrom: from + text.length }); },
-    apply(command) { const { from, to } = selection(); const edit = applyFormat(area.value, from, to, command); if (!edit) { area.focus(); return false; } return replace(edit); },
+    apply(command) {
+      const { from, to } = selection();
+      const edit = command === 'indent' || command === 'outdent' ? indentEdit(area.value, from, to, command === 'indent' ? 'in' : 'out')
+        : command === 'checklist' ? checklistEdit(area.value, from, to, moveChecked) : applyFormat(area.value, from, to, command);
+      if (!edit) { area.focus(); return false; }
+      return replace(edit);
+    },
     activeFormats() { const { from, to } = selection(); return activeFormats(area.value, from, to); },
     context: () => 'text',
     flush() {},
@@ -1875,7 +1885,8 @@ function mountFormattedEditor({ createBodyEditor }) {
   const editor = createBodyEditor({
     parent: $('note-editor'),
     value: area.value,
-    labels: { note: 'Note', placeholder: 'Take a note…', done: 'Done' },
+    labels: { note: 'Note', placeholder: 'Take a note…', done: 'Done', keys: LIST_KEYS_HINT },
+    moveChecked: () => moveChecked,
     onChange: syncRaw,
     onState: showFormatState,
     // A table button or the emoji panel keeps the table bar, as long as no other place gets the focus.
@@ -1924,7 +1935,8 @@ $('note-title').addEventListener('input', syncRaw);
 $('note-body').addEventListener('input', syncRaw);
 $('note-title').addEventListener('keydown', (event) => { if (event.key === 'Enter') { event.preventDefault(); bodyEditor.focus(); } });
 
-// The formatting bar (design opmaak-editor, part 5.3): Bold · Italic · Heading · Bulleted · Numbered · Checklist ·
+// The formatting bar (design opmaak-editor, part 5.3, and kaarten-en-lijsten, part 7): Bold · Italic · Heading · Bulleted ·
+// Numbered · Checklist · Indent · Outdent ·
 // Highlight · Table · Emoji · More. While a table cell has the focus, the table bar takes its place.
 const FORMAT_MORE = [['strike', 'Strikethrough'], ['quote', 'Quote'], ['code', 'Code'], ['rule', 'Dividing line']];
 function showFormatState(state) {
@@ -1947,8 +1959,7 @@ $('format-bar').addEventListener('click', (event) => {
   const button = event.target.closest('button[data-format]');
   if (!button) return;
   const command = button.dataset.format;
-  if (command === 'checklist') toggleChecklist(editArea());
-  else if (command === 'emoji') toggleEmojiPanel();
+  if (command === 'emoji') toggleEmojiPanel();
   else if (command === 'more') showMenu(button, FORMAT_MORE.map(([name, label]) => ({ label, action: () => { editArea().apply(name); showFormatState(); } })));
   else { editArea().apply(command); showFormatState(); }
 });
@@ -1960,10 +1971,24 @@ $('table-bar').addEventListener('click', (event) => {
   bodyEditor.apply(command);
   showFormatState();
 });
-// The plain text boxes get the shortcuts too; the formatted editor has its own.
+// The plain text boxes get the shortcuts too; the formatted editor has its own. Tab and Shift+Tab as there: on a list
+// line they change the item's level, elsewhere (or after Ctrl+M) they leave the box.
+let tabLeaves = false;
 for (const area of [$('note-body'), $('note-content')]) {
   area.addEventListener('keydown', (event) => {
-    if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey || !['b', 'i'].includes(event.key.toLowerCase())) return;
+    const mod = event.ctrlKey || event.metaKey;
+    if (event.ctrlKey && !event.metaKey && !event.altKey && event.key.toLowerCase() === 'm') { event.preventDefault(); tabLeaves = !tabLeaves; return; }
+    if ((event.key === 'Tab' && !mod && !event.altKey && !tabLeaves) || (mod && !event.altKey && !event.shiftKey && (event.key === ']' || event.key === '['))) {
+      const tab = event.key === 'Tab', out = tab ? event.shiftKey : event.key === '[';
+      const { selectionStart: from, selectionEnd: to, value } = area;
+      const first = value.slice(0, from).split('\n').length - 1, last = value.slice(0, to).split('\n').length - 1;
+      const onList = listLevels(value).slice(first, last + 1).some((level) => level >= 0);
+      if (tab && !onList && !indentEdit(value, from, to, 'in') && !indentEdit(value, from, to, 'out')) return;
+      event.preventDefault();
+      editArea().apply(out ? 'outdent' : 'indent');
+      return;
+    }
+    if (!mod || event.altKey || event.shiftKey || !['b', 'i'].includes(event.key.toLowerCase())) return;
     event.preventDefault();
     editArea().apply(event.key.toLowerCase() === 'b' ? 'bold' : 'italic');
   });
@@ -2223,16 +2248,9 @@ $('markdown-help-toggle').addEventListener('click', () => {
   $('markdown-help-toggle').setAttribute('aria-expanded', String(open));
 });
 
-// Checklist button, as in the plugin and Android: toggle the line's checkbox or start one.
-// The formatting bar's Checklist button runs this same code, which does not go through the formatting core.
-function toggleChecklist(area) {
-  const value = area.getValue(), caret = area.getSelection().from;
-  const lineStart = value.lastIndexOf('\n', caret - 1) + 1, next = value.indexOf('\n', caret), lineEnd = next < 0 ? value.length : next;
-  const line = value.slice(lineStart, lineEnd);
-  const updated = /^- \[ \]/.test(line) ? `- [x]${line.slice(5)}` : /^- \[[xX]\]/.test(line) ? `- [ ]${line.slice(5)}` : `- [ ] ${line}`;
-  area.replace({ from: lineStart, to: lineEnd, insert: updated, selFrom: caret + (updated.length - line.length) });
-}
-$('insert-checklist').addEventListener('click', () => toggleChecklist(editArea()));
+// Checklist button, as in the plugin and Android: start a task, give a bullet a box, or tick a task (moving it with
+// "Move checked items to the bottom"). The formatting bar's Checklist button does the same, through the shared core.
+$('insert-checklist').addEventListener('click', () => { editArea().apply('checklist'); showFormatState(); });
 
 // Insert link: type a web address (a [text](address) link), or search your notes for a [[wikilink]], which uses the
 // note's name when that is unique (Obsidian's convention). The old menu listed every note and covered the screen.

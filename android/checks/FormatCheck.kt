@@ -46,6 +46,10 @@ fun main(arguments: Array<String>) {
             // Fields: selection from, to, the line, move (1 or 0).
             "tick" -> FormatCore.tickEdit(input, fields[4].toInt(), fields[5] == "1", fields[2].toInt(), fields[3].toInt())
                 ?.let { "${edit(it.edit)}:${it.line}" } ?: "null"
+            // Fields: selection from, to, and "in" or "out".
+            "indent" -> edit(FormatCore.indentEdit(input, fields[2].toInt(), fields[3].toInt(), fields[4]))
+            // Fields: selection from, to, move (1 or 0).
+            "checklist" -> edit(FormatCore.checklistEdit(input, fields[2].toInt(), fields[3].toInt(), fields[4] == "1"))
             else -> error("Unknown case ${fields[0]}")
         }
     }

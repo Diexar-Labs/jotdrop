@@ -10,13 +10,14 @@
 // adopted (constructed) style sheet instead of a <style> element, and our own style comes in with a <link>.
 import { EditorSelection, EditorState, Prec, StateEffect, StateField } from '@codemirror/state';
 import { Decoration, EditorView, WidgetType, keymap, placeholder } from '@codemirror/view';
-import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
-import { activeFormats, applyFormat, backspaceEdit, blocks, emptyPair, inlineSpans, linePrefix, listEnterEdit, parseTable, tableEdit } from '/shared/format.mjs';
+import { defaultKeymap, history, historyKeymap, toggleTabFocusMode } from '@codemirror/commands';
+import { activeFormats, applyFormat, backspaceEdit, blocks, checklistEdit, emptyPair, indentEdit, inlineSpans, linePrefix, listEnterEdit, listLevels, parseTable, tableEdit, tickEdit } from '/shared/format.mjs';
 import { createTableGrid } from '/shared/table-grid.mjs';
 
 // Above this many characters the note shows raw, for speed.
 export const RAW_ABOVE = 50000;
 const INLINE_COMMANDS = new Set(['bold', 'italic', 'strike', 'highlight', 'code']);
+const LIST_COMMANDS = new Set(['indent', 'outdent', 'checklist']);
 const TABLE_COMMANDS = new Set(['addRow', 'addColumn', 'deleteRow', 'deleteColumn', 'alignLeft', 'alignCenter', 'alignRight', 'deleteTable']);
 const MARK_CLASS = { bold: 'cm-jd-bold', italic: 'cm-jd-italic', strike: 'cm-jd-strike', highlight: 'cm-jd-mark', code: 'cm-jd-code', link: 'cm-jd-link', wikilink: 'cm-jd-link', url: 'cm-jd-link' };
 const setFormatted = StateEffect.define();
@@ -26,6 +27,7 @@ const DEFAULT_LABELS = {
   placeholder: 'Take a note…',
   done: 'Done',
   table: 'Table',
+  keys: 'In a list, Tab and Shift+Tab change the level of an item. To leave the note with Tab, press Ctrl+M first.',
 };
 
 class BulletWidget extends WidgetType {
@@ -48,9 +50,12 @@ class RuleWidget extends WidgetType {
   }
 }
 
-/** The box of a task: ☐ or ☑ (a shape, not only a color); a click ticks it in the source. */
+/**
+ * The box of a task: ☐ or ☑ (a shape, not only a color). A click ticks it in the source through the shared core, so
+ * with "Move checked items to the bottom" the task moves too; the caret stays in its own text and does not jump.
+ */
 class BoxWidget extends WidgetType {
-  constructor(checked, label) { super(); this.checked = checked; this.label = label; }
+  constructor(checked, host) { super(); this.checked = checked; this.host = host; }
   eq(other) { return other.checked === this.checked; }
   toDOM(view) {
     const box = view.dom.ownerDocument.createElement('span');
@@ -58,17 +63,35 @@ class BoxWidget extends WidgetType {
     box.textContent = this.checked ? '☑' : '☐';
     box.setAttribute('role', 'checkbox');
     box.setAttribute('aria-checked', String(this.checked));
-    box.setAttribute('aria-label', this.label);
+    box.setAttribute('aria-label', this.host.labels.done);
     box.addEventListener('mousedown', (event) => {
       event.preventDefault();
-      const line = view.state.doc.lineAt(view.posAtDOM(box));
-      const open = line.text.indexOf('[');
-      if (open < 0) return;
-      view.dispatch({ changes: { from: line.from + open + 1, to: line.from + open + 2, insert: this.checked ? ' ' : 'x' }, userEvent: 'input.check' });
+      const line = view.state.doc.lineAt(view.posAtDOM(box)).number - 1, { main } = view.state.selection;
+      const edit = tickEdit(view.state.doc.toString(), line, this.host.moveChecked(), main.from, main.to);
+      if (!edit) return;
+      view.dispatch({ changes: { from: edit.from, to: edit.to, insert: edit.insert }, selection: EditorSelection.single(edit.selFrom, edit.selTo), userEvent: 'input.check' });
     });
     return box;
   }
   ignoreEvent() { return true; }
+}
+
+// Levels show up to 8 deep in the editor (design kaarten-en-lijsten, part 7); deeper lines stay on level 8.
+const MAX_LEVEL = 8;
+
+/**
+ * The list lines and the lines of more text under an item, per line number from 0: { level, kind } for a list line,
+ * { level, kind, more: true } for more text (the level and kind of its item); null for every other line.
+ */
+function listLines(text) {
+  const levels = listLevels(text), lines = text.split('\n'), out = [];
+  lines.forEach((line, index) => {
+    if (levels[index] >= 0) { out.push({ level: levels[index], kind: linePrefix(line).kind }); return; }
+    // More text under an item: indented, not blank, right after a list line or more text, and not a new list.
+    const above = out[index - 1];
+    out.push(above && line.trim() && /^[ \t]/.test(line) && !linePrefix(line).kind ? { ...above, more: true } : null);
+  });
+  return out;
 }
 
 /** A table as a grid. Equal source means equal widget, so selection changes never redraw it. */
@@ -110,6 +133,7 @@ function decorate(state, formatted, host) {
     hide(pair.from, main.from);
     hide(main.from, pair.to);
   }
+  const lists = listLines(text);
   for (const run of blocks(text)) {
     if (run.kind === 'table') {
       const source = text.slice(run.from, run.to);
@@ -126,6 +150,13 @@ function decorate(state, formatted, host) {
       }
       const prefix = linePrefix(lineText(line));
       const at = (offset) => line.from + offset;
+      // A list line springs in per level and wraps under its own words; the tab or spaces themselves are hidden.
+      const list = lists[number];
+      if (list) {
+        const level = Math.min(list.level, MAX_LEVEL);
+        out.push(Decoration.line({ class: `${list.more ? 'cm-jd-more' : 'cm-jd-li'} cm-jd-li-${list.kind} cm-jd-l${level}` }).range(line.from));
+        hide(line.from, at(prefix.indent));
+      }
       switch (prefix.kind) {
         case 'heading':
           out.push(Decoration.line({ class: `cm-jd-h cm-jd-h${prefix.level}` }).range(line.from));
@@ -145,7 +176,7 @@ function decorate(state, formatted, host) {
         case 'task': {
           const close = lineText(line).indexOf(']', prefix.markFrom) + 1;
           if (prefix.checked) out.push(Decoration.line({ class: 'cm-jd-done' }).range(line.from));
-          replaceWith(new BoxWidget(prefix.checked, host.labels.done), at(prefix.markFrom), at(close));
+          replaceWith(new BoxWidget(prefix.checked, host), at(prefix.markFrom), at(close));
           break;
         }
         case 'ordered':
@@ -174,7 +205,7 @@ function decorate(state, formatted, host) {
  * onChange(text) runs on every change the user makes (not for setValue); onState({ context, active }) whenever the
  * selection, the text or the focus changes, so the host can show which buttons are on and which bar to show.
  */
-export function createBodyEditor({ parent, value = '', formatted = true, labels: given = {}, onChange, onState, isTableTool, stylesheet = '/editor.css' }) {
+export function createBodyEditor({ parent, value = '', formatted = true, labels: given = {}, onChange, onState, isTableTool, moveChecked = () => false, stylesheet = '/editor.css' }) {
   const doc = parent.ownerDocument;
   const labels = { ...DEFAULT_LABELS, ...given };
   let view, context = 'text', activeGrid = null;
@@ -199,6 +230,7 @@ export function createBodyEditor({ parent, value = '', formatted = true, labels:
 
   const host = {
     labels,
+    moveChecked,
     makeGrid(editorView, widget) {
       let grid;
       grid = createTableGrid(doc, {
@@ -270,7 +302,28 @@ export function createBodyEditor({ parent, value = '', formatted = true, labels:
     ],
   });
 
+  /**
+   * Tab and Shift+Tab on a list line, Mod+] and Mod+[ anywhere (they replace CodeMirror's own indenting, which would
+   * put 2 spaces before any line). On a list line Tab is always the editor's, also when the item cannot move; off a
+   * list it leaves the field as before. Ctrl+M (CodeMirror's own switch, here also on a Mac) makes Tab leave it anyway.
+   */
+  const indentKey = (direction, always) => (target) => {
+    const { from, to } = target.state.selection.main, text = target.state.doc.toString();
+    const edit = indentEdit(text, from, to, direction);
+    if (!edit) {
+      if (always) return true;
+      const levels = listLevels(text), first = target.state.doc.lineAt(from).number - 1, last = target.state.doc.lineAt(to).number - 1;
+      return levels.slice(first, last + 1).some((level) => level >= 0) || !!indentEdit(text, from, to, direction === 'in' ? 'out' : 'in');
+    }
+    target.dispatch({ changes: { from: edit.from, to: edit.to, insert: edit.insert }, selection: EditorSelection.single(edit.selFrom, edit.selTo), userEvent: 'input.indent', scrollIntoView: true });
+    return true;
+  };
+
   const keys = Prec.high(keymap.of([
+    { key: 'Tab', run: indentKey('in', false), shift: indentKey('out', false) },
+    { key: 'Ctrl-m', run: toggleTabFocusMode },
+    { key: 'Mod-]', run: indentKey('in', true) },
+    { key: 'Mod-[', run: indentKey('out', true) },
     {
       key: 'Enter',
       run: (target) => {
@@ -287,6 +340,10 @@ export function createBodyEditor({ parent, value = '', formatted = true, labels:
       run: (target) => {
         const { main } = target.state.selection, field = target.state.field(formatField);
         if (!main.empty || !field.formatted) return false;
+        // At the start of the words of an item in a level, Backspace takes it one level back (its indent is hidden).
+        const line = target.state.doc.lineAt(main.head), prefix = linePrefix(line.text);
+        if (main.head <= line.from + prefix.markTo && ['bullet', 'ordered', 'task'].includes(prefix.kind)
+          && listLevels(target.state.doc.toString())[line.number - 1] > 0) return indentKey('out', true)(target);
         const edit = backspaceEdit(target.state.doc.toString(), main.head, field.signs);
         if (!edit) return false;
         target.dispatch({ changes: { from: edit.from, to: edit.to, insert: edit.insert }, selection: { anchor: edit.selFrom }, userEvent: 'delete.backward', scrollIntoView: true });
@@ -306,7 +363,7 @@ export function createBodyEditor({ parent, value = '', formatted = true, labels:
     keymap.of([...defaultKeymap, ...historyKeymap]),
     EditorView.lineWrapping,
     placeholder(labels.placeholder),
-    EditorView.contentAttributes.of({ spellcheck: 'true', autocapitalize: 'sentences', autocorrect: 'on', 'aria-label': labels.note }),
+    EditorView.contentAttributes.of({ spellcheck: 'true', autocapitalize: 'sentences', autocorrect: 'on', 'aria-label': labels.note, 'aria-description': labels.keys }),
     formatField,
     // An empty pair the caret leaves without typing in it (a button pressed, then the caret moved on) goes again, so
     // no `****` stays behind in the note.
@@ -414,8 +471,11 @@ export function createBodyEditor({ parent, value = '', formatted = true, labels:
       notify();
       return done;
     }
-    const { from, to } = view.state.selection.main;
-    const edit = applyFormat(view.state.doc.toString(), from, to, command);
+    const { from, to } = view.state.selection.main, text = view.state.doc.toString();
+    // Indent, outdent and the Checklist button go through the shared core too (design kaarten-en-lijsten, part 7).
+    if (LIST_COMMANDS.has(command) && context === 'table') return false;
+    const edit = command === 'indent' || command === 'outdent' ? indentEdit(text, from, to, command === 'indent' ? 'in' : 'out')
+      : command === 'checklist' ? checklistEdit(text, from, to, moveChecked()) : applyFormat(text, from, to, command);
     if (!edit) { view.focus(); return false; }
     view.dispatch({ changes: { from: edit.from, to: edit.to, insert: edit.insert }, selection: EditorSelection.single(edit.selFrom, edit.selTo), userEvent: 'input.format', scrollIntoView: true });
     if (command === 'table') {

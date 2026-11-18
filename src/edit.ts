@@ -1,6 +1,5 @@
 import { App, Modal, Notice, Platform, Scope, SuggestModal, TFile, setIcon } from "obsidian";
 import type JotDropPlugin from "./main";
-import { toggleOrInsertChecklistOnTextArea } from "./capture";
 import { LightboxModal } from "./lightbox";
 import { DrawingModal, isDrawingName, readDrawingAt, saveDrawingFile } from "./drawing";
 import { voidAsync } from "./asyncUtil";
@@ -9,7 +8,7 @@ import { DEFAULT_WARN, WARN_OPTIONS, warnReminder, withPaperDrawer } from "../cl
 import { MarkdownHelpModal } from "./markdownHelp";
 import { t } from "./i18n";
 import { keepModalAboveKeyboard } from "./mobileKeyboard";
-import { enhanceListEditing } from "./listEditor";
+import { enhanceListEditing, toggleChecklistOnTextArea } from "./listEditor";
 import { AskJotDropModal } from "./askJotDrop";
 import { draftAnswer } from "./ai";
 import { fileKind, isFileEmbed, renderFileChip } from "./fileKinds";
@@ -474,7 +473,7 @@ export class EditNoteModal extends Modal {
       text: t("action_checklist"),
     });
     checkBtn.addEventListener("click", () => {
-      toggleOrInsertChecklistOnTextArea(this.bodyEl);
+      toggleChecklistOnTextArea(this.bodyEl, this.plugin.settings.moveChecked);
       this.state.body = this.bodyEl.value;
     });
 

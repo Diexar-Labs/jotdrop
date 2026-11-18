@@ -7,7 +7,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { activeFormats, applyFormat, backspaceEdit, blocks, cellSource, cellText, emptyPair, inlineSpans, linePrefix, listEnterEdit, listLevels, parseTable, tableCells, tableEdit, tickEdit } from '../cloud/shared/format.mjs';
+import { activeFormats, applyFormat, backspaceEdit, blocks, cellSource, cellText, checklistEdit, emptyPair, indentEdit, inlineSpans, linePrefix, listEnterEdit, listLevels, parseTable, tableCells, tableEdit, tickEdit } from '../cloud/shared/format.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const code = (value) => Buffer.from(value, 'utf8').toString('base64');
@@ -41,6 +41,8 @@ const answer = {
     const tick = tickEdit(text, Number(line), Number(move) === 1, Number(from), Number(to));
     return tick ? `${edit(tick)}:${tick.line}` : 'null';
   },
+  indent: (text, from, to, direction) => edit(indentEdit(text, Number(from), Number(to), direction)),
+  checklist: (text, from, to, move) => edit(checklistEdit(text, Number(from), Number(to), Number(move) === 1)),
 };
 // The inserted text as UTF-16 units: a random selection can cut an emoji in half, which UTF-8 cannot carry.
 const units = (value) => Array.from({ length: value.length }, (_, i) => value.charCodeAt(i).toString(16)).join('.');
@@ -74,6 +76,8 @@ for (const vector of vectors.enter) cases.push(['enter', ...unmark(vector.text)]
 for (const vector of vectors.backspace) cases.push(['backspace', ...unmark(vector.text), vector.hidden.map((range) => range.join('-')).join(';')]);
 for (const vector of vectors.levels) cases.push(['levels', vector.text]);
 for (const vector of vectors.tick) cases.push(['tick', ...unmark(vector.text), vector.line, vector.move ? 1 : 0]);
+for (const vector of vectors.indent) cases.push(['indent', ...unmark(vector.text), vector.direction]);
+for (const vector of vectors.checklist) cases.push(['checklist', ...unmark(vector.text), vector.move ? 1 : 0]);
 // A table change as fields: fromLine, type, row, column, after, at, align, text (base64); `_` is not set.
 const tableCase = (text, fromLine, op) => ['table', text, fromLine, op.type,
   ...['row', 'column', 'after', 'at', 'align'].map((key) => (op[key] === undefined ? '_' : op[key])), op.text === undefined ? '_' : code(op.text)];
@@ -135,7 +139,7 @@ for (let i = 0; i < 1500; i++) {
 // Lists in levels and ticks (design kaarten-en-lijsten): every line of the vector texts, the nested-lists fixture and
 // random lists, ticked with and without moving, the caret somewhere at random. Tabs, 2 and 4 spaces mix, as do CRLF,
 // text between the items, code, quotes and tables.
-const listTexts = [...vectors.levels.map((vector) => vector.text), ...vectors.tick.map((vector) => unmark(vector.text)[0]),
+const listTexts = [...vectors.levels.map((vector) => vector.text), ...vectors.tick.map((vector) => unmark(vector.text)[0]), ...vectors.indent.map((vector) => unmark(vector.text)[0]),
   readFileSync(path.join(root, 'cloud/shared/fixtures/format/nested-lists.md'), 'utf8')];
 const listPool = ['- [ ] a', '- [x] b', '- [X] c', '\t- [ ] d', '\t- [x] e', '  - [ ] f', '  - [x] g', '    - [ ] h', '\t\t- [ ] i', '      - [x] j',
   '* [ ] k', '+ [x] l', '- m', '  - n', '1. o', '  2) p', 'text', '  more text', '\tmore', '', '   ', '# Head', '---', '```', '> - [ ] q',
@@ -152,9 +156,21 @@ for (const text of listTexts) {
       cases.push(['tick', text, Math.min(a, b), Math.max(a, b), line, move]);
     }
   }
+  // Tab, Shift+Tab, the Checklist button and Enter at the end of every line; for the first three the caret or a
+  // selection at random.
+  let offset = 0;
+  for (const line of text.split('\n')) {
+    const a = offset + Math.floor(random() * (line.length + 1)), b = random() < 0.7 ? a : Math.floor(random() * (text.length + 1));
+    const end = offset + line.length - (line.endsWith('\r') ? 1 : 0);
+    cases.push(['indent', text, Math.min(a, b), Math.max(a, b), 'in'], ['indent', text, Math.min(a, b), Math.max(a, b), 'out'],
+      ['checklist', text, Math.min(a, b), Math.max(a, b), random() < 0.5 ? 1 : 0], ['enter', text, end, end]);
+    offset += line.length + 1;
+  }
 }
 const moving = cases.filter(([kind, text, , , line, move]) => kind === 'tick' && move === 1 && (tickEdit(text, line, true)?.line ?? line) !== line).length;
 assert.ok(moving > 400, `the lists give enough ticks that move (${moving})`);
+const indenting = cases.filter(([kind, text, from, to, direction]) => kind === 'indent' && direction === 'in' && indentEdit(text, from, to, 'in')).length;
+assert.ok(indenting > 400, `the lists give enough items that indent (${indenting})`);
 
 const temporary = mkdtempSync(path.join(tmpdir(), 'jotdrop-android-format-'));
 try {
