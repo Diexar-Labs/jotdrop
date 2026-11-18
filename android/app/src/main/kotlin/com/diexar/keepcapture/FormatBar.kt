@@ -5,11 +5,15 @@ import androidx.annotation.StringRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -27,6 +31,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.FormatAlignLeft
 import androidx.compose.material.icons.automirrored.filled.FormatAlignRight
 import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.FormatAlignCenter
 import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.BorderColor
@@ -50,14 +56,22 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -66,7 +80,9 @@ import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 
 /** The editor's own choices on this device: the Markdown switch and the recently used emoji. */
 internal object EditorPrefs {
@@ -187,11 +203,7 @@ internal fun FormatBar(
             onEmoji(emoji)
         }
         // The buttons scroll sideways; the Markdown switch stays in sight at the end.
-        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-        Row(
-            modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        ScrollHintRow(foreground, Modifier.padding(horizontal = 4.dp), extra = { MarkdownSwitch(markdown, foreground, onMarkdown) }) {
             BarButton(Icons.Filled.FormatBold, R.string.format_bold, foreground, "bold" in active) { onFormat("bold") }
             BarButton(Icons.Filled.FormatItalic, R.string.format_italic, foreground, "italic" in active) { onFormat("italic") }
             BarButton(Icons.Filled.Title, R.string.format_heading, foreground, "heading" in active) { onFormat("heading") }
@@ -219,8 +231,88 @@ internal fun FormatBar(
                 }
             }
         }
-        MarkdownSwitch(markdown, foreground, onMarkdown)
+    }
+}
+
+/**
+ * A row of buttons that scrolls sideways and shows that it does (Eric, 18 Nov: the Table button sat behind the edge and
+ * he did not know the bar moved). Where more buttons wait, the row fades out and a small arrow next to it points on; a tap
+ * on the arrow moves the row on by a few buttons, and back to the start once the end is in sight. The arrow is a shape,
+ * not a color. [extra] (the Markdown switch) stays put at the end, and a swipe that starts on it moves the row too.
+ */
+@Composable
+private fun ScrollHintRow(
+    foreground: Color,
+    modifier: Modifier = Modifier,
+    extra: (@Composable () -> Unit)? = null,
+    content: @Composable RowScope.() -> Unit,
+) {
+    val scroll = rememberScrollState()
+    val scope = rememberCoroutineScope()
+    val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val density = LocalDensity.current
+    val step = with(density) { 132.dp.toPx() }
+    val fade = with(density) { 24.dp.toPx() }
+    // Our own test (not ScrollState.canScrollForward): it follows the real width of the content at once.
+    val more = scroll.value < scroll.maxValue
+    Row(
+        modifier = modifier.fillMaxWidth().draggable(
+            orientation = Orientation.Horizontal,
+            state = rememberDraggableState { scroll.dispatchRawDelta(if (rtl) it else -it) },
+        ),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                .drawWithContent {
+                    drawContent()
+                    val start = if (rtl) size.width else 0f
+                    val end = if (rtl) 0f else size.width
+                    val sign = if (rtl) -1f else 1f
+                    if (scroll.value > 0) drawRect(
+                        Brush.horizontalGradient(0f to Color.Transparent, 1f to Color.Black, startX = start, endX = start + sign * fade),
+                        blendMode = BlendMode.DstIn,
+                    )
+                    if (scroll.value < scroll.maxValue) drawRect(
+                        Brush.horizontalGradient(0f to Color.Black, 1f to Color.Transparent, startX = end - sign * fade, endX = end),
+                        blendMode = BlendMode.DstIn,
+                    )
+                }
+                .horizontalScroll(scroll),
+            verticalAlignment = Alignment.CenterVertically,
+            content = content,
+        )
+        // Its own place next to the row, so it never sits on a button. It points on while more buttons wait, and back to
+        // the start once the end is in sight. No room is kept for it when all buttons fit.
+        if (scroll.maxValue > 0) ScrollArrow(forward = more, foreground = foreground) {
+            scope.launch { scroll.animateScrollTo(if (more) (scroll.value + step.toInt()).coerceAtMost(scroll.maxValue) else 0) }
         }
+        extra?.invoke()
+    }
+}
+
+/** The arrow next to a [ScrollHintRow], framed like the Markdown switch: points to where more buttons wait; TalkBack hears a button. */
+@Composable
+private fun ScrollArrow(forward: Boolean, foreground: Color, onClick: () -> Unit) {
+    val name = stringResource(if (forward) R.string.format_bar_forward else R.string.format_bar_back)
+    val shape = RoundedCornerShape(8.dp)
+    Box(
+        modifier = Modifier
+            .padding(horizontal = 2.dp)
+            .size(width = 30.dp, height = 40.dp)
+            .clip(shape)
+            .border(1.dp, foreground.copy(alpha = 0.4f), shape)
+            .clickable(role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = name },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            if (forward) Icons.AutoMirrored.Filled.KeyboardArrowRight else Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+            contentDescription = null,
+            tint = foreground,
+        )
     }
 }
 
@@ -238,10 +330,7 @@ internal fun TableBar(
 ) {
     Column(Modifier.fillMaxWidth()) {
         HorizontalDivider(color = foreground.copy(alpha = 0.15f))
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp).horizontalScroll(rememberScrollState()),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        ScrollHintRow(foreground, Modifier.padding(horizontal = 4.dp)) {
             BarButton(Icons.Filled.FormatBold, R.string.format_bold, foreground, "bold" in cell.active) { cell.format("bold") }
             BarButton(Icons.Filled.FormatItalic, R.string.format_italic, foreground, "italic" in cell.active) { cell.format("italic") }
             BarButton(Icons.Filled.BorderColor, R.string.format_highlight, foreground, "highlight" in cell.active) { cell.format("highlight") }

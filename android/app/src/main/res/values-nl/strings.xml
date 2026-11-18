@@ -426,6 +426,8 @@
     <string name="format_highlight">Markeren</string>
     <string name="format_emoji">Emoji</string>
     <string name="format_more">Meer opmaak</string>
+    <string name="format_bar_forward">Meer knoppen</string>
+    <string name="format_bar_back">Eerdere knoppen</string>
     <string name="format_strike">Doorhalen</string>
     <string name="format_quote">Citaat</string>
     <string name="format_code">Code</string>

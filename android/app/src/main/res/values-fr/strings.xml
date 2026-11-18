@@ -113,6 +113,8 @@
     <string name="format_highlight">Surligner</string>
     <string name="format_emoji">Émoji</string>
     <string name="format_more">Plus de mise en forme</string>
+    <string name="format_bar_forward">Plus de boutons</string>
+    <string name="format_bar_back">Boutons précédents</string>
     <string name="format_strike">Barré</string>
     <string name="format_quote">Citation</string>
     <string name="format_code">Code</string>
