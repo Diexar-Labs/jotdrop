@@ -113,6 +113,8 @@
     <string name="format_highlight">Evidenzia</string>
     <string name="format_emoji">Emoji</string>
     <string name="format_more">Altra formattazione</string>
+    <string name="format_bar_forward">Altri pulsanti</string>
+    <string name="format_bar_back">Pulsanti precedenti</string>
     <string name="format_strike">Barrato</string>
     <string name="format_quote">Citazione</string>
     <string name="format_code">Codice</string>

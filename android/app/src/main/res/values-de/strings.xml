@@ -113,6 +113,8 @@
     <string name="format_highlight">Markieren</string>
     <string name="format_emoji">Emoji</string>
     <string name="format_more">Weitere Formatierung</string>
+    <string name="format_bar_forward">Weitere Schaltflächen</string>
+    <string name="format_bar_back">Frühere Schaltflächen</string>
     <string name="format_strike">Durchstreichen</string>
     <string name="format_quote">Zitat</string>
     <string name="format_code">Code</string>

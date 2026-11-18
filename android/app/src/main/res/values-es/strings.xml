@@ -113,6 +113,8 @@
     <string name="format_highlight">Resaltar</string>
     <string name="format_emoji">Emoji</string>
     <string name="format_more">Más formato</string>
+    <string name="format_bar_forward">Más botones</string>
+    <string name="format_bar_back">Botones anteriores</string>
     <string name="format_strike">Tachado</string>
     <string name="format_quote">Cita</string>
     <string name="format_code">Código</string>

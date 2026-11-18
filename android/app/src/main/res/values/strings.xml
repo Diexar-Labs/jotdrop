@@ -438,6 +438,8 @@
     <string name="format_highlight">Highlight</string>
     <string name="format_emoji">Emoji</string>
     <string name="format_more">More formatting</string>
+    <string name="format_bar_forward">More buttons</string>
+    <string name="format_bar_back">Earlier buttons</string>
     <string name="format_strike">Strikethrough</string>
     <string name="format_quote">Quote</string>
     <string name="format_code">Code</string>
