@@ -24,6 +24,7 @@ const ROWS: [code: string, result: Result, key: string][] = [
   ["#tag", "text", "md_help_tag"],
   ["---", "text", "md_help_divider"],
   ["| A | B |\n| --- | --- |\n| 1 | 2 |", "text", "md_help_table"],
+  ["Tab · Shift+Tab", "text", "md_help_indent"],
 ];
 
 export class MarkdownHelpModal extends Modal {
