@@ -1,4 +1,4 @@
-import { App, Modal, Notice, SuggestModal, TFile, setIcon } from "obsidian";
+import { App, Modal, Notice, Platform, Scope, SuggestModal, TFile, setIcon } from "obsidian";
 import type JotDropPlugin from "./main";
 import { toggleOrInsertChecklistOnTextArea } from "./capture";
 import { LightboxModal } from "./lightbox";
@@ -88,6 +88,7 @@ export class EditNoteModal extends Modal {
   private cleanupKeyboard: (() => void) | null = null;
   private cleanupListEditor: (() => void) | null = null;
   private dropReady = false;
+  private escapeScope: Scope | null = null;
   // The warning picked in this modal; it is not stored, the reminder it made is.
   private warnChoice = "";
   // Files whose embed was taken off in this modal: after saving, the ones no note uses any more go to the trash.
@@ -111,7 +112,54 @@ export class EditNoteModal extends Modal {
     this.contentEl.addClass("jotdrop-edit-modal");
     this.cleanupKeyboard = keepModalAboveKeyboard(this);
     this.registerNavHandlers();
+    this.registerEscapeSaves();
     await this.loadNote(this.file);
+    // After the note is built: made earlier, this button would be the first thing the dialog puts focus on.
+    this.addExpandButton();
+  }
+
+  /**
+   * Esc saves the note and closes the editor (issue #44, point 6). A failed save keeps the editor open,
+   * and Cancel still discards. Only a note with unsaved changes is written, so opening and closing a note
+   * leaves the file as it was.
+   */
+  private registerEscapeSaves(): void {
+    // The dialog's own Escape handler (close without saving) is registered first and would win in this.scope,
+    // so ours sits in a child scope pushed on top of it. Nested dialogs push theirs above, so Esc there is theirs.
+    const scope = new Scope(this.scope);
+    scope.register([], "Escape", () => {
+      void this.saveAndClose();
+      return false;
+    });
+    this.app.keymap.pushScope(scope);
+    this.escapeScope = scope;
+  }
+
+  private async saveAndClose(): Promise<void> {
+    if (this.isDirty() && !(await this.persist())) return;
+    this.close();
+  }
+
+  /**
+   * Desktop: a button beside the close button that lets the editor fill the window, and back (issue #44, point 5).
+   * The state is per editor window; on a phone the editor already fills the screen.
+   */
+  private addExpandButton(): void {
+    if (Platform.isMobile) return;
+    const btn = this.modalEl.createEl("button", { cls: "jotdrop-edit-expand clickable-icon" });
+    const sync = (): void => {
+      const on = this.modalEl.hasClass("jotdrop-edit-fullscreen");
+      const label = t(on ? "action_exit_fullscreen" : "action_fullscreen");
+      setIcon(btn, on ? "minimize-2" : "maximize-2");
+      btn.setAttribute("aria-label", label);
+      btn.setAttribute("title", label);
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+    };
+    btn.addEventListener("click", () => {
+      this.modalEl.toggleClass("jotdrop-edit-fullscreen", !this.modalEl.hasClass("jotdrop-edit-fullscreen"));
+      sync();
+    });
+    sync();
   }
 
   /** Loads a note into the modal. Called on open and again on prev/next navigation. */
@@ -895,6 +943,8 @@ export class EditNoteModal extends Modal {
   }
 
   onClose(): void {
+    if (this.escapeScope) this.app.keymap.popScope(this.escapeScope);
+    this.escapeScope = null;
     this.plugin.cloud?.endEdit(this.file.path);
     this.cleanupListEditor?.();
     this.cleanupListEditor = null;

@@ -1288,6 +1288,9 @@ private fun EditorScreen(
                                 selection = TextRange(changed.second),
                             )
                             else -> next
+                        }.let { value ->
+                            // A letter typed first in a list item becomes a capital (issue #44, point 9).
+                            capitalizeListItemStart(current.text, value.text)?.let { value.copy(text = it) } ?: value
                         }.let { current.leavingEmptyPair(it) }.let { result ->
                             // A text piece next to a table: what the pipeline makes of its change may not reach into
                             // the table (a Backspace that joins the line above); then it is the field's own change.
