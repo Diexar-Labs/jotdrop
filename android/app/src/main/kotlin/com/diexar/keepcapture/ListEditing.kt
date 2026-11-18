@@ -97,6 +97,31 @@ internal fun listEnterAfterChange(
     return base.replaceRange(edit.from, edit.to, edit.insert) to edit.from + edit.insert.length
 }
 
+/**
+ * A lowercase letter typed as the first thing in a list item (after "- ", "- [ ] " or "1. ") becomes a capital, like the
+ * first letter of a sentence (issue #44, point 9). The keyboard cannot do it: it sees a marker before the cursor, not a
+ * sentence start. Only one typed character counts; pasted text, a dictated phrase and a word taken from a suggestion
+ * stay as they came, and so does an edit anywhere else in the item. Null when [next] needs no change.
+ */
+internal fun capitalizeListItemStart(current: String, next: String): String? {
+    val diff = textDiff(current, next)
+    if (diff.endB - diff.start != 1 || diff.endA - diff.start > 1) return null
+    val typed = next[diff.start]
+    if (!typed.isLowerCase()) return null
+    val lineStart = next.lastIndexOf('\n', diff.start - 1) + 1
+    val lineEnd = next.indexOf('\n', diff.start).let { if (it < 0) next.length else it }
+    var fence: String? = null
+    for (line in next.substring(0, lineStart).split('\n')) fence = nextFence(line, fence)
+    if (fence != null) return null
+    val prefix = FormatCore.linePrefix(next.substring(lineStart, lineEnd))
+    if (prefix.kind != "bullet" && prefix.kind != "task" && prefix.kind != "ordered") return null
+    if (diff.start != lineStart + prefix.markTo) return null
+    val capital = typed.uppercase()
+    // A letter with no single-letter capital (the German sharp s becomes two letters) is left alone.
+    if (capital.length != 1 || capital[0] == typed) return null
+    return next.replaceRange(diff.start, diff.start + 1, capital)
+}
+
 /** Where [b] differs from [a]: the part a[start, endA) became b[start, endB). */
 internal data class TextDiff(val start: Int, val endA: Int, val endB: Int) {
     val size get() = (endA - start) + (endB - start)

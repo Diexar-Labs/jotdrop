@@ -1,4 +1,4 @@
-import { App, ItemView, Menu, Modal, Notice, TFile, WorkspaceLeaf, normalizePath, setIcon } from "obsidian";
+import { App, ItemView, Menu, Modal, Notice, Scope, TFile, WorkspaceLeaf, normalizePath, setIcon } from "obsidian";
 import { PAPER_DRAWER, drawerLabel, drawerName, inDrawer, isPaperDrawer } from "../cloud/shared/paper.mjs";
 import { cardPreview, tagOnly } from "../cloud/shared/card-preview.mjs";
 import { cardTable } from "../cloud/shared/format-dom.mjs";
@@ -555,6 +555,17 @@ export class JotDropView extends ItemView {
       }, 100);
     });
     this.resizeObserver.observe(root);
+
+    // Ctrl+F (Cmd+F on macOS) jumps to the search field while this view is active (issue #44, point 7).
+    // Obsidian handles hotkeys before the DOM sees them, so this goes through the view's own key scope.
+    // In selection mode the toolbar is swapped, so the key keeps its normal meaning there.
+    this.scope = new Scope(this.app.scope);
+    this.scope.register(["Mod"], "f", () => {
+      if (this.selectionMode) return;
+      this.searchEl.focus();
+      this.searchEl.select();
+      return false;
+    });
 
     // Escape exits selection mode (counterpart of Android's BackHandler).
     this.registerDomEvent(activeDocument, "keydown", (ev: KeyboardEvent) => {

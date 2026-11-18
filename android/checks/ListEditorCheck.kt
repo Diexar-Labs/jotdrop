@@ -64,6 +64,39 @@ fun main() {
     changed("- [ ] mlk", "- [ ] milk\nmore\n", 16, null)
     changed("- [ ] milk", "- [ ] milk", 10, null)
     changed("```\n- mlk", "```\n- milk\n", 11, null)
+    // The first letter typed in a list item becomes a capital; nothing else is touched (issue #44, point 9).
+    fun capital(current: String, next: String, expected: String?) {
+        val result = capitalizeListItemStart(current, next)
+        check(result == expected) { "Wrong capital: $current -> $next gave $result" }
+    }
+    capital("- ", "- a", "- A")
+    capital("* ", "* a", "* A")
+    capital("- [ ] ", "- [ ] b", "- [ ] B")
+    capital("- [x] ", "- [x] b", "- [x] B")
+    capital("  - ", "  - m", "  - M")
+    capital("\t* ", "\t* m", "\t* M")
+    capital("1. ", "1. t", "1. T")
+    capital("2) ", "2) t", "2) T")
+    capital("Intro\n- ", "Intro\n- k", "Intro\n- K")
+    capital("- one\n- ", "- one\n- k", "- one\n- K")
+    capital("- ", "- é", "- É")
+    capital("```\nx\n```\n- ", "```\nx\n```\n- d", "```\nx\n```\n- D")
+    capital("- ", "- ß", null)
+    capital("- ", "- 1", null)
+    capital("- ", "- #", null)
+    capital("- ", "- A", null)
+    capital("- a", "- ab", null)
+    capital("- hello", "- hello world", null)
+    capital("- ", "- ab", null)
+    capital("- ", "- ", null)
+    capital("- abc", "- bc", null)
+    capital("plain ", "plain t", null)
+    capital("", "t", null)
+    capital("- [ ", "- [ x", null)
+    capital("```\n- ", "```\n- c", null)
+    capital("~~~\ntext\n- ", "~~~\ntext\n- c", null)
+    capital("> - ", "> - q", null)
+    capital("# ", "# h", null)
     // The field still edits the text from before the list edit (seen on the emulator, 5 Nov):
     // Enter, an echo of the old text, then "jam" typed fast, all on the old text.
     run {
