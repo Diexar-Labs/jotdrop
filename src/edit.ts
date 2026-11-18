@@ -9,6 +9,7 @@ import { MarkdownHelpModal } from "./markdownHelp";
 import { t } from "./i18n";
 import { keepModalAboveKeyboard } from "./mobileKeyboard";
 import { enhanceListEditing, toggleChecklistOnTextArea } from "./listEditor";
+import { createFormatBar, FormatBar } from "./formatBar";
 import { AskJotDropModal } from "./askJotDrop";
 import { draftAnswer } from "./ai";
 import { fileKind, isFileEmbed, renderFileChip } from "./fileKinds";
@@ -86,6 +87,7 @@ export class EditNoteModal extends Modal {
   private touchOnTextField = false;
   private cleanupKeyboard: (() => void) | null = null;
   private cleanupListEditor: (() => void) | null = null;
+  private formatBar: FormatBar | null = null;
   private dropReady = false;
   private escapeScope: Scope | null = null;
   // The warning picked in this modal; it is not stored, the reminder it made is.
@@ -235,8 +237,11 @@ export class EditNoteModal extends Modal {
         }
         this.touchStartX = e.touches[0].clientX;
         this.touchStartY = e.touches[0].clientY;
-        // Swiping inside a text field selects text — never treat it as navigation.
-        this.touchOnTextField = isTextFieldElement(e.target);
+        // Swiping inside a text field selects text, and swiping over the format
+        // bar or emoji panel scrolls them sideways — never treat either as navigation.
+        this.touchOnTextField =
+          isTextFieldElement(e.target) ||
+          (e.target instanceof Element && e.target.closest(".jotdrop-format-bar, .jotdrop-emoji-panel") !== null);
       },
       { passive: true },
     );
@@ -301,6 +306,8 @@ export class EditNoteModal extends Modal {
 
   private buildLayout(): void {
     const root = this.contentEl;
+    this.formatBar?.destroy();
+    this.formatBar = null;
     this.cleanupListEditor?.();
     root.empty();
 
@@ -329,6 +336,12 @@ export class EditNoteModal extends Modal {
     this.bodyEl.addEventListener("input", () => {
       this.state.body = this.bodyEl.value;
     });
+    // The formatting bar right above the text (design opmaak-editor, part 8); the codes stay visible in the text.
+    this.formatBar = createFormatBar(this.app, this.bodyEl, {
+      moveChecked: () => this.plugin.settings.moveChecked,
+      parentScope: () => this.escapeScope,
+    });
+    this.bodyEl.parentElement?.before(this.formatBar.element);
 
     const footer = root.createDiv({ cls: "jotdrop-edit-footer" });
     const cancel = footer.createEl("button", { text: t("action_cancel") });
@@ -945,6 +958,8 @@ export class EditNoteModal extends Modal {
     if (this.escapeScope) this.app.keymap.popScope(this.escapeScope);
     this.escapeScope = null;
     this.plugin.cloud?.endEdit(this.file.path);
+    this.formatBar?.destroy();
+    this.formatBar = null;
     this.cleanupListEditor?.();
     this.cleanupListEditor = null;
     this.cleanupKeyboard?.();

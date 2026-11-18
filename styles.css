@@ -1512,6 +1512,235 @@
   margin-top: 12px;
 }
 
+/* Formatting bar of the edit window (design opmaak-editor, part 5.3 and 8): one row that scrolls sideways when narrow */
+
+.jotdrop-format-bar {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 2px;
+  margin: 0 0 6px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.jotdrop-format-btn {
+  flex: 0 0 auto;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-normal);
+  cursor: pointer;
+}
+
+.jotdrop-format-btn:hover {
+  background: var(--background-modifier-hover);
+}
+
+.jotdrop-format-btn:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 1px;
+}
+
+/* "On" is a shape and not only a color: a thicker edge and a line under the button. */
+.jotdrop-format-btn[aria-pressed="true"] {
+  border: 2px solid var(--text-normal);
+  box-shadow: inset 0 -3px 0 var(--text-normal);
+  background: var(--background-modifier-hover);
+}
+
+.jotdrop-format-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.is-mobile .jotdrop-format-btn {
+  min-width: 40px;
+  height: 40px;
+}
+
+.jotdrop-table-bar .jotdrop-format-btn {
+  font-size: 0.85em;
+}
+
+.jotdrop-emoji-panel {
+  max-height: 240px;
+  margin: 0 0 8px;
+  padding: 8px;
+  overflow-y: auto;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-secondary);
+}
+
+.jotdrop-emoji-panel h3 {
+  margin: 4px 0;
+  font-size: 0.8em;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.jotdrop-emoji-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.jotdrop-emoji-row button {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 1.25em;
+  cursor: pointer;
+}
+
+.jotdrop-emoji-row button:hover,
+.jotdrop-emoji-row button:focus-visible {
+  background: var(--background-modifier-hover);
+}
+
+.jotdrop-emoji-hint {
+  margin: 6px 0 0;
+  font-size: 0.8em;
+  color: var(--text-muted);
+}
+
+/* The table grid window (cloud/shared/table-grid.mjs): the web editor's grid in Obsidian's colors */
+
+.modal.jotdrop-table-modal {
+  width: min(760px, 96vw);
+}
+
+/* Phones: Obsidian reports the keyboard height in --keyboard-height but does not shrink the screen, so a window
+   centered in the full height ends up with its lower part (second row, Done) behind the keyboard. */
+.is-phone .modal-container.jotdrop-table-modal-container {
+  box-sizing: border-box;
+  padding-bottom: var(--keyboard-height, 0px);
+}
+
+.is-phone .jotdrop-table-modal-container .modal.jotdrop-table-modal {
+  max-height: 100%;
+  overflow-y: auto;
+}
+
+.jotdrop-table-modal .jd-grid-block {
+  padding: 6px 0;
+}
+
+.jotdrop-table-modal .jd-grid {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.jotdrop-table-modal .jd-grid table {
+  width: max-content;
+  max-width: none;
+  margin: 0;
+  border-collapse: collapse;
+}
+
+.jotdrop-table-modal .jd-grid th,
+.jotdrop-table-modal .jd-grid td {
+  min-width: 56px;
+  max-width: 220px;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.jotdrop-table-modal .jd-grid th {
+  font-weight: 700;
+  border-bottom: 1.5px solid currentColor;
+}
+
+/* Wide tables scroll inside their frame; the first column stays. */
+.jotdrop-table-modal .jd-grid th:first-child,
+.jotdrop-table-modal .jd-grid td:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--modal-background, var(--background-primary));
+}
+
+/* Every other row a little darker; opaque, so the first column covers what scrolls under it. */
+.jotdrop-table-modal .jd-grid tbody tr:nth-child(even) > * {
+  background: color-mix(in srgb, var(--text-normal) 6%, var(--modal-background, var(--background-primary)));
+}
+
+.jotdrop-table-modal .jd-grid .jd-align-center { text-align: center; }
+.jotdrop-table-modal .jd-grid .jd-align-right { text-align: right; }
+
+.jotdrop-table-modal .jd-cell {
+  min-height: 1.55em;
+  padding: 4px 8px;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  cursor: text;
+}
+
+.jotdrop-table-modal .jd-cell:focus-visible,
+.jotdrop-table-modal .jd-cell.jd-editing {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: -2px;
+}
+
+.jotdrop-table-modal .jd-cell-input,
+.jotdrop-table-modal .jd-cell-input:focus {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  resize: none;
+  overflow: hidden;
+  background: transparent;
+  box-shadow: none;
+  color: inherit;
+  font: inherit;
+  line-height: 1.55;
+  text-align: inherit;
+  outline: none;
+}
+
+.jotdrop-table-modal .jd-bold { font-weight: 700; }
+.jotdrop-table-modal .jd-italic { font-style: italic; }
+.jotdrop-table-modal .jd-strike { text-decoration: line-through; }
+.jotdrop-table-modal .jd-mark { background: var(--text-highlight-bg); border-radius: 3px; }
+.jotdrop-table-modal .jd-code { font-family: var(--font-monospace); font-size: 0.92em; }
+.jotdrop-table-modal .jd-link { color: var(--link-color); text-decoration: underline; }
+
+/* A strip to type above or below a table at the very start or end of the note. */
+.jotdrop-table-modal .jd-grid-strip {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 4px 0;
+  padding: 4px 8px;
+  border: 1px dashed var(--background-modifier-border);
+  border-radius: 8px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-muted);
+  font-size: 0.85em;
+  text-align: left;
+  cursor: text;
+}
+
+.jotdrop-table-modal .jd-grid-strip[hidden] {
+  display: none;
+}
+
 /* Editor window: full-screen toggle on the desktop (issue #44, point 5) */
 
 .modal .jotdrop-edit-expand {
