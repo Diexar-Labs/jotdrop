@@ -695,3 +695,163 @@ export function tableEdit(text, fromLine, op) {
     default: return null;
   }
 }
+
+// --- Lists in levels and ticking a task (design kaarten-en-lijsten, parts 4 and 6) ---------------------------------
+
+const LIST_KINDS = new Set(['task', 'bullet', 'ordered']);
+
+/** The width of a line's indent in columns: a space is 1, a tab goes on to the next multiple of 4. */
+function indentColumns(line) {
+  let column = 0;
+  for (const char of line) {
+    if (char === ' ') column++;
+    else if (char === '\t') column += 4 - (column % 4);
+    else break;
+  }
+  return column;
+}
+
+/**
+ * The lists of a text, per line: a list line (task, bullet, numbered) is { level, column, parent, series }, with
+ * `parent` the line of its main item or -1; a line of more text that belongs to an item (indented deeper than the
+ * series' first level) is { level: -1, column, parent, series }; every other line is null. A series of list lines
+ * ends at a blank line, a plain text line that is not indented deeper, a heading, a rule, a quote, a table or a code
+ * block. The level comes from a stack: a line at column k takes everything at k or further off it.
+ */
+function listStructure(text) {
+  const lines = String(text).split('\n'), kinds = lineKinds(text);
+  /** @type {({ level: number, column: number, parent: number, series: number } | null)[]} */
+  const out = [];
+  /** @type {{ column: number, line: number }[]} */
+  let stack = [];
+  let series = -1;
+  lines.forEach((line, index) => {
+    const kind = kinds[index] === 'text' ? linePrefix(line).kind : null;
+    const column = indentColumns(line);
+    if (kind !== null && LIST_KINDS.has(kind)) {
+      if (!stack.length) series++;
+      while (stack.length && stack[stack.length - 1].column >= column) stack.pop();
+      out.push({ level: stack.length, column, parent: stack.length ? stack[stack.length - 1].line : -1, series });
+      stack.push({ column, line: index });
+      return;
+    }
+    if (kind === '' && !blank(line) && stack.length && column > stack[0].column) {
+      while (stack[stack.length - 1].column >= column) stack.pop();
+      out.push({ level: -1, column, parent: stack[stack.length - 1].line, series });
+      return;
+    }
+    stack = [];
+    out.push(null);
+  });
+  return out;
+}
+
+/** The last line of an item: its own line plus the lines under it that are indented deeper (sub-items, more text). */
+function itemEnd(structure, line) {
+  const item = structure[line];
+  let end = line;
+  while (end + 1 < structure.length && structure[end + 1]?.series === item.series && structure[end + 1].column > item.column) end++;
+  return end;
+}
+
+/**
+ * The level of every line: 0 and up for a task, bullet or numbered line, -1 for any other line (design part 4).
+ * Tabs, 2 spaces and 4 spaces all read: a tab counts to the next multiple of 4 columns.
+ * @param {string} text
+ * @returns {number[]}
+ */
+export function listLevels(text) {
+  return listStructure(text).map((item) => (item ? item.level : -1));
+}
+
+/**
+ * Ticks or unticks the task on line `line` (ticking writes a small `x`). With `move` (the setting "Move checked items
+ * to the bottom") the task moves along with the lines under it, never past a blank or text line (design part 6):
+ * ticked, it goes right under its last open sibling below it; unticked, right above its first ticked sibling above
+ * it; else it stays. Bullets and numbered lines between the tasks stay where they are. Siblings are the items with the
+ * same main item in the same series, so a sub-item stays among the sub-items of its main item.
+ * One replacement plus `line`, the line the task is on now. The selection stays in its own text: in the task it goes
+ * along with it, so a second press puts the same task back. Null when `line` is no task in a text block.
+ * @param {string} text
+ * @param {number} line
+ * @param {boolean} move
+ * @param {number} [selFrom]
+ * @param {number} [selTo]
+ */
+export function tickEdit(text, line, move, selFrom = 0, selTo = selFrom) {
+  text = String(text);
+  const lines = text.split('\n'), structure = listStructure(text);
+  const item = structure[line];
+  if (!item || item.level < 0) return null;
+  const prefix = linePrefix(lines[line]);
+  if (prefix.kind !== 'task') return null;
+  const box = lines[line].indexOf('[', prefix.markFrom + 1) + 1;
+  const checked = !prefix.checked;
+  const toggled = lines.slice();
+  toggled[line] = lines[line].slice(0, box) + (checked ? 'x' : ' ') + lines[line].slice(box + 1);
+
+  let order = lines.map((_, index) => index), at = line;
+  if (move) {
+    const end = itemEnd(structure, line);
+    // More text of the main item between its sub-items splits them into two lists, as in Markdown.
+    const joined = (index) => structure[index]?.series === item.series && !(structure[index].level < 0 && structure[index].parent === item.parent);
+    let first = line, last = line;
+    while (joined(first - 1)) first--;
+    while (joined(last + 1)) last++;
+    const siblings = [];
+    for (let index = first; index <= last; index++) {
+      const other = structure[index];
+      if (index !== line && other.level >= 0 && other.parent === item.parent) {
+        const kind = linePrefix(lines[index]);
+        if (kind.kind === 'task') siblings.push({ index, checked: kind.checked });
+      }
+    }
+    const block = order.slice(line, end + 1);
+    const open = siblings.filter((other) => other.index > line && !other.checked);
+    const done = siblings.filter((other) => other.index < line && other.checked);
+    if (checked && open.length) {
+      const target = itemEnd(structure, open[open.length - 1].index);
+      order = [...order.slice(0, line), ...order.slice(end + 1, target + 1), ...block, ...order.slice(target + 1)];
+      at = line + target - end;
+    } else if (!checked && done.length) {
+      const target = done[0].index;
+      order = [...order.slice(0, target), ...block, ...order.slice(target, line), ...order.slice(end + 1)];
+      at = target;
+    }
+  }
+  const arrange = () => {
+    const next = order.map((index) => toggled[index]);
+    const last = lines.length - 1;
+    if (order[last] !== last) {
+      // The last line has no `\n` after it: the line that ends the text now takes over its ending, and the old last
+      // line gets the ending of the line it swapped with. A CRLF text stays CRLF.
+      const moved = order.indexOf(last), middleCr = crOf(toggled[order[last]]);
+      next[moved] = withoutCr(next[moved]) + middleCr;
+      next[last] = withoutCr(next[last]) + crOf(toggled[last]);
+    }
+    return next;
+  };
+  let next = arrange();
+  if (at !== line) {
+    // With mixed indents (4 spaces, then 2) a moved task could land under another main item. Then it is only ticked.
+    const after = listStructure(next.join('\n'));
+    const kept = order.every((old, index) => {
+      const was = structure[old], now = after[index];
+      if (!was || !now) return !was && !now;
+      return was.level === now.level && (was.parent < 0 ? now.parent < 0 : order[now.parent] === was.parent);
+    });
+    if (!kept) { order = lines.map((_, index) => index); at = line; next = arrange(); }
+  }
+  const out = next.join('\n');
+  const before = lineTable(text);
+  const starts = [];
+  let offset = 0;
+  for (const value of next) { starts.push(offset); offset += value.length + 1; }
+  const map = (pos) => {
+    pos = Math.max(0, Math.min(text.length, pos));
+    const index = before.at(pos), to = order.indexOf(index);
+    return starts[to] + Math.min(pos - before.starts[index], next[to].length);
+  };
+  const a = map(selFrom), b = map(selTo);
+  return { ...replacement(text, out, Math.min(a, b), Math.max(a, b)), line: at };
+}

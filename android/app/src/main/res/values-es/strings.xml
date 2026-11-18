@@ -141,4 +141,7 @@
     <string name="emoji_food">Comida</string>
     <string name="emoji_travel">Viajes</string>
     <string name="emoji_symbols">Símbolos</string>
+    <string name="section_checklists">Listas de tareas</string>
+    <string name="move_checked_label">Mover los elementos marcados al final</string>
+    <string name="move_checked_hint">Al marcar una tarea, pasa debajo de las tareas abiertas de su lista. Al desmarcarla, vuelve a subir. Esto cambia el orden de las líneas en la nota.</string>
 </resources>

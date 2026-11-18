@@ -706,6 +706,9 @@
 .jotdrop-card-preview .jd-table-more { margin: 2px 0 0; font-size: .85em; color: var(--text-faint); }
 .jotdrop-preview-task { display: flex; align-items: flex-start; }
 .jotdrop-preview-task .jotdrop-task-text { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+/* Lists in levels on the cards (design kaarten-en-lijsten, part 7): 3 levels. */
+.jotdrop-card-preview .jotdrop-level-1 { margin-left: 1.25em; }
+.jotdrop-card-preview .jotdrop-level-2 { margin-left: 2.5em; }
 .jotdrop-card .compact-preview-controls { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px 8px; margin-top: 6px; }
 .jotdrop-card .compact-preview-controls[hidden] { display: none; }
 .jotdrop-card .compact-preview-controls button { min-height: 32px; font-size: .85em; padding: 4px 8px; }

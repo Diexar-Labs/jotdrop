@@ -11,6 +11,18 @@ fun main() {
         if (count >= 10) check(toggleChecklistText(text, rows[9].checklistIndex!!)!!.lines()[9] == "- [x] task 10")
     }
     check(previewTaskRows("Intro\n> - [ ] quote\n* [ ] bullet\n- [x] real").last().checklistIndex == 0)
+    // Card rows carry their list level (design kaarten-en-lijsten, part 7): -1 is no list line.
+    check(previewTaskRows("- a\n\t- [ ] b\n\t\t- c\n    - d\ntext").map { it.level } == listOf(0, 1, 2, 1, -1))
+    // A tick from the card or the widget: the Nth task as before, through the core, moved only with the setting (part 6).
+    check(tickChecklistText("- [ ] a\n- [ ] b", 0, false) == "- [x] a\n- [ ] b")
+    check(tickChecklistText("- [ ] a\n- [ ] b", 0, true) == "- [ ] b\n- [x] a")
+    check(tickChecklistText("- [x] a\n- [x] b", 1, true) == "- [ ] b\n- [x] a")
+    check(tickChecklistText("- [ ] a\r\n- [ ] b", 0, true) == "- [ ] b\r\n- [x] a")
+    check(tickChecklistText("- [ ] a\ntext\n- [ ] b", 0, true) == "- [x] a\ntext\n- [ ] b")
+    check(tickChecklistText("- [ ] a\n\t- [ ] sub\n- [ ] b", 0, true) == "- [ ] b\n- [x] a\n\t- [ ] sub")
+    // A task the card counts but the core does not (in a code block) still ticks, without moving.
+    check(tickChecklistText("```\n- [ ] code\n```\n- [ ] a\n- [ ] b", 0, true) == "```\n- [x] code\n```\n- [ ] a\n- [ ] b")
+    check(tickChecklistText("- [ ] a", 1, true) == null)
     fun enter(text: String, expected: String, start: Int = text.length, end: Int = start) {
         val edit = checkNotNull(listEnterEdit(text, start, end)) { "Expected a list edit: $text" }
         check(text.replaceRange(edit.from, edit.to, edit.insert) == expected) { "Wrong list edit: $text" }

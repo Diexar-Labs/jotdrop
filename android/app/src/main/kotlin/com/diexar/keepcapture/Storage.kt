@@ -50,6 +50,7 @@ object Storage {
     private const val KEY_ASSETS_FOLDER = "assets_folder"
     private const val KEY_SPEECH_LANG = "speech_language"
     private const val KEY_DOWNLOAD_IMAGES = "download_images"
+    private const val KEY_MOVE_CHECKED = "move_checked"
     private const val KEY_SORT_MODE = "sort_mode"
     private const val KEY_ONE_COLUMN = "one_column_cards"
     private const val KEY_THEME = "app_theme"
@@ -183,6 +184,14 @@ object Storage {
             .edit()
             .putBoolean(KEY_DOWNLOAD_IMAGES, enabled)
             .apply()
+    }
+
+    /** "Move checked items to the bottom" (design kaarten-en-lijsten, part 6): per device, off by default. */
+    fun getMoveChecked(context: Context): Boolean =
+        PreferenceManager.getDefaultSharedPreferences(context).getBoolean(KEY_MOVE_CHECKED, false)
+
+    fun saveMoveChecked(context: Context, enabled: Boolean) {
+        PreferenceManager.getDefaultSharedPreferences(context).edit().putBoolean(KEY_MOVE_CHECKED, enabled).apply()
     }
 
     fun getThemeChoice(context: Context): ThemeChoice {
@@ -1280,7 +1289,10 @@ object Storage {
         }
     }
 
-    /** Schakelt exact het N-de Markdown-checklist-item in de body om. */
+    /**
+     * Schakelt exact het N-de Markdown-checklist-item in de body om. Met "Move checked items to the bottom" verhuist
+     * het daarbij in de notitie (de kaart, de widget: alles wat hier vinkt).
+     */
     fun toggleChecklistItem(context: Context, uri: Uri, targetIndex: Int, expectedSnippet: String? = null): Result<Unit> {
         if (targetIndex < 0) {
             return Result.failure(IllegalArgumentException("Ongeldig checklist-item."))
@@ -1293,7 +1305,7 @@ object Storage {
         if (expectedSnippet != null && !sameChecklistPreview(extractSnippet(body), expectedSnippet)) {
             return Result.failure(IllegalStateException(context.getString(R.string.save_conflict_title)))
         }
-        val updatedBody = toggleChecklistText(body, targetIndex)
+        val updatedBody = tickChecklistText(body, targetIndex, getMoveChecked(context))
             ?: return Result.failure(IllegalStateException("Checklist-item bestaat niet meer."))
         return updateNote(context, uri, head + updatedBody)
     }

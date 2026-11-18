@@ -2,7 +2,7 @@ import { App, ItemView, Menu, Modal, Notice, TFile, WorkspaceLeaf, normalizePath
 import { PAPER_DRAWER, drawerLabel, drawerName, inDrawer, isPaperDrawer } from "../cloud/shared/paper.mjs";
 import { cardPreview, tagOnly } from "../cloud/shared/card-preview.mjs";
 import { cardTable } from "../cloud/shared/format-dom.mjs";
-import { type CardTable, checklistPreviewRows, previewPlain, wrapTaskText } from "./metadata";
+import { type CardTable, type PreviewRow, checklistPreviewRows, previewPlain, wrapTaskText } from "./metadata";
 import type JotDropPlugin from "./main";
 import { QuickCaptureModal, createNoteInFolder } from "./capture";
 import { AttachmentPreviewHint, EditNoteModal } from "./edit";
@@ -32,7 +32,7 @@ import {
   plainPreviewText,
   renderInlinePreview,
   stripFrontmatter,
-  toggleChecklistItem,
+  tickChecklistItem,
   updateMeta,
 } from "./metadata";
 import { discoverLabels, assignLabel, removeLabel, createLabel as managerCreateLabel, renameLabel as managerRenameLabel, deleteLabel as managerDeleteLabel, LabelInfo } from "./labelManager";
@@ -2291,12 +2291,13 @@ export class JotDropView extends ItemView {
       const preview = body.createDiv({ cls: "jotdrop-card-preview" });
       let expectedContent = content;
       const controller = cardPreview(preview, previewRows, {
-        isTask: (row: { index?: number }) => row.index !== undefined,
-        // Like Keep: only a note of nothing but tasks is a checklist card; elsewhere a task reads as ☐/☑ text.
-        isChecked: (row: { checked?: boolean }) => Boolean(row.checked),
-        isMeta: (row: { text: string }) => tagOnly(row.text),
-        atomic: (row: { table?: CardTable }) => Boolean(row.table),
-        render: (row: { text: string; index?: number; checked?: boolean; table?: CardTable }, asText: boolean) => {
+        isTask: (row: PreviewRow) => row.index !== undefined,
+        // Only tasks: a checklist card. Tasks and other text: a mixed card, its tasks with real boxes too.
+        isChecked: (row: PreviewRow) => Boolean(row.checked),
+        isMeta: (row: PreviewRow) => tagOnly(row.text),
+        atomic: (row: PreviewRow) => Boolean(row.table),
+        level: (row: PreviewRow) => row.level ?? 0,
+        render: (row: PreviewRow, asText: boolean) => {
           if (row.table) {
             return cardTable(preview.ownerDocument, row.table, {
               plain: previewPlain,
@@ -2307,6 +2308,7 @@ export class JotDropView extends ItemView {
             });
           }
           const el = createDiv({ cls: row.index === undefined || asText ? "jotdrop-preview-line" : "jotdrop-preview-task" });
+          if (row.level) el.addClass(`jotdrop-level-${row.level}`);
           if (row.index === undefined || asText) el.setText(row.text);
           else {
             renderInlinePreview(el, row.text, row.index);
@@ -2336,8 +2338,20 @@ export class JotDropView extends ItemView {
           e.stopPropagation();
           if (this.showTrash || space?.gone || space?.frozen || file.name.includes(".cloud-conflict-")) { this.openEditModal(file, openedAttachment); return; }
           const index = Number(toggle.dataset.checklistIndex);
-          void this.toggleChecklist(file, index, toggle, expectedContent).then((updated) => {
-            if (updated === undefined) return;
+          const ticking = toggle.textContent !== "☑";
+          void this.toggleChecklist(file, index, toggle, expectedContent).then((result) => {
+            if (result === undefined) return;
+            const { updated, moved } = result;
+            if (moved) {
+              // The pen strikes the task in its own place first; then the card shows the new order. Until then the old
+              // expected text stays, so another tap on this card meanwhile is refused instead of hitting the wrong task.
+              window.setTimeout(() => {
+                expectedContent = updated;
+                previewRows.splice(0, previewRows.length, ...checklistPreviewRows(updated));
+                controller.fit();
+              }, ticking ? STRIKE_MS + 50 : 0);
+              return;
+            }
             expectedContent = updated;
             const row = previewRows.find((item) => item.index === index);
             if (row) { row.checked = !row.checked; row.text = row.text.replace(/[☐☑]/, row.checked ? "☑" : "☐"); }
@@ -2684,23 +2698,23 @@ export class JotDropView extends ItemView {
     }
   }
 
-  private async toggleChecklist(file: TFile, index: number, toggle: HTMLElement, expected?: string): Promise<string | undefined> {
+  private async toggleChecklist(file: TFile, index: number, toggle: HTMLElement, expected?: string): Promise<{ updated: string; moved: boolean } | undefined> {
     if (!Number.isInteger(index) || index < 0) return;
     try {
       const wasChecked = toggle.textContent === "☑";
       this.plugin.suppressModifyOnce(file.path);
-      let updated = "";
+      let result = { updated: "", moved: false };
       await this.app.vault.process(file, (content) => {
         // Only the body decides which task an index means; an own color change rewrites just the frontmatter.
         if (expected !== undefined && checklistBody(content) !== checklistBody(expected)) throw new Error(t("preview_changed"));
-        updated = toggleChecklistItem(content, index);
-        return updated;
+        result = tickChecklistItem(content, index, this.plugin.settings.moveChecked);
+        return result.updated;
       });
       toggle.setText(wasChecked ? "☐" : "☑");
       toggle.setAttribute("aria-checked", String(!wasChecked));
       // The pen draws its line through a task just ticked.
       toggle.nextElementSibling?.toggleClass("just-struck", !wasChecked);
-      return updated;
+      return result;
     } catch (err) {
       new Notice(t("notice_error", err instanceof Error ? err.message : String(err)));
       void this.render();

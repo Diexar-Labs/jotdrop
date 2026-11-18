@@ -775,4 +775,168 @@ internal object FormatCore {
             else -> return null
         }
     }
+
+    // --- Lists in levels and ticking a task (design kaarten-en-lijsten, parts 4 and 6) ---------------------------------
+
+    private val listKinds = setOf("task", "bullet", "ordered")
+
+    /** The width of a line's indent in columns: a space is 1, a tab goes on to the next multiple of 4. */
+    private fun indentColumns(line: String): Int {
+        var column = 0
+        for (char in line) {
+            if (char == ' ') column++
+            else if (char == '\t') column += 4 - column % 4
+            else break
+        }
+        return column
+    }
+
+    /** A list line (level 0 and up) or a line of more text under an item (level -1), as in format.mjs. */
+    private class ListItem(val level: Int, val column: Int, val parent: Int, val series: Int)
+
+    /**
+     * The lists of a text, per line: a list line (task, bullet, numbered) has its level, its column, `parent` (the line
+     * of its main item or -1) and its series; a line of more text that belongs to an item has level -1; every other line
+     * is null. A series ends at a blank line, a plain text line that is not indented deeper, a heading, a rule, a quote,
+     * a table or a code block. The level comes from a stack: a line at column k takes everything at k or further off it.
+     */
+    private fun listStructure(text: String): List<ListItem?> {
+        val lines = text.split('\n')
+        val kinds = lineKinds(text)
+        val out = ArrayList<ListItem?>(lines.size)
+        // Each entry: column, line.
+        var stack = ArrayList<IntArray>()
+        var series = -1
+        for ((index, line) in lines.withIndex()) {
+            val kind = if (kinds[index] == "text") linePrefix(line).kind else null
+            val column = indentColumns(line)
+            if (kind != null && kind in listKinds) {
+                if (stack.isEmpty()) series++
+                while (stack.isNotEmpty() && stack.last()[0] >= column) stack.removeAt(stack.size - 1)
+                out += ListItem(stack.size, column, if (stack.isEmpty()) -1 else stack.last()[1], series)
+                stack += intArrayOf(column, index)
+                continue
+            }
+            if (kind == "" && !blank(line) && stack.isNotEmpty() && column > stack[0][0]) {
+                while (stack.last()[0] >= column) stack.removeAt(stack.size - 1)
+                out += ListItem(-1, column, stack.last()[1], series)
+                continue
+            }
+            stack = ArrayList()
+            out += null
+        }
+        return out
+    }
+
+    /** The last line of an item: its own line plus the lines under it that are indented deeper (sub-items, more text). */
+    private fun itemEnd(structure: List<ListItem?>, line: Int): Int {
+        val item = structure[line]!!
+        var end = line
+        while (end + 1 < structure.size && structure[end + 1]?.series == item.series && structure[end + 1]!!.column > item.column) end++
+        return end
+    }
+
+    /**
+     * The level of every line: 0 and up for a task, bullet or numbered line, -1 for any other line (design part 4).
+     * Tabs, 2 spaces and 4 spaces all read: a tab counts to the next multiple of 4 columns.
+     */
+    fun listLevels(text: String): List<Int> = listStructure(text).map { it?.level ?: -1 }
+
+    /** A tick as one replacement, plus the line the task is on now. */
+    data class Tick(val edit: Edit, val line: Int)
+
+    /**
+     * Ticks or unticks the task on line [line] (ticking writes a small `x`). With [move] (the setting "Move checked
+     * items to the bottom") the task moves along with the lines under it, never past a blank or text line (design
+     * part 6): ticked, it goes right under its last open sibling below it; unticked, right above its first ticked
+     * sibling above it; else it stays. Bullets and numbered lines between the tasks stay where they are. The selection
+     * stays in its own text: in the task it goes along with it. Null when [line] is no task in a text block.
+     */
+    fun tickEdit(text: String, line: Int, move: Boolean, selFrom: Int = 0, selTo: Int = selFrom): Tick? {
+        val lines = text.split('\n')
+        val structure = listStructure(text)
+        val item = structure.getOrNull(line) ?: return null
+        if (item.level < 0) return null
+        val prefix = linePrefix(lines[line])
+        if (prefix.kind != "task") return null
+        val box = lines[line].indexOf('[', prefix.markFrom + 1) + 1
+        val checked = !prefix.checked
+        val toggled = lines.toMutableList()
+        toggled[line] = lines[line].substring(0, box) + (if (checked) "x" else " ") + lines[line].substring(box + 1)
+
+        var order = lines.indices.toList()
+        var at = line
+        if (move) {
+            val end = itemEnd(structure, line)
+            // More text of the main item between its sub-items splits them into two lists, as in Markdown.
+            fun joined(index: Int): Boolean {
+                val other = structure.getOrNull(index) ?: return false
+                return other.series == item.series && !(other.level < 0 && other.parent == item.parent)
+            }
+            var first = line
+            var last = line
+            while (joined(first - 1)) first--
+            while (joined(last + 1)) last++
+            // Each sibling task: its line, and whether it is ticked.
+            val siblings = mutableListOf<kotlin.Pair<Int, Boolean>>()
+            for (index in first..last) {
+                val other = structure[index]!!
+                if (index != line && other.level >= 0 && other.parent == item.parent) {
+                    val kind = linePrefix(lines[index])
+                    if (kind.kind == "task") siblings += index to kind.checked
+                }
+            }
+            val block = order.subList(line, end + 1)
+            val open = siblings.filter { it.first > line && !it.second }
+            val done = siblings.filter { it.first < line && it.second }
+            if (checked && open.isNotEmpty()) {
+                val target = itemEnd(structure, open.last().first)
+                order = order.subList(0, line) + order.subList(end + 1, target + 1) + block + order.subList(target + 1, order.size)
+                at = line + target - end
+            } else if (!checked && done.isNotEmpty()) {
+                val target = done.first().first
+                order = order.subList(0, target) + block + order.subList(target, line) + order.subList(end + 1, order.size)
+                at = target
+            }
+        }
+        fun arrange(): MutableList<String> {
+            val next = order.map { toggled[it] }.toMutableList()
+            val last = lines.size - 1
+            if (order[last] != last) {
+                // The last line has no `\n` after it: the line that ends the text now takes over its ending, and the old
+                // last line gets the ending of the line it swapped with. A CRLF text stays CRLF.
+                val moved = order.indexOf(last)
+                val middleCr = crOf(toggled[order[last]])
+                next[moved] = withoutCr(next[moved]) + middleCr
+                next[last] = withoutCr(next[last]) + crOf(toggled[last])
+            }
+            return next
+        }
+        var next = arrange()
+        if (at != line) {
+            // With mixed indents (4 spaces, then 2) a moved task could land under another main item. Then it is only ticked.
+            val after = listStructure(next.joinToString("\n"))
+            val kept = order.withIndex().all { (index, old) ->
+                val was = structure[old]
+                val now = after[index]
+                if (was == null || now == null) was == null && now == null
+                else was.level == now.level && (if (was.parent < 0) now.parent < 0 else now.parent >= 0 && order[now.parent] == was.parent)
+            }
+            if (!kept) { order = lines.indices.toList(); at = line; next = arrange() }
+        }
+        val out = next.joinToString("\n")
+        val before = Lines(text)
+        val starts = IntArray(next.size)
+        var offset = 0
+        for ((i, value) in next.withIndex()) { starts[i] = offset; offset += value.length + 1 }
+        fun map(position: Int): Int {
+            val pos = position.coerceIn(0, text.length)
+            val index = before.at(pos)
+            val to = order.indexOf(index)
+            return starts[to] + minOf(pos - before.starts[index], next[to].length)
+        }
+        val a = map(selFrom)
+        val b = map(selTo)
+        return Tick(replacement(text, out, minOf(a, b), maxOf(a, b))!!, at)
+    }
 }

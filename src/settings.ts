@@ -28,6 +28,8 @@ export interface JotDropSettings {
   sortMode: SortMode;
   cardWidth: number;
   showArchived: boolean;
+  /** "Move checked items to the bottom": a task ticked in JotDrop moves in the note itself. Per device, off by default. */
+  moveChecked: boolean;
   /** Download the article thumbnail when capturing a URL. */
   downloadImages: boolean;
   /** Whether the loopback HTTP server for the Chrome extension should be active. */
@@ -62,6 +64,7 @@ export const DEFAULT_SETTINGS: JotDropSettings = {
   sortMode: "manual",
   cardWidth: 240,
   showArchived: false,
+  moveChecked: false,
   downloadImages: true,
   clipServerEnabled: false,
   clipServerPort: 27124,
@@ -211,6 +214,16 @@ export class JotDropSettingTab extends PluginSettingTab {
           this.plugin.settings.showArchived = value;
           await this.plugin.saveSettings();
           this.plugin.refreshViews();
+        })
+      );
+
+    new Setting(containerEl)
+      .setName(t("settings_move_checked"))
+      .setDesc(t("settings_move_checked_desc"))
+      .addToggle((toggle) =>
+        toggle.setValue(this.plugin.settings.moveChecked).onChange(async (value) => {
+          this.plugin.settings.moveChecked = value;
+          await this.plugin.saveSettings();
         })
       );
 

@@ -4,7 +4,8 @@ private val listMarker = Regex("^([ \\t]*)([-*+])[ \\t]+(?:\\[([ xX])\\](?:[ \\t
 private val checklistItem = Regex("(?m)^(\\s*-\\s+\\[)([ xX])(\\](?:\\s|$))")
 private val codeFence = Regex("^[ \\t]*(`{3,}|~{3,})(.*)$")
 
-internal data class PreviewTaskRow(val text: String, val checklistIndex: Int?)
+/** A card row: its source line, the how-manieth checklist item it is, and its list level (-1: no list line). */
+internal data class PreviewTaskRow(val text: String, val checklistIndex: Int?, val level: Int = -1)
 
 internal fun sameChecklistPreview(left: String, right: String): Boolean {
     fun identity(text: String) = checklistItem.replace(text) { it.groupValues[1] + " " + it.groupValues[3] }
@@ -17,7 +18,8 @@ internal fun previewTaskRows(text: String): List<PreviewTaskRow> {
         val marker = match.range.first + match.groupValues[1].indexOf('-')
         text.take(marker).count { it == '\n' } to index
     }.toMap()
-    return text.lines().mapIndexed { line, value -> PreviewTaskRow(value, indices[line]) }
+    val levels = FormatCore.listLevels(text)
+    return text.lines().mapIndexed { line, value -> PreviewTaskRow(value, indices[line], levels.getOrElse(line) { -1 }) }
 }
 
 /** Toggle exactly the Nth Markdown checklist item, or null when it does not exist. */
@@ -34,6 +36,20 @@ internal fun toggleChecklistText(text: String, targetIndex: Int): String? {
         }
     }
     return updated.takeIf { toggled }
+}
+
+/**
+ * Ticks the Nth checklist item, counted as [toggleChecklistText] counts them, through the shared core: with [move] the
+ * task moves below the open tasks of its list (design kaarten-en-lijsten, part 6). A line the core sees as no task (in
+ * a code block, say) gets the old toggle, without moving.
+ */
+internal fun tickChecklistText(text: String, targetIndex: Int, move: Boolean): String? {
+    if (targetIndex < 0) return null
+    val match = checklistItem.findAll(text).elementAtOrNull(targetIndex) ?: return null
+    val marker = match.range.first + match.groupValues[1].indexOf('-')
+    val tick = FormatCore.tickEdit(text, text.substring(0, marker).count { it == '\n' }, move)
+        ?: return toggleChecklistText(text, targetIndex)
+    return text.replaceRange(tick.edit.from, tick.edit.to, tick.edit.insert)
 }
 
 /** The rewritten note plus anything typed below [marker] while it waited (7 nov: tasks were lost otherwise). */

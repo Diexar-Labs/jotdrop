@@ -193,6 +193,9 @@
     <string name="section_images">Article images</string>
     <string name="download_images_label">Save article images</string>
     <string name="download_images_hint">Download the article thumbnail when capturing a URL. Turn off to save only the title and link, without any image files.</string>
+    <string name="section_checklists">Checklists</string>
+    <string name="move_checked_label">Move checked items to the bottom</string>
+    <string name="move_checked_hint">When you tick a task, it moves below the open tasks in its list. Unticking moves it back up. This changes the order of the lines in the note.</string>
     <string name="speech_lang_hint">Works online out of the box. For offline recognition: download the language via Android settings → Languages and input → Speech recognition.</string>
 
     <string name="section_pinned">Pinned</string>

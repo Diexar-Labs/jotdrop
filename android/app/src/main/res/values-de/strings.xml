@@ -141,4 +141,7 @@
     <string name="emoji_food">Essen</string>
     <string name="emoji_travel">Reisen</string>
     <string name="emoji_symbols">Symbole</string>
+    <string name="section_checklists">Checklisten</string>
+    <string name="move_checked_label">Abgehakte Einträge nach unten</string>
+    <string name="move_checked_hint">Wenn Sie eine Aufgabe abhaken, rückt sie unter die offenen Aufgaben ihrer Liste. Entfernen Sie den Haken, rückt sie wieder nach oben. Dadurch ändert sich die Reihenfolge der Zeilen in der Notiz.</string>
 </resources>

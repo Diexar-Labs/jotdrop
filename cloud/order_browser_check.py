@@ -43,7 +43,7 @@ def check_order(browser, url, token):
         page.locator('#connect-form button[type="submit"]').click()
         page.locator("#recovery-saved").check()
         page.locator("#finish-recovery").click()
-        for name, content in [("2026-10-27 080001 A", "# Card A\n\nFirst."), ("2026-10-27 080002 B", "# Card B\n\n- [ ] Task"), ("2026-10-27 080003 C", "# Card C\n\nThird.")]:
+        for name, content in [("2026-10-27 080001 A", "# Card A\n\nFirst."), ("2026-10-27 080002 B", "# Card B\n\nBefore:\n- [ ] Task\n- [ ] Other"), ("2026-10-27 080003 C", "# Card C\n\nThird.")]:
             page.locator("#new-note").click()
             page.locator("#note-path").fill(f"notes/{name}.md")
             page.locator("#note-content").fill(content)
@@ -53,11 +53,15 @@ def check_order(browser, url, token):
         # Manual order is the default, like the plugin: newest first, then fixed.
         assert page.locator("#sort").input_value() == "manual"
         assert titles() == ["Card C", "Card B", "Card A"], titles()
-        # A ticked box changes the note but never moves its card.
-        card("Card B").locator(".task-row input").check()
+        # A ticked box changes the note but never moves its card, also on a mixed card whose task moves in the note
+        # ("Move checked items to the bottom", design kaarten-en-lijsten).
+        page.locator("#move-checked").click()
+        card("Card B").locator(".task-row input").first.check()
         page.locator('.note-card[data-revision="2"]').filter(has_text="Card B").wait_for()
         synced()
         assert titles() == ["Card C", "Card B", "Card A"], titles()
+        assert raw("Card B") == "# Card B\n\nBefore:\n- [ ] Other\n- [x] Task", raw("Card B")
+        page.locator("#move-checked").click()
 
         # Dragging writes `order` to the moved card only, as the plugin and Android read it.
         drag("Card A", "Card C", before=True)

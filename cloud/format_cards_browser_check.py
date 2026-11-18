@@ -67,8 +67,10 @@ def check_format_cards(browser, url, token):
         small = page.locator(".note-card").filter(has_text="Small table").first
         assert small.locator(".jd-card-table tbody tr").count() == 1
         assert small.locator(".jd-table-more").count() == 0
-        # A note with a table is never a checklist card: its task reads as text.
-        assert small.locator(".task-row").count() == 0 and "☐ not a checklist card" in small.inner_text(), small.inner_text()
+        # A note with a table is never a checklist card; its task is a real box on a mixed card (design kaarten-en-lijsten).
+        assert small.locator(".compact-card-preview").get_attribute("data-mode") == "mixed"
+        assert small.get_by_role("checkbox", name="not a checklist card", exact=True).count() == 1, small.inner_text()
+        assert "☐" not in small.inner_text(), small.inner_text()
         code = page.locator(".note-card").filter(has_text="Code table").first
         assert code.locator(".jd-card-table").count() == 0
 
@@ -106,7 +108,7 @@ def check_format_cards(browser, url, token):
         assert frame["first"] == "sticky", frame
         stranger.close()
         assert not errors, errors
-        return {"card_table_3x3": True, "more_in_words": True, "never_checklist": True, "code_stays_code": True, "whole_or_gone": True, "shared_page_full_table": True, "page_no_sideways_scroll": True}
+        return {"card_table_3x3": True, "more_in_words": True, "never_checklist": True, "mixed_with_table": True, "code_stays_code": True, "whole_or_gone": True, "shared_page_full_table": True, "page_no_sideways_scroll": True}
     finally:
         context.close()
 

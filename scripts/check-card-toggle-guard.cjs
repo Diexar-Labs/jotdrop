@@ -14,7 +14,7 @@ const viewPath = process.argv[2] || path.join(process.cwd(), "src/view.ts");
   const method = cls.members.find((n) => n.name?.getText(source) === "toggleChecklist");
   const compiled = ts.transpileModule(`class Probe {${method.getText(source)}}`, { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText;
   const bundled = await esbuild.build({
-    stdin: { contents: 'export { checklistBody, toggleChecklistItem } from "./src/metadata.ts";', resolveDir: process.cwd() },
+    stdin: { contents: 'export { checklistBody, tickChecklistItem } from "./src/metadata.ts";', resolveDir: process.cwd() },
     bundle: true, platform: "node", format: "cjs", write: false,
     plugins: [{
       name: "obsidian-stub",
@@ -26,10 +26,10 @@ const viewPath = process.argv[2] || path.join(process.cwd(), "src/view.ts");
   });
   const loaded = { exports: {} };
   new Function("module", "exports", "require", bundled.outputFiles[0].text)(loaded, loaded.exports, require);
-  const { checklistBody, toggleChecklistItem } = loaded.exports;
+  const { checklistBody, tickChecklistItem } = loaded.exports;
   let notices = [];
-  const Probe = new Function("checklistBody", "toggleChecklistItem", "Notice", "t", `${compiled}; return Probe;`)(
-    checklistBody, toggleChecklistItem, class { constructor(...args) { notices.push(args.join(" ")); } }, (...args) => args.join(":"),
+  const Probe = new Function("checklistBody", "tickChecklistItem", "Notice", "t", `${compiled}; return Probe;`)(
+    checklistBody, tickChecklistItem, class { constructor(...args) { notices.push(args.join(" ")); } }, (...args) => args.join(":"),
   );
 
   const tasks = (n) => Array.from({ length: n }, (_, i) => `- [ ] task ${i + 1}`).join("\n");
@@ -43,11 +43,11 @@ const viewPath = process.argv[2] || path.join(process.cwd(), "src/view.ts");
     const probe = new Probe();
     const state = { disk };
     probe.app = { vault: { process: async (_file, fn) => { if (opts.fail) throw new Error("disk full"); state.disk = fn(state.disk); } } };
-    probe.plugin = { suppressModifyOnce() {} };
+    probe.plugin = { suppressModifyOnce() {}, settings: { moveChecked: Boolean(opts.move) } };
     probe.render = () => { renders++; };
     const el = toggleEl();
-    const updated = await probe.toggleChecklist({ path: "synthetic.md" }, index, el, expected);
-    return { disk: state.disk, updated, renders, el, notices: [...notices] };
+    const result = await probe.toggleChecklist({ path: "synthetic.md" }, index, el, expected);
+    return { disk: state.disk, updated: result?.updated, moved: result?.moved, renders, el, notices: [...notices] };
   };
   const fail = (msg, r) => { throw new Error(`${msg}: ${JSON.stringify({ notices: r.notices, renders: r.renders, disk: r.disk })}`); };
 
@@ -102,6 +102,25 @@ const viewPath = process.argv[2] || path.join(process.cwd(), "src/view.ts");
     if (second.disk !== first.disk || second.notices.length !== 1 || second.renders !== 1) fail("stale quick click was not refused safely", second);
     const chained = await run(first.disk, 1, first.updated);
     if (chained.notices.length || !chained.disk.includes("- [x] task 1\n- [x] task 2\n- [ ] task 3")) fail("click with updated expectation failed", chained);
+  }
+
+  // "Move checked items to the bottom" (design kaarten-en-lijsten, part 6): the core moves the task in the note.
+  {
+    const list = `---\ncolor: red\n---\n# List\n${tasks(3)}\n\nAfter`;
+    const off = await run(list, 0, list);
+    if (off.notices.length || off.moved || !off.disk.includes("# List\n- [x] task 1\n- [ ] task 2\n- [ ] task 3\n")) fail("tick with the setting off moved", off);
+    const on = await run(list, 0, list, { move: true });
+    if (on.notices.length || !on.moved || on.updated !== on.disk || on.disk !== "---\ncolor: red\n---\n# List\n- [ ] task 2\n- [ ] task 3\n- [x] task 1\n\nAfter") fail("tick with the setting on did not move", on);
+    // Unticked, it goes back above the ticked ones.
+    const ticked = "# List\n- [ ] task 1\n- [x] task 2\n- [x] task 3";
+    const back = await run(ticked, 2, ticked, { move: true });
+    if (back.notices.length || !back.moved || back.disk !== "# List\n- [ ] task 1\n- [ ] task 3\n- [x] task 2") fail("untick with the setting on did not move", back);
+    // A task this count sees but the core does not (in a code block) is just ticked, as before.
+    const fenced = "# List\n```\n- [ ] in code\n```\n- [ ] task 1\n- [ ] task 2";
+    const code = await run(fenced, 0, fenced, { move: true });
+    if (code.notices.length || code.moved || code.disk !== fenced.replace("- [ ] in code", "- [x] in code")) fail("a task in code was not just ticked", code);
+    const after = await run(fenced, 1, fenced, { move: true });
+    if (after.notices.length || !after.moved || !after.disk.endsWith("- [ ] task 2\n- [x] task 1")) fail("the count after a code block hit the wrong line", after);
   }
 
   // A failed write shows an error, re-renders and leaves the card unticked.

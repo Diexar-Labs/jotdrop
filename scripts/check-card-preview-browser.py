@@ -30,8 +30,9 @@ with sync_playwright() as p:
             card.append(make('h3',{cls:'jotdrop-card-title',text:`Synthetic ${name}`}));
             const host=make('div',{cls:'jotdrop-card-preview'});card.append(host);document.querySelector('main').append(card);
             const rows=Preview.checklistPreviewRows(body);
-            Preview.cardPreview(host,rows,{isTask:r=>r.index!==undefined,isChecked:r=>Boolean(r.checked),isMeta:r=>Preview.tagOnly(r.text),render:(r,asText)=>{
+            Preview.cardPreview(host,rows,{isTask:r=>r.index!==undefined,isChecked:r=>Boolean(r.checked),isMeta:r=>Preview.tagOnly(r.text),level:r=>r.level??0,render:(r,asText)=>{
               const el=make('div',{cls:r.index===undefined||asText?'jotdrop-preview-line':'jotdrop-preview-task'});
+              if(r.level)el.classList.add(`jotdrop-level-${r.level}`);
               if(r.index===undefined||asText)el.textContent=r.text;else{Preview.renderInlinePreview(el,r.text,r.index);Preview.wrapTaskText(el);el.querySelector('.jotdrop-task-text').dataset.previewTaskText='';el.querySelector('button').setAttribute('aria-label',r.text.slice(2));}
               return el;
             },height:()=>innerHeight,openLabel:n=>n?`Open note - ${n} more tasks`:'Open note',checkedLabel:n=>`+ ${n} checked items`,open:()=>{window.opened=name;}});
@@ -58,19 +59,40 @@ with sync_playwright() as p:
         assert card.locator('[data-preview-action="checked"]').text_content() == "+ 7 checked items", card.locator('[data-preview-action="checked"]').evaluate("el=>[el.innerText, getComputedStyle(el).textTransform]")
         page.evaluate("body=>showPreview('plain',body)", "# Title\nPlain text")
         assert state(page.locator('[data-name="plain"]'))["mode"] == "text"
-        # Any other text makes it a text card: tasks as ☐/☑ text, no checkboxes.
-        page.evaluate("body=>showPreview('mixed',body)", "# Title\nIntro\n- [ ] A\n- [x] B")
+        # Tasks and other text make a mixed card (design kaarten-en-lijsten, part 5): the note's own order, real boxes.
+        page.evaluate("body=>showPreview('mixed',body)", "# Title\nIntro\n- [ ] A\n- [x] B\nOutro")
         mixed = page.locator('[data-name="mixed"]')
-        assert state(mixed)["mode"] == "text" and mixed.locator("button[data-checklist-index]").count() == 0
-        mixed_text = mixed.locator(".jotdrop-card-preview").text_content()
-        assert "☐ A" in mixed_text and "☑ B" in mixed_text, repr(mixed_text)
+        assert state(mixed) == {"mode": "mixed", "visible-tasks": "2", "hidden-tasks": "0", "checked-tasks": "0"}, state(mixed)
+        assert mixed.locator("button[data-checklist-index]").count() == 2
+        assert mixed.locator('button[data-checklist-index="1"]').text_content() == "☑"
+        rows = mixed.locator(".jotdrop-card-preview > *").evaluate_all("els=>els.map(el=>el.textContent.replace(/[☐☑]/,'').trim())")
+        assert rows == ["Intro", "A", "B", "Outro"], rows
+        # Levels: 3 on the card, deeper items stay on the third; bullets show as •.
+        page.evaluate("body=>showPreview('levels',body)", "# Title\nIntro\n- [ ] top\n\t- [ ] sub\n\t\t- [x] deeper\n\t\t\t- [ ] deepest\n- bullet\n\t1. number")
+        levels = page.locator('[data-name="levels"]')
+        classes = levels.locator(".jotdrop-card-preview > *").evaluate_all("els=>els.map(el=>[...el.classList].filter(c=>c.startsWith('jotdrop-level-')).join(''))")
+        assert classes == ["", "", "jotdrop-level-1", "jotdrop-level-2", "jotdrop-level-2", "", "jotdrop-level-1"], classes
+        lefts = levels.locator(".jotdrop-card-preview > *").evaluate_all("els=>els.map(el=>Math.round(el.getBoundingClientRect().left))")
+        assert lefts[1] < lefts[2] < lefts[3] == lefts[4] and lefts[5] == lefts[1] and lefts[6] == lefts[2], lefts
+        assert levels.locator(".jotdrop-card-preview > *").nth(5).text_content() == "• bullet"
+        # A checklist card keeps a ticked task with an open sub-task, struck through, above it.
+        page.evaluate("body=>showPreview('heads',body)", "# Title\n- [x] pack\n\t- [x] socks\n\t- [ ] charger\n- [x] done")
+        heads = page.locator('[data-name="heads"]')
+        assert state(heads) == {"mode": "checklist", "visible-tasks": "2", "hidden-tasks": "0", "checked-tasks": "2"}, state(heads)
+        assert heads.locator('button[data-checklist-index="0"]').text_content() == "☑"
         # A line of only hashtags and a link-preview marker are no text: still a checklist.
         page.evaluate("body=>showPreview('tagged',body)", "# Title\n- [ ] milk\n- [ ] bread\n\n#groceries #shop\n<!-- jotdrop-preview: pending -->")
         assert state(page.locator('[data-name="tagged"]'))["mode"] == "checklist"
         page.evaluate("body=>showPreview('article',body)", "# Title\n" + "Article sentence. " * 300 + "\n- [ ] A\n- [ ] B\n- [x] C")
         card = page.locator('[data-name="article"]')
-        assert state(card)["mode"] == "text" and card.locator("button[data-checklist-index]").count() == 0
-        assert card.locator('[data-preview-action="open"]').inner_text() == "Open note"
+        # mrjo118's case: the text keeps the text card's room and the card says how many tasks are behind "Open note".
+        assert state(card) == {"mode": "mixed", "visible-tasks": "0", "hidden-tasks": "3", "checked-tasks": "0"}, state(card)
+        assert card.locator("button[data-checklist-index]").count() == 0
+        assert card.locator('[data-preview-action="open"]').text_content() == "Open note - 3 more tasks"
+        assert card.locator(".jotdrop-card-preview").evaluate("el=>el.getBoundingClientRect().height") <= 200.5
+        # In view first: an off-screen card skips its rendering (content-visibility) and has no inner text.
+        card.scroll_into_view_if_needed()
+        page.wait_for_function("()=>document.querySelector('[data-name=\"article\"] .jotdrop-card-preview').innerText.length > 0")
         intro = card.locator(".jotdrop-card-preview").inner_text()
         assert intro.startswith("Article sentence.") and intro.endswith("…"), intro[-60:]
         page.evaluate("body=>showPreview('long',body)", "# Title\n" + "\n".join("- [ ] " + ("Unicode café 漢字 🙂 " * 30) for _ in range(11)))
@@ -88,6 +110,6 @@ with sync_playwright() as p:
                 assert all(bottom <= 1 for bottom in sizes["rows"]), sizes
             if width == 390:
                 page.screenshot(path=str(shots / "obsidian-mobile.png"), full_page=True)
-        print("Obsidian synthetic DOM (Keep model): 1/5/10/11/12/100, checked folded, original indices, mixed = text, tag line, article, small viewport and 200% text PASS")
+        print("Obsidian synthetic DOM (Keep model): 1/5/10/11/12/100, checked folded, original indices, mixed with boxes, levels, open sub-task, tag line, article, small viewport and 200% text PASS")
     finally:
         browser.close()
