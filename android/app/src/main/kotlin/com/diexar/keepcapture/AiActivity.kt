@@ -654,14 +654,17 @@ private fun AskScreen(
                     onSkip = { receiptSaid = context.getString(R.string.ai_receipt_skipped) })
             }
             receiptSaid?.let { said -> item { Text(said) } }
+            val merged = mergeIds
+            // A merge whose new text was applied to the newer note: the merged text is in that note, so the AI's answer has nothing left to save.
+            val mergeApplied = merged != null && report?.actions?.any { it.tool == "replace_note_text" && it.status == "done" && it.input?.get("id") == merged.second.id } == true
             report?.let { done -> item {
                 AiResult(done, asked, provider, model, phone, executor, target, summarize, kind.takeIf { draft != null }, action, targetTitle, hideAnswer = found != null,
                     savedNote, addedBelow, onSaved = { savedNote = true }, onAddedBelow = { addedBelow = true }, onDraft = { replace -> onDraftAnswer(done.answer, replace) },
-                    saveTitle = mergeIds?.second?.let { context.getString(R.string.ai_title_merge, AiAsk.shortTitle(it.title).ifBlank { context.getString(R.string.ai_untitled) }) })
+                    saveTitle = mergeIds?.second?.let { context.getString(R.string.ai_title_merge, AiAsk.shortTitle(it.title).ifBlank { context.getString(R.string.ai_untitled) }) },
+                    week = week, mergeApplied = mergeApplied)
             } }
             // After a merge that was applied, the older note is still there: moving it to the trash is the user's own step.
-            val merged = mergeIds
-            if (merged != null && report?.actions?.any { it.tool == "replace_note_text" && it.status == "done" && it.input?.get("id") == merged.second.id } == true) item {
+            if (merged != null && mergeApplied) item {
                 val older = AiAsk.shortTitle(merged.first.title).ifBlank { stringResource(R.string.ai_untitled) }
                 if (olderTrashed) Text(stringResource(R.string.ai_merge_trashed, older))
                 else Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -718,7 +721,7 @@ private fun AiResult(
     report: AiReport, asked: String, provider: String, model: String, phone: Boolean, executor: AiExecutor, target: Uri?, summarize: Boolean,
     draftKind: String?, action: String?, targetTitle: String, hideAnswer: Boolean,
     savedNote: Boolean, addedBelow: Boolean, onSaved: () -> Unit, onAddedBelow: () -> Unit, onDraft: (Boolean) -> Unit,
-    saveTitle: String? = null,
+    saveTitle: String? = null, week: Boolean = false, mergeApplied: Boolean = false,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -761,6 +764,8 @@ private fun AiResult(
             }
             action == "transcribe" -> stringResource(R.string.ai_sent_recording, provider, fileNames)
             names.isEmpty() && fileNames.isEmpty() -> stringResource(R.string.ai_sent_none, provider)
+            // "This week" sends a digest (title, first line, open tasks, dates) of these notes, not the notes themselves.
+            week && fileNames.isEmpty() -> stringResource(R.string.ai_sent_digest, provider, names)
             fileNames.isEmpty() -> stringResource(R.string.ai_sent_notes, provider, names)
             names.isEmpty() -> stringResource(R.string.ai_sent_files, provider, fileNames)
             else -> stringResource(R.string.ai_sent_notes_files, provider, names, fileNames)
@@ -780,7 +785,8 @@ private fun AiResult(
                     if (ok) onAddedBelow() else Toast.makeText(context, R.string.ai_error_save, Toast.LENGTH_SHORT).show()
                 }
             }) { Text(stringResource(if (addedBelow) R.string.ai_added_below else R.string.ai_add_below)) }
-            if (draftKind == null && !summarize) OutlinedButton(enabled = !savedNote, onClick = {
+            // After an applied merge the merged text is in the newer note; saving the AI's sentence about it would only make a useless note.
+            if (draftKind == null && !summarize && !mergeApplied) OutlinedButton(enabled = !savedNote, onClick = {
                 scope.launch {
                     val name = AiAsk.shortTitle(targetTitle).ifBlank { context.getString(R.string.ai_untitled) }
                     val title = saveTitle ?: when (action) {

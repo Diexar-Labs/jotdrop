@@ -65,6 +65,7 @@
     <string name="ai_tool_other">%1$s (JotDrop does not do this)</string>
     <string name="ai_sent_none">Sent to %1$s: only your request.</string>
     <string name="ai_sent_notes">Sent to %1$s: your request and these notes: %2$s</string>
+    <string name="ai_sent_digest">Sent to %1$s: your request and a digest of these notes: %2$s</string>
     <string name="ai_tokens">%1$d tokens in, %2$d out</string>
     <string name="ai_save_note">Save as a new note</string>
     <string name="ai_saved_as_note">Saved as a new note</string>

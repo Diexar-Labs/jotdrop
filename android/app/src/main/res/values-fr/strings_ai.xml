@@ -65,6 +65,7 @@
     <string name="ai_tool_other">%1$s (JotDrop ne fait pas ça)</string>
     <string name="ai_sent_none">Envoyé à %1$s : seulement ta demande.</string>
     <string name="ai_sent_notes">Envoyé à %1$s : ta demande et ces notes : %2$s</string>
+    <string name="ai_sent_digest">Envoyé à %1$s : ta demande et un extrait de ces notes : %2$s</string>
     <string name="ai_tokens">%1$d jetons en entrée, %2$d en sortie</string>
     <string name="ai_save_note">Enregistrer comme nouvelle note</string>
     <string name="ai_saved_as_note">Enregistrée comme nouvelle note</string>

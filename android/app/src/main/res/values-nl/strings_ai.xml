@@ -65,6 +65,7 @@
     <string name="ai_tool_other">%1$s (dat doet JotDrop niet)</string>
     <string name="ai_sent_none">Verstuurd naar %1$s: alleen je vraag.</string>
     <string name="ai_sent_notes">Verstuurd naar %1$s: je vraag en deze notities: %2$s</string>
+    <string name="ai_sent_digest">Verstuurd naar %1$s: je vraag en een uittreksel van deze notities: %2$s</string>
     <string name="ai_tokens">%1$d tokens in, %2$d uit</string>
     <string name="ai_save_note">Opslaan als nieuwe notitie</string>
     <string name="ai_saved_as_note">Opgeslagen als nieuwe notitie</string>
