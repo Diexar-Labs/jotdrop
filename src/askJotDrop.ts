@@ -546,10 +546,16 @@ export class AskJotDropModal extends Modal {
     return this.notes.find((note) => note.id === id)?.title ?? this.fileOf(id)?.basename ?? "a note";
   }
 
+  /** A merge whose new text was applied to the newer note: the merged text is in that note, so the AI's answer has nothing left to save. */
+  private mergeApplied(report: Report): boolean {
+    const { merge } = this.options;
+    return Boolean(merge) && report.actions.some((action) => action.tool === "replace_note_text" && action.status === "done" && (action.input as { id?: string } | null | undefined)?.id === merge?.newer.id);
+  }
+
   /** After a merge that was applied, the older note is still there: moving it to the trash is the user's own step. */
   private mergeTrashRow(report: Report): void {
     const { merge, trash } = this.options;
-    if (!merge || !trash || !report.actions.some((action) => action.tool === "replace_note_text" && action.status === "done" && (action.input as { id?: string } | null | undefined)?.id === merge.newer.id)) return;
+    if (!merge || !trash || !this.mergeApplied(report)) return;
     const older = this.fileOf(merge.older.id);
     if (!older) return;
     const item = this.el.actions.createEl("li", { text: `The older note "${merge.older.title}" is still there. ` });
@@ -601,7 +607,9 @@ export class AskJotDropModal extends Modal {
     }
     const also = report.sent.filter((note) => !first.has(note.id));
     // In words what went: the question (a recording goes on its own), the notes, and each file by name.
-    const went = [...(this.options.action === "transcribe" ? [] : ["your question"]), ...(first.size ? [`${first.size} ${first.size === 1 ? "note" : "notes"}`] : []),
+    // "This week" sends a digest (title, first line, open tasks, dates), not the notes themselves: the line says so.
+    const noteWords = `${first.size} ${first.size === 1 ? "note" : "notes"}`;
+    const went = [...(this.options.action === "transcribe" ? [] : ["your question"]), ...(first.size ? [this.options.week ? `a digest of ${noteWords}` : noteWords] : []),
       ...(report.files ?? []).map((file) => `the ${FILE_WORDS[file.kind]?.toLowerCase() ?? "file"} "${file.name}"`)];
     const wentText = went.length > 1 ? `${went.slice(0, -1).join(", ")} and ${went[went.length - 1]}` : went[0];
     this.el.also.setText(report.stop === "off" || (report.error && report.rounds === 0) ? "Nothing was sent." : `${report.error ? "Tried to send" : "Sent"} to ${name}: ${wentText}${also.length ? `. While answering it also read: ${also.map((note) => `"${note.title}"`).join(", ")}` : ""}.`);
@@ -619,8 +627,11 @@ export class AskJotDropModal extends Modal {
       const below = buttons.createEl("button", { text: "Add below the note", cls: "mod-cta" });
       below.addEventListener("click", () => void this.addBelow(below));
     }
-    const save = buttons.createEl("button", { text: "Save as a new note" });
-    save.addEventListener("click", () => void this.saveAnswer(save));
+    // After an applied merge the merged text is in the newer note; saving the AI's sentence about it would only make a useless note.
+    if (!this.mergeApplied(report)) {
+      const save = buttons.createEl("button", { text: "Save as a new note" });
+      save.addEventListener("click", () => void this.saveAnswer(save));
+    }
     buttons.createEl("button", { text: "Report" }).addEventListener("click", () => this.toggleReport());
   }
 

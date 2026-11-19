@@ -5404,7 +5404,9 @@ function showAiReport(report, request, first) {
   }
   const also = report.sent.filter((note) => !first.has(note.id));
   // In words what went: the question (a recording goes on its own), the notes, and each file by name.
-  const went = [...(aiScope.kind === 'transcribe' ? [] : ['your question']), ...(first.size ? [`${first.size} ${first.size === 1 ? 'note' : 'notes'}`] : []),
+  // "This week" sends a digest (title, first line, open tasks, dates), not the notes themselves: the line says so.
+  const noteWords = `${first.size} ${first.size === 1 ? 'note' : 'notes'}`;
+  const went = [...(aiScope.kind === 'transcribe' ? [] : ['your question']), ...(first.size ? [aiScope.kind === 'digest' ? `a digest of ${noteWords}` : noteWords] : []),
     ...(report.files ?? []).map((file) => `the ${FILE_WORDS[file.kind]?.toLowerCase() ?? 'file'} "${file.name}"`)];
   const wentText = went.length > 1 ? `${went.slice(0, -1).join(', ')} and ${went.at(-1)}` : went[0];
   $('ai-also').textContent = report.stop === 'off' || (report.error && !report.rounds) ? 'Nothing was sent.' : `${report.error ? 'Tried to send' : 'Sent'} to ${spec.name}: ${wentText}${also.length ? `. While answering it also read: ${also.map((note) => `"${note.title}"`).join(', ')}` : ''}.`;
@@ -5415,7 +5417,7 @@ function showAiReport(report, request, first) {
   const answered = Boolean(report.answer.trim());
   $('ai-use-replace').hidden = !answered || !aiScope.editor || aiScope.kind === 'summarize';
   $('ai-use-below').hidden = !answered || !(aiScope.editor || aiScope.kind === 'summarize' || FILE_KINDS.has(aiScope.kind));
-  $('ai-save-answer').hidden = !answered;
+  $('ai-save-answer').hidden = !answered || mergeApplied(report);
   $('ai-report').hidden = !answered;
 }
 
@@ -5536,10 +5538,12 @@ $('ai-dialog').addEventListener('close', () => { dictation?.abort(); aiConfirmin
 function mergeRequest({ older, newer }) {
   return `Two notes may be duplicates. The older one has id ${older.id}, the newer one has id ${newer.id}. Write one text that keeps everything from both notes and does not repeat itself, in the language of the notes. Replace the text of the newer note (id ${newer.id}) with that text. Do not change the older note.`;
 }
+// A merge whose new text was applied to the newer note: the merged text is in that note, so the AI's answer has nothing left to save.
+const mergeApplied = (report) => Boolean(aiScope.merge) && report.actions.some((action) => action.tool === 'replace_note_text' && action.status === 'done' && action.input?.id === aiScope.merge.newer.id);
 // After a merge that was applied, the older note is still there: moving it to the trash is the user's own step.
 function mergeTrashRow(report) {
   const merge = aiScope.merge;
-  if (!merge || !report.actions.some((action) => action.tool === 'replace_note_text' && action.status === 'done' && action.input?.id === merge.newer.id)) return;
+  if (!merge || !mergeApplied(report)) return;
   const older = files.get(merge.older.id);
   if (!older || older.deleted) return;
   const item = document.createElement('li');

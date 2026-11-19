@@ -201,7 +201,7 @@ def check_overview(browser, url, token):
         assert "Open tasks:\n- brood kopen" in message and "melk gehaald" not in message and SECRET_LINE not in message
         assert "Reminder: " in message and "Expires: " in message and "Expired: " in message
         assert ATTIC.split(",")[1] not in message, "only the first line of a note goes"
-        assert "7 notes" in page.locator("#ai-also").inner_text()
+        assert "your question and a digest of 7 notes" in page.locator("#ai-also").inner_text(), "the week sends a digest, and the line says so"
         assert page.locator("#ai-sources").get_by_role("button", name='Open "Weekplan"').count() == 1
         page.locator("#ai-close").click()
 
@@ -247,15 +247,38 @@ def check_overview(browser, url, token):
         trash = page.locator("#ai-actions li").filter(has_text='The older note "Tuin 1" is still there.')
         trash.get_by_role("button", name="Move it to the trash").wait_for()
         assert card("Tuin 1").count() == 1, "the older note stays until the user says so"
-        page.locator("#ai-save-answer").click()
-        page.locator("#ai-status").filter(has_text="Saved as the note").wait_for()
+        assert page.locator("#ai-save-answer").is_hidden(), "after an applied merge the merged text is in the note: nothing is left to save"
         shot(page, "merge-trash")
         trash.get_by_role("button", name="Move it to the trash").click()
         page.locator("#ai-actions li").filter(has_text='Moved "Tuin 1" to the trash.').wait_for()
         page.locator("#ai-close").click()
         synced()
         assert card("Tuin 1").count() == 0 and raw("Tuin 2").strip().endswith(merged)
-        assert card("Merged text of Tuin 2").count() == 1, "a saved merge answer is named after the note, not the request"
+        assert card("Merged text of Tuin 2").count() == 0, "no useless note from the AI's sentence after an applied merge"
+
+        # --- A merge the user does not apply keeps the AI's answer: saving it is still offered, named after the note.
+        make("notes/tuin-5.md", f"# Tuin 5\n\n{GARDEN}\n")
+        make("notes/tuin-6.md", f"# Tuin 6\n\n{GARDEN}\n")
+        open_dups()
+        page.locator("#dup-list > li").filter(has_text='Older: "Tuin 5"').get_by_role("button", name="Merge with AI…").click()
+        ask.wait_for()
+        declined = re.search(r"older one has id (\S+), the newer one has id (\S+)\.", page.locator("#ai-request").input_value())
+        assert declined, page.locator("#ai-request").input_value()
+        fake.queue.extend([
+            lambda body: {"content": [{"type": "tool_use", "id": "tu_decline", "name": "replace_note_text", "input": {"id": declined.group(2), "text": merged}}], "stop_reason": "tool_use"},
+            lambda body: {"content": [{"type": "text", "text": "Nothing was changed."}], "stop_reason": "end_turn"},
+        ])
+        page.locator("#ai-send").click()
+        page.locator("#ai-confirm").wait_for()
+        page.locator("#ai-decline").click()
+        assert "Nothing was changed." in answer()
+        assert page.locator("#ai-save-answer").is_visible(), "a merge that was not applied can still save the AI's answer"
+        page.locator("#ai-save-answer").click()
+        page.locator("#ai-status").filter(has_text="Saved as the note").wait_for()
+        page.locator("#ai-close").click()
+        synced()
+        assert card("Merged text of Tuin 6").count() == 1, "a saved merge answer is named after the note, not the request"
+        assert card("Tuin 5").count() == 1 and card("Tuin 6").count() == 1, "declining changes no note"
 
         # --- Merge refuses notes the AI would only see shortened: the merged text would lose the rest.
         make("notes/lang-1.md", f"# Lang 1\n\n{LONG}\n")
@@ -298,7 +321,7 @@ def check_overview(browser, url, token):
         assert not errors, errors
         return {"no_ai_no_network": True, "pairs_in_words": True, "compare_diff": True, "keep_both_remembered": True, "older_to_trash_by_click": True,
                 "week_digest_titles_only": True, "week_no_tools": True, "cleared_box_stays_out": True, "merge_waits_for_confirmation": True,
-                "merge_trash_by_click": True, "merge_refuses_shortened": True, "inside_offers_shorter": True, "merge_answer_title": True, "nothing_readable_to_jotdrop": True, "requests_to_jotdrop": len(to_jotdrop), "anthropic": len(fake.requests)}
+                "merge_trash_by_click": True, "merge_refuses_shortened": True, "inside_offers_shorter": True, "merge_answer_title": True, "merge_applied_hides_save": True, "week_line_says_digest": True,"nothing_readable_to_jotdrop": True, "requests_to_jotdrop": len(to_jotdrop), "anthropic": len(fake.requests)}
     finally:
         if sys.exc_info()[0]:
             print({"status": page.locator("#ai-status").text_content(), "dups": page.locator("#dup-status").text_content(), "errors": errors})
