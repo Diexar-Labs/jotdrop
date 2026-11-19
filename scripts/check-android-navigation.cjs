@@ -30,7 +30,7 @@ assert(storage.includes('"/Trash"'), 'Attachment refcounts must include Trash');
 assert(storage.includes('FrontmatterWriter.applyLabels(current, labels)'), 'Label edits preserve the latest body and leave tags untouched');
 const drawerBinding = list.slice(list.indexOf('JotDropDrawer('), list.indexOf('onManageLabels ='));
 assert(!drawerBinding.includes('allTagsAlpha'), 'The drawer must not contain the tag list');
-const labelDiscovery = storage.slice(storage.indexOf('private fun listLabels('), storage.indexOf('private fun saveLabels('));
+const labelDiscovery = storage.slice(storage.indexOf('private suspend fun listLabels('), storage.indexOf('private fun saveLabels('));
 assert(!labelDiscovery.includes('.meta.tags'), 'Do not discover collections from tags');
 assert(labelDiscovery.includes('.meta.labels'), 'Only dedicated collection memberships belong in the drawer');
 assert(!source('EditorActivity').includes('suggestions = Storage.getLabels(context)'), 'Labels must not become tag suggestions');
@@ -73,7 +73,10 @@ assert(storage.includes('LabelNames.applyChanges(meta.labels, added, removed)'),
 assert(drawer.includes('Storage.addLabel(context, normalized)'), 'Creation must merge a fresh label registry under the write mutex');
 assert(storage.includes('private fun saveLabels('), 'Callers must not overwrite label snapshots without coordination');
 assert.match(storage, /suspend fun addLabel\([^\n]+noteWriteMutex\.withLock/);
-assert.match(storage, /suspend fun refreshLabels\([^\n]+noteWriteMutex\.withLock/);
+// The scan itself runs outside the mutex (check-android-startup.cjs); the registry merge and save stay inside it.
+const refreshOp = storage.slice(storage.indexOf('suspend fun refreshLabels('), storage.indexOf('fun setExpires('));
+const lockedRefresh = refreshOp.slice(refreshOp.indexOf('noteWriteMutex.withLock'));
+assert(lockedRefresh.includes('getLabels(context)') && lockedRefresh.includes('saveLabels(context, labels)'), 'Discovery must merge into a fresh registry read under the write mutex');
 assert(storage.includes('saveLabels(context, getLabels(context) + label)'), 'Creation must read the registry inside the locked operation');
 assert(list.includes('Storage.refreshLabels('), 'Discovery must use the coordinated registry operation');
 const restoreAction = list.slice(list.indexOf('val toRestore ='), list.indexOf('onDelete = { showBulkDeleteDialog'));
