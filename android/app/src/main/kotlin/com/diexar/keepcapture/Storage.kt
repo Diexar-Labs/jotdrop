@@ -10,6 +10,8 @@ import android.system.OsConstants
 import android.util.AtomicFile
 import androidx.documentfile.provider.DocumentFile
 import androidx.preference.PreferenceManager
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
@@ -1409,14 +1411,20 @@ object Storage {
         return raw.split("\n").filter { it.isNotBlank() }
     }
 
-    /** Discover only dedicated collection memberships, never ordinary tags. Call on IO. */
-    private fun listLabels(context: Context): Result<List<String>> = runCatching {
+    /**
+     * Discover only dedicated collection memberships, never ordinary tags. Call on IO.
+     * Runs without noteWriteMutex: a note being written reads as empty or as a beginning without the
+     * closing `---`, so it gives no labels, never a wrong one.
+     */
+    private suspend fun listLabels(context: Context): Result<List<String>> = runCatching {
         val vaultUri = getVaultUri(context) ?: error("Geen vault-map gekozen.")
         val tree = DocumentFile.fromTreeUri(context, vaultUri) ?: error("Vault-map kan niet worden geopend.")
         val labels = getLabels(context).toMutableList()
         for (folder in NoteFolder.entries) {
             val directory = traverseSubfolder(context, tree, folderPath(context, folder)) ?: continue
             for (child in queryChildren(context, vaultUri, directory.uri, strict = true)) {
+                // A newer reload cancels this one; without the lock nothing else stops an outdated scan.
+                currentCoroutineContext().ensureActive()
                 if (child.name.startsWith(".") || !child.name.endsWith(".md", true)) continue
                 val note = readNote(context, child.uri)
                 // Eén geparkeerde notitie mag het verversen niet blokkeren; bestaande labels blijven in het register.
@@ -1451,15 +1459,25 @@ object Storage {
         }
     }
 
-    suspend fun refreshLabels(context: Context): Result<Unit> = noteWriteMutex.withLock {
+    /** Raised (under noteWriteMutex) after every rename or delete, the only ways a label leaves the register. */
+    @Volatile private var labelRemovals = 0
+
+    /**
+     * Scans without noteWriteMutex and locks only the save. Under the lock the scan held up trash,
+     * archive and the next card list for 10 to 14 s on a phone with ~570 notes (19 nov 2026).
+     */
+    suspend fun refreshLabels(context: Context): Result<Unit> {
         val scopeKey = labelsKey(context)
-        listLabels(context).fold(
-            onSuccess = { labels ->
-                if (scopeKey != labelsKey(context) || labels == getLabels(context)) Result.success(Unit)
-                else saveLabels(context, labels)
-            },
-            onFailure = { Result.failure(it) },
-        )
+        val removals = labelRemovals
+        val found = listLabels(context).getOrElse { return Result.failure(it) }
+        return noteWriteMutex.withLock {
+            val current = getLabels(context)
+            // A rename or delete during the scan: the scan may still hold the old label; skip, the next reload scans again.
+            if (scopeKey != labelsKey(context) || removals != labelRemovals) return@withLock Result.success(Unit)
+            // Labels added during the scan stay; the scan only adds.
+            val labels = (current + found).distinctBy { it.lowercase() }
+            if (labels == current) Result.success(Unit) else saveLabels(context, labels)
+        }
     }
 
     /**
@@ -1537,6 +1555,9 @@ object Storage {
                 parked?.let { throw it }
                 val labels = getLabels(context).filterNot { it.equals(old, true) }
                 saveLabels(context, if (new == null) labels else labels + new).getOrThrow()
+            }.also {
+                // Also after a partial failure: a label scan that read notes before or during this must not save.
+                labelRemovals++
             }
         }
     }
