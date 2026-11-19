@@ -209,6 +209,63 @@ const errorText = (error) => {
 const errorMessage = (error) => activeSpace && error?.status === 401 ? 'You no longer have access to this group.' : error?.status === 401 ?'This device no longer has access. Lock the workspace and reconnect using another device or your recovery code.' : error?.message || 'The operation failed. Your local files have not been changed.';
 const message = (text = '') => { $('workspace-message').textContent = text; };
 
+// Undo, like Keep: after archive, trash, restore or pin a toast offers Undo for 10 seconds. Only the last action, only on
+// this browser, only while the toast shows. Each step puts one note back and says true, or leaves it alone and says false
+// when the note changed since. Undo is a new, ordinary change; nothing is rewound.
+const UNDO_MS = 10000, UNDONE_MS = 4000;
+let toastTimer, undoSteps, undoGeneration;
+function toast(text, steps, ms = steps ? UNDO_MS : UNDONE_MS) {
+  clearTimeout(toastTimer);
+  undoSteps = steps;
+  undoGeneration = generation;
+  $('toast').replaceChildren(text);
+  if (steps) $('toast').append(button('Undo', runUndo, 'toast-undo'));
+  $('toast').hidden = false;
+  toastTimer = setTimeout(hideToast, ms);
+}
+function hideToast() {
+  clearTimeout(toastTimer);
+  undoSteps = undefined;
+  $('toast').hidden = true;
+}
+async function runUndo() {
+  const steps = undoSteps, at = generation;
+  hideToast();
+  if (!steps || undoGeneration !== at) return;
+  let undone = 0, failure;
+  // What other devices changed in the meantime comes in first, so a step sees it and leaves that note alone.
+  await syncAgain();
+  if (generation !== at) return;
+  // The last change first, so several notes go back in the order they came.
+  for (const step of [...steps].reverse()) {
+    try { if (await step()) undone++; } catch (error) { failure = error; }
+  }
+  if (generation !== at) return;
+  render();
+  // A newer action came in meanwhile: its own Undo stays in sight.
+  if (undoSteps) return;
+  const left = steps.length - undone;
+  const why = failure ? errorText(failure) : `The ${undone ? 'other ' : ''}${left === 1 ? 'note' : 'notes'} changed.`;
+  toast(left ? `${undone ? `${undone} of ${steps.length} undone.` : 'Could not undo.'} ${why}` : 'Undone', undefined, left ? UNDO_MS : UNDONE_MS);
+}
+// Undo works on what the cloud confirmed: a change still on its way goes up first. Without the cloud there is no Undo.
+async function settled(id) {
+  if (syncing) await syncing;
+  if (files.get(id)?.pending) await syncAgain();
+  if (files.get(id)?.pending) throw new Error('The cloud cannot be reached right now.');
+  return files.get(id);
+}
+// A card action that can be undone: the toast says what happened once it did.
+async function withUndo(text, action) {
+  const undo = await action;
+  if (undo) toast(text, [undo]);
+}
+// What a move between notes, archive and trash does, said for one note or several.
+function movedText(path, count = 1) {
+  const notes = count === 1 ? 'Note' : `${count} notes`;
+  return path.startsWith('notes/Archive/') ? `${notes} back in your notes` : path.startsWith('notes/Trash/') ? `${notes} restored` : `${notes} archived`;
+}
+
 function button(text, action, className) {
   const element = document.createElement('button');
   element.type = 'button';
@@ -691,6 +748,8 @@ const gridSpans = new ResizeObserver((entries) => {
 
 function render() {
   closeMenu();
+  // Another workspace or group: an Undo from before belongs to notes that are no longer shown.
+  if (undoSteps && undoGeneration !== generation) hideToast();
   // Notes changed in two places stay in sight until a version is chosen.
   $('resolve-now').hidden = ![...files.values()].some((entry) => entry.conflict);
   // The rebuilt cards keep what the pointer, the keyboard and the grid had: a tick or a sync never blinks or reflows the screen.
@@ -1060,13 +1119,22 @@ function render() {
     const save = () => download(base64ToBytes(entry.file.content), entry.file.path);
     // Only in the trash, and only for your own notes: a group's notes belong to everyone in it.
     const forever = view === 'trash' && !activeSpace ? button('Delete forever', () => purgeEntry(entry), 'danger') : undefined;
-    if (entry.deleted) actions.append(button('Restore', () => restoreEntry(entry)), ...(forever ? [forever] : []));
+    if (entry.deleted) actions.append(button('Restore', () => withUndo('Note restored', restoreEntry(entry, entry.revision, false))), ...(forever ? [forever] : []));
     else if (markdown && view !== 'trash') {
       // The plugin's card bar: edit, color, labels, archive and a menu with the rest.
       if (view === 'notes' && !moment && !activeSpace) {
-        const pin = iconButton('pin', parts.pinned ? 'Unpin' : 'Pin', () => {
-          justPinned = { path: entry.file.path, pinned: !parts.pinned };
-          return changeNote(entry, { pinned: parts.pinned ? null : true });
+        const pin = iconButton('pin', parts.pinned ? 'Unpin' : 'Pin', async () => {
+          const was = Boolean(parts.pinned);
+          justPinned = { path: entry.file.path, pinned: !was };
+          await changeNote(entry, { pinned: was ? null : true });
+          // Undo writes only `pinned`, back to what it was, while it is still what this tap made it.
+          toast(was ? 'Note unpinned' : 'Note pinned', [async () => {
+            const current = await settled(entry.id);
+            if (!current || current.deleted || current.conflict || Boolean(noteParts(noteText(current.file), current.file.path).pinned) === was) return false;
+            justPinned = { path: current.file.path, pinned: was };
+            await changeNote(current, { pinned: was ? true : null });
+            return true;
+          }]);
         }, 'card-pin');
         pin.setAttribute('aria-pressed', String(Boolean(parts.pinned)));
         if (justPinned?.path === entry.file.path && justPinned.pinned === Boolean(parts.pinned)) {
@@ -1090,15 +1158,15 @@ function render() {
         ...(moment ? [] : [{ label: 'Ask JotDrop about this note…', action: () => openAi({ entry }) }, { label: 'Summarize with AI', action: () => openAi({ entry, summarize: true }) }]),
         // Version 2: only on a card that has such a file, never on an earlier moment.
         ...(moment ? [] : aiFileActions(entry, activeSpace?.frozen).map(([label, kind]) => ({ label, action: () => openAi({ entry, kind }) }))),
-        ...(activeSpace?.frozen ? [] : [{ label: 'Move to trash', action: () => deleteEntry(entry) }]),
+        ...(activeSpace?.frozen ? [] : [{ label: 'Move to trash', action: () => withUndo('Note moved to trash', deleteEntry(entry, true, false)) }]),
       ]));
       if (activeSpace) actions.append(iconButton('pencil', 'Open note', () => openEditor(entry)), color, more);
       else actions.append(iconButton('pencil', 'Open note', () => openEditor(entry)), color, labels,
-        iconButton('archive', view === 'archive' ? 'Unarchive' : 'Archive', () => moveArchive(entry, false), 'archive-note'), more);
+        iconButton('archive', view === 'archive' ? 'Unarchive' : 'Archive', () => withUndo(movedText(entry.file.path), moveArchive(entry, false)), 'archive-note'), more);
     } else {
-      if (markdown) actions.append(button('Open note', () => openEditor(entry)), button('Restore note', () => moveArchive(entry, false), 'archive-note'));
+      if (markdown) actions.append(button('Open note', () => openEditor(entry)), button('Restore note', () => withUndo(movedText(entry.file.path), moveArchive(entry, false)), 'archive-note'));
       actions.append(button('Download', save));
-      if (!markdown) actions.append(button('Move to trash', () => deleteEntry(entry), 'danger'));
+      if (!markdown) actions.append(button('Move to trash', () => withUndo('File moved to trash', deleteEntry(entry, true, false)), 'danger'));
       if (forever) actions.append(forever);
     }
     if (!moment) card.append(actions);
@@ -1196,13 +1264,15 @@ async function syncAgain() {
 }
 
 // One choice for all chosen notes, like the plugin and Android. A note that fails stays chosen and unchanged.
-async function runBulk(action, keepSelection = false) {
-  const ids = [...selectedIds], failed = [];
+// With `done` (the toast text for that many notes) one Undo puts them all back.
+async function runBulk(action, keepSelection = false, done) {
+  const ids = [...selectedIds], failed = [], steps = [];
   for (const id of ids) {
-    try { await action(files.get(id)); } catch { failed.push(id); }
+    try { const undo = await action(files.get(id)); if (done && undo) steps.push(undo); } catch { failed.push(id); }
   }
   if (!keepSelection) { selectedIds.clear(); for (const id of failed) selectedIds.add(id); }
   render();
+  if (steps.length) toast(done(steps.length), steps);
   await syncAgain();
   if (failed.length) message(`${failed.length} of ${ids.length} notes could not be changed. They stay selected; sync and try again.`);
 }
@@ -1223,8 +1293,9 @@ function renderSelectionBar() {
     : button('Select all', () => { for (const id of selectableIds) selectedIds.add(id); render(); });
   bar.replaceChildren(done, paragraph(`${count} selected`, 'selection-count'), all);
   if (view === 'trash') {
-    bar.append(button('Restore', () => confirm(`Restore ${notes}?`)
-      && runBulk((entry) => (entry.deleted ? restoreEntry(entry, entry.revision, false) : moveArchive(entry, false)))));
+    // One note asks nothing first, it has Undo; several still ask (Eric, 19 Nov).
+    bar.append(button('Restore', () => (count === 1 || confirm(`Restore ${notes}?`))
+      && runBulk((entry) => (entry.deleted ? restoreEntry(entry, entry.revision, false) : moveArchive(entry, false)), false, (n) => (n === 1 ? 'Note restored' : `${n} notes restored`))));
     // There is no undo, so this one asks first, and says so (Eric, 3 Nov).
     if (!activeSpace) bar.append(button('Delete forever', () => confirm(`Delete ${notes} forever? ${count === 1 ? 'It is' : 'They are'} removed from your cloud and its history. This cannot be undone.`)
       && runBulk((entry) => purgeEntry(entry, false)), 'danger'));
@@ -1249,8 +1320,8 @@ function renderSelectionBar() {
   const archive = view === 'archive' ? 'Unarchive' : 'Archive';
   bar.append(color, labels,
     // Archiving can always be undone, so it asks nothing first (Eric, 3 Nov).
-    button(archive, () => runBulk((entry) => moveArchive(entry, false))),
-    button('Move to trash', () => confirm(`Move ${notes} to trash?`) && runBulk((entry) => deleteEntry(entry, false)), 'danger'));
+    button(archive, () => runBulk((entry) => moveArchive(entry, false), false, (n) => movedText(view === 'archive' ? 'notes/Archive/' : 'notes/', n))),
+    button('Move to trash', () => (count === 1 || confirm(`Move ${notes} to trash?`)) && runBulk((entry) => deleteEntry(entry, false), false, (n) => (n === 1 ? 'Note moved to trash' : `${n} notes moved to trash`)), 'danger'));
 }
 
 // The Paper drawer opens every paper, a small drawer only its own; any other label matches itself.
@@ -1484,9 +1555,10 @@ async function queueFile(path, bytes, expectedRevision, modifiedAt = new Date().
   setTimeout(() => { if (generation === activeGeneration && files.get(prepared.id)?.pending) render(); }, QUIET_PENDING_MS);
 }
 
-async function deleteEntry(entry, ask = true) {
+// Gives the Undo step: back where it was. From a card or the open note nothing is asked first, there is Undo (`confirmFirst` false).
+async function deleteEntry(entry, ask = true, confirmFirst = ask) {
   if (activeSpace?.frozen) throw new Error('This group is read-only.');
-  if (ask && !confirm(`Move "${entry.file.path}" to trash?`)) return;
+  if (confirmFirst && !confirm(`Move "${entry.file.path}" to trash?`)) return;
   // A list link stays on the note, and does not pull the note back: who throws the note away is asked whether the link ends with it.
   const linked = ask && !activeSpace ? liveLists.filter((link) => link.path === entry.file.path) : [];
   if (linked.length && confirm('This note has a live list link. End the link too?')) {
@@ -1499,16 +1571,32 @@ async function deleteEntry(entry, ask = true) {
   if (entry.conflict) throw new Error('Resolve the conflicting versions before moving this file to trash.');
   const key = `${pendingPrefix()}${entry.id}`;
   const prior = await store('get', key);
+  const { file } = entry, trashed = entry.revision + 1;
+  let undo;
   if (prior && prior.prepared.baseRevision === 0 && !await store('get', key.replace('pending:', 'upload:'))) {
     await store('delete', key);
     files.delete(entry.id);
+    // It never reached the cloud: Undo saves it again as it was.
+    undo = async () => {
+      if (files.has(entry.id)) return false;
+      await queueFile(file.path, base64ToBytes(file.content), undefined, file.modifiedAt);
+      return true;
+    };
   } else {
     const prepared = prior?.prepared || await sealFile(entry.file.path, base64ToBytes(entry.file.content), entry.revision, entry.file.modifiedAt);
     await store('queue', key, { prepared, deleted: true, queueId: crypto.randomUUID() });
     files.set(entry.id, { ...entry, deleted: true, pending: true });
+    // The cloud brings back the content from just before the deletion: byte for byte the old note, as a new version.
+    undo = async () => {
+      const current = await settled(entry.id);
+      if (!current?.deleted || current.conflict || current.purged || current.revision !== trashed) return false;
+      await restoreEntry(current, current.revision, false);
+      return true;
+    };
   }
   render();
   void sync();
+  return undo;
 }
 
 // Delete forever, from the trash: the cloud keeps no version, piece or history of the note, only a deleted version
@@ -1558,7 +1646,16 @@ async function moveArchive(entry, ask = true) {
   const copy = [...files.values()].find((item) => item.file.path === path);
   if (!copy || copy.pending || copy.conflict) throw new Error('The new copy is still waiting to sync. The original is kept; resolve both copies before retrying.');
   if (entry !== files.get(entry.id)) throw new Error('The original changed during the move. Both copies are kept for review.');
-  await deleteEntry(entry, false);
+  const restore = await deleteEntry(entry, false), moved = copy.revision;
+  // Undo: the original comes back byte for byte (its links as they were), then the copy goes. Not a move back,
+  // which would rewrite the attachment links. When the copy changed since, nothing happens.
+  return restore && (async () => {
+    const current = await settled(copy.id);
+    if (!current || current.deleted || current.conflict || current.revision !== moved) return false;
+    if (!await restore()) return false;
+    await deleteEntry(files.get(copy.id) ?? current, false);
+    return true;
+  });
 }
 
 async function showPlan(activeClient, activeGeneration) {
@@ -1792,6 +1889,8 @@ async function sync() {
 }
 
 function openEditor(entry) {
+  // Undo never works under an open note: the editor would show the old text and save it back (rule 10).
+  hideToast();
   discardVoice();
   resetPhoto();
   $('editor').classList.toggle('in-space', Boolean(activeSpace));
@@ -2408,12 +2507,19 @@ function closeEditor() {
   editing = undefined;
 }
 
+// Gives the Undo step for a note restored from the trash: back to the trash, when nobody changed it since.
 async function restoreEntry(entry, revision = entry.revision, ask = true) {
     if (entry.pending) throw new Error('Sync this file before restoring an earlier cloud version.');
   if (ask && !confirm('Restore this version as a new cloud version?')) return;
-  await client.restore(entry.id, revision, entry.revision);
+  const restored = await client.restore(entry.id, revision, entry.revision);
   cursor = 0;
-  await sync();
+  // A sync that was already running read the changes before this one.
+  await syncAgain();
+  return async () => {
+    const current = await settled(entry.id);
+    if (!current || current.deleted || current.conflict || current.revision !== restored.revision) return false;
+    return Boolean(await deleteEntry(current, false));
+  };
 }
 
 // The slider steps through the minutes with a change; its last step is now.
@@ -3284,9 +3390,14 @@ $('editor-form').addEventListener('submit', async (event) => {
   } finally { event.submitter.disabled = false; }
 });
 $('note-download').addEventListener('click', () => { bodyEditor.flush(); download(encoder.encode($('note-content').value), $('note-path').value, 'text/markdown'); });
+// No question first: the note closes and the board offers Undo.
 $('note-delete').addEventListener('click', async () => {
-  try { await deleteEntry(editing); resetPhoto(); $('editor').close(); }
-  catch (error) { $('editor-message').textContent = errorText(error); }
+  try {
+    const undo = await deleteEntry(editing, true, false);
+    resetPhoto();
+    $('editor').close();
+    if (undo) toast('Note moved to trash', [undo]);
+  } catch (error) { $('editor-message').textContent = errorText(error); }
 });
 async function toggleVersionDiff(row, version) {
   const open = row.querySelector('.history-diff');

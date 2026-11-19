@@ -64,6 +64,7 @@
     "check:cloud-ai-overview": "python cloud/ai_overview_browser_check.py",
     "check:cloud-ai-key": "python cloud/ai_key_browser_check.py",
     "check:cloud-order": "python cloud/order_browser_check.py",
+    "check:cloud-undo": "python cloud/undo_browser_check.py",
     "check:cloud-steady": "python cloud/steady_browser_check.py",
     "check:cloud-playful": "python cloud/playful_browser_check.py",
     "check:cloud-quiet-sync": "python cloud/quiet_sync_browser_check.py",

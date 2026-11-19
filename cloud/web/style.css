@@ -211,6 +211,10 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 @media (hover: none) { .note-card .card-select { opacity: 1; } }
 .selection-bar { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; margin-bottom: 1rem; padding: .6rem .8rem; background: var(--surface); border: 2px solid var(--accent); border-radius: 12px; }
 .selection-count { margin: 0 auto 0 0; font-weight: 700; }
+/* Like Keep: a short line at the bottom after archive, trash, restore or pin. Undo is a bold underlined word, never only a colour. */
+.toast { position: fixed; left: 50%; bottom: 1.2rem; z-index: 30; display: flex; align-items: center; gap: .4rem; box-sizing: border-box; min-height: 48px; max-width: min(92vw, 520px); padding: .2rem 1rem; translate: -50% 0; border-radius: 10px; background: var(--ink); color: var(--page); box-shadow: 0 6px 24px rgb(0 0 0 / .25); }
+.toast .toast-undo { min-width: 44px; min-height: 44px; margin: 0 -.5rem 0 0; padding: .4rem .7rem; border: 0; border-radius: 8px; background: none; color: inherit; font: inherit; font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
+.toast .toast-undo:focus-visible { outline: 2px solid var(--page); outline-offset: 1px; }
 .note-card:has(.card-pin) h3 { padding-right: 2rem; }
 .note-card .card-pin { position: absolute; top: .5rem; right: .5rem; margin: 0; padding: .3rem; border-color: transparent; opacity: 0; transition: opacity .15s ease; }
 .note-card:is(:hover, .is-hovered) .card-pin, .note-card:focus-within .card-pin, .note-card .card-pin[aria-pressed="true"] { opacity: 1; }
