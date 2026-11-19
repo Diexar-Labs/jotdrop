@@ -1693,7 +1693,8 @@ private fun EditorBody(
     val pieces = if (formatted && !bodyTooTall && value.text.length <= FORMAT_RAW_ABOVE) {
         pieceLayout.update(value.text, Triple(layoutKey, relayout, formatted))
     } else emptyList()
-    val split = pieces.size > 1
+    // A note that is only a table is one piece too: it is still a grid (with the strips above and below to type in).
+    val split = pieces.size > 1 || pieces.singleOrNull()?.kind == "table"
     // Each piece's number among its own kind: the keys text-0, table-0, text-1 keep a field's focus when only its text changes.
     val ordinals = remember(pieces) {
         var texts = 0
