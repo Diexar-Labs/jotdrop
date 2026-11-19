@@ -119,6 +119,43 @@ test('two devices sync edits, moves and deletions, and keep both versions on con
   assert.equal(decode(a.files.get('notes/Archive/Shopping.md')), 'Edited while deleted elsewhere');
 });
 
+test('undo of an archive puts the note back on its old path: one note, its history goes on, no copy', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'jotdrop-sync-undo-'));
+  const enrollmentToken = randomToken(), app = await createCloudServer({ dataDir: directory, enrollmentToken });
+  t.after(async () => { await app.close(); await rm(directory, { recursive: true, force: true }); });
+  const owner = (await CloudClient.create({ url: `http://127.0.0.1:${app.port}`, enrollmentToken, deviceName: 'Phone' })).client;
+  const other = await CloudClient.claim({ pairingCode: (await owner.makePairing('Desktop')).pairingCode });
+  const a = device(owner), b = device(other);
+  const note = 'notes/Plan.md', archived = 'notes/Archive/Plan.md';
+  const move = (from, to) => { a.files.set(to, a.files.get(from)); a.files.delete(from); };
+  const quiet = { uploaded: 0, downloaded: 0, deleted: 0, conflicts: 0, skipped: [] };
+  a.files.set(note, text('Plan'));
+  await a.sync();
+  await b.sync();
+
+  // Archive, sync, Undo, sync: the old path gets a new version on top of its deleted one, the archive copy goes.
+  move(note, archived);
+  await a.sync();
+  assert.deepEqual(await b.sync(), { ...quiet, downloaded: 1, deleted: 1 });
+  move(archived, note);
+  assert.deepEqual(await a.sync(), { ...quiet, uploaded: 1, deleted: 1 });
+  assert.deepEqual(await b.sync(), { ...quiet, downloaded: 1, deleted: 1 });
+  for (const side of [a, b]) {
+    assert.deepEqual([...side.files.keys()], [note], 'One note on the old path, no conflict copy');
+    assert.equal(decode(side.files.get(note)), 'Plan');
+  }
+  const { versions } = await owner.history(await objectId(owner.credentials.vaultKey, note));
+  assert.deepEqual(versions.map((version) => [version.revision, version.deleted]), [[3, false], [2, true], [1, false]], 'The history of the note goes on');
+  assert.deepEqual([await a.sync(), await b.sync()], [quiet, quiet]);
+
+  // Archive and Undo before a sync: the cloud sees nothing.
+  move(note, archived);
+  move(archived, note);
+  assert.deepEqual(await a.sync(), quiet);
+  assert.deepEqual(await b.sync(), quiet);
+  assert.deepEqual([...b.files.keys()], [note]);
+});
+
 test('a note changed in different places on two devices merges without a copy', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'jotdrop-sync-merge-'));
   const enrollmentToken = randomToken(), app = await createCloudServer({ dataDir: directory, enrollmentToken });

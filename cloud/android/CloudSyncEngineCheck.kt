@@ -125,6 +125,39 @@ private class ScaleDevice(val cloud: ScaleCloud) {
     fun restart() { tracked = savedTracked.toMutableMap(); seen = savedSeen.toMutableMap(); index = copy(savedIndex) }
 }
 
+/** Undo of an archive puts the note back on its old path: one note, its history goes on, no copy. Before a sync the cloud sees nothing. */
+private fun checkUndoMove() {
+    val remote = CheckRemote()
+    val phone = CheckLocal()
+    val desktop = CheckLocal()
+    val tp = mutableMapOf<String, CloudSyncBase>()
+    val td = mutableMapOf<String, CloudSyncBase>()
+    fun syncPhone() = CloudSyncEngine.sync(remote, phone, tp) {}
+    fun syncDesktop() = CloudSyncEngine.sync(remote, desktop, td) {}
+    val note = "notes/Plan.md"
+    val archived = "notes/Archive/Plan.md"
+    fun move(from: String, to: String) { phone.files[to] = phone.files.remove(from)!! }
+    fun quiet(report: CloudSyncReport) = report.uploaded == 0 && report.downloaded == 0 && report.deleted == 0 && report.conflicts == 0
+    phone.files[note] = "Plan".toByteArray()
+    syncPhone()
+    syncDesktop()
+    // Archive, sync, Undo, sync: the old path gets a new version on top of its deleted one, the archive copy goes.
+    move(note, archived)
+    syncPhone()
+    check(syncDesktop().let { it.downloaded == 1 && it.deleted == 1 })
+    move(archived, note)
+    check(syncPhone().let { it.uploaded == 1 && it.deleted == 1 && it.downloaded == 0 && it.conflicts == 0 })
+    check(syncDesktop().let { it.downloaded == 1 && it.deleted == 1 && it.uploaded == 0 && it.conflicts == 0 })
+    for (side in listOf(phone, desktop)) check(side.files.keys == setOf(note) && String(side.files.getValue(note)) == "Plan" && side.copies.isEmpty())
+    check(remote.files.getValue(note).let { it.revision == 3 && !it.deleted } && remote.files.getValue(archived).deleted)
+    check(quiet(syncPhone()) && quiet(syncDesktop()))
+    // Archive and Undo before a sync: the cloud sees nothing.
+    move(note, archived)
+    move(archived, note)
+    check(quiet(syncPhone()) && quiet(syncDesktop()) && desktop.files.keys == setOf(note))
+    println("Native undo check passed: archive and Undo after and before a sync, one note on the old path, history goes on, no copy")
+}
+
 /** 5,000 files and about 300 MB; checkCloudSync runs in a 160 MiB heap, so a sync that held them all would fail. */
 /** The shared cases of cloud/shared/merge-vectors.json (as base64 lines from the check script), then two devices. */
 private fun checkMerge() {
@@ -555,5 +588,6 @@ fun main() {
     check(CloudSyncEngine.sync(badRemote, badLocal, badTrackedOld) {}.uploaded == 1 && badWrites.last() == badPath to 2)
     println("Native sync checks passed: two devices,binary attachments, offline conflicts, CAS races, delete/recreate/restore, lost responses, persisted baselines and fail-closed limits")
     checkMerge()
+    checkUndoMove()
     checkScale()
 }
