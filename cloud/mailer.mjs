@@ -27,7 +27,7 @@ const PLUS_LINK = 'https://app.jotdrop.net/?plan=plus';
 function aboveFreeLines(trial) {
   const lines = [];
   if (trial.usedMb) lines.push(`- You use ${trial.usedMb} MB, and Free has ${trial.quotaMb} MB. Everything stays and you can still read it, but new notes and photos only sync once there is room again.`);
-  if (trial.devices) lines.push(`- ${trial.devices} devices are signed in, and Free has ${trial.deviceLimit}. They all keep working. To add a new one, sign out one of these first.`);
+  if (trial.devices) lines.push(`- ${trial.devices} devices are signed in, and Free includes ${trial.deviceLimit}. Syncing on the others can pause once the trial is over, but the notes on them stay where they are. With Plus, every device syncs.`);
   if (trial.groups) lines.push(`- You share ${trial.groups} notes or lists, and Free shares one. They all keep working; only a new one needs Plus.`);
   if (trial.links) lines.push(`- ${trial.links === 1 ? '1 note link is' : `${trial.links} note links are`} older than 7 days. On Free a link lasts 7 days, so ${trial.links === 1 ? 'it is' : 'they are'} paused. With Plus ${trial.links === 1 ? 'it works' : 'they work'} again.`);
   return lines;
