@@ -85,7 +85,7 @@ test('a trial sends one mail 3 days before the end and one on the day, never twi
   assert.match(mailText(cloud.mails.at(-1)).body, /nothing changes for you/);
 });
 
-test('when the trial ends nothing is lost: extra devices keep working, a new one is refused, and the mail says so', async (t) => {
+test('when the trial ends nothing is lost: extra devices still sync today, a new one is refused, and the mail promises nothing about extra devices', async (t) => {
   const cloud = await fixture(t);
   const { email, client } = await signUp(cloud, 'cas');
   const laptop = await CloudClient.claim({ pairingCode: (await client.makePairing('Laptop')).pairingCode });
@@ -102,7 +102,9 @@ test('when the trial ends nothing is lost: extra devices keep working, a new one
   assert.equal(ended.trial.devices, 3);
   assert.equal(ended.trial.links, 2);
   const { body } = mailText(ended);
-  assert.match(body, /3 devices are signed in, and Free has 2\. They all keep working/);
+  assert.match(body, /3 devices are signed in, and Free includes 2\. Syncing on the others can pause once the trial is over/);
+  // Nobody may be told that extra devices keep working: syncing on them is meant to pause.
+  assert.doesNotMatch(body, /devices[^\n]*keep working/i);
   assert.match(body, /2 note links are older than 7 days/);
   assert.doesNotMatch(body, /—/);
 });
