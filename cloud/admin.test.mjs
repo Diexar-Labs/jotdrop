@@ -221,6 +221,7 @@ test('totals and the account list match the database and never include secrets',
     limits: { weeks: ['2026-10-26T00:00:00.000Z', '2026-10-19T00:00:00.000Z', '2026-10-12T00:00:00.000Z', '2026-10-05T00:00:00.000Z'], kinds: [] },
     subscriptions: [{ plan: 'plus', interval: null, currency: null, count: 1, pastDue: 0 }], family: { plans: 0, members: 0 },
     links: { copies: { active: 0, accounts: 0, newLast7Days: 0 }, lists: { active: 0, accounts: 0, newLast7Days: 0 } }, backup: { state: 'not-set-up' },
+    sync: { on: false, from: null, above: 0, promised: 0, wouldPause: 0, ending: 0, limited: 0, devicesOnHold: 0 },
     // Newest version first, 0.28.9 after 0.28.43 by its parts, and the device that never said which app it is.
     apps: [{ app: null, version: null, devices: 1, usedLast30Days: 1, accounts: 1, lastSeenAt: '2026-10-26T08:00:00.000Z', newest: null, behind: false },
       { app: 'android', version: '0.28.43', devices: 1, usedLast30Days: 1, accounts: 1, lastSeenAt: '2026-10-25T10:00:00.000Z', newest: '0.28.43', behind: false },
@@ -231,9 +232,9 @@ test('totals and the account list match the database and never include secrets',
 
   const list = await get('/api/admin/accounts');
   assert.deepEqual(list.body, { total: 3, page: 1, pageSize: 500, accounts: [
-    { email: 'alice@example.test', createdAt: '2026-10-24T09:00:00.000Z', hasPassword: true, hasAuthenticator: true, providers: ['google'], plan: 'plus', plusUntil: iso(now + 10 * DAY), subscribed: false, usedBytes: 5000, quotaBytes: 5000000, spaces: 0, activeDevices: 2, lastActiveAt: '2026-10-26T11:00:00.000Z', newsletter: true, apps: [{ app: null, version: null }, { app: 'android', version: '0.28.43' }] },
-    { email: 'bob@example.test', createdAt: '2026-10-01T09:00:00.000Z', hasPassword: false, hasAuthenticator: false, providers: ['github', 'google'], plan: 'plus', plusUntil: iso(now + 30 * DAY), subscribed: true, usedBytes: 11000, quotaBytes: 5000000, spaces: 0, activeDevices: 1, lastActiveAt: '2026-10-20T07:30:00.000Z', newsletter: true, apps: [{ app: 'android', version: '0.28.9' }] },
-    { email: 'carol@example.test', createdAt: '2026-08-01T09:00:00.000Z', hasPassword: true, hasAuthenticator: false, providers: [], plan: 'free', plusUntil: iso(now - 5 * DAY), subscribed: false, usedBytes: 0, quotaBytes: 1000000, spaces: 0, activeDevices: 0, lastActiveAt: null, newsletter: false, apps: [] },
+    { email: 'alice@example.test', createdAt: '2026-10-24T09:00:00.000Z', hasPassword: true, hasAuthenticator: true, providers: ['google'], plan: 'plus', plusUntil: iso(now + 10 * DAY), subscribed: false, usedBytes: 5000, quotaBytes: 5000000, spaces: 0, activeDevices: 2, sync: { promise: null, onHold: 0, pauseAt: null }, lastActiveAt: '2026-10-26T11:00:00.000Z', newsletter: true, apps: [{ app: null, version: null }, { app: 'android', version: '0.28.43' }] },
+    { email: 'bob@example.test', createdAt: '2026-10-01T09:00:00.000Z', hasPassword: false, hasAuthenticator: false, providers: ['github', 'google'], plan: 'plus', plusUntil: iso(now + 30 * DAY), subscribed: true, usedBytes: 11000, quotaBytes: 5000000, spaces: 0, activeDevices: 1, sync: { promise: null, onHold: 0, pauseAt: null }, lastActiveAt: '2026-10-20T07:30:00.000Z', newsletter: true, apps: [{ app: 'android', version: '0.28.9' }] },
+    { email: 'carol@example.test', createdAt: '2026-08-01T09:00:00.000Z', hasPassword: true, hasAuthenticator: false, providers: [], plan: 'free', plusUntil: iso(now - 5 * DAY), subscribed: false, usedBytes: 0, quotaBytes: 1000000, spaces: 0, activeDevices: 0, sync: { promise: null, onHold: 0, pauseAt: null }, lastActiveAt: null, newsletter: false, apps: [] },
   ] });
   const emails = async (query) => (await get(`/api/admin/accounts?${query}`)).body.accounts.map((entry) => entry.email.split('@')[0]);
   assert.deepEqual(await emails('q=BO'), ['bob']);
@@ -455,4 +456,43 @@ test('the setup script prints settings the server accepts, without the password'
   const status = await new Promise((done, reject) => request({ host: '127.0.0.1', port: app.port, method: 'POST', path: '/api/admin/login', headers: { Host: 'admin.example.test', Origin: ADMIN, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } },
     (response) => { response.resume(); done(response.statusCode); }).on('error', reject).end(payload));
   assert.equal(status, 200);
+});
+
+test('the dashboard counts accounts above the free devices: what would happen while the switch is off, grace and hold once it is on', async (t) => {
+  const seed = (admin, now) => {
+    const db = new DatabaseSync(join(admin.dataDir, 'cloud.db'), { timeout: 5000 });
+    const account = (email, devices, { plusUntil = 0, promise } = {}) => {
+      const id = randomUUID(), vaultId = randomUUID();
+      db.prepare("INSERT INTO vaults VALUES(?,?,'account')").run(vaultId, 'RECOVERY-HASH'.padEnd(64, '0'));
+      db.prepare("INSERT INTO accounts(id,email,vaultId,kdf,authHash,wrappedVaultKey,createdAt,passwordChangedAt) VALUES(?,?,?,'{}','AUTH-HASH$0','WRAPPED',?,?)").run(id, email, vaultId, '2026-10-01T09:00:00.000Z', '2026-10-01T09:00:00.000Z');
+      if (plusUntil) db.prepare('INSERT INTO plans VALUES(?,?,1)').run(vaultId, plusUntil);
+      if (promise) db.prepare('INSERT INTO device_promises VALUES(?,?,?)').run(vaultId, promise, now);
+      const ids = Array.from({ length: devices }, (_, index) => {
+        const deviceId = randomUUID(), seen = new Date(now - index * DAY).toISOString();
+        db.prepare('INSERT INTO devices(id,vaultId,name,tokenHash,createdAt,lastSeenAt,keepSync) VALUES(?,?,?,?,?,?,?)').run(deviceId, vaultId, `Device ${index + 1}`, 'DEVICE-TOKEN-HASH', seen, seen, index < 2 ? 1 : 0);
+        return deviceId;
+      });
+      return { vaultId, ids, pause: (pauseAt) => db.prepare('INSERT INTO sync_pauses(vaultId,createdAt,pauseAt,mailed) VALUES(?,?,?,1)').run(vaultId, now - DAY, pauseAt) };
+    };
+    return { db, account };
+  };
+  const listed = async (admin, cookie) => Object.fromEntries((await admin.call('GET', '/api/admin/accounts', { cookie })).body.accounts.map((entry) => [entry.email.split('@')[0], [entry.activeDevices, entry.sync]]));
+
+  const off = await fixture(t);
+  const before = seed(off, off.time());
+  before.account('four@example.test', 4); before.account('kept@example.test', 3, { promise: 3 }); before.account('plus@example.test', 5, { plusUntil: off.time() + DAY }); before.account('two@example.test', 2);
+  before.db.close();
+  const offCookie = off.cookieOf(await off.login());
+  assert.deepEqual((await off.call('GET', '/api/admin/summary', { cookie: offCookie })).body.sync, { on: false, from: null, above: 2, promised: 1, wouldPause: 1, ending: 0, limited: 0, devicesOnHold: 0 });
+  assert.deepEqual(await listed(off, offCookie), { four: [4, { promise: null, onHold: 0, pauseAt: null }], kept: [3, { promise: 3, onHold: 0, pauseAt: null }], plus: [5, { promise: null, onHold: 0, pauseAt: null }], two: [2, { promise: null, onHold: 0, pauseAt: null }] });
+
+  const on = await fixture(t, { syncPauseFrom: Date.parse('2026-10-01T00:00:00Z') });
+  const now = on.time(), after = seed(on, now);
+  after.account('held@example.test', 4).pause(now - 60 * 60 * 1000);
+  after.account('soon@example.test', 3).pause(now + 3 * DAY);
+  after.account('kept@example.test', 3, { promise: 3 });
+  after.db.close();
+  const onCookie = on.cookieOf(await on.login());
+  assert.deepEqual((await on.call('GET', '/api/admin/summary', { cookie: onCookie })).body.sync, { on: true, from: '2026-10-01T00:00:00.000Z', above: 3, promised: 1, wouldPause: 2, ending: 1, limited: 1, devicesOnHold: 2 });
+  assert.deepEqual(await listed(on, onCookie), { held: [4, { promise: null, onHold: 2, pauseAt: null }], soon: [3, { promise: null, onHold: 0, pauseAt: new Date(now + 3 * DAY).toISOString() }], kept: [3, { promise: 3, onHold: 0, pauseAt: null }] });
 });
