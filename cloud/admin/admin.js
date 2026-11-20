@@ -54,6 +54,7 @@ const LIMITS = {
   storage: 'Storage full', devices: 'One device too many', 'file-size': 'File too large', links: 'A second link', 'link-days': 'A link longer than 7 days',
   'shared-spaces': 'A second shared note', 'old-trash': 'Restore a note deleted over 30 days ago', 'old-version': 'Open a version older than 30 days',
   voting: 'Vote on the roadmap', mail: 'Turn on Mail to JotDrop', 'family-invite': 'Invite people without a family plan', 'ai-key': 'One AI key on all devices',
+  'device-paused': 'Sync on hold on a device',
 };
 const plural = (count, one, many) => `${count} ${count === 1 ? one : many}`;
 // What each app calls itself in its X-JotDrop-Client header; an app this page does not know yet shows its own name.
@@ -111,8 +112,18 @@ function backupTile({ state, at, detail, logChangedAt }, generatedAt) {
   return tile('Last backup', value, notes.filter(Boolean).join('. '));
 }
 
+// Accounts without Plus above the free plan's devices. While the switch is off it says how many would go on hold.
+function syncTile(sync) {
+  if (!sync) return tile('Above Free devices', 'Unknown', 'This server does not count it yet');
+  const promised = `${plural(sync.promised, 'account keeps', 'accounts keep')} all devices (promise)`;
+  const note = sync.on
+    ? `${promised}. ${sync.ending} in the 7 days before the hold, ${sync.limited} with ${plural(sync.devicesOnHold, 'device', 'devices')} on hold. On hold from ${day(sync.from)} at the earliest`
+    : `${promised}. Switch off: nobody is on hold; ${plural(sync.wouldPause, 'account', 'accounts')} would be`;
+  return tile('Above Free devices', String(sync.above), note);
+}
+
 async function loadSummary() {
-  const { generatedAt, accounts, trials, trialsEnding, limits, subscriptions, family, links, backup, apps, roadmap, storage } = await api('/api/admin/summary');
+  const { generatedAt, accounts, trials, trialsEnding, limits, subscriptions, family, links, backup, apps, roadmap, storage, sync } = await api('/api/admin/summary');
   $('generated').textContent = `Updated ${when(generatedAt)}`;
   $('tiles').replaceChildren(
     tile('Accounts', String(accounts.total)),
@@ -120,6 +131,7 @@ async function loadSummary() {
     tile('New, last 30 days', String(accounts.newLast30Days)),
     tile('Plus', String(accounts.plus), `${accounts.paying} paying, rest trial or granted`),
     tile('Free', String(accounts.free)),
+    syncTile(sync),
     tile('Trials running', String(trials.running), `${trials.total} started, ${trials.paidAfter} of those pay or paid (${percent(trials.paidAfter, trials.total)})`),
     tile('Trials ending, next 7 days', String(trialsEnding.length), `${trialsEnding.filter((trial) => trial.subscribed).length} of those already pay`),
     tile('Family plans', String(family.plans), `${plural(family.members, 'member', 'members')} besides those who pay`),
@@ -150,7 +162,9 @@ function row(account) {
   cell(methods.join(', '), account.hasAuthenticator ? 'Authenticator app on' : undefined);
   cell(account.plan === 'plus' ? 'Plus' : 'Free', account.plan === 'plus' ? `until ${day(account.plusUntil)}${account.subscribed ? ', paying' : ''}` : account.plusUntil ? `Plus ended ${day(account.plusUntil)}` : undefined);
   cell(`${bytes(account.usedBytes)} of ${bytes(account.quotaBytes)}`, `${percent(account.usedBytes, account.quotaBytes)} used${account.spaces ? `, ${account.spaces} shared` : ''}`);
-  cell(`${account.activeDevices} active`, account.apps.map((entry) => `${appName(entry.app)}${entry.version ? ` ${entry.version}` : ''}`).join(', ') || undefined);
+  const sync = account.sync ?? {};
+  const held = sync.onHold ? `, ${sync.onHold} on hold` : sync.pauseAt ? `, on hold from ${day(sync.pauseAt)}` : sync.promise ? `, promise ${sync.promise}` : '';
+  cell(`${account.activeDevices} active${held}`, account.apps.map((entry) => `${appName(entry.app)}${entry.version ? ` ${entry.version}` : ''}`).join(', ') || undefined);
   cell(when(account.lastActiveAt));
   cell(account.newsletter ? 'Yes' : 'No');
   return tr;

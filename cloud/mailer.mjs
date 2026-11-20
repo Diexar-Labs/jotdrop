@@ -23,18 +23,32 @@ const footer = '\n\nJotDrop, private notes that sync end to end encrypted.';
 // and at most two per account (jurist, 2 Nov 2026; LSSI art. 21 covers promotional mail).
 // Opens the Plus choice in the web app, after signing in (`takePlanChoice` in web/app.js).
 const PLUS_LINK = 'https://app.jotdrop.net/?plan=plus';
+// Sync on hold above the free plan's devices (Hand-off/ontwerp-sync-pauzeren-boven-free.md). Concept wording: the final
+// texts go through the Humanizer in phase 6. A device is named with its app, since many share a name ("Obsidian on Windows").
+const APP_NAMES = { android: 'Android app', web: 'web app', obsidian: 'Obsidian', joplin: 'Joplin', clipper: 'Web Clipper', mcp: 'AI agent' };
+const deviceName = ({ name, app }) => APP_NAMES[app] && !name.toLowerCase().includes(APP_NAMES[app].toLowerCase()) ? `${name} (${APP_NAMES[app]})` : name;
+const listed = (devices) => { const names = devices.map(deviceName); return names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`; };
+const longDay = (iso) => new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+// Which devices go on hold on which day, which go on, and that the notes stay.
+function syncLine(sync) {
+  return `From ${longDay(sync.pauseAt)}, sync goes on hold on ${listed(sync.onHold)}. Your notes stay on ${sync.onHold.length === 1 ? 'it' : 'them'}, but changes made there no longer reach your other devices. ${listed(sync.syncing)} keep syncing. You can choose other devices in JotDrop under Devices.`;
+}
+
 // What stays above the free plan once the trial ends; empty when everything fits in Free.
 function aboveFreeLines(trial) {
   const lines = [];
   if (trial.usedMb) lines.push(`- You use ${trial.usedMb} MB, and Free has ${trial.quotaMb} MB. Everything stays and you can still read it, but new notes and photos only sync once there is room again.`);
-  if (trial.devices) lines.push(`- ${trial.devices} devices are signed in, and Free includes ${trial.deviceLimit}. Syncing on the others can pause once the trial is over, but the notes on them stay where they are. With Plus, every device syncs.`);
+  // A cloud that got the old trial mail keeps that promise (ontwerp deel 6); with sync on hold switched on the date and the names follow.
+  if (trial.devices && trial.promised) lines.push(`- ${trial.devices} devices are signed in, and Free has ${trial.deviceLimit}. They all keep working. To add a new one, sign out one of these first.`);
+  else if (trial.devices && trial.sync) lines.push(`- ${trial.devices} devices are signed in, and Free includes ${trial.deviceLimit}. ${syncLine(trial.sync)}`);
+  else if (trial.devices) lines.push(`- ${trial.devices} devices are signed in, and Free includes ${trial.deviceLimit}. Syncing on the others can pause once the trial is over, but the notes on them stay where they are. With Plus, every device syncs.`);
   if (trial.groups) lines.push(`- You share ${trial.groups} notes or lists, and Free shares one. They all keep working; only a new one needs Plus.`);
   if (trial.links) lines.push(`- ${trial.links === 1 ? '1 note link is' : `${trial.links} note links are`} older than 7 days. On Free a link lasts 7 days, so ${trial.links === 1 ? 'it is' : 'they are'} paused. With Plus ${trial.links === 1 ? 'it works' : 'they work'} again.`);
   return lines;
 }
 
 /** The subject and plain text of each mail the server sends. */
-export function mailText({ kind, code, provider, report, trial }) {
+export function mailText({ kind, code, provider, report, trial, sync }) {
   const texts = {
     verify: [`Your JotDrop code: ${code}`, `Enter this code to finish creating your JotDrop account:\n\n${code}\n\nThe code works for 15 minutes. If you did not sign up, you can ignore this email.`],
     login: [`Your JotDrop sign-in code: ${code}`, `Enter this code to sign in to JotDrop:\n\n${code}\n\nThe code works for 15 minutes. If you did not try to sign in, change your password.`],
@@ -57,6 +71,10 @@ export function mailText({ kind, code, provider, report, trial }) {
     const now = lines.length ? `A few things go beyond Free:\n${lines.join('\n')}` : 'Everything you have fits in Free, so nothing changes for you.';
     texts[kind] = ['Your JotDrop Plus trial has ended', `Your cloud is on the free plan now. Your notes, photos and history are all still there.\n\n${now}\n\nIf you want Plus later, you can choose it at ${PLUS_LINK}.\n\nThis is the last email about your trial.`];
   }
+  // A service notice about the account's own devices (jurist J3): the date, the devices, what stays, where to choose, and one plain line about Plus.
+  // One when the grace starts outside a trial; the reminder only after the long notice of the one-time change.
+  if (kind === 'sync-pausing') texts[kind] = ['Sync goes on hold on some of your JotDrop devices', `Your JotDrop plan syncs ${sync.limit} devices, and ${sync.devices} are signed in.\n\n${syncLine(sync)}\n\nWith JotDrop Plus every device syncs: ${PLUS_LINK}\n\nYou get this email because it changes how your own JotDrop account works.`];
+  if (kind === 'sync-pause-reminder') texts[kind] = [`On ${longDay(sync.pauseAt)} sync goes on hold on some of your JotDrop devices`, `As we wrote before: your JotDrop plan syncs ${sync.limit} devices, and ${sync.devices} are signed in.\n\n${syncLine(sync)}\n\nWith JotDrop Plus every device syncs: ${PLUS_LINK}\n\nThis is the last email about it.`];
   // Only for us. What the writer typed stays plain text here; mailHtml escapes it.
   if (kind === 'space-report') texts[kind] = [`JotDrop report: ${report.reason}`, `Someone reported something in a shared group.\n\nReason: ${report.reason}\nFrom: ${report.from}\nAbout: ${report.about ?? 'the group'}\nGroup: ${report.spaceId}\n\nTheir words, each line marked:\n${(report.details || 'They wrote nothing more.').split('\n').map((line) => `> ${line}`).join('\n')}\n\nThe server cannot read the notes in this group. Ask the writer if you need to see them.`];
   if (kind === 'link-report') texts[kind] = [`JotDrop link report: ${report.reason}`, `Someone reported a shared note link. We cannot read the note: open the link only if the report includes it.\n\nReason: ${report.reason}\nOwner: ${report.owner}\nLink ID: ${report.linkId}\n\nWhat they wrote:\n${report.details.split('\n').map((text) => `> ${text}`).join('\n')}`];
@@ -71,8 +89,8 @@ const FONT = "'Instrument Sans', -apple-system, 'Segoe UI', Roboto, Helvetica, A
 
 /** The same mail dressed in the house style "paper and ink" (Eric, 27 Oct): the code large in an amber box, easy to copy.
  * Tables and inline styles only, since mail apps ignore style sheets; the plain text goes along for apps that show no HTML. */
-export function mailHtml({ kind, code, provider, report, trial }) {
-  const { subject, body } = mailText({ kind, code, provider, report, trial });
+export function mailHtml({ kind, code, provider, report, trial, sync }) {
+  const { subject, body } = mailText({ kind, code, provider, report, trial, sync });
   const paragraphs = body.split('\n\n');
   const closing = paragraphs.pop();
   const content = paragraphs.map((paragraph) => paragraph === code
@@ -113,9 +131,9 @@ export function createBrevoList({ apiKey, listId, fetcher = globalThis.fetch }) 
 export function createSesMailer({ region, accessKeyId, secretAccessKey, from, fetcher = globalThis.fetch, clock = Date.now }) {
   if (![region, accessKeyId, secretAccessKey, from].every((value) => typeof value === 'string' && value.length > 0) || !/^[a-z]{2}-[a-z]+-\d$/.test(region)) throw new Error('Provide the SES region, access key, secret key and sender address.');
   const url = `https://email.${region}.amazonaws.com/v2/email/outbound-emails`;
-  return async ({ to, kind, code, provider, report, trial }) => {
-    const { subject, body: text } = mailText({ kind, code, provider, report, trial });
-    const html = mailHtml({ kind, code, provider, report, trial });
+  return async ({ to, kind, code, provider, report, trial, sync }) => {
+    const { subject, body: text } = mailText({ kind, code, provider, report, trial, sync });
+    const html = mailHtml({ kind, code, provider, report, trial, sync });
     const body = JSON.stringify({ FromEmailAddress: from, Destination: { ToAddresses: [to] }, Content: { Simple: { Subject: { Data: subject, Charset: 'UTF-8' }, Body: { Text: { Data: text, Charset: 'UTF-8' }, Html: { Data: html, Charset: 'UTF-8' } } } } });
     const headers = signRequest({ method: 'POST', url, headers: { 'content-type': 'application/json', 'x-amz-content-sha256': sha256(body) }, body, service: 'ses', region, accessKeyId, secretAccessKey, date: new Date(clock()) });
     const response = await fetcher(url, { method: 'POST', headers, body, signal: AbortSignal.timeout(10000) });

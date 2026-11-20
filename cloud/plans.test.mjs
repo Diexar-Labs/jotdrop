@@ -312,10 +312,10 @@ test('the free trial runs 14 days once per cloud', async (t) => {
   const cloud = await fixture(t);
   const { client } = await cloud.create();
   const free = (await client.status()).plan;
-  assert.deepEqual(free, { name: 'free', plusUntil: null, trialAvailable: true, trialEnds: null, deviceLimit: 2, historyDays: 30, subscribed: false, checkout: false, founderPrice: false, familyCheckout: false, family: null, supporter: false, early: false });
+  assert.deepEqual(free, { name: 'free', plusUntil: null, trialAvailable: true, trialEnds: null, deviceLimit: 2, historyDays: 30, subscribed: false, checkout: false, founderPrice: false, familyCheckout: false, family: null, supporter: false, early: false, sync: { limit: 2, state: 'all', pauseAt: null, thisDevice: 'syncing', changeAt: null } });
   const started = await trial(client);
   assert.equal(started.plusUntil, '2026-11-06T08:00:00.000Z');
-  assert.deepEqual((await client.status()).plan, { name: 'plus', plusUntil: '2026-11-06T08:00:00.000Z', trialAvailable: false, trialEnds: '2026-11-06T08:00:00.000Z', deviceLimit: null, historyDays: null, subscribed: false, checkout: false, founderPrice: false, familyCheckout: false, family: null, supporter: false, early: true });
+  assert.deepEqual((await client.status()).plan, { name: 'plus', plusUntil: '2026-11-06T08:00:00.000Z', trialAvailable: false, trialEnds: '2026-11-06T08:00:00.000Z', deviceLimit: null, historyDays: null, subscribed: false, checkout: false, founderPrice: false, familyCheckout: false, family: null, supporter: false, early: true, sync: { limit: null, state: 'all', pauseAt: null, thisDevice: 'syncing', changeAt: null } });
   await assert.rejects(trial(client), (error) => error.status === 409);
   cloud.advance(15 * DAY);
   assert.equal((await client.status()).plan.trialAvailable, false);

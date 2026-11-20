@@ -110,6 +110,17 @@ const INVITE_LIFETIME = 7 * DAY, TAKEOVER_WAIT = 7 * DAY, FROZEN_SPACE_LIFETIME 
 // AI agent its tools and none of them may come near the key; an app that never asks for it stays out as well. The app
 // name is what the device says about itself: an extra lock, not proof.
 const AI_KEY_APPS = ['web', 'obsidian', 'android'], MAX_AI_KEY = 8 * 1024;
+// Sync on hold above the free plan's devices (Hand-off/ontwerp-sync-pauzeren-boven-free.md, Eric 20 Nov 2026): seven days
+// of grace once a cloud without Plus has more devices than its limit, then the devices not chosen get no notes and send
+// none. After the pause starts the choice changes at most once a day; the reminder only follows a notice of over 14 days.
+const SYNC_GRACE = 7 * DAY, SYNC_CHANGE_WAIT = DAY, SYNC_REMINDER = 3 * DAY, SYNC_LONG_NOTICE = 14 * DAY;
+// The clipper and an AI agent come last when the server picks who goes on syncing: they call in often and would win from the phone.
+const SYNC_HELPER_APPS = ['clipper', 'mcp'];
+// What a device on hold still reaches: its own plan, its devices and its account. Everything else, also a route added later, is refused.
+const PAUSED_ROUTES = [/^\/status$/, /^\/devices(?:\/|$)/, /^\/account(?:\/|$)/, /^\/family(?:\/|$)/, /^\/recovery$/];
+// When the trial mail stopped saying "They all keep working" on production: 20 Nov 2026 15:51:01 CET. A cloud that got a
+// trial mail before then keeps its devices (ontwerp deel 6).
+const TRIAL_PROMISE_ENDED = Date.parse('2026-11-20T14:51:01Z');
 
 /** QR code as rows of "1" (dark) and "0", so every client can draw it without a QR library of its own. */
 function qrRows(text) {
@@ -232,7 +243,7 @@ async function body(req, maximum = MAX_BODY) {
 }
 
 /** Loopback-only server behind a trusted HTTPS proxy. Accounts need a mailer; no billing or provider credentials. `quotaBytes` and `freeDeviceLimit` are the free plan's limits. */
-export async function createCloudServer({ dataDir, enrollmentToken, mailer, newsletter, serverKey, stripe, reviewLogin, oauth = {}, fetcher = globalThis.fetch, quotaBytes = 250 * 1024 * 1024, plusQuotaBytes = 10 * 1024 * 1024 * 1024, maxFileBytes = 25 * 1024 * 1024, plusMaxFileBytes = 200 * 1024 * 1024, freeDeviceLimit = 2, maxHistoryEntries = 100000, maxDeviceEntries = 1000, maxPairingEntries = 128, maxConcurrentRequests = 16, signupsPerAddress = 5, signupTrial = TRIAL_TIME, roadmap = ROADMAP, earlyFeatures = EARLY_FEATURES, turnstile, webRoot = join(directory, 'web'), corsOrigins = [], publicOrigin, adminOrigin, adminPasswordHash, adminTotpSecret, adminRoot = join(directory, 'admin'), port = 0, enrollmentLimit = 1, sweepEvery = 60 * 60 * 1000, clock = Date.now, mailDomain, mailinToken, backupLog, mcpPlusOnly = false }) {
+export async function createCloudServer({ dataDir, enrollmentToken, mailer, newsletter, serverKey, stripe, reviewLogin, oauth = {}, fetcher = globalThis.fetch, quotaBytes = 250 * 1024 * 1024, plusQuotaBytes = 10 * 1024 * 1024 * 1024, maxFileBytes = 25 * 1024 * 1024, plusMaxFileBytes = 200 * 1024 * 1024, freeDeviceLimit = 2, maxHistoryEntries = 100000, maxDeviceEntries = 1000, maxPairingEntries = 128, maxConcurrentRequests = 16, signupsPerAddress = 5, signupTrial = TRIAL_TIME, roadmap = ROADMAP, earlyFeatures = EARLY_FEATURES, turnstile, webRoot = join(directory, 'web'), corsOrigins = [], publicOrigin, adminOrigin, adminPasswordHash, adminTotpSecret, adminRoot = join(directory, 'admin'), port = 0, enrollmentLimit = 1, sweepEvery = 60 * 60 * 1000, clock = Date.now, mailDomain, mailinToken, backupLog, mcpPlusOnly = false, syncPauseFrom, trialPromiseEnded = TRIAL_PROMISE_ENDED }) {
   if (!dataDir || (enrollmentToken !== undefined && !validToken(enrollmentToken)) || [quotaBytes, plusQuotaBytes, freeDeviceLimit].some((value) => !Number.isSafeInteger(value) || value < 1)) throw new Error('Provide a data directory, random 32-byte enrollment token and positive quota.');
   if (mailer !== undefined && typeof mailer !== 'function') throw new Error('Provide the mailer as a function.');
   // Google Play reviewers cannot receive email codes: this one address confirms with a fixed code and gets no mail. The password stays required.
@@ -244,6 +255,9 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   // Mail to JotDrop: `mailDomain` is the domain of the secret addresses; `mailinToken` lets only the local mailin process deliver.
   if (mailDomain !== undefined && !/^[a-z0-9][a-z0-9.-]{2,126}[a-z0-9]$/.test(mailDomain)) throw new Error('Provide the mail domain as a lowercase hostname.');
   if (mailinToken !== undefined && !validToken(mailinToken)) throw new Error('Provide the mailin token as 32 random bytes.');
+  // JOTDROP_CLOUD_SYNC_PAUSE_FROM: without it nothing pauses and no mail about it goes; with it no cloud pauses before that moment.
+  if (syncPauseFrom !== undefined && (!Number.isSafeInteger(syncPauseFrom) || syncPauseFrom < 0)) throw new Error('Provide the start of sync on hold as a time in milliseconds.');
+  if (!Number.isSafeInteger(trialPromiseEnded) || trialPromiseEnded < 0) throw new Error('Provide the end of the old trial mail as a time in milliseconds.');
   // JotDrop Plus is sold through Stripe Managed Payments (Stripe is the seller and handles VAT); without settings there is no checkout.
   if (stripe !== undefined && !['secretKey', 'webhookSecret', 'monthPrice', 'yearPrice'].every((name) => typeof stripe[name] === 'string' && stripe[name].length > 0)) throw new Error('Provide the Stripe secret key, webhook secret and both prices.');
   // `oauth.google` / `oauth.github`: { clientId, clientSecret }, plus endpoint overrides for tests.
@@ -375,6 +389,19 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       // Who uploaded a piece that no version uses yet; only set in a space, so one member cannot block the others.
       if (!all('PRAGMA table_info(chunks)').some((column) => column.name === 'deviceId')) db.exec('ALTER TABLE chunks ADD COLUMN deviceId TEXT;');
       db.exec('CREATE INDEX IF NOT EXISTS chunks_by_device ON chunks(deviceId) WHERE deviceId IS NOT NULL;');
+      // Sync on hold: `keepSync` 1 = chosen to go on syncing, which only counts while the cloud has a row in sync_pauses;
+      // the row says when the pause starts, which mails went (1 notice, 2 reminder) and when the choice last changed after
+      // the start. No foreign keys and no higher user_version: an older server ignores all of it and nobody is on hold.
+      if (!all('PRAGMA table_info(devices)').some((column) => column.name === 'keepSync')) db.exec('ALTER TABLE devices ADD COLUMN keepSync INTEGER NOT NULL DEFAULT 0;');
+      db.exec('CREATE TABLE IF NOT EXISTS sync_pauses(vaultId TEXT PRIMARY KEY, createdAt INTEGER NOT NULL, pauseAt INTEGER NOT NULL, mailed INTEGER NOT NULL DEFAULT 0, changedAt INTEGER);');
+      // The promise of the old trial mail ("They all keep working"): a limit of its own for that cloud, for good.
+      const promisesKnown = Boolean(one("SELECT 1 FROM sqlite_master WHERE type='table' AND name='device_promises'"));
+      db.exec('CREATE TABLE IF NOT EXISTS device_promises(vaultId TEXT PRIMARY KEY, devices INTEGER NOT NULL, grantedAt INTEGER NOT NULL);');
+      // Once, when this table is new. Which mail said it is not stored, so it is recorded generously: every cloud that got a
+      // trial mail before the new text (the first mail goes 3 days before the end, at an hourly sweep) and has more
+      // devices than Free now keeps the number it has now.
+      if (!promisesKnown) run(`INSERT INTO device_promises(vaultId,devices,grantedAt) SELECT vaultId,active,? FROM (SELECT t.vaultId,(SELECT COUNT(*) FROM devices d WHERE d.vaultId=t.vaultId AND d.revoked=0) AS active
+        FROM trials t JOIN accounts a ON a.vaultId=t.vaultId WHERE t.mail>=1 AND t.trialUntil-?<=?) WHERE active>?`, clock(), 3 * DAY, trialPromiseEnded + 60 * 60 * 1000, freeDeviceLimit);
       run("INSERT INTO secrets VALUES('fake-salt',?) ON CONFLICT(name) DO NOTHING", randomBytes(32).toString('base64url'));
       const legacy = all('PRAGMA table_info(revisions)').some((column) => column.name === 'envelope');
       db.exec(`CREATE TABLE IF NOT EXISTS ${legacy ? 'revisions_migrated' : 'revisions'}(vaultId TEXT NOT NULL REFERENCES vaults(id), id TEXT NOT NULL, revision INTEGER NOT NULL, envelopeHash TEXT NOT NULL, deleted INTEGER NOT NULL, size INTEGER NOT NULL, updatedAt TEXT NOT NULL, deviceId TEXT NOT NULL, PRIMARY KEY(vaultId,id,revision), FOREIGN KEY(vaultId,id,envelopeHash) REFERENCES envelopes(vaultId,id,envelopeHash));`);
@@ -588,6 +615,88 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     } catch { /* A count must never turn a refusal into a server error. */ }
   }
   const dropDevicePieces = (deviceId) => run('DELETE FROM chunks WHERE deviceId=? AND claimed=0', deviceId);
+  // Sync on hold (Hand-off/ontwerp-sync-pauzeren-boven-free.md). When in doubt a device syncs: the switch off, no row in
+  // sync_pauses, Plus at this moment, no more devices than the limit, or fewer chosen devices than the limit all mean
+  // that every device syncs. Plus and the device count are worked out on every request, never stored.
+  const syncOn = syncPauseFrom !== undefined;
+  // The Play reviewers' account never goes on hold (rule 14).
+  const syncExempt = (vaultId) => Boolean(reviewLogin) && one('SELECT email FROM accounts WHERE vaultId=?', vaultId)?.email === reviewLogin.email;
+  // Free syncs `freeDeviceLimit` devices; a cloud with the promise of the old trial mail syncs the number it had then.
+  const syncLimit = (vaultId) => Math.max(freeDeviceLimit, one('SELECT devices FROM device_promises WHERE vaultId=?', vaultId)?.devices ?? 0);
+  const activeDevices = (vaultId) => all('SELECT id,name,app,lastSeenAt,keepSync FROM devices WHERE vaultId=? AND revoked=0', vaultId);
+  // Who gets a place first: the apps people use, most recently used first; the clipper and an AI agent after them.
+  const syncOrder = (a, b) => Number(SYNC_HELPER_APPS.includes(a.app)) - Number(SYNC_HELPER_APPS.includes(b.app)) || b.lastSeenAt.localeCompare(a.lastSeenAt) || a.id.localeCompare(b.id);
+  // Never before the switch's date, also when that date moved after the row was made.
+  const pauseStart = (row) => Math.max(row.pauseAt, syncPauseFrom);
+  /** The cloud's limit, and while some devices are limited the row, its active devices and the chosen ones (`kept`). */
+  function syncState(vaultId) {
+    const plus = isPlus(vaultId), limit = plus ? null : syncLimit(vaultId);
+    const row = syncOn && !plus ? one('SELECT * FROM sync_pauses WHERE vaultId=?', vaultId) : undefined;
+    if (!row || syncExempt(vaultId)) return { limit };
+    const active = activeDevices(vaultId);
+    if (active.length <= limit) return { limit };
+    const kept = active.filter((device) => device.keepSync);
+    return { limit, row, active, pauseAt: pauseStart(row), kept: kept.length >= limit ? new Set(kept.map((device) => device.id)) : null };
+  }
+  // The check on every request: one lookup for a cloud without a row, the rest only for a cloud with one.
+  function devicePaused(device) {
+    if (!syncOn || device.keepSync) return false;
+    const row = one('SELECT pauseAt FROM sync_pauses WHERE vaultId=?', device.vaultId);
+    if (!row || clock() < pauseStart(row)) return false;
+    const state = syncState(device.vaultId);
+    return Boolean(state.kept) && !state.kept.has(device.id);
+  }
+  // Old app versions show this text as it is, so it explains itself; no link and no price (Android shows it too).
+  function pausedText(vaultId) {
+    const limit = syncLimit(vaultId);
+    return `Sync is on hold on this device. ${limit === freeDeviceLimit ? 'The free plan' : 'Your plan'} syncs ${limit} devices, and this is not one of them. Your notes on this device stay here. Choose your ${limit} devices in JotDrop under Devices.`;
+  }
+  /** What the apps read under plan.sync in /status. */
+  function syncView(vaultId, deviceId) {
+    const state = syncState(vaultId), now = clock();
+    if (!state.kept) return { limit: state.limit, state: 'all', pauseAt: null, thisDevice: 'syncing', changeAt: null };
+    const started = now >= state.pauseAt, wait = started && state.row.changedAt !== null && state.row.changedAt + SYNC_CHANGE_WAIT > now;
+    return { limit: state.limit, state: started ? 'limited' : 'ending', pauseAt: isoTime(state.pauseAt), thisDevice: state.kept.has(deviceId) ? 'syncing' : 'paused', changeAt: wait ? isoTime(state.row.changedAt + SYNC_CHANGE_WAIT) : null };
+  }
+  function deviceList(vaultId) {
+    const state = syncState(vaultId);
+    return all('SELECT id,name,app,createdAt,lastSeenAt,revoked FROM devices WHERE vaultId=? ORDER BY createdAt', vaultId)
+      .map((entry) => ({ ...entry, revoked: Boolean(entry.revoked), syncing: !entry.revoked && (!state.kept || state.kept.has(entry.id)) }));
+  }
+  /** Gives `limit` active devices a place: `protect` first, then the chosen ones, then `prefer`, then by syncOrder. Returns the chosen devices that lost their place. */
+  function settleKeepers(vaultId, limit, { prefer, protect } = {}) {
+    const active = activeDevices(vaultId);
+    const rank = (device) => device.id === protect ? 0 : device.keepSync ? 1 : device.id === prefer ? 2 : 3;
+    const keep = new Set([...active].sort((a, b) => rank(a) - rank(b) || syncOrder(a, b)).slice(0, limit).map((device) => device.id));
+    for (const device of active) if (Boolean(device.keepSync) !== keep.has(device.id)) run('UPDATE devices SET keepSync=? WHERE id=?', keep.has(device.id) ? 1 : 0, device.id);
+    return active.filter((device) => device.keepSync && !keep.has(device.id)).sort(syncOrder);
+  }
+  // A new sign-in always gets a place (rule 11). When the device it replaced was on hold, a chosen device has to make room:
+  // the one that comes last in syncOrder. Not a change of devices, so the day's wait stays as it was.
+  function syncPlaceFor(vaultId, deviceId) {
+    if (!syncOn || !one('SELECT 1 FROM sync_pauses WHERE vaultId=?', vaultId)) return null;
+    run('UPDATE devices SET keepSync=1 WHERE id=?', deviceId);
+    const dropped = settleKeepers(vaultId, syncLimit(vaultId), { protect: deviceId });
+    return dropped.length ? { id: dropped[0].id, name: dropped[0].name } : null;
+  }
+  // Names and apps for the mails, the devices that go on first.
+  function syncMail(vaultId, pauseAt, limit) {
+    const active = activeDevices(vaultId).sort(syncOrder), named = (device) => ({ name: device.name, app: device.app ?? null });
+    return { pauseAt: isoTime(pauseAt), limit, devices: active.length, syncing: active.filter((device) => device.keepSync).map(named), onHold: active.filter((device) => !device.keepSync).map(named) };
+  }
+  /** Starts the grace for a cloud above its limit without Plus: the row, the provisional choice and what the mail says. Null when nothing starts. */
+  function startSyncPause(vaultId) {
+    return transaction(() => {
+      if (!syncOn || isPlus(vaultId) || syncExempt(vaultId) || one('SELECT 1 FROM sync_pauses WHERE vaultId=?', vaultId)) return null;
+      const limit = syncLimit(vaultId);
+      if (activeDevices(vaultId).length <= limit) return null;
+      // The grace starts when the server sees it (rule 3), so an old end of Plus never puts anyone on hold at once.
+      const now = clock(), pauseAt = Math.max(now + SYNC_GRACE, syncPauseFrom);
+      run('INSERT INTO sync_pauses(vaultId,createdAt,pauseAt,mailed) VALUES(?,?,?,1)', vaultId, now, pauseAt);
+      settleKeepers(vaultId, limit);
+      return syncMail(vaultId, pauseAt, limit);
+    });
+  }
   // A free cloud at its device limit can only swap a device, so someone who lost their phone can still sign in.
   function addDevice(vaultId, name, tokenHash, replaceDeviceId) {
     // Count revoked rows too: revocation must not bypass the local metadata ceiling.
@@ -602,7 +711,9 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     }
     const id = randomUUID(), now = new Date(clock()).toISOString();
     run('INSERT INTO devices(id,vaultId,name,tokenHash,createdAt,lastSeenAt) VALUES(?,?,?,?,?,?)', id, vaultId, name.trim(), tokenHash, now, now);
-    return { vaultId, deviceId: id };
+    // The app says which device went on hold for this one: "<name> is on hold".
+    const onHold = syncPlaceFor(vaultId, id);
+    return { vaultId, deviceId: id, ...(onHold ? { onHold } : {}) };
   }
   const requireAccounts = () => { if (!mailer || !serverKey) fail(503, 'Email sign-in is not available on this server'); };
   const codeFor = (email) => email === reviewLogin?.email ? reviewLogin.code : newCode();
@@ -1031,10 +1142,34 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     const apps = all('SELECT app,appVersion AS version,COUNT(*) AS devices,COALESCE(SUM(lastSeenAt>=?),0) AS usedLast30Days,COUNT(DISTINCT vaultId) AS accounts,MAX(lastSeenAt) AS lastSeenAt FROM devices WHERE revoked=0 GROUP BY 1,2', since(30))
       .sort((a, b) => (a.app ?? '').localeCompare(b.app ?? '') || compareVersions(b.version ?? '', a.version ?? ''));
     const newest = new Map(apps.filter((row) => row.app && row.version).map((row) => [row.app, row.version]).reverse());
-    return { generatedAt: new Date(now).toISOString(), accounts: { ...accounts, free: accounts.total - accounts.plus }, trials, trialsEnding, limits, subscriptions, family, links, backup: lastBackup(),
+    return { generatedAt: new Date(now).toISOString(), accounts: { ...accounts, free: accounts.total - accounts.plus }, trials, trialsEnding, limits, subscriptions, family, links, backup: lastBackup(), sync: adminSync(now),
       apps: apps.map((row) => ({ ...row, newest: newest.get(row.app) ?? null, behind: Boolean(row.version && compareVersions(row.version, newest.get(row.app)) < 0) })),
       roadmap: roadmap.map((item) => ({ title: item.title, votes: votes.get(item.id) ?? 0 })),
       storage: { storedBytes: one('SELECT (SELECT COALESCE(SUM(size),0) FROM envelopes) + (SELECT COALESCE(SUM(size),0) FROM chunks) AS size').size, databaseBytes: file('cloud.db') + file('cloud.db-wal'), diskFreeBytes: disk.bavail * disk.bsize, diskTotalBytes: disk.blocks * disk.bsize } };
+  }
+  // Accounts without Plus above the free plan's devices. Counted also while the switch is off: `wouldPause` then says how
+  // many would go on hold, so the numbers can be checked before the start date (ontwerp deel 5, Beheer).
+  function adminSync(now) {
+    const above = all(`SELECT a.vaultId,(SELECT COUNT(*) FROM devices d WHERE d.vaultId=a.vaultId AND d.revoked=0) AS active FROM accounts a WHERE ${plusUntilSql}<=?`, now).filter((row) => row.active > freeDeviceLimit);
+    const counts = { on: syncOn, from: syncOn ? isoTime(syncPauseFrom) : null, above: above.length, promised: 0, wouldPause: 0, ending: 0, limited: 0, devicesOnHold: 0 };
+    for (const { vaultId, active } of above) {
+      if (syncExempt(vaultId)) continue;
+      if (active <= syncLimit(vaultId)) { counts.promised++; continue; }
+      counts.wouldPause++;
+      const state = syncState(vaultId);
+      if (!state.kept) continue;
+      if (now < state.pauseAt) counts.ending++;
+      else { counts.limited++; counts.devicesOnHold += state.active.length - state.kept.size; }
+    }
+    return counts;
+  }
+  // The Devices column: "4 active, 2 on hold", "on hold from <date>" or "promise 4".
+  function adminDeviceSync(vaultId, active, now) {
+    const promise = one('SELECT devices FROM device_promises WHERE vaultId=?', vaultId)?.devices ?? null;
+    if (active <= freeDeviceLimit) return { promise, onHold: 0, pauseAt: null };
+    const state = syncState(vaultId);
+    if (!state.kept) return { promise, onHold: 0, pauseAt: null };
+    return { promise, onHold: now >= state.pauseAt ? state.active.length - state.kept.size : 0, pauseAt: now < state.pauseAt ? isoTime(state.pauseAt) : null };
   }
   const ADMIN_SORT = { created: 'a.createdAt', email: 'a.email', storage: 'usedBytes', active: 'lastActiveAt' };
   function adminAccounts(params) {
@@ -1043,7 +1178,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     requireValue(search.length <= 254 && Object.hasOwn(ADMIN_SORT, sort) && ['asc', 'desc'].includes(order) && Number.isSafeInteger(page) && page >= 1 && Number.isSafeInteger(pageSize) && pageSize >= 1 && pageSize <= ADMIN_PAGE, 'Invalid account list request');
     const now = clock();
     // ponytail: sums the storage of every matching account per page; keep per-vault counters if the account list grows large.
-    const rows = all(`SELECT a.email,a.createdAt,a.authHash<>'' AS hasPassword,a.totpSecret IS NOT NULL AS hasAuthenticator,(SELECT group_concat(provider,',') FROM (SELECT provider FROM identities WHERE accountId=a.id ORDER BY provider)) AS providers,
+    const rows = all(`SELECT a.vaultId,a.email,a.createdAt,a.authHash<>'' AS hasPassword,a.totpSecret IS NOT NULL AS hasAuthenticator,(SELECT group_concat(provider,',') FROM (SELECT provider FROM identities WHERE accountId=a.id ORDER BY provider)) AS providers,
       ${plusUntilSql} AS plusUntil,EXISTS${runningSql} AS subscribed,${usedBytesSql} AS usedBytes,(SELECT COUNT(*) FROM spaces WHERE ownerAccountId=a.id AND ownerGoneAt IS NULL) AS spaces,(SELECT COUNT(*) FROM devices WHERE vaultId=a.vaultId AND revoked=0) AS activeDevices,
       (SELECT MAX(lastSeenAt) FROM devices WHERE vaultId=a.vaultId) AS lastActiveAt,EXISTS(SELECT 1 FROM newsletter WHERE accountId=a.id) AS newsletter,
       (SELECT group_concat(entry,'|') FROM (SELECT DISTINCT COALESCE(app,'')||'/'||COALESCE(appVersion,'') AS entry FROM devices WHERE vaultId=a.vaultId AND revoked=0 ORDER BY entry)) AS apps
@@ -1051,7 +1186,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     return { accounts: rows.map((row) => {
       const plus = row.plusUntil > now;
       return { email: row.email, createdAt: row.createdAt, hasPassword: Boolean(row.hasPassword), hasAuthenticator: Boolean(row.hasAuthenticator), providers: row.providers ? row.providers.split(',') : [], plan: plus ? 'plus' : 'free',
-        plusUntil: row.plusUntil ? new Date(row.plusUntil).toISOString() : null, subscribed: Boolean(row.subscribed), usedBytes: row.usedBytes, quotaBytes: plus ? plusQuotaBytes : quotaBytes, spaces: row.spaces, activeDevices: row.activeDevices, lastActiveAt: row.lastActiveAt ?? null, newsletter: Boolean(row.newsletter),
+        plusUntil: row.plusUntil ? new Date(row.plusUntil).toISOString() : null, subscribed: Boolean(row.subscribed), usedBytes: row.usedBytes, quotaBytes: plus ? plusQuotaBytes : quotaBytes, spaces: row.spaces, activeDevices: row.activeDevices, sync: adminDeviceSync(row.vaultId, row.activeDevices, now), lastActiveAt: row.lastActiveAt ?? null, newsletter: Boolean(row.newsletter),
         apps: row.apps ? row.apps.split('|').map((entry) => { const [app, version] = entry.split('/'); return { app: app || null, version: version || null }; }) : [] };
     }), total: one('SELECT COUNT(*) AS count FROM accounts WHERE instr(email,?)>0', search).count, page, pageSize };
   }
@@ -1185,7 +1320,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       run('DELETE FROM code_failures WHERE scope IN (?,?,?)', `login:${account.id}`, `reset:${account.id}`, `signup:${account.email}`);
       run('DELETE FROM accounts WHERE id=?', account.id);
     }
-    for (const table of ['uploads', 'pairings', 'revisions', 'envelope_chunks', 'chunks', 'retired_envelopes', 'envelopes', 'changes', 'purges', 'signups', 'devices', 'plans', 'trials', 'subscriptions', 'mail_accounts', 'mail_senders', 'mail_items', 'mail_parts', 'mail_log', 'ai_keys', 'ai_key_times']) run(`DELETE FROM ${table} WHERE vaultId=?`, vaultId);
+    for (const table of ['uploads', 'pairings', 'revisions', 'envelope_chunks', 'chunks', 'retired_envelopes', 'envelopes', 'changes', 'purges', 'signups', 'devices', 'plans', 'trials', 'subscriptions', 'mail_accounts', 'mail_senders', 'mail_items', 'mail_parts', 'mail_log', 'ai_keys', 'ai_key_times', 'sync_pauses', 'device_promises']) run(`DELETE FROM ${table} WHERE vaultId=?`, vaultId);
     run('DELETE FROM vaults WHERE id=?', vaultId);
   }
   function forgetAddress(account, kind) {
@@ -1210,7 +1345,9 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     const devices = one('SELECT COUNT(*) AS count FROM devices WHERE vaultId=? AND revoked=0', account.vaultId).count;
     const groups = liveSpaces(account.id);
     const links = allLinks(account).filter((link) => (link.expiresAt === null || link.expiresAt > now) && link.createdAt + LINK_FREE_DAYS * DAY <= now).length;
-    return { usedMb: used > quotaBytes ? Math.ceil(used / 1048576) : 0, quotaMb: Math.round(quotaBytes / 1048576), devices: devices > freeDeviceLimit ? devices : 0, deviceLimit: freeDeviceLimit, groups: groups > 1 ? groups : 0, links };
+    // A cloud with the promise of the old trial mail keeps hearing that its devices keep working (ontwerp deel 6).
+    const promised = devices > freeDeviceLimit && devices <= (one('SELECT devices FROM device_promises WHERE vaultId=?', account.vaultId)?.devices ?? 0);
+    return { usedMb: used > quotaBytes ? Math.ceil(used / 1048576) : 0, quotaMb: Math.round(quotaBytes / 1048576), devices: devices > freeDeviceLimit ? devices : 0, deviceLimit: freeDeviceLimit, groups: groups > 1 ? groups : 0, links, ...(promised ? { promised } : {}) };
   }
   // Two mails per trial: three days before the end, and on the day itself. A cloud that pays or has a family gets neither;
   // a trial that ended more than a week ago (a server that was down) is marked without a late mail.
@@ -1222,16 +1359,49 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       if (extended || row.trialUntil <= now - 7 * DAY) { run('UPDATE trials SET mail=2 WHERE vaultId=?', row.vaultId); continue; }
       if (row.trialUntil <= now) {
         run('UPDATE trials SET mail=2 WHERE vaultId=?', row.vaultId);
-        sendMailLater({ to: row.email, kind: 'trial-ended', trial: aboveFree(account) });
+        // With sync on hold switched on, the grace starts here, so this last trial mail names the date and the devices and no second mail follows.
+        const sync = startSyncPause(row.vaultId);
+        sendMailLater({ to: row.email, kind: 'trial-ended', trial: { ...aboveFree(account), ...(sync ? { sync } : {}) } });
       } else if (row.mail < 1 && row.trialUntil - now <= 3 * DAY) {
         run('UPDATE trials SET mail=1 WHERE vaultId=?', row.vaultId);
         sendMailLater({ to: row.email, kind: 'trial-ending', trial: { ...aboveFree(account), endsAt: new Date(row.trialUntil).toISOString() } });
       }
     }
   }
+  // Every hour, after sweepTrials: rows that no longer apply go, a free place is filled, the reminder goes, and a cloud that
+  // has just come above its limit without Plus starts its grace with one mail. With the switch off it does nothing.
+  function sweepSyncPauses() {
+    if (!syncOn) return;
+    const now = clock(), mails = [];
+    transaction(() => {
+      for (const row of all('SELECT * FROM sync_pauses')) {
+        const email = one('SELECT email FROM accounts WHERE vaultId=?', row.vaultId)?.email, limit = syncLimit(row.vaultId);
+        // Plus again or back within the limit: every device syncs. The choice stays on the devices as a proposal for next time (rule 8).
+        if (!email || isPlus(row.vaultId) || syncExempt(row.vaultId) || activeDevices(row.vaultId).length <= limit) { run('DELETE FROM sync_pauses WHERE vaultId=?', row.vaultId); continue; }
+        // A chosen device was signed out in a way that did not hand its place on: fill up (rule 7).
+        settleKeepers(row.vaultId, limit);
+        // Only after the long notice of the one-time change for existing accounts (ontwerp deel 11): a reminder 3 days before.
+        const start = pauseStart(row);
+        if (row.mailed === 1 && start - row.createdAt > SYNC_LONG_NOTICE && now >= start - SYNC_REMINDER && now < start) {
+          run('UPDATE sync_pauses SET mailed=2 WHERE vaultId=?', row.vaultId);
+          mails.push({ to: email, kind: 'sync-pause-reminder', sync: syncMail(row.vaultId, start, limit) });
+        }
+      }
+      // A cloud whose trial is still open for sweepTrials gets its date in the trial mail instead.
+      const candidates = all(`SELECT a.vaultId,a.email FROM accounts a WHERE (SELECT COUNT(*) FROM devices d WHERE d.vaultId=a.vaultId AND d.revoked=0)>?
+        AND NOT EXISTS (SELECT 1 FROM sync_pauses p WHERE p.vaultId=a.vaultId) AND NOT EXISTS (SELECT 1 FROM trials t WHERE t.vaultId=a.vaultId AND t.mail<2)`, freeDeviceLimit);
+      for (const { vaultId, email } of candidates) {
+        const sync = startSyncPause(vaultId);
+        if (sync) mails.push({ to: email, kind: 'sync-pausing', sync });
+      }
+    });
+    for (const mail of mails) sendMailLater(mail);
+  }
   function sweepSpaces() {
     transaction(() => {
       const now = clock();
+      // Never kept for a cloud that is gone, also when an older server deleted it without knowing these tables.
+      for (const table of ['sync_pauses', 'device_promises']) run(`DELETE FROM ${table} WHERE vaultId NOT IN (SELECT id FROM vaults)`);
       run('DELETE FROM space_invites WHERE expiresAt<=?', now);
       for (const table of ['note_links', 'list_links']) run(`DELETE FROM ${table} WHERE expiresAt<=? OR accountId NOT IN (SELECT id FROM accounts)`, now);
       // An older server may have run for a while and deleted accounts without knowing about spaces.
@@ -2011,11 +2181,13 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           run('UPDATE plans SET vaultId=? WHERE vaultId=?', vaultId, account.vaultId);
           run('UPDATE trials SET vaultId=? WHERE vaultId=?', vaultId, account.vaultId);
           run('UPDATE subscriptions SET vaultId=? WHERE vaultId=?', vaultId, account.vaultId);
+          // The promise of the old trial mail belongs to the person too; the pause of the old devices goes with them.
+          run('UPDATE device_promises SET vaultId=? WHERE vaultId=?', vaultId, account.vaultId);
           setCredentials(account.id, next);
           run('DELETE FROM device_approvals WHERE accountId=?', account.id);
           // Nobody can read the old ciphertext any more; deleting it is what the user confirmed. Mail to JotDrop goes too:
           // its address, filter and sealed mail belong to the old key, and mail_accounts still points at the vault that is deleted here.
-          for (const table of ['uploads', 'pairings', 'revisions', 'envelope_chunks', 'chunks', 'retired_envelopes', 'envelopes', 'changes', 'purges', 'signups', 'devices', 'ai_keys', 'ai_key_times', 'mail_accounts', 'mail_senders', 'mail_items', 'mail_parts', 'mail_log']) run(`DELETE FROM ${table} WHERE vaultId=?`, account.vaultId);
+          for (const table of ['uploads', 'pairings', 'revisions', 'envelope_chunks', 'chunks', 'retired_envelopes', 'envelopes', 'changes', 'purges', 'signups', 'devices', 'ai_keys', 'ai_key_times', 'mail_accounts', 'mail_senders', 'mail_items', 'mail_parts', 'mail_log', 'sync_pauses']) run(`DELETE FROM ${table} WHERE vaultId=?`, account.vaultId);
           run('DELETE FROM vaults WHERE id=?', account.vaultId);
           return addDevice(vaultId, value.deviceName, value.deviceTokenHash);
         })); return;
@@ -2182,6 +2354,9 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         if (![5, 6, 8, 10, 13].includes(sqliteCode(error))) throw error; // BUSY, LOCKED, READONLY, IOERR, FULL.
       }
       requireMcpPlus(client, device.vaultId);
+      // A device on hold reaches its own plan, devices and account, and nothing notes go through, shared spaces included.
+      // Counted like a plan limit. An upload that got past this check may finish: the pause is no security measure.
+      if ((inSpace || !PAUSED_ROUTES.some((pattern) => pattern.test(route))) && devicePaused(device)) planLimit('device-paused', device.vaultId, 403, pausedText(device.vaultId), { code: 'device-paused' });
       // Without this list a member could delete the space with /account/delete, add a device with /pairings or set /recovery.
       if (inSpace && !SPACE_ROUTES.some(([verb, pattern]) => verb === method && pattern.test(route))) fail(403, 'This is not available in a shared space.');
       // Members do not see each other's devices.
@@ -2483,7 +2658,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       }
       if (method === 'GET' && route === '/status') {
         const plan = planRow(vaultId), plus = plan.plusUntil > clock(), owner = one('SELECT id,vaultId FROM accounts WHERE vaultId=?', vaultId);
-        reply(200, { usedBytes: one('SELECT (SELECT COALESCE(SUM(size),0) FROM envelopes WHERE vaultId=?) + (SELECT COALESCE(SUM(size),0) FROM chunks WHERE vaultId=?) AS size', vaultId, vaultId).size + (owner ? liveSpaceBytes(owner.id) : 0), quotaBytes: quotaFor(vaultId), plan: { name: plus ? 'plus' : 'free', plusUntil: plan.plusUntil ? new Date(plan.plusUntil).toISOString() : null, trialAvailable: !plan.trialUsed && !plus, trialEnds: trialEnds(plan) ? new Date(plan.trialUntil).toISOString() : null, deviceLimit: plus ? null : freeDeviceLimit, historyDays: plus ? null : FREE_HISTORY / DAY, subscribed: subscribed(vaultId), checkout: Boolean(stripe), founderPrice: founderPrice(), familyCheckout: familyPrices.length > 0, family: familyRole(owner), supporter: owner ? supporter(vaultId, owner) : subscribed(vaultId), early: plus }, mail: mailStatus(vaultId), features: featuresFor(plus), sequence: one('SELECT COALESCE(MAX(sequence),0) AS sequence FROM changes WHERE vaultId=?', vaultId).sequence, history: historyUsage(vaultId), transport: { version: 1, chunkBytes: TRANSFER_CHUNK_BYTES, reservedBytes: one('SELECT COALESCE(SUM(reservedBytes),0) AS size FROM uploads WHERE vaultId=?', vaultId).size }, pieces: { version: 1, pieceBytes: PIECE_BYTES, maxFileBytes: maxFileFor(vaultId), legacy: one('SELECT COUNT(*) AS count FROM envelopes WHERE vaultId=? AND pieces=0 AND size>?', vaultId, LEGACY_ENVELOPE_BYTES).count } }); return;
+        reply(200, { usedBytes: one('SELECT (SELECT COALESCE(SUM(size),0) FROM envelopes WHERE vaultId=?) + (SELECT COALESCE(SUM(size),0) FROM chunks WHERE vaultId=?) AS size', vaultId, vaultId).size + (owner ? liveSpaceBytes(owner.id) : 0), quotaBytes: quotaFor(vaultId), plan: { name: plus ? 'plus' : 'free', plusUntil: plan.plusUntil ? new Date(plan.plusUntil).toISOString() : null, trialAvailable: !plan.trialUsed && !plus, trialEnds: trialEnds(plan) ? new Date(plan.trialUntil).toISOString() : null, deviceLimit: plus ? null : freeDeviceLimit, historyDays: plus ? null : FREE_HISTORY / DAY, subscribed: subscribed(vaultId), checkout: Boolean(stripe), founderPrice: founderPrice(), familyCheckout: familyPrices.length > 0, family: familyRole(owner), supporter: owner ? supporter(vaultId, owner) : subscribed(vaultId), early: plus, sync: syncView(vaultId, deviceId) }, mail: mailStatus(vaultId), features: featuresFor(plus), sequence: one('SELECT COALESCE(MAX(sequence),0) AS sequence FROM changes WHERE vaultId=?', vaultId).sequence, history: historyUsage(vaultId), transport: { version: 1, chunkBytes: TRANSFER_CHUNK_BYTES, reservedBytes: one('SELECT COALESCE(SUM(reservedBytes),0) AS size FROM uploads WHERE vaultId=?', vaultId).size }, pieces: { version: 1, pieceBytes: PIECE_BYTES, maxFileBytes: maxFileFor(vaultId), legacy: one('SELECT COUNT(*) AS count FROM envelopes WHERE vaultId=? AND pieces=0 AND size>?', vaultId, LEGACY_ENVELOPE_BYTES).count } }); return;
       }
       if (method === 'GET' && route === '/changes') {
         const after = Number(url.searchParams.get('after') || 0);
@@ -2513,7 +2688,30 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           return { ...entry, deleted: Boolean(entry.deleted), locked: cleared || Boolean(cutoff) && (replacedAt ? replacedAt < cutoff : Boolean(entry.deleted) && entry.updatedAt < cutoff), cleared };
         }), cursor: objects.at(-1)?.id ?? after, hasMore }); return;
       }
-      if (method === 'GET' && route === '/devices') { reply(200, { devices: all('SELECT id,name,createdAt,lastSeenAt,revoked FROM devices WHERE vaultId=? ORDER BY createdAt', vaultId).map((entry) => ({ ...entry, revoked: Boolean(entry.revoked) })) }); return; }
+      // `app` says which JotDrop app a device runs and `syncing` whether it goes on syncing (in the grace: what it will do).
+      if (method === 'GET' && route === '/devices') { reply(200, { devices: deviceList(vaultId) }); return; }
+      // Which devices go on syncing: exactly as many active devices as the limit. As often as you like in the grace; after the
+      // pause starts once a day (rule 6), so the limit cannot be passed by choosing every device in turn.
+      if (method === 'PUT' && route === '/devices/syncing') {
+        const value = await body(req, MAX_METADATA_BODY);
+        requireValue(Array.isArray(value.deviceIds) && value.deviceIds.length <= 100 && value.deviceIds.every(validId) && new Set(value.deviceIds).size === value.deviceIds.length, 'Choose the devices that go on syncing.');
+        transaction(() => {
+          requireAccess(vaultId, deviceId);
+          const state = syncState(vaultId);
+          if (!state.row) fail(409, 'Every device syncs now, so there is nothing to choose.', { code: 'sync-all' });
+          const active = new Set(state.active.map((device) => device.id)), chosen = new Set(value.deviceIds), now = clock();
+          requireValue(chosen.size === state.limit && value.deviceIds.every((id) => active.has(id)), `Choose ${state.limit} of your signed-in devices.`);
+          if (state.active.every((device) => Boolean(device.keepSync) === chosen.has(device.id))) return;
+          const started = now >= state.pauseAt;
+          if (started && state.row.changedAt !== null && state.row.changedAt + SYNC_CHANGE_WAIT > now) {
+            const from = isoTime(state.row.changedAt + SYNC_CHANGE_WAIT);
+            fail(409, `You changed your devices less than a day ago. You can change them again from ${from.slice(0, 10)} ${from.slice(11, 16)} UTC.`, { code: 'choice-wait' });
+          }
+          for (const device of state.active) run('UPDATE devices SET keepSync=? WHERE id=?', chosen.has(device.id) ? 1 : 0, device.id);
+          if (started) run('UPDATE sync_pauses SET changedAt=? WHERE vaultId=?', now, vaultId);
+        });
+        reply(200, { devices: deviceList(vaultId) }); return;
+      }
       const revoke = /^\/devices\/([0-9a-f-]+)$/.exec(route);
       if (method === 'DELETE' && revoke) {
         transaction(() => {
@@ -2524,6 +2722,9 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           run('UPDATE devices SET revoked=1 WHERE id=? AND vaultId=?', target.id, vaultId);
           run('DELETE FROM uploads WHERE vaultId=? AND deviceId=?', vaultId, target.id);
           dropDevicePieces(target.id);
+          // Signing out always works, also from a device on hold (rule 7). A chosen device's place goes to the device that
+          // signed it out when that one was on hold, otherwise to the next in syncOrder. Not a change of devices.
+          if (target.keepSync && !target.revoked && syncOn && one('SELECT 1 FROM sync_pauses WHERE vaultId=?', vaultId)) settleKeepers(vaultId, syncLimit(vaultId), { prefer: deviceId });
         });
         reply(200, { ok: true }); return;
       }
@@ -2776,6 +2977,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   server.headersTimeout = 10000;
   sweepSpaces();
   sweepTrials();
+  sweepSyncPauses();
   // The privacy policy promises votes go when their idea leaves the list (roadmap.mjs changes need a restart anyway).
   run(`DELETE FROM roadmap_votes WHERE itemId NOT IN (${roadmap.map(() => '?').join(',')})`, ...roadmapIds);
   await new Promise((done, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', done); });
@@ -2785,6 +2987,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     run('DELETE FROM signups WHERE expiresAt<=?', clock());
     sweepSpaces();
     sweepTrials();
+    sweepSyncPauses();
     void fillBilling();
   }, sweepEvery);
   sweep.unref();
@@ -2818,8 +3021,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
   const [adminOrigin, adminPasswordHash, adminTotpSecret] = ['ORIGIN', 'PASSWORD_HASH', 'TOTP_SECRET'].map((name) => process.env[`JOTDROP_CLOUD_ADMIN_${name}`] || undefined);
   if ((adminOrigin || adminPasswordHash || adminTotpSecret) && !(adminOrigin && adminPasswordHash && adminTotpSecret)) console.warn('Admin dashboard off: set JOTDROP_CLOUD_ADMIN_ORIGIN, JOTDROP_CLOUD_ADMIN_PASSWORD_HASH and JOTDROP_CLOUD_ADMIN_TOTP_SECRET together.');
   const reviewLogin = process.env.JOTDROP_CLOUD_REVIEW_EMAIL || process.env.JOTDROP_CLOUD_REVIEW_CODE ? { email: process.env.JOTDROP_CLOUD_REVIEW_EMAIL, code: process.env.JOTDROP_CLOUD_REVIEW_CODE } : undefined;
+  // Sync on hold above the free plan's devices: off until this is set to a date (YYYY-MM-DD, 00:00 UTC); nobody pauses before it.
+  const pauseFrom = process.env.JOTDROP_CLOUD_SYNC_PAUSE_FROM || undefined;
+  if (pauseFrom !== undefined && !(/^\d{4}-\d{2}-\d{2}$/.test(pauseFrom) && Number.isFinite(Date.parse(`${pauseFrom}T00:00:00Z`)))) throw new Error('Set JOTDROP_CLOUD_SYNC_PAUSE_FROM to a date like 2027-01-15, or leave it out.');
+  const syncPauseFrom = pauseFrom === undefined ? undefined : Date.parse(`${pauseFrom}T00:00:00Z`);
   const app = await createCloudServer({ dataDir: process.env.JOTDROP_CLOUD_DATA_DIR, reviewLogin, adminOrigin, adminPasswordHash, adminTotpSecret, enrollmentToken, mailer, newsletter, serverKey, stripe, oauth: { google: provider('GOOGLE'), github: provider('GITHUB') }, maxHistoryEntries: Number(process.env.JOTDROP_CLOUD_MAX_HISTORY_ENTRIES ?? 100000), maxDeviceEntries: Number(process.env.JOTDROP_CLOUD_MAX_DEVICE_ENTRIES ?? 1000), maxPairingEntries: Number(process.env.JOTDROP_CLOUD_MAX_PAIRING_ENTRIES ?? 128), maxConcurrentRequests: Number(process.env.JOTDROP_CLOUD_MAX_CONCURRENT_REQUESTS ?? 16), signupsPerAddress: Number(process.env.JOTDROP_CLOUD_SIGNUPS_PER_ADDRESS ?? 5), signupTrial: Number(process.env.JOTDROP_CLOUD_SIGNUP_TRIAL_DAYS ?? 14) * DAY, turnstile, publicOrigin: process.env.JOTDROP_CLOUD_PUBLIC_ORIGIN, port: Number(process.env.JOTDROP_CLOUD_PORT || 8787), corsOrigins: (process.env.JOTDROP_CLOUD_CORS_ORIGINS || '').split(',').map((entry) => entry.trim()).filter(Boolean),
-    mailDomain: process.env.JOTDROP_CLOUD_MAIL_DOMAIN || undefined, mailinToken: process.env.JOTDROP_CLOUD_MAILIN_TOKEN || undefined, backupLog: process.env.JOTDROP_CLOUD_BACKUP_LOG || undefined, mcpPlusOnly: process.env.JOTDROP_CLOUD_MCP_PLUS_ONLY === '1' });
+    mailDomain: process.env.JOTDROP_CLOUD_MAIL_DOMAIN || undefined, mailinToken: process.env.JOTDROP_CLOUD_MAILIN_TOKEN || undefined, backupLog: process.env.JOTDROP_CLOUD_BACKUP_LOG || undefined, mcpPlusOnly: process.env.JOTDROP_CLOUD_MCP_PLUS_ONLY === '1', syncPauseFrom });
   console.log(`JotDrop Cloud listening on http://127.0.0.1:${app.port}.`);
   if (!process.env.JOTDROP_CLOUD_ENROLLMENT_TOKEN) console.log(`Single-use local enrollment token: ${enrollmentToken}`);
   for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => { void app.close().then(() => process.exit(0)); });
