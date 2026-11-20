@@ -2024,8 +2024,11 @@ object Storage {
         // Een gewone eerste regel is al de kaarttitel en hoeft niet dubbel in de
         // snippet. Een lijstregel blijft juist staan, inclusief geneste checklists.
         val firstIsList = lines.firstOrNull()?.matches(snippetListLine) == true
+        // Begint de notitie met een tabel, dan is de eerste regel de kopregel van die tabel en blijft hij staan: zonder
+        // hem is de rest geen tabel meer en staan de rijen plat op de kaart (Eric, 20 nov; de web-app doet het zo).
+        val firstIsTable = FormatCore.blocks(lines.joinToString("\n")).firstOrNull()?.kind == "table"
         val rest = withoutHeadingMarks(
-            if (firstIsList) lines.joinToString("\n")
+            if (firstIsList || firstIsTable) lines.joinToString("\n")
             else if (lines.size > 1) lines.drop(1).joinToString("\n")
             else "",
         )

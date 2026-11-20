@@ -238,4 +238,9 @@ const gridCode = list.slice(list.indexOf('private fun NotesGrid('));
 assert(gridCode.includes('val columnCount = if (oneColumn) 1 else if (isLandscape) 4 else 2'), 'The grid must give one column when the user chose it');
 assert(list.includes('Storage.saveOneColumn(context, single)') && list.includes('Storage.getOneColumn(context)'), 'The one-column choice must be saved per device');
 assert(list.includes('R.string.view_one_column') && list.includes('R.string.view_two_columns'), 'The overflow menu must offer both views');
+// A note that starts with a table keeps its first line in the card text: that line is the table's header, and without it
+// the rest is not a table any more, so the rows stood flat on the card unless the note began with a title (Eric, 20 Nov 2026).
+const snippetCode = storage.slice(storage.indexOf('private fun extractSnippet('), storage.indexOf('private fun cardTableSource('));
+assert(snippetCode.includes('FormatCore.blocks(lines.joinToString("\\n")).firstOrNull()?.kind == "table"'), 'The card text must know that the note starts with a table');
+assert(/if \(firstIsList \|\| firstIsTable\) lines\.joinToString/.test(snippetCode), 'A note that starts with a table must keep its first line, the table header, in the card text');
 console.log('Android navigation and recording safety wiring checks passed');
