@@ -6,7 +6,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
+import { DatabaseSync } from 'node:sqlite';
 import { createCloudServer } from './server.mjs';
+import { setPlusUntil } from './set-plus.mjs';
 import { CloudClient } from './shared/client.mjs';
 import { accountInfo, confirmLogin, confirmSignup, logIn, providerSignUp, signUp } from './shared/account.mjs';
 import { bytesToBase64, encryptEnvelope, objectId, randomToken } from './shared/crypto.mjs';
@@ -15,7 +17,7 @@ import { acceptInvite, createSpace, makeInvite, readInvite, removeMember, replac
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 // Obsidian's requestUrl answers every status without throwing, like `throw: false`. A test can hold an answer with `afterRequest`.
 const obsidian = `
-export class Modal {}; export class Notice {}; export class Setting {}; export class ButtonComponent {}; export class FileSystemAdapter {};
+export class Modal { open() { globalThis.opened?.push(this); } }; export class Notice { constructor(message) { globalThis.notices?.push(message); } }; export class Setting {}; export class ButtonComponent {}; export class FileSystemAdapter {};
 export class TFile { static [Symbol.hasInstance](value) { return value?.isTestFile === true; } };
 export const Platform = { isWin: true };
 export const normalizePath = (p) => p.replace(/\\\\/g, '/').replace(/\\/+/g, '/');
@@ -33,7 +35,7 @@ const bundle = await build({ entryPoints: [join(root, 'src/cloud.ts')], bundle: 
 const loaded = new Module(join(root, 'cloud/plugin-test-bundle.cjs'));
 loaded.filename = join(root, 'cloud/plugin-test-bundle.cjs');
 loaded._compile(bundle.outputFiles[0].text, loaded.filename);
-const { CloudController } = loaded.exports;
+const { CloudController, HOLD_STATUS } = loaded.exports;
 globalThis.window ??= globalThis;
 
 const text = (value) => new TextEncoder().encode(value);
@@ -56,6 +58,8 @@ function vault() {
   const plugin = {
     settings: { notesFolder: 'Mini Notes', archiveFolder: 'Mini Notes/Archive', cloudServer: '' },
     resolveAssetsFolder: () => 'Mini Notes/.attachments',
+    // The once-a-day check of the shared AI key (Ask JotDrop): nothing to say in these tests.
+    aiKeys: { async daily() { return null; } },
     refreshViews() {},
     addCommand() {}, registerEvent() {}, registerInterval() {}, registerDomEvent() {},
     app: {
@@ -750,4 +754,133 @@ test('the plugin settles a conflict either way and goes back to a moment with th
   assert.equal((await cloud.history('Mini Notes/B.md')).versions[0].revision, 4);
   await assert.rejects(cloud.history('Other/Private.md'), /JotDrop folders/);
   await assert.rejects(cloud.history('Mini Notes/B.cloud-conflict-r2.md'), /JotDrop folders/);
+});
+
+// Sync on hold above the plan's devices (Hand-off/ontwerp-sync-pauzeren-boven-free.md, deel 8), against a real server with
+// the switch on: every request of the plugin is counted.
+test('sync on hold: the plugin stops at /status, asks nothing between checks, keeps edits here and syncs them after "Sync here instead"', async (t) => {
+  const DAY = 86_400_000, HOUR = 3_600_000;
+  const dataDir = await mkdtemp(join(tmpdir(), 'jotdrop-plugin-hold-test-'));
+  const mails = [];
+  let now = Date.parse('2027-01-04T08:00:00Z');
+  const app = await createCloudServer({ dataDir, signupTrial: 0, enrollmentToken: randomToken(), mailer: async (mail) => { mails.push(mail); }, serverKey: randomToken(), clock: () => now, syncPauseFrom: now - DAY, sweepEvery: 10, signupsPerAddress: 100 });
+  const requests = [];
+  const count = (requested) => { requests.push(new URL(requested).pathname.replace(/^\/api\/v1/, '')); };
+  globalThis.afterRequest = count;
+  globalThis.notices = [];
+  globalThis.opened = [];
+  t.after(async () => { globalThis.afterRequest = undefined; globalThis.notices = undefined; globalThis.opened = undefined; await app.close(); await rm(dataDir, { recursive: true, force: true }); });
+  const url = `http://127.0.0.1:${app.port}`, dbPath = join(dataDir, 'cloud.db');
+  const sql = (statement, ...args) => { const db = new DatabaseSync(dbPath, { timeout: 5000 }); try { return db.prepare(statement).run(...args); } finally { db.close(); } };
+  const sweep = () => new Promise((done) => setTimeout(done, 80));
+  const seen = (device, appName, hours) => sql('UPDATE devices SET app=?,lastSeenAt=? WHERE id=?', appName, new Date(now - hours * HOUR).toISOString(), device.credentials.deviceId);
+  const refused = (error) => error.status === 403 && error.code === 'device-paused';
+  const cloudFiles = async (reader) => {
+    const out = {};
+    for (const id of new Set((await reader.listChanges()).changes.map((change) => change.id))) { const read = await reader.read(id); if (!read.deleted) out[read.file.path] = decode(read.file.bytes); }
+    return out;
+  };
+
+  // A free account with three devices, made while it had Plus: this vault, a desk (web app) and a tablet.
+  const v = vault();
+  v.put('Mini Notes/Shopping.md', 'Milk');
+  const cloud = new CloudController(v.plugin, v.store);
+  const pending = await signUp({ url, email: 'free@example.com', password: 'correct horse battery', deviceName: 'Obsidian on Windows' });
+  const { client } = await confirmSignup(pending, mails.find((mail) => mail.kind === 'verify').code);
+  setPlusUntil(dbPath, client.credentials.vaultId, now + 30 * DAY);
+  await cloud.finishSignIn(client, 'free@example.com');
+  await cloud.setEnabled(true);
+  await cloud.syncNow();
+  assert.match(cloud.status, /Synced\. 1 up/);
+  const desk = await CloudClient.claim({ pairingCode: (await client.makePairing('Desk')).pairingCode });
+  const tablet = await CloudClient.claim({ pairingCode: (await client.makePairing('Tablet')).pairingCode });
+  const own = client.credentials.deviceId;
+  seen(desk, 'web', 1); seen(tablet, 'android', 2); seen(client, 'obsidian', 3);
+  // Plus ends: the server keeps the two used last, so this vault goes on hold in 7 days.
+  setPlusUntil(dbPath, client.credentials.vaultId, 0);
+  await sweep();
+
+  // The grace: everything still syncs, and the notice can name the devices that go on hold.
+  requests.length = 0;
+  await cloud.syncNow();
+  assert.equal(cloud.syncPlan.state, 'ending');
+  assert.equal(cloud.syncPlan.thisDevice, 'paused');
+  assert.equal(cloud.syncPlan.limit, 2);
+  assert.equal(Date.parse(cloud.syncPlan.pauseAt), now + 7 * DAY);
+  assert.equal(cloud.onHold, false);
+  assert.match(cloud.status, /Synced/);
+  assert.deepEqual(cloud.holdDevices.filter((device) => device.syncing === false).map((device) => device.id), [own]);
+  assert.ok(requests.includes('/devices') && requests.includes('/changes'));
+  // The same answer does not read the devices again; "Not now" is kept for that date.
+  requests.length = 0;
+  await cloud.syncNow(false);
+  assert.ok(!requests.includes('/devices'));
+  await cloud.skipHoldNotice();
+  assert.equal(cloud.holdSkipped, cloud.syncPlan.pauseAt);
+
+  // The pause starts. A change made here first: the round stops at /status, before anything goes up.
+  now += 8 * DAY;
+  v.put('Mini Notes/Shopping.md', 'Milk and bread');
+  requests.length = 0;
+  await cloud.syncNow(false);
+  assert.deepEqual(requests, ['/status']);
+  assert.equal(cloud.onHold, true);
+  assert.equal(cloud.status, HOLD_STATUS);
+  assert.equal(cloud.syncPlan.state, 'limited');
+  assert.equal(decode(v.files.get('Mini Notes/Shopping.md')), 'Milk and bread');
+  // Between checks nothing goes to the cloud: not the minute timer, not an edit.
+  requests.length = 0;
+  v.put('Mini Notes/On hold.md', 'Written on hold');
+  await cloud.syncNow(false);
+  await cloud.syncNow(false);
+  assert.deepEqual(requests, []);
+  // A restart remembers it, and stays as quiet.
+  const restarted = new CloudController(v.plugin, v.store);
+  await restarted.syncNow(false);
+  assert.equal(restarted.onHold, true);
+  assert.deepEqual(requests, []);
+  // A check (Obsidian opened, Check again) asks once; 30 minutes after the last time the timer asks once too.
+  await cloud.checkAgain();
+  assert.deepEqual(requests, ['/status']);
+  cloud.state.holdCheckedAt -= 31 * 60_000;
+  requests.length = 0;
+  await cloud.syncNow(false);
+  assert.deepEqual(requests, ['/status']);
+  await assert.rejects(client.listChanges(), refused);
+  assert.deepEqual(await cloudFiles(desk), { 'notes/Shopping.md': 'Milk' });
+
+  // "Sync here instead": this vault and the desk; the tablet makes room. What was written on hold goes up.
+  await cloud.connection.setSyncDevices([own, desk.credentials.deviceId]);
+  await cloud.syncNow();
+  assert.equal(cloud.onHold, false);
+  assert.equal(cloud.syncPlan.thisDevice, 'syncing');
+  assert.match(cloud.status, /Synced\. 2 up/);
+  assert.deepEqual(await cloudFiles(desk), { 'notes/On hold.md': 'Written on hold', 'notes/Shopping.md': 'Milk and bread' });
+  await assert.rejects(tablet.listChanges(), refused);
+  // A second change within a day waits; the plan says from when.
+  await assert.rejects(cloud.connection.setSyncDevices([own, tablet.credentials.deviceId]), (error) => error.status === 409 && error.code === 'choice-wait');
+
+  // Refused in the middle of a round (the choice changed elsewhere meanwhile): on hold, not an error.
+  v.put('Mini Notes/Later.md', 'After the switch');
+  let flipped = false;
+  globalThis.afterRequest = (requested) => {
+    count(requested);
+    if (!flipped && requested.endsWith('/status')) { flipped = true; sql('UPDATE devices SET keepSync=CASE WHEN id=? THEN 0 ELSE 1 END WHERE vaultId=?', own, client.credentials.vaultId); }
+  };
+  requests.length = 0;
+  await cloud.syncNow();
+  globalThis.afterRequest = count;
+  assert.equal(cloud.onHold, true);
+  assert.equal(cloud.status, HOLD_STATUS);
+  assert.equal(requests.filter((path) => path === '/status').length, 2, 'asks its plan again after the refusal');
+  assert.ok(!('notes/Later.md' in await cloudFiles(desk)));
+
+  // Signing in in place of the device on hold: the new one syncs, and the app says which device went on hold (rule 11).
+  seen(desk, 'web', 1); seen(tablet, 'android', 5);
+  const other = vault();
+  const second = new CloudController(other.plugin, other.store);
+  const again = await logIn({ url, email: 'free@example.com', password: 'correct horse battery', deviceName: 'Obsidian on Mac' });
+  globalThis.opened.length = 0;
+  await second.finishSignIn(await confirmLogin(again, mails.filter((mail) => mail.kind === 'login').at(-1).code, { replaceDeviceId: own }), 'free@example.com');
+  assert.deepEqual(globalThis.opened.map((modal) => modal.text), ['Sync now runs on this device, and Tablet is on hold. You can change that under Devices in the JotDrop settings.']);
 });

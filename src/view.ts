@@ -38,6 +38,7 @@ import {
 import { discoverLabels, assignLabel, removeLabel, createLabel as managerCreateLabel, renameLabel as managerRenameLabel, deleteLabel as managerDeleteLabel, LabelInfo } from "./labelManager";
 import { voidAsync } from "./asyncUtil";
 import { ConflictReviewModal, NoteHistoryModal } from "./cloudReview";
+import { HOLD_APPS, goingOnHold, noticeShown, waitUntil } from "./syncHold";
 import { EndListLinkModal, NoteLinkModal } from "./noteLink";
 import { SharedGroupsModal } from "./cloud";
 import { AskJotDropModal, type AskOptions, addAskButton } from "./askJotDrop";
@@ -391,6 +392,8 @@ export class JotDropView extends ItemView {
   private trashBarEl!: HTMLElement;
   private conflictBarEl!: HTMLElement;
   private cloudLineEl: HTMLElement | null = null;
+  /** Sync on hold: the notice before the pause, or the line that stays while this device is on hold. */
+  private holdBarEl: HTMLElement | null = null;
   private offCloud: (() => void) | null = null;
   // Like the Android app: deleted notes go to <notes folder>/Trash and this
   // view can show that folder instead of the notes.
@@ -527,8 +530,10 @@ export class JotDropView extends ItemView {
     this.buildSelectionToolbar();
 
     this.cloudLineEl = root.createDiv({ cls: "jotdrop-cloud-line is-hidden" });
-    this.offCloud = this.plugin.cloud?.onChange(() => { this.renderCloudLine(); this.sealFresh(); }) ?? null;
+    this.holdBarEl = root.createDiv({ cls: "jotdrop-hold-bar is-hidden", attr: { role: "status" } });
+    this.offCloud = this.plugin.cloud?.onChange(() => { this.renderCloudLine(); this.renderHoldBar(); this.sealFresh(); }) ?? null;
     this.renderCloudLine();
+    this.renderHoldBar();
 
     this.filterBarEl = root.createDiv({ cls: "jotdrop-filter-bar" });
     this.trashBarEl = root.createDiv({ cls: "jotdrop-trash-bar is-hidden" });
@@ -1329,16 +1334,79 @@ export class JotDropView extends ItemView {
     const shown = !!cloud?.signedIn && !!cloud.email;
     el.toggleClass("is-hidden", !shown);
     if (!shown) return;
-    setIcon(el.createSpan({ cls: "jotdrop-cloud-line-icon" }), cloud.enabled ? "cloud" : "cloud-off");
+    const held = cloud.onHold;
+    setIcon(el.createSpan({ cls: "jotdrop-cloud-line-icon" }), cloud.enabled && !held ? "cloud" : "cloud-off");
     el.createSpan({ cls: "jotdrop-cloud-line-email", text: cloud.email, attr: { title: `Logged in as ${cloud.email}` } });
-    el.createSpan({ cls: "jotdrop-cloud-line-status", text: cloud.enabled ? cloud.status : "Cloud sync is off." });
+    el.createSpan({ cls: "jotdrop-cloud-line-status", text: held ? t("hold_status") : cloud.enabled ? cloud.status : "Cloud sync is off." });
     const open = el.createEl("button", { cls: "clickable-icon jotdrop-cloud-line-settings", attr: { "aria-label": "JotDrop Cloud settings" } });
     setIcon(open, "settings");
-    open.addEventListener("click", () => {
-      const setting = (this.app as unknown as { setting: { open(): void; openTabById(id: string): void } }).setting;
-      setting.open();
-      setting.openTabById(this.plugin.manifest.id);
-    });
+    open.addEventListener("click", () => this.openCloudSettings());
+  }
+
+  /** The plugin's settings, where the cloud part lives; `devices` scrolls to the device choice ("here": this device ticked). */
+  private openCloudSettings(devices?: { here: boolean }): void {
+    if (this.plugin.cloud && devices) this.plugin.cloud.devicesWanted = devices;
+    const setting = (this.app as unknown as { setting: { open(): void; openTabById(id: string): void } }).setting;
+    setting.open();
+    setting.openTabById(this.plugin.manifest.id);
+  }
+
+  /**
+   * Sync on hold (Hand-off/ontwerp-sync-pauzeren-boven-free.md, deel 8). Before the pause: a notice naming the devices that
+   * go on hold, which "Not now" puts away (it comes back in the last 3 days). On hold: one line that stays while it
+   * lasts. Built again only when what it says changes, so a screen reader does not hear it again after every check.
+   * A sign and words, never colour alone.
+   */
+  private renderHoldBar(): void {
+    const el = this.holdBarEl, cloud = this.plugin.cloud;
+    if (!el) return;
+    const plan = cloud?.signedIn ? cloud.syncPlan : null, now = Date.now();
+    let text = "", icon = "";
+    let actions: Array<{ label: string; run: (button: HTMLButtonElement) => void; cta?: boolean }> = [];
+    const site = cloud?.website;
+    const plus = { label: t("hold_plus"), run: () => { if (site) window.open(site, "_blank"); } };
+    if (cloud && plan && cloud.onHold) {
+      const wait = waitUntil(plan, now);
+      icon = "cloud-off";
+      text = [t("hold_status"), plan.limit ? t("hold_limit", String(plan.limit)) : "", t("hold_stays"), wait ? t("hold_wait", new Date(wait).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })) : ""].filter(Boolean).join(" ");
+      actions = [
+        ...(wait ? [] : [{ label: t("hold_here"), run: () => this.openCloudSettings({ here: true }), cta: true }]),
+        { label: t("hold_devices"), run: () => this.openCloudSettings({ here: false }) },
+        plus,
+        { label: t("hold_check"), run: (button) => {
+          button.disabled = true;
+          button.setText(t("hold_checking"));
+          void cloud.checkAgain().then(() => { if (cloud.onHold) new Notice(t("hold_still")); }, (error) => new Notice(error instanceof Error ? error.message : String(error)))
+            .finally(() => { button.disabled = false; button.setText(t("hold_check")); });
+        } },
+      ];
+    } else if (cloud && plan && cloud.enabled && plan.pauseAt && noticeShown(plan, cloud.holdSkipped, now)) {
+      const own = cloud.connection?.credentials.deviceId;
+      const names = goingOnHold(cloud.holdDevices).map((device) => {
+        if (device.id === own) return t("hold_this_device");
+        return device.app && HOLD_APPS.includes(device.app) ? t("hold_device_app", device.name, t(`hold_app_${device.app}`)) : device.name;
+      });
+      icon = "clock";
+      text = t("ending_text", String(plan.limit), new Date(plan.pauseAt).toLocaleDateString(), names.join(", ") || t("ending_some"));
+      actions = [
+        { label: t("ending_choose"), run: () => this.openCloudSettings({ here: false }), cta: true },
+        plus,
+        { label: t("ending_later"), run: () => { void cloud.skipHoldNotice(); } },
+      ];
+    }
+    const key = text && `${icon}|${text}`;
+    if (el.dataset.key === key) return;
+    el.dataset.key = key;
+    el.empty();
+    el.toggleClass("is-hidden", !text);
+    if (!text) return;
+    setIcon(el.createSpan({ cls: "jotdrop-hold-bar-icon", attr: { "aria-hidden": "true" } }), icon);
+    el.createSpan({ cls: "jotdrop-hold-bar-text", text });
+    const buttons = el.createDiv({ cls: "jotdrop-hold-bar-actions" });
+    for (const action of actions) {
+      const button = buttons.createEl("button", { text: action.label, cls: action.cta ? "mod-cta" : "" });
+      button.addEventListener("click", () => action.run(button));
+    }
   }
 
   applyCardWidth(): void {

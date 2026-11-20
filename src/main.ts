@@ -59,7 +59,7 @@ export default class JotDropPlugin extends Plugin {
     this.cloud.register();
     this.excalidraw = new ExcalidrawPreviews(this.app);
     this.aiStore = new AiSettingsStore(this.app);
-    this.aiKeys = new AiKeyCloud(this.aiStore, () => this.cloud.connection);
+    this.aiKeys = new AiKeyCloud(this.aiStore, () => this.cloud.connection, () => this.cloud.onHold);
 
     this.registerView(VIEW_TYPE_JOTDROP, (leaf) => new JotDropView(leaf, this));
 

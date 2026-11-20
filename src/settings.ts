@@ -344,13 +344,14 @@ export class JotDropSettingTab extends PluginSettingTab {
     this.cloudAccountStop?.();
     this.cloudAccountStop = undefined;
     // Sign-in and on/off redraw everything; a sync only updates the status line.
-    const shown = { signedIn: cloud.signedIn, enabled: cloud.enabled, accessLost: cloud.accessLost };
+    // Sync on hold also redraws: the button, the plan line and the device choice follow it.
+    const shown = { signedIn: cloud.signedIn, enabled: cloud.enabled, accessLost: cloud.accessLost, onHold: cloud.onHold };
     let statusRow: Setting | undefined;
     let showConflicts = () => {};
     const statusText = () => `${cloud.status}${cloud.lastSynced ? ` Last sync: ${new Date(cloud.lastSynced).toLocaleString()}.` : ""}`;
     this.cloudListener = cloud.onChange(() => {
       if (!el.isConnected) return;
-      if (cloud.signedIn !== shown.signedIn || cloud.enabled !== shown.enabled || cloud.accessLost !== shown.accessLost || !statusRow) refresh();
+      if (cloud.signedIn !== shown.signedIn || cloud.enabled !== shown.enabled || cloud.accessLost !== shown.accessLost || cloud.onHold !== shown.onHold || !statusRow) refresh();
       else { statusRow.setDesc(statusText()); showConflicts(); }
     });
     new Setting(el).setName("Cloud sync").setHeading();
@@ -383,8 +384,9 @@ export class JotDropSettingTab extends PluginSettingTab {
         if (on) cloud.confirmEnable(refresh);
         else void cloud.setEnabled(false).then(refresh);
       }));
+    // On hold "Sync now" only asks the cloud whether this device may sync again.
     statusRow = new Setting(el).setName("Status").setDesc(statusText())
-      .addButton((button) => button.setButtonText("Sync now").setDisabled(!cloud.enabled).onClick(async () => {
+      .addButton((button) => button.setButtonText(cloud.onHold ? "Check again" : "Sync now").setDisabled(!cloud.enabled).onClick(async () => {
         button.setDisabled(true);
         try { await cloud.syncNow(); } catch (error) { new Notice(error instanceof Error ? error.message : String(error), 10000); }
         finally { button.setDisabled(false); }

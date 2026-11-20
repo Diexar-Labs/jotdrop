@@ -516,6 +516,23 @@ function fakeVault(TFile, initial) {
   assert.equal(await away.keys.daily(), "");
   await assert.rejects(away.keys.turnOn(claude), refused("cloud"));
 
+  // Sync on hold on this device (sync pause, deel 8): the cloud refuses /ai-key here, so nothing asks it. A look finds
+  // nothing, a tap says why, and Save keeps the key on this device.
+  {
+    const values = new Map();
+    const store = new AiSettingsStore({ appId: "held", vault: { getName: () => "held" } }, { get: async (k) => values.get(k), put: async (k, v) => { values.set(k, v); }, delete: async (k) => { values.delete(k); } });
+    const held = new AiKeyCloud(store, () => connect(), () => true);
+    const before = server.sent.length;
+    assert.equal(await held.look(), undefined);
+    assert.equal(await held.daily(), "");
+    await assert.rejects(held.use(), refused("hold"));
+    await assert.rejects(held.turnOn(claude), refused("hold"));
+    await assert.rejects(held.removeEverywhere(), refused("hold"));
+    const kept = await held.shareSaved({ ...claude, synced: 5, syncedVault: vaultId });
+    assert.match(kept.said, /on hold/);
+    assert.equal(server.sent.length, before, "nothing went to the cloud on hold");
+  }
+
   // 1. The switch on, on the desktop: the key goes up sealed; the laptop offers it and takes it after one tap.
   const desktop = device("desktop"), laptop = device("laptop");
   await desktop.store.save(claude);
@@ -771,7 +788,7 @@ function fakeVault(TFile, initial) {
   const sharedCode = code("src/aiShared.ts"), cloudCode = code("src/cloud.ts"), askText = source("src/askJotDrop.ts");
   assert.match(sharedCode, /import \* as keysync from "\.\.\/cloud\/shared\/ai\/keysync\.mjs"/, "the plugin uses the shared rules");
   assert.doesNotMatch(ai + ask, /ai-key:v1|encryptEnvelope|decryptEnvelope|"\/ai-key"/, "no own copy of the sealing or of the address");
-  assert.match(main, /this\.aiKeys = new AiKeyCloud\(this\.aiStore, \(\) => this\.cloud\.connection\)/, "the own account's connection, never a shared group's");
+  assert.match(main, /this\.aiKeys = new AiKeyCloud\(this\.aiStore, \(\) => this\.cloud\.connection, \(\) => this\.cloud\.onHold\)/, "the own account's connection, never a shared group's, and whether sync is on hold here");
   assert.match(main, /identifyClient\("obsidian", this\.manifest\.version\)/, "the server lets obsidian/<version> in");
   assert.match(cloudCode, /void this\.plugin\.aiKeys\.daily\(\)\.then\(\(said\) => \{ if \(said\) new Notice\(said, 10000\); \}, \(\) => \{\}\)/, "once a day after a sync, never failing the sync");
   assert.match(ask, /render\(\); void checkKey\(\);/, "a look when the settings open");

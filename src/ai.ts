@@ -79,6 +79,8 @@ export class AiSettingsStore {
 const DAY_MS = 24 * 60 * 60 * 1000;
 const PLUS_TEXT = "Using one key on all your devices is part of JotDrop Plus.";
 const UNREACHABLE = "Could not reach JotDrop for the key. Try again in a moment.";
+// Sync on hold (Hand-off/ontwerp-sync-pauzeren-boven-free.md, deel 8): the cloud refuses the shared key to this device, so it does not ask.
+const ON_HOLD = "Sync is on hold on this device, so it cannot use the key your other devices share. A key you add here keeps working.";
 export const KEY_REPLACED = "The key was replaced on another device. This device now uses the new one.";
 export const KEY_REMOVED = "The key was removed on another device, so Ask JotDrop is off on this device. Add a key to turn it on again.";
 
@@ -126,7 +128,8 @@ export function ownLook(config: AiConfig): KeyLook | undefined {
 const followed = (shared: SharedKey, includeShared: boolean, synced: number, syncedVault: string): AiConfig => aiSettings({ ...shared, includeShared, synced, syncedVault });
 
 export class AiKeyCloud {
-  constructor(private store: AiSettingsStore, private connection: () => KeyClient | undefined) {}
+  /** `held`: sync is on hold on this device, so nothing here asks the cloud for the key. */
+  constructor(private store: AiSettingsStore, private connection: () => KeyClient | undefined, private held: () => boolean = () => false) {}
 
   /** The workspace of the own account, or undefined when this device is not signed in to JotDrop Cloud. */
   get vaultId(): string | undefined { return this.connection()?.credentials.vaultId; }
@@ -134,16 +137,17 @@ export class AiKeyCloud {
   private client(): KeyClient {
     const client = this.connection();
     if (!client) throw new KeyRefused("Sign in to JotDrop Cloud on this device to use this.", "cloud");
+    if (this.held()) throw new KeyRefused(ON_HOLD, "hold");
     return client;
   }
 
   /**
    * Looks at what the server has and follows it: a newer shared key for the same service replaces the copy here, a
-   * removed one takes it away and turns Ask JotDrop off. Undefined when not signed in, or signed in to another account meanwhile.
+   * removed one takes it away and turns Ask JotDrop off. Undefined when not signed in, on hold, or signed in to another account meanwhile.
    */
   async look(): Promise<{ look: KeyLook; settings: AiConfig; changed?: "replaced" | "removed" } | undefined> {
     const client = this.connection();
-    if (!client) return undefined;
+    if (!client || this.held()) return undefined;
     const remote = await readSharedKey(client);
     if (this.connection() !== client) return undefined;
     const look = { remote, vaultId: client.credentials.vaultId };
@@ -216,6 +220,8 @@ export class AiKeyCloud {
    * Returns the settings kept now, what to say, and what the server has after this when that is known.
    */
   async shareSaved(settings: AiConfig): Promise<{ settings: AiConfig; said: string; look?: KeyLook }> {
+    // Saved here; the other devices hear of it once this device syncs again and the settings are saved once more.
+    if (this.connection() && this.held()) return { settings, said: "Your other devices keep the earlier key while sync is on hold on this device." };
     const client = this.client();
     try { sharedKey(settings); } catch (error) {
       const next = { ...settings, synced: 0, syncedVault: "" };

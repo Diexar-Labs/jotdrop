@@ -11,6 +11,8 @@ import { cloudTimeline, conflictOriginal, copyName, fromHex, hash, isPreserved, 
 import { listListLinks, removeListLink, syncList } from "../cloud/shared/list-links.mjs";
 import { splitNote } from "./noteLink";
 import { mailKeyPair, mailToNote, openMailBody, openMailKey, openMailPart } from "../cloud/shared/mail.mjs";
+import * as hold from "./syncHold";
+import type { HoldDevice, SyncPlan } from "./syncHold";
 
 export const DEFAULT_CLOUD_SERVER = "https://app.jotdrop.net";
 const PROVIDER_NAMES: Record<string, string> = { google: "Google", github: "GitHub" };
@@ -51,7 +53,12 @@ type SyncState = {
   seen?: Record<string, { size: number; modified: number; hash: string }>; upload?: Prepared; lastSynced?: string; message: string; conflicts: number;
   /** The server no longer knows this device (signed out elsewhere); logging in again clears it. */
   accessLost?: boolean;
+  /** plan.sync as the cloud last said it (null: everything syncs), and when a device on hold last asked. */
+  hold?: SyncPlan | null;
+  holdCheckedAt?: number;
 };
+/** The status of a device on hold: in the settings, and in the vault's state for the next start. */
+export const HOLD_STATUS = "Sync is on hold on this device. Changes you make here stay on this device and go up once it syncs again.";
 type Session = { credentials: CloudClient["credentials"]; email: string };
 type ProviderSignIn = Awaited<ReturnType<typeof providerTicket>> & { provider: string; email: string; account: boolean };
 type MomentFile = { id: string; revision: number | null; deleted: boolean; locked: boolean; cleared: boolean };
@@ -114,7 +121,8 @@ export async function unseal<T = Session>(saved: Sealed): Promise<T> {
   return JSON.parse(decoder.decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: new Uint8Array(saved.iv) }, saved.key, saved.data)));
 }
 
-const deviceName = () => `Obsidian on ${Platform.isWin ? "Windows" : Platform.isMacOS ? "Mac" : Platform.isLinux ? "Linux" : Platform.isAndroidApp ? "Android" : Platform.isIosApp ? "iPhone or iPad" : "this device"}`;
+// The phone first: Obsidian on Android also reports Linux, and an iPad can report Mac; the device list must tell them apart.
+const deviceName = () => `Obsidian on ${Platform.isAndroidApp ? "Android" : Platform.isIosApp ? "iPhone or iPad" : Platform.isWin ? "Windows" : Platform.isMacOS ? "Mac" : Platform.isLinux ? "Linux" : "this device"}`;
 const sameBytes = (a: Uint8Array, b: Uint8Array) => a.length === b.length && a.every((value, index) => value === b[index]);
 
 /** The JotDrop folders as the cloud sees them: `notes/` (with Archive and Trash) and `attachments/`, like Android. */
@@ -368,6 +376,16 @@ export class CloudController {
   listLinks: ListLink[] = [];
   /** The plan's maximum per file as the last sync heard it, kept for offline; unknown before the first sync. */
   maxFileBytes?: number;
+  /** Sync on hold: the devices of the notice before the pause (read again when the plan's answer changes or after 30 minutes). */
+  holdDevices: HoldDevice[] = [];
+  private holdKey = "";
+  private holdDevicesAt = 0;
+  /** The pause date whose notice was put away with "Not now". */
+  holdSkipped?: string;
+  /** A sync asked for as a check: on hold, only a check (or 30 minutes) asks the cloud again. */
+  private pendingCheck = false;
+  /** "Sync here instead" on the board: the settings open with this device ticked and the choice in sight. */
+  devicesWanted?: { here: boolean };
 
   constructor(private plugin: JotDropPlugin, store?: KeyValues) {
     const app = plugin.app as unknown as { appId?: string };
@@ -381,6 +399,12 @@ export class CloudController {
   get enabled(): boolean { return !!this.state?.enabled; }
   get accessLost(): boolean { return !!this.state?.accessLost; }
   get lastSynced(): string | undefined { return this.state?.lastSynced; }
+  /** plan.sync of the own cloud as the last sync or check heard it; null while everything syncs. */
+  get syncPlan(): SyncPlan | null { return this.state?.hold ?? null; }
+  /** Sync is on: this device is not one of the devices the plan syncs, so nothing goes up or comes in. */
+  get onHold(): boolean { return this.enabled && hold.onHold(this.state?.hold); }
+  /** The cloud's own website, for JotDrop Plus. */
+  get website(): string { return this.client?.credentials.url ?? (this.plugin.settings.cloudServer || DEFAULT_CLOUD_SERVER); }
   onChange(listener: () => void): () => void { this.listeners.add(listener); return () => this.listeners.delete(listener); }
   // A copy: a listener may re-register itself, and a live Set would then call it forever.
   private changed(): void { for (const listener of [...this.listeners]) listener(); }
@@ -401,9 +425,10 @@ export class CloudController {
     plugin.registerEvent(plugin.app.vault.on("modify", (file) => touched(file.path)));
     plugin.registerEvent(plugin.app.vault.on("delete", (file) => touched(file.path)));
     plugin.registerEvent(plugin.app.vault.on("rename", (file, old) => { touched(file.path); touched(old); }));
+    // Opening Obsidian and coming back to it count as a check (a device on hold then asks once); the timer does not.
     plugin.registerInterval(window.setInterval(() => this.request(0), 60_000));
-    plugin.registerDomEvent(window, "focus", () => this.request(0));
-    plugin.app.workspace.onLayoutReady(() => { void this.ready.then(() => this.request(0)); });
+    plugin.registerDomEvent(window, "focus", () => this.request(0, true));
+    plugin.app.workspace.onLayoutReady(() => { void this.ready.then(() => this.request(0, true)); });
     // Google or GitHub sends the browser back here: obsidian://jotdrop-cloud?oauth=<ticket>
     plugin.registerObsidianProtocolHandler("jotdrop-cloud", (params) => {
       // The person check comes back as obsidian://jotdrop-cloud?human=<token>.
@@ -451,6 +476,7 @@ export class CloudController {
     this.spaces = spaces ? await unseal<KnownSpace[]>(spaces) : [];
     this.putAside = await this.store.get<string[]>("spaces-aside") ?? [];
     this.maxFileBytes = await this.store.get<number>("max-file-bytes");
+    this.holdSkipped = await this.store.get<string>("hold-notice");
     this.status = this.state?.message || "Signed in. Cloud sync is off.";
     this.changed();
   }
@@ -459,15 +485,19 @@ export class CloudController {
   async finishSignIn(client: CloudClient, email: string): Promise<void> {
     await this.ready;
     await this.stop();
+    // Signed in in place of a device while the cloud has more devices than its plan syncs (sync pause rule 11).
+    const replaced = (client as { onHold?: { id: string; name: string } }).onHold;
     this.client = new CloudClient({ ...client.credentials, fetcher: cloudFetch });
     this.email = email;
     await this.store.put("session", await seal({ credentials: this.client.credentials, email }));
     const old = await this.store.get<SyncState>("state");
-    // Same cloud as before: keep its baselines. Another cloud starts fresh.
-    this.state = old && old.vaultId === client.credentials.vaultId ? { ...old, enabled: false, accessLost: false, message: "Signed in. Cloud sync is off." } : undefined;
+    // Same cloud as before: keep its baselines. Another cloud starts fresh. A new sign-in always syncs: the plan is read again.
+    this.state = old && old.vaultId === client.credentials.vaultId ? { ...old, enabled: false, accessLost: false, hold: null, holdCheckedAt: 0, message: "Signed in. Cloud sync is off." } : undefined;
     if (this.state) await this.store.put("state", this.state);
+    this.resetHoldDevices();
     this.status = "Signed in. Turn on cloud sync to sync this vault.";
     this.changed();
+    if (replaced) new HoldSignInModal(this.plugin.app, `Sync now runs on this device, and ${replaced.name} is on hold. You can change that under Devices in the JotDrop settings.`).open();
   }
 
   /** Checks the folders before asking the person to confirm. */
@@ -501,32 +531,84 @@ export class CloudController {
     await this.store.put("state", this.state);
     this.status = "Cloud sync is on. Syncing...";
     this.changed();
-    this.request(0);
+    this.request(0, true);
   }
 
   beginEdit(path: string): void { this.editing.add(path); }
   endEdit(path: string): void { this.editing.delete(path); this.request(); }
 
-  /** Sync soon; changes in quick succession share one sync. */
-  request(delay = 2000): void {
+  /** Sync soon; changes in quick succession share one sync. `check`: also on hold, ask the cloud once. */
+  request(delay = 2000, check = false): void {
     if (!this.client || !this.state?.enabled) return;
+    if (check) this.pendingCheck = true;
     window.clearTimeout(this.timer);
-    this.timer = window.setTimeout(() => { void this.syncNow().catch(() => {}); }, delay);
+    this.timer = window.setTimeout(() => { void this.syncNow(false).catch(() => {}); }, delay);
   }
 
-  async syncNow(): Promise<void> {
+  /** `check` (a person asked): on hold this asks the cloud again; otherwise a device on hold asks at most every 30 minutes. */
+  async syncNow(check = true): Promise<void> {
     await this.ready;
     if (!this.client) throw new Error("Log in to JotDrop Cloud first.");
     if (!this.state?.enabled) throw new Error("Turn on cloud sync first.");
+    if (check) this.pendingCheck = true;
     // A sync under way may have read the cloud before this was asked: the next one starts after it, shared by everyone who asks meanwhile.
-    if (this.running) return this.next ??= this.running.catch(() => {}).then(() => { this.next = undefined; return this.syncNow(); });
-    this.running = this.run().finally(() => { this.running = undefined; });
+    if (this.running) return this.next ??= this.running.catch(() => {}).then(() => { this.next = undefined; return this.syncNow(false); });
+    const asked = this.pendingCheck;
+    this.pendingCheck = false;
+    this.running = this.run(asked).finally(() => { this.running = undefined; });
     return this.running;
   }
 
-  private async run(): Promise<void> {
-    const client = this.client!, generation = this.generation, abort = this.abort = new AbortController();
+  /** "Check again" on the board and in the settings. */
+  checkAgain(): Promise<void> { return this.syncNow(true); }
+
+  /** "Not now" on the notice before the pause: away for this date; it comes back in the last 3 days. */
+  async skipHoldNotice(): Promise<void> {
+    const at = this.state?.hold?.pauseAt;
+    if (!at) return;
+    this.holdSkipped = at;
+    await this.store.put("hold-notice", at).catch(() => {});
+    this.changed();
+  }
+
+  /** The devices of the notice are read again at the next sync, after a choice made here. */
+  resetHoldDevices(): void { this.holdKey = ""; this.holdDevicesAt = 0; this.holdDevices = []; }
+
+  /** plan.sync as the settings just read it: when this device's state changed, the board follows and a sync asks once. */
+  learnPlan(raw: unknown): void {
+    if (!this.state?.enabled) return;
+    const plan = hold.readSyncPlan(raw);
+    if (JSON.stringify(plan) === JSON.stringify(this.state.hold ?? null)) return;
+    this.request(0, true);
+  }
+
+  /**
+   * Reads plan.sync from /status. Returns true when this device is on hold: then nothing else goes to the cloud.
+   * During the grace it also reads which devices go on hold, for the notice.
+   */
+  private async notePlan(client: CloudClient, state: SyncState, raw: unknown): Promise<boolean> {
+    const plan = hold.readSyncPlan(raw);
+    state.hold = plan;
+    if (hold.onHold(plan)) { state.holdCheckedAt = Date.now(); return true; }
+    state.holdCheckedAt = 0;
+    if (plan?.state !== "ending") { this.resetHoldDevices(); return false; }
+    const key = JSON.stringify(plan);
+    if (key !== this.holdKey || Date.now() - this.holdDevicesAt >= hold.RECHECK_MS) {
+      try {
+        this.holdDevices = ((await client.devices()) as { devices: HoldDevice[] }).devices;
+        this.holdKey = key;
+        this.holdDevicesAt = Date.now();
+      } catch { /* The notice says "some of your devices" until the list can be read. */ }
+    }
+    return false;
+  }
+
+  private async run(check = false): Promise<void> {
+    const client = this.client!, generation = this.generation;
     const state = this.state!;
+    // On hold nothing goes to the cloud between checks: not the minute timer, not an edit, not a focus within 30 minutes.
+    if (hold.onHold(state.hold) && !hold.mayAsk(check, true, state.holdCheckedAt ?? 0, Date.now())) return;
+    const abort = this.abort = new AbortController();
     const active = () => { abort.signal.throwIfAborted(); if (this.generation !== generation) throw new Error("Cloud sync stopped. Your notes were kept."); };
     const save = () => this.store.put("state", state);
     // A big first sync takes a while: show how far it is, twice a second at most.
@@ -537,7 +619,7 @@ export class CloudController {
       this.status = `${label} ${done} / ${total}`;
       this.changed();
     };
-    this.status = "Syncing...";
+    this.status = hold.onHold(state.hold) ? "Checking whether this device may sync again..." : "Syncing...";
     this.lastUploaded.clear();
     this.changed();
     // A sync that only sent changes up leaves the cards as they are: no redraw, so closing a card or a tick never moves the view.
@@ -548,6 +630,15 @@ export class CloudController {
       if (folder.binding !== state.binding) throw new Error("The notes or attachments folder changed. Turn cloud sync off and on again for the new folder.");
       await folder.guard();
       const { vaultKey, vaultId } = client.credentials;
+      // The plan first, before anything goes up: a device on hold stops here, also with an upload cut off by a restart.
+      const cloudStatus = await client.status();
+      if (await this.notePlan(client, state, cloudStatus.plan?.sync)) {
+        state.message = HOLD_STATUS;
+        await save();
+        this.status = HOLD_STATUS;
+        redraw = false;
+        return;
+      }
       if (state.upload) {
         // An upload cut off by a restart: finish it, or keep it as a copy when the cloud moved on.
         const prepared = state.upload;
@@ -606,7 +697,6 @@ export class CloudController {
         },
       };
       // The plan's maximum per file; a server without encrypted pieces takes 4 MiB.
-      const cloudStatus = await client.status();
       const pieces = cloudStatus.pieces;
       const maxFileBytes: number = pieces?.maxFileBytes ?? MAX_FILE_BYTES;
       if (this.maxFileBytes !== maxFileBytes) { this.maxFileBytes = maxFileBytes; await this.store.put("max-file-bytes", maxFileBytes); }
@@ -646,6 +736,18 @@ export class CloudController {
       void this.plugin.aiKeys.daily().then((said) => { if (said) new Notice(said, 10000); }, () => {});
     } catch (error) {
       if (this.generation !== generation) return;
+      // Refused mid-round because this device went on hold: the own plan, which it may still read, says the rest.
+      if (hold.refused(error)) {
+        const plan = await client.status().then((answer) => hold.readSyncPlan(answer.plan?.sync), () => hold.REFUSED);
+        if (hold.onHold(plan)) {
+          state.hold = plan;
+          state.holdCheckedAt = Date.now();
+          state.message = HOLD_STATUS;
+          await save().catch(() => {});
+          this.status = HOLD_STATUS;
+          return;
+        }
+      }
       const status = (error as { status?: number }).status;
       state.message = status === 401 ? "This device no longer has access. Your notes were kept. Log in again to sync."
         : error instanceof TypeError ? "The cloud is unreachable. Your changes stay on this device and sync later."
@@ -1249,7 +1351,8 @@ export class CloudController {
   /** Forget this device's keys; the notes stay in the vault and in the cloud. */
   async logOut(): Promise<void> {
     await this.ready;
-    if (this.state?.upload) throw new Error("A change is still waiting to upload. Sync first, then log out.");
+    // On hold an upload cannot finish; the change itself stays in the vault, so logging out loses nothing.
+    if (this.state?.upload && !this.onHold) throw new Error("A change is still waiting to upload. Sync first, then log out.");
     const client = await this.forget("Logged out. Your notes stay in this vault and in the cloud.");
     // Give the device slot back, like the website; the server keeps the last active device.
     if (client) void client.revokeDevice(client.credentials.deviceId).catch(() => {});
@@ -1304,6 +1407,17 @@ export class CloudController {
       modal.open();
     }, fail);
   }
+}
+
+/** Which device went on hold when this one signed in in its place (sync pause rule 11): one message that waits for OK, like Android's dialog. */
+class HoldSignInModal extends Modal {
+  constructor(app: App, readonly text: string) { super(app); }
+  onOpen(): void {
+    this.titleEl.setText("Signed in");
+    this.contentEl.createEl("p", { text: this.text });
+    this.contentEl.createDiv({ cls: "jotdrop-confirm-footer" }).createEl("button", { cls: "mod-cta", text: "OK" }).addEventListener("click", () => this.close());
+  }
+  onClose(): void { this.contentEl.empty(); }
 }
 
 type Pending = Awaited<ReturnType<typeof logIn>> & { secondFactor?: string };
