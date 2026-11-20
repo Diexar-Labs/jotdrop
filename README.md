@@ -192,13 +192,13 @@ The apps are free and always will be. Pay only when you want more from the cloud
 | | **Free** | **Plus** |
 | --- | --- | --- |
 | Encrypted cloud storage | 250 MB | 10 GB |
-| Connected devices | 2 | No plan limit |
+| Devices that sync | 2 | No plan limit |
 | Largest synced file | 25 MB | 200 MB |
 | Time machine | 30 days | Full available history |
 | End-to-end encryption | Included | Included |
 | One AI key on all your devices | No | Yes |
 
-250 MB is more than it sounds: 10,000 notes of 5 KB are about 50 MB of text. Photos, encryption and history take extra space. The free plan needs no payment details. When both free devices are in use, signing in on a third asks which one it replaces. JotDrop Plus is bought on the [JotDrop pricing page](https://jotdrop.net/#pricing), where the current prices are.
+250 MB is more than it sounds: 10,000 notes of 5 KB are about 50 MB of text. Photos, encryption and history take extra space. The free plan needs no payment details. When both free devices are in use, signing in on a third asks which one it replaces. If more devices stay signed in when a trial or Plus ends, you choose which 2 keep syncing. Sync goes on hold on the others 7 days later, in both directions, and the notes already on them stay. We email you the date first. JotDrop Plus is bought on the [JotDrop pricing page](https://jotdrop.net/#pricing), where the current prices are.
 
 ## Install
 

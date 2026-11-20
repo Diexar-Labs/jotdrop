@@ -11,7 +11,7 @@ You can say "put milk and bread on my shopping list" to Claude, and it's on the 
 - This program holds the key to your notes. Run it only on a computer you trust as much as your phone.
 - Your agent reads notes for you, so its AI provider sees what it reads. JotDrop still doesn't.
 - Your agent can make and change notes. It can't delete, archive or share them, and older versions stay in each note's history.
-- It counts as a device. On the free plan that is one of your two. You can remove it at any time under Connected devices.
+- It counts as a device. On the free plan that is one of the two that sync. If you sign in more devices than your plan syncs and this agent is not one of them, sync goes on hold for it: your agent reads the saved copy of your notes and cannot change anything until you choose it under Devices in JotDrop. You can remove it at any time under Connected devices.
 
 ## Connect
 

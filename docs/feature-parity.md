@@ -97,6 +97,8 @@ Stand gemeten op `ee57d58` (feature-branch), bijgewerkt met elke afgeronde funct
 | Wachtwoord wijzigen/vergeten | ja | ja (vergeten: goedkeuren, herstelcode of opnieuw beginnen) | ja |
 | Authenticator-app (TOTP) | ja | NEE | NEE |
 | Apparaten bekijken en intrekken | ja | ja | ja |
+| Sync op pauze boven het aantal apparaten van het plan ("on hold"): balk voor de pauze, vaste regel tijdens de pauze, kiezen welke apparaten doorgaan, "Check again" (ontwerp `Hand-off/ontwerp-sync-pauzeren-boven-free.md`) | ja (op pauze alleen-lezen) | ja (bewerken blijft kunnen) | ja (bewerken blijft kunnen) |
+| Dezelfde pauze in Joplin, Web Clipper en jotdrop-mcp: alleen een eigen pauzetekst, geen apparatenlijst; kiezen doe je in de web-app, Android of Obsidian | n.v.t. | n.v.t. | n.v.t. |
 | Koppelcode maken | ja | ja | ja |
 | Nieuw apparaat goedkeuren (4 woorden) | ja | ja (goedkeuren en zelf laten goedkeuren) | ja |
 | Automatisch synchroniseren | ja | ja (notitiemap met Archive/Trash + bijlagen, zelfde regels als Android; stopt bij Syncthing of gekoppelde Obsidian Sync) | ja |

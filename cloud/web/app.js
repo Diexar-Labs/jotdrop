@@ -189,7 +189,7 @@ function plusChoice() {
 function showPlusNudge() {
   const nearlyFull = !plusQuiet && storageShare >= .8 ? `Your cloud storage is ${Math.round(storageShare * 100)}% full${storageFilesShare > .5 ? ', mostly with attached files' : ''}. JotDrop Plus has 10 GB and takes files up to 200 MB.` : '';
   const days = trialDaysLeft(currentPlan);
-  const trialEnding = !plusQuiet && days && days <= 3 ? `Your JotDrop Plus trial ends in ${days === 1 ? '1 day' : `${days} days`}. After that you are on Free: nothing is deleted, and you keep 250 MB, 2 devices and 30 days of history.` : '';
+  const trialEnding = !plusQuiet && days && days <= 3 ? `Your JotDrop Plus trial ends in ${days === 1 ? '1 day' : `${days} days`}. After that you are on Free: nothing is deleted. Free has 250 MB, 30 days of history and sync on 2 devices. With more devices signed in, sync can go on hold on the others. We email you first, and their notes stay on them.` : '';
   const reason = plusReason || trialEnding || nearlyFull, choice = plusChoice();
   $('plus-nudge').hidden = !reason || !choice;
   $('plus-reason').textContent = reason;

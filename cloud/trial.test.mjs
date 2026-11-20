@@ -102,7 +102,7 @@ test('when the trial ends nothing is lost: extra devices still sync today, a new
   assert.equal(ended.trial.devices, 3);
   assert.equal(ended.trial.links, 2);
   const { body } = mailText(ended);
-  assert.match(body, /3 devices are signed in, and Free includes 2\. Syncing on the others can pause once the trial is over/);
+  assert.match(body, /3 devices are signed in, and Free includes 2\. The others keep syncing for now\. Before sync goes on hold on any of them, we email you the date and the devices\./);
   // Nobody may be told that extra devices keep working: syncing on them is meant to pause.
   assert.doesNotMatch(body, /devices[^\n]*keep working/i);
   assert.match(body, /2 note links are older than 7 days/);

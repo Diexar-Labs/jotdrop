@@ -23,15 +23,17 @@ const footer = '\n\nJotDrop, private notes that sync end to end encrypted.';
 // and at most two per account (jurist, 2 Nov 2026; LSSI art. 21 covers promotional mail).
 // Opens the Plus choice in the web app, after signing in (`takePlanChoice` in web/app.js).
 const PLUS_LINK = 'https://app.jotdrop.net/?plan=plus';
-// Sync on hold above the free plan's devices (Hand-off/ontwerp-sync-pauzeren-boven-free.md). Concept wording: the final
-// texts go through the Humanizer in phase 6. A device is named with its app, since many share a name ("Obsidian on Windows").
+// Sync on hold above the free plan's devices (Hand-off/ontwerp-sync-pauzeren-boven-free.md). The wording is a service notice
+// about the account's own devices (jurist J3) and went through the Humanizer in phase 6 (20 Nov 2026): date, devices, what stays,
+// where to choose, and one plain line about Plus. A device is named with its app, since many share a name ("Obsidian on Windows").
+const TERMS_LINK = 'https://app.jotdrop.net/terms';
 const APP_NAMES = { android: 'Android app', web: 'web app', obsidian: 'Obsidian', joplin: 'Joplin', clipper: 'Web Clipper', mcp: 'AI agent' };
 const deviceName = ({ name, app }) => APP_NAMES[app] && !name.toLowerCase().includes(APP_NAMES[app].toLowerCase()) ? `${name} (${APP_NAMES[app]})` : name;
 const listed = (devices) => { const names = devices.map(deviceName); return names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`; };
 const longDay = (iso) => new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
 // Which devices go on hold on which day, which go on, and that the notes stay.
 function syncLine(sync) {
-  return `From ${longDay(sync.pauseAt)}, sync goes on hold on ${listed(sync.onHold)}. Your notes stay on ${sync.onHold.length === 1 ? 'it' : 'them'}, but changes made there no longer reach your other devices. ${listed(sync.syncing)} keep syncing. You can choose other devices in JotDrop under Devices.`;
+  return `From ${longDay(sync.pauseAt)}, sync goes on hold on ${listed(sync.onHold)}. The notes already there stay there, but changes no longer travel to or from ${sync.onHold.length === 1 ? 'it' : 'them'}. ${listed(sync.syncing)} ${sync.syncing.length === 1 ? 'keeps' : 'keep'} syncing. To pick other devices, open JotDrop and go to Devices.`;
 }
 
 // What stays above the free plan once the trial ends; empty when everything fits in Free.
@@ -41,7 +43,7 @@ function aboveFreeLines(trial) {
   // A cloud that got the old trial mail keeps that promise (ontwerp deel 6); with sync on hold switched on the date and the names follow.
   if (trial.devices && trial.promised) lines.push(`- ${trial.devices} devices are signed in, and Free has ${trial.deviceLimit}. They all keep working. To add a new one, sign out one of these first.`);
   else if (trial.devices && trial.sync) lines.push(`- ${trial.devices} devices are signed in, and Free includes ${trial.deviceLimit}. ${syncLine(trial.sync)}`);
-  else if (trial.devices) lines.push(`- ${trial.devices} devices are signed in, and Free includes ${trial.deviceLimit}. Syncing on the others can pause once the trial is over, but the notes on them stay where they are. With Plus, every device syncs.`);
+  else if (trial.devices) lines.push(`- ${trial.devices} devices are signed in, and Free includes ${trial.deviceLimit}. The others keep syncing for now. Before sync goes on hold on any of them, we email you the date and the devices. The notes on them stay where they are. With Plus, every device syncs.`);
   if (trial.groups) lines.push(`- You share ${trial.groups} notes or lists, and Free shares one. They all keep working; only a new one needs Plus.`);
   if (trial.links) lines.push(`- ${trial.links === 1 ? '1 note link is' : `${trial.links} note links are`} older than 7 days. On Free a link lasts 7 days, so ${trial.links === 1 ? 'it is' : 'they are'} paused. With Plus ${trial.links === 1 ? 'it works' : 'they work'} again.`);
   return lines;
@@ -73,8 +75,8 @@ export function mailText({ kind, code, provider, report, trial, sync }) {
   }
   // A service notice about the account's own devices (jurist J3): the date, the devices, what stays, where to choose, and one plain line about Plus.
   // One when the grace starts outside a trial; the reminder only after the long notice of the one-time change.
-  if (kind === 'sync-pausing') texts[kind] = ['Sync goes on hold on some of your JotDrop devices', `Your JotDrop plan syncs ${sync.limit} devices, and ${sync.devices} are signed in.\n\n${syncLine(sync)}\n\nWith JotDrop Plus every device syncs: ${PLUS_LINK}\n\nYou get this email because it changes how your own JotDrop account works.`];
-  if (kind === 'sync-pause-reminder') texts[kind] = [`On ${longDay(sync.pauseAt)} sync goes on hold on some of your JotDrop devices`, `As we wrote before: your JotDrop plan syncs ${sync.limit} devices, and ${sync.devices} are signed in.\n\n${syncLine(sync)}\n\nWith JotDrop Plus every device syncs: ${PLUS_LINK}\n\nThis is the last email about it.`];
+  if (kind === 'sync-pausing') texts[kind] = ['Sync will go on hold on some of your JotDrop devices', `Your JotDrop plan syncs ${sync.limit} devices, and ${sync.devices} are signed in.\n\n${syncLine(sync)}\n\nWith JotDrop Plus every device syncs: ${PLUS_LINK}\n\nThe rule is in our terms of use: ${TERMS_LINK}\n\nYou get this email because it changes how your own JotDrop account works.`];
+  if (kind === 'sync-pause-reminder') texts[kind] = [`On ${longDay(sync.pauseAt)} sync goes on hold on some of your JotDrop devices`, `A reminder of our earlier email. Your JotDrop plan syncs ${sync.limit} devices, and ${sync.devices} are signed in.\n\n${syncLine(sync)}\n\nWith JotDrop Plus every device syncs: ${PLUS_LINK}\n\nThis is the last email about it.`];
   // Only for us. What the writer typed stays plain text here; mailHtml escapes it.
   if (kind === 'space-report') texts[kind] = [`JotDrop report: ${report.reason}`, `Someone reported something in a shared group.\n\nReason: ${report.reason}\nFrom: ${report.from}\nAbout: ${report.about ?? 'the group'}\nGroup: ${report.spaceId}\n\nTheir words, each line marked:\n${(report.details || 'They wrote nothing more.').split('\n').map((line) => `> ${line}`).join('\n')}\n\nThe server cannot read the notes in this group. Ask the writer if you need to see them.`];
   if (kind === 'link-report') texts[kind] = [`JotDrop link report: ${report.reason}`, `Someone reported a shared note link. We cannot read the note: open the link only if the report includes it.\n\nReason: ${report.reason}\nOwner: ${report.owner}\nLink ID: ${report.linkId}\n\nWhat they wrote:\n${report.details.split('\n').map((text) => `> ${text}`).join('\n')}`];
