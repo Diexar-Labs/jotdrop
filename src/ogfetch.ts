@@ -267,16 +267,22 @@ export function parseTikTokVideo(html: string, expectedId: string | null = null)
   const script = html.match(/<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([\s\S]*?)<\/script>/);
   if (!script) return null;
   try {
-    const item = JSON.parse(script[1])?.__DEFAULT_SCOPE__?.["webapp.video-detail"]?.itemInfo?.itemStruct;
-    if (!item || typeof item.id !== "string" || (expectedId && item.id !== expectedId)) return null;
+    // The JSON comes from TikTok, so every step is checked: a missing or odd field reads as undefined.
+    const field = (v: unknown, key: string): unknown =>
+      typeof v === "object" && v !== null ? (v as Record<string, unknown>)[key] : undefined;
+    const path = (v: unknown, ...keys: string[]): unknown => keys.reduce(field, v);
+    const item = path(JSON.parse(script[1]) as unknown, "__DEFAULT_SCOPE__", "webapp.video-detail", "itemInfo", "itemStruct");
+    const id = field(item, "id");
+    if (typeof id !== "string" || (expectedId && id !== expectedId)) return null;
     const text = (v: unknown): string | null => (typeof v === "string" && v.trim() ? v : null);
-    const covers = [item.video?.cover, item.video?.originCover, item.video?.dynamicCover]
+    const video = field(item, "video"), author = field(item, "author");
+    const covers = [field(video, "cover"), field(video, "originCover"), field(video, "dynamicCover")]
       .map(text)
       .filter((c, i, all): c is string => !!c && all.indexOf(c) === i);
     return {
-      caption: text(item.desc),
-      authorId: text(item.author?.uniqueId),
-      nickname: text(item.author?.nickname),
+      caption: text(field(item, "desc")),
+      authorId: text(field(author, "uniqueId")),
+      nickname: text(field(author, "nickname")),
       covers,
     };
   } catch {

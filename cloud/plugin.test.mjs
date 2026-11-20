@@ -56,6 +56,8 @@ function vault() {
   const plugin = {
     settings: { notesFolder: 'Mini Notes', archiveFolder: 'Mini Notes/Archive', cloudServer: '' },
     resolveAssetsFolder: () => 'Mini Notes/.attachments',
+    // The once-a-day check of the shared AI key (Ask JotDrop): nothing to say in these tests.
+    aiKeys: { async daily() { return null; } },
     refreshViews() {},
     addCommand() {}, registerEvent() {}, registerInterval() {}, registerDomEvent() {},
     app: {

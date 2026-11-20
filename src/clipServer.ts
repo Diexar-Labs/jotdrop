@@ -1,4 +1,4 @@
-import { Notice } from "obsidian";
+import { Notice, Platform } from "obsidian";
 import type JotDropPlugin from "./main";
 import { createNoteInFolder } from "./capture";
 import { fetchOg, safeMarkdownLink } from "./ogfetch";
@@ -53,11 +53,10 @@ export class ClipServer {
   }
 
   start(): void {
-    if (this.server) return;
+    if (this.server || !Platform.isDesktopApp) return;
     const port = this.plugin.settings.clipServerPort;
     // Node's http module is desktop-only and must not be evaluated while the
     // plugin is loading in Obsidian Mobile.
-    // eslint-disable-next-line @typescript-eslint/no-require-imports -- loopback clip server needs Node's http; Obsidian exposes no typed equivalent
     const http = require("http") as {
       createServer(handler: (req: IncomingMessageLike, res: ServerResponseLike) => void): ServerLike;
     };

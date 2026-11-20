@@ -14,6 +14,7 @@ on:
       - "package.json"
       - "package-lock.json"
       - "esbuild.config.mjs"
+      - "eslint.config.mjs"
       - "scripts/**"
       - ".github/workflows/android-build.yml"
   pull_request:
@@ -26,12 +27,16 @@ on:
       - "package.json"
       - "package-lock.json"
       - "esbuild.config.mjs"
+      - "eslint.config.mjs"
       - "scripts/**"
       - ".github/workflows/android-build.yml"
   workflow_dispatch:
 
 permissions:
   contents: write
+  # Only the attestation steps use these, and those run on release tags only.
+  id-token: write
+  attestations: write
 
 defaults:
   run:
@@ -60,9 +65,19 @@ jobs:
         working-directory: .
         run: npm ci
 
+      # The version gate runs here on its own: `npm run build` itself no longer runs it,
+      # so Obsidian can rebuild an older tag in a clean checkout.
+      - name: Verify source base
+        working-directory: .
+        run: npm run verify:base
+
       - name: Build plugin assets
         working-directory: .
         run: npm run build
+
+      - name: Lint with Obsidian's review rules
+        working-directory: .
+        run: npm run lint:obsidian
 
       - name: Check list editor behavior
         working-directory: .
@@ -148,6 +163,18 @@ jobs:
             android/artifacts/BUILD-INFO.txt
           retention-days: 30
 
+      # Provenance: anyone can check with `gh attestation verify <file> --repo <this repo>`
+      # that a release file was built here from the tagged commit.
+      - name: Attest Android release files
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            android/artifacts/jotdrop.apk
+            android/artifacts/plugin/main.js
+            android/artifacts/plugin/manifest.json
+            android/artifacts/plugin/styles.css
+
       - name: Publish Android release
         if: startsWith(github.ref, 'refs/tags/v')
         working-directory: .
@@ -160,6 +187,15 @@ jobs:
           else
             gh release create "${GITHUB_REF_NAME}" android/artifacts/jotdrop.apk android/artifacts/plugin/main.js android/artifacts/plugin/manifest.json android/artifacts/plugin/styles.css android/artifacts/BUILD-INFO.txt --verify-tag --generate-notes --latest
           fi
+
+      - name: Attest Obsidian plugin files
+        if: ${{ startsWith(github.ref, 'refs/tags/') && !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: |
+            main.js
+            manifest.json
+            styles.css
 
       - name: Publish Obsidian plugin release
         if: ${{ startsWith(github.ref, 'refs/tags/') && !startsWith(github.ref, 'refs/tags/v') }}

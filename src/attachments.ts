@@ -23,7 +23,7 @@ export function normalizeAssetsFolder(input: string): string | null {
   if (segments.length === 0) return null;
   if (segments.some((s) => s === "." || s === "..")) return null;
   // Characters Obsidian refuses in vault paths.
-  if (/[<>"|?*\u0000-\u001f]/.test(trimmed)) return null;
+  if (/[<>"|?*]/.test(trimmed) || [...trimmed].some((c) => c < " ")) return null;
   return normalizePath(segments.join("/"));
 }
 

@@ -12,7 +12,10 @@ import { findDuplicates as similar, pairKey as pairs } from "../cloud/shared/sim
 import * as keysync from "../cloud/shared/ai/keysync.mjs";
 import * as web from "../cloud/web/ai-web.mjs";
 import { joinNote as join, splitNote as split } from "../cloud/web/note.mjs";
-export { AiError, PROVIDERS, TRANSCRIBE_MODEL, createProvider, pickDefaultModel } from "../cloud/shared/ai/providers.mjs";
+export { AiError, PROVIDERS, TRANSCRIBE_MODEL, createProvider } from "../cloud/shared/ai/providers.mjs";
+import { pickDefaultModel as pickModel } from "../cloud/shared/ai/providers.mjs";
+/** The model to preselect for this service from its list, or null. */
+export const pickDefaultModel: <M extends { id: string }>(provider: string, models: M[]) => string | null = pickModel;
 export { FILE_TIMEOUT_MS } from "../cloud/shared/ai/assistant.mjs";
 export { PHOTO_SYSTEM } from "../cloud/web/ai-web.mjs";
 
@@ -39,26 +42,26 @@ export const runAssistant = run as unknown as (args: {
 export type AiCaps = { image: boolean | "unknown"; pdf: boolean | "unknown"; audio: boolean | "unknown"; transcribe: boolean | "unknown" };
 export const capabilities = parts.capabilities as unknown as (provider: string, model: string | { id: string; inputs?: string[] }) => AiCaps;
 export const explain = parts.explain as unknown as (provider: string, kind: string, use?: "ask" | "transcribe") => string;
-export const LIMITS = parts.LIMITS as { files: number; image: number; pdf: number; audio: number; total: number };
+export const LIMITS: { files: number; image: number; pdf: number; audio: number; total: number } = parts.LIMITS;
 export const decodedLength = parts.decodedLength as unknown as (data: string) => number;
 
 export type AiReceipt = { title?: string; shop?: string; amount?: string; currency?: string; bought?: string; warrantyUntil?: string };
-export const KEEP_YEARS = receipt.KEEP_YEARS as number[];
+export const KEEP_YEARS: number[] = receipt.KEEP_YEARS;
 export const receiptRequest = receipt.receiptRequest as unknown as (language: string) => { system: string; text: string };
 export const parseReceipt = receipt.parseReceipt as unknown as (answer: string) => AiReceipt | null;
 export const keepUntil = receipt.keepUntil as unknown as (bought: string | undefined, years: number) => string;
-export const receiptLines = web.receiptLines as unknown as (receipt: AiReceipt) => string;
+export const receiptLines: (receipt: AiReceipt) => string = web.receiptLines;
 export const fileRequest = web.fileRequest as unknown as (kind: "photo" | "transcribe") => string;
 export const aiFileKind = web.aiFileKind as unknown as (path: string) => { kind: AiFileKind; mime: string } | null;
 export const plainBase64 = web.plainBase64 as unknown as (value: string) => string;
-export const joinNote = join as unknown as (parts: { front: string; title: string; body: string }) => string;
+export const joinNote: (parts: { front: string; title: string; body: string }) => string = join;
 export const selectNotes = select as unknown as (notes: NoteIn[], question: string, options: { includeShared: boolean; pinned: string[] }) => { notes: Array<{ id: string; title: string; truncated: boolean }> };
 export const parseMarkdown = parse as unknown as (text: string) => Array<{ kind: string; level: number; spans: Array<{ text: string; bold: boolean; italic: boolean; code: boolean }> }>;
 export const foldUnchanged = fold as unknown as (lines: Array<{ type: string; text: string; sign: string }>) => Array<{ type: string; text?: string; sign?: string; count?: number }>;
 export const splitNote = split as unknown as (text: string) => { front: string; title: string; body: string };
 
 type Items = { text?: string; items?: string[] };
-export const newNoteText = web.newNoteText as unknown as (note: Items & { title: string; color?: string; label?: string }) => string;
+export const newNoteText: (note: Items & { title: string; color?: string; label?: string }) => string = web.newNoteText;
 export const appendedText = web.appendedText as unknown as (text: string, add: Items) => string;
 export const replacedText = web.replacedText as unknown as (text: string, newText: string) => string;
 export const expiryChanges = web.expiryChanges as unknown as (text: string, date: string, drawer?: string) => { expires: string; jotdrop_labels: string[]; reminder?: string };
@@ -75,7 +78,7 @@ export const pairKey = pairs as unknown as (first: string, second: string) => st
 export const diffLines = diff as unknown as (before: string, after: string) => Array<{ type: string; text: string }> | null;
 export type WeekDigest = { notes: Array<{ id: string; title: string }>; text: string; left: number; truncated: boolean; counts: { changed: number; reminders: number; expiring: number } };
 export const weekDigest = digest as unknown as (notes: OverviewNote[], options: { now?: Date; timeZone: string; includeShared: boolean }) => WeekDigest;
-export const digestRequest = digestAsk as unknown as (args: { language: string; date: string; timeZone: string; text: string }) => { system: string; text: string };
+export const digestRequest: (args: { language: string; date: string; timeZone: string; text: string }) => { system: string; text: string } = digestAsk;
 
 // Version 2, phase 8: one key on all your devices (JotDrop Plus). The rules are the shared code (cloud/shared/ai/keysync.mjs,
 // the same in the web app; Android has them in Kotlin against the same vectors); this file only states the types.

@@ -87,7 +87,7 @@ export function readLabels(value: unknown): string[] {
     .map((label) => label.trim())
     .filter((label) => {
       const key = label.toLowerCase();
-      if (!label || /[\x00-\x1f\x7f-\x9f]/.test(label) || seen.has(key)) return false;
+      if (!label || /\p{Cc}/u.test(label) || seen.has(key)) return false;
       seen.add(key);
       return true;
     });
@@ -388,13 +388,14 @@ export function stripFrontmatter(content: string): string {
  */
 export function neutralizeInlineHashtags(text: string): string {
   const skipped = /(`{3,}|~{3,})[\s\S]*?\1|`[^`\n]+`|\[\[[^\]\n]*\]\]|\]\([^)\n]*\)|https?:\/\/[^\s<>]+/g;
-  const hashtag = /(?<![\\\p{L}\p{N}\p{M}_/])#(?=\p{N}*[\p{L}\p{M}_/\p{Extended_Pictographic}-])/gu;
+  // The character before `#` is captured and put back: a lookbehind breaks loading the plugin on iOS before 16.4.
+  const hashtag = /(^|[^\\\p{L}\p{N}\p{M}_/])#(?=\p{N}*[\p{L}\p{M}_/\p{Extended_Pictographic}-])/gu;
   let out = "", at = 0;
   for (const match of text.matchAll(skipped)) {
-    out += text.slice(at, match.index).replace(hashtag, "\\#") + match[0];
+    out += text.slice(at, match.index).replace(hashtag, "$1\\#") + match[0];
     at = match.index + match[0].length;
   }
-  return out + text.slice(at).replace(hashtag, "\\#");
+  return out + text.slice(at).replace(hashtag, "$1\\#");
 }
 
 /**
@@ -487,8 +488,8 @@ export function wrapTaskText(preview: HTMLElement): void {
     const text = createSpan({ cls: "jotdrop-task-text" });
     toggle.after(text);
     let node = text.nextSibling;
-    while (node && !(node instanceof HTMLElement && node.hasClass("jotdrop-checklist-toggle"))) {
-      if (node instanceof Text && node.data.includes("\n")) {
+    while (node && !(node.instanceOf(HTMLElement) && node.hasClass("jotdrop-checklist-toggle"))) {
+      if (node.instanceOf(Text) && node.data.includes("\n")) {
         node.splitText(node.data.indexOf("\n"));
         text.appendChild(node);
         break;
@@ -601,7 +602,7 @@ export function checklistPreviewRows(content: string): PreviewRow[] {
   const indices = new Map<number, number>();
   let index = 0;
   for (const match of body.matchAll(/^(\s*-\s+\[)([ xX])(\](?:\s|$))/gm)) {
-    const marker = match.index! + match[1].indexOf("-");
+    const marker = match.index + match[1].indexOf("-");
     indices.set(body.slice(0, marker).split("\n").length - 1, index++);
   }
   const rows: PreviewRow[] = [];
@@ -644,7 +645,7 @@ export function tickChecklistItem(content: string, targetIndex: number, move: bo
   let index = 0;
   for (const match of content.slice(bodyStart).matchAll(/^(\s*-\s+\[)([ xX])(\](?:\s|$))/gm)) {
     if (index++ !== targetIndex) continue;
-    const line = content.slice(0, bodyStart + match.index! + match[1].indexOf("-")).split("\n").length - 1;
+    const line = content.slice(0, bodyStart + match.index + match[1].indexOf("-")).split("\n").length - 1;
     const edit = tickEdit(content, line, move);
     if (!edit) break;
     return { updated: content.slice(0, edit.from) + edit.insert + content.slice(edit.to), moved: edit.line !== line };

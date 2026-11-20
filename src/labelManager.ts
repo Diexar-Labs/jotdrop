@@ -9,7 +9,7 @@ export interface LabelInfo {
 
 function isValidLabelName(name: string): boolean {
   if (!name || !name.trim()) return false;
-  if (/[\x00-\x1f\x7f-\x9f]/.test(name)) return false;
+  if (/\p{Cc}/u.test(name)) return false;
   return true;
 }
 

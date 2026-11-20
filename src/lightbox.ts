@@ -93,7 +93,6 @@ export class LightboxModal extends Modal {
         try {
           const fullPath = adapter.getFullPath(this.vaultPath!);
           // Electron's shell — desktop only; not part of Obsidian's plugin TS types.
-          // eslint-disable-next-line @typescript-eslint/no-require-imports -- desktop-only "open in system app"; Electron's shell has no Obsidian-typed equivalent
           const { shell } = require("electron") as { shell: { openPath(path: string): Promise<string> } };
           const err = await shell.openPath(fullPath);
           if (err) {
