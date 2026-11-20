@@ -80,7 +80,7 @@ HOW IT WORKS WITH JOTDROP CLOUD
 3. In the clipper settings, choose JotDrop Cloud, paste the code and pick an unlock passphrase for this browser. Chrome asks once for access to app.jotdrop.net.
 4. Click the JotDrop icon on any page and press Save. The card appears in the web app.
 
-The clipper counts as one of your cloud devices. The Free plan has room for two.
+The clipper counts as one of your cloud devices. The Free plan syncs two.
 
 WHAT GETS SAVED
 The page title and link, the text you selected (if any), your tags, a color and a pin. In Obsidian the plugin can also add the page's preview picture.

@@ -112,8 +112,8 @@ test('a trial that ends with 4 devices: 7 days of grace, then 2 sync and 2 are o
   const ended = cloud.mails.find((mail) => mail.kind === 'trial-ended');
   assert.deepEqual(ended.trial.sync, { pauseAt: iso(pauseAt), limit: 2, devices: 4, syncing: [{ name: 'Laptop', app: 'obsidian' }, { name: 'Phone', app: 'android' }], onHold: [{ name: 'Tablet', app: 'android' }, { name: 'Desk', app: 'web' }] });
   const { body } = mailText(ended);
-  assert.match(body, /4 devices are signed in, and Free includes 2\. From 25 January 2027, sync goes on hold on Tablet \(Android app\) and Desk \(web app\)\. Your notes stay on them/);
-  assert.match(body, /Laptop \(Obsidian\) and Phone \(Android app\) keep syncing\. You can choose other devices in JotDrop under Devices\./);
+  assert.match(body, /4 devices are signed in, and Free includes 2\. From 25 January 2027, sync goes on hold on Tablet \(Android app\) and Desk \(web app\)\. The notes already there stay there/);
+  assert.match(body, /Laptop \(Obsidian\) and Phone \(Android app\) keep syncing\. To pick other devices, open JotDrop and go to Devices\./);
   assert.doesNotMatch(body, /—|keep working/);
 
   // The grace: everything syncs, every device knows what comes, and using a device does not move the choice.
@@ -456,12 +456,17 @@ test('the Play review account never goes on hold', async (t) => {
 test('the mails about sync on hold say the date, the devices and what stays, in plain words', () => {
   const sync = { pauseAt: '2027-02-14T08:00:00.000Z', limit: 2, devices: 3, syncing: [{ name: 'Phone', app: 'android' }, { name: 'Obsidian on Windows', app: 'obsidian' }], onHold: [{ name: '<Old> laptop', app: 'web' }] };
   const pausing = mailText({ kind: 'sync-pausing', sync });
-  assert.equal(pausing.subject, 'Sync goes on hold on some of your JotDrop devices');
-  assert.match(pausing.body, /^Your JotDrop plan syncs 2 devices, and 3 are signed in\.\n\nFrom 14 February 2027, sync goes on hold on <Old> laptop \(web app\)\. Your notes stay on it, but changes made there no longer reach your other devices\. Phone \(Android app\) and Obsidian on Windows keep syncing\./);
+  assert.equal(pausing.subject, 'Sync will go on hold on some of your JotDrop devices');
+  assert.match(pausing.body, /^Your JotDrop plan syncs 2 devices, and 3 are signed in\.\n\nFrom 14 February 2027, sync goes on hold on <Old> laptop \(web app\)\. The notes already there stay there, but changes no longer travel to or from it\. Phone \(Android app\) and Obsidian on Windows keep syncing\. To pick other devices, open JotDrop and go to Devices\./);
   assert.match(pausing.body, /With JotDrop Plus every device syncs: https:\/\/app\.jotdrop\.net\/\?plan=plus/);
+  assert.match(pausing.body, /The rule is in our terms of use: https:\/\/app\.jotdrop\.net\/terms/);
   const reminder = mailText({ kind: 'sync-pause-reminder', sync });
   assert.equal(reminder.subject, 'On 14 February 2027 sync goes on hold on some of your JotDrop devices');
+  assert.match(reminder.body, /^A reminder of our earlier email\. Your JotDrop plan syncs 2 devices, and 3 are signed in\./);
   assert.match(reminder.body, /This is the last email about it\./);
+  // One device that goes on, two on hold: the verbs agree with the numbers.
+  const one = mailText({ kind: 'sync-pausing', sync: { ...sync, devices: 3, syncing: [{ name: 'Phone', app: 'android' }], onHold: [{ name: 'Old', app: 'web' }, { name: 'Tablet', app: 'android' }] } });
+  assert.match(one.body, /sync goes on hold on Old \(web app\) and Tablet \(Android app\)\. The notes already there stay there, but changes no longer travel to or from them\. Phone \(Android app\) keeps syncing\./);
   assert.match(mailHtml({ kind: 'sync-pausing', sync }), /&#60;Old&#62; laptop/);
   // A cloud with the promise of the old trial mail still reads that its devices keep working.
   const promised = mailText({ kind: 'trial-ended', trial: { usedMb: 0, quotaMb: 250, devices: 3, deviceLimit: 2, groups: 0, links: 0, promised: true } });

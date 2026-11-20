@@ -67,8 +67,11 @@ as usual, so a clip is never lost.
 4. Click the JotDrop icon on any page, enter the unlock passphrase and press **Save to JotDrop**. With **Stay unlocked until the browser closes** ticked, you only type it once per browser session.
 
 The clipper becomes one of your cloud devices. On the Free plan it counts
-toward the device limit; if the web app says the limit is reached, sign out an
-older device first. To stop, open the settings, **Disconnect this browser**
+toward the 2 devices that sync; if the web app says the limit is reached, sign
+out an older device first. If your plan syncs fewer devices than you have
+signed in and the clipper is not one of them, it goes on hold: Save keeps the
+clip as an encrypted draft, and it goes up once the clipper syncs again. Choose
+your devices under **Devices & recovery**. To stop, open the settings, **Disconnect this browser**
 and give the unlock passphrase: the clipper removes its keys and signs itself
 out of your cloud. Forgot the passphrase? Disconnect without it, sign out "Web
 clipper" in the web app and pair again.

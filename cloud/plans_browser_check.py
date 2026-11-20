@@ -190,6 +190,7 @@ def check_plans(browser, url, codes, database):
     assert not manage.get_by_text("link.com").is_visible()
     manage.locator("summary").click()
     assert manage.get_by_text("Manage or cancel your subscription at link.com.").is_visible()
+    assert manage.get_by_text("When Plus ends, your cloud moves to Free and syncs 2 devices.").is_visible()
 
     # This browser was not remembered: locking gives its device slot back.
     tablet.locator("#lock").click()
