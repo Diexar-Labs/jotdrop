@@ -69,6 +69,7 @@ class CloudActivity : ThemedComponentActivity() {
         if (savedInstanceState == null) {
             CloudAccountFlow.startProvider = intent.getStringExtra(EXTRA_PROVIDER)
             takeProviderReturn(intent)
+            openDevices = intent.getStringExtra(EXTRA_DEVICES)
         }
         val welcome = intent.getBooleanExtra(EXTRA_WELCOME, false)
         val resolve = intent.getStringExtra(EXTRA_RESOLVE)
@@ -96,11 +97,18 @@ class CloudActivity : ThemedComponentActivity() {
         /** From a card's menu: the note to share. */
         const val EXTRA_SHARE = "share"
         const val EXTRA_LINK = "link"
+        /** From the line on the board while sync is on hold: [DEVICES_LIST] opens Devices, [DEVICES_HERE] also ticks this phone. */
+        const val EXTRA_DEVICES = "devices"
+        const val DEVICES_LIST = "list"
+        const val DEVICES_HERE = "here"
+        /** The Devices page to open, until the screen has opened it; this activity is singleTask, so it also comes by onNewIntent. */
+        internal var openDevices by mutableStateOf<String?>(null)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         takeProviderReturn(intent)
+        intent.getStringExtra(EXTRA_DEVICES)?.let { openDevices = it }
     }
 
     /** Google or GitHub sends the browser back to jotdrop-cloud://oauth?oauth=<ticket>, the person check to jotdrop-cloud://human?token=<token>. */
@@ -148,6 +156,10 @@ private fun CloudScreen(welcome: Boolean, resolve: String?, onBack: () -> Unit, 
     // When the 14 days of Plus every new account starts with end; null outside a trial.
     var trialEnds by remember { mutableStateOf<java.time.Instant?>(null) }
     var mailStatus by remember { mutableStateOf<JSONObject?>(null) }
+    // Devices: this phone's own entry, and "Sync here instead" from the board ticks it first.
+    var hereId by remember { mutableStateOf<String?>(null) }
+    var chooseHere by rememberSaveable { mutableStateOf(false) }
+    var choiceSaved by remember { mutableStateOf(false) }
 
     suspend fun refresh() {
         status = withContext(Dispatchers.IO) { CloudSyncManager.status(context) }
@@ -189,7 +201,16 @@ private fun CloudScreen(welcome: Boolean, resolve: String?, onBack: () -> Unit, 
     }
     fun loadDevices() = run {
         val client = cloud()
+        hereId = client.credentials.deviceId
         devices = withContext(Dispatchers.IO) { val array = client.devices().getJSONArray("devices"); List(array.length()) { array.getJSONObject(it) } }
+    }
+    // Which devices sync, when the plan syncs fewer than are signed in. A phone that may sync again starts at once.
+    fun saveSyncChoice(ids: List<String>) = run {
+        val client = cloud()
+        devices = withContext(Dispatchers.IO) { val array = client.setSyncDevices(ids).getJSONArray("devices"); List(array.length()) { array.getJSONObject(it) } }
+        chooseHere = false
+        choiceSaved = true
+        if (status?.enabled == true) CloudSyncManager.sync(context, check = true)
     }
     fun loadTimeline() = run {
         val client = cloud()
@@ -250,8 +271,19 @@ private fun CloudScreen(welcome: Boolean, resolve: String?, onBack: () -> Unit, 
         wasConnected = connected
     }
     // Just signed in, from anywhere: to the notes once sync runs and the recovery code is saved.
-    if (justSignedIn) LaunchedEffect(status?.enabled, CloudAccountFlow.recoveryCode, CloudAccountFlow.secureOffer, CloudAccountFlow.totpTurnedOn) {
-        if (status?.enabled == true && CloudAccountFlow.recoveryCode == null && CloudAccountFlow.secureOffer == null && !CloudAccountFlow.totpTurnedOn) onSignedIn()
+    if (justSignedIn) LaunchedEffect(status?.enabled, CloudAccountFlow.recoveryCode, CloudAccountFlow.secureOffer, CloudAccountFlow.totpTurnedOn, CloudAccountFlow.heldBySignIn) {
+        if (status?.enabled == true && CloudAccountFlow.recoveryCode == null && CloudAccountFlow.secureOffer == null && !CloudAccountFlow.totpTurnedOn &&
+            CloudAccountFlow.heldBySignIn == null) onSignedIn()
+    }
+    // From the line on the board: straight to Devices, with this phone ticked for "Sync here instead".
+    LaunchedEffect(CloudActivity.openDevices, status?.connected) {
+        val wanted = CloudActivity.openDevices ?: return@LaunchedEffect
+        if (status?.connected != true) return@LaunchedEffect
+        CloudActivity.openDevices = null
+        chooseHere = wanted == CloudActivity.DEVICES_HERE
+        tab = 2
+        snapshotFlow { busy }.first { !it }
+        loadDevices()
     }
     // From a conflict copy's card: straight into the comparison of its note, like "Resolve now" on the card in Obsidian.
     var resolveOpened by rememberSaveable { mutableStateOf(false) }
@@ -340,18 +372,24 @@ private fun CloudScreen(welcome: Boolean, resolve: String?, onBack: () -> Unit, 
                     }
                 } else if (tab == 2) {
                     if (devices.isEmpty()) item { Text("Tap Refresh to see the devices connected to your cloud.") }
+                    // Who syncs shows only while the plan syncs fewer devices than are signed in.
+                    val choosing = status?.plan?.takeIf(CloudSyncHold::choosing)
                     items(devices, key = { it.getString("id") }) { device ->
                         OutlinedCard(Modifier.fillMaxWidth()) {
                             Row(Modifier.padding(start = 14.dp, top = 6.dp, bottom = 6.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Icon(Icons.Filled.Devices, null)
                                 Spacer(Modifier.width(12.dp))
                                 Column(Modifier.weight(1f)) {
-                                    Text(device.getString("name"), style = MaterialTheme.typography.titleSmall)
-                                    Text(if (device.optBoolean("revoked")) "Access revoked" else "Last active: ${device.optString("lastSeenAt")}", style = MaterialTheme.typography.bodySmall)
+                                    Text(device.getString("name") + if (device.optString("id") == hereId) " (this phone)" else "", style = MaterialTheme.typography.titleSmall)
+                                    Text(deviceLine(device, choosing), style = MaterialTheme.typography.bodySmall)
                                 }
                                 TextButton(onClick = { revoke = device }, enabled = !busy && !device.optBoolean("revoked")) { Text("Revoke") }
                             }
                         }
+                    }
+                    if (choosing != null && devices.isNotEmpty()) item(key = "sync-choice") {
+                        SyncChoice(choosing, devices, hereId, chooseHere, busy, ::saveSyncChoice)
+                        if (choiceSaved) Text("Saved. The devices you chose sync from now on.", style = MaterialTheme.typography.bodyMedium)
                     }
                     item {
                         Text("Add a device with a pairing code", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 8.dp))
@@ -377,7 +415,8 @@ private fun CloudScreen(welcome: Boolean, resolve: String?, onBack: () -> Unit, 
             } else {
                 item(key = "sync") {
                     CloudCard(Icons.Filled.CloudSync, "Sync") {
-                        val synced = status!!.enabled && status!!.conflictPaths.isEmpty() && !status!!.oldUpload
+                        val held = CloudSyncHold.onHold(status!!.plan)
+                        val synced = status!!.enabled && status!!.conflictPaths.isEmpty() && !status!!.oldUpload && !held
                         // A sign and words, not only a colour.
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(if (synced) Icons.Filled.CheckCircle else Icons.Filled.Info, null, tint = if (synced) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
@@ -400,8 +439,9 @@ private fun CloudScreen(welcome: Boolean, resolve: String?, onBack: () -> Unit, 
                                 Text("Keep old upload as a local copy")
                             }
                         }
-                        Button(onClick = { run { CloudSyncManager.sync(context) } }, enabled = !busy && status!!.enabled, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
-                            Icon(Icons.Filled.Sync, null); Spacer(Modifier.width(8.dp)); Text("Sync now")
+                        // On hold this asks the cloud whether this phone may sync again, and syncs at once if so.
+                        Button(onClick = { run { CloudSyncManager.sync(context, check = true) } }, enabled = !busy && status!!.enabled, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) {
+                            Icon(Icons.Filled.Sync, null); Spacer(Modifier.width(8.dp)); Text(if (held) "Check again" else "Sync now")
                         }
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
@@ -442,6 +482,7 @@ private fun CloudScreen(welcome: Boolean, resolve: String?, onBack: () -> Unit, 
                             val date = java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM).format(java.util.Date(ends.toEpochMilli()))
                             Text("JotDrop Plus trial: ${if (days == 1L) "1 day" else "$days days"} left, until $date. After that you are on Free and nothing is deleted.", style = MaterialTheme.typography.bodyMedium)
                         }
+                        status?.plan?.takeIf(CloudSyncHold::choosing)?.let { Text(planLine(it), style = MaterialTheme.typography.bodyMedium) }
                         // Google Play allows naming the website, without a link or button, when the app sells nothing itself.
                         Text("JotDrop Plus adds more storage, devices and history. Upgrade on our website.", style = MaterialTheme.typography.bodySmall)
                     }
@@ -479,6 +520,9 @@ private fun CloudScreen(welcome: Boolean, resolve: String?, onBack: () -> Unit, 
     }
     CloudRecoveryDialog()
     CloudSecureOfferDialog { cloud() }
+    CloudAccountFlow.heldBySignIn?.let { name -> AlertDialog(onDismissRequest = { CloudAccountFlow.heldBySignIn = null }, title = { Text("Sync runs on this phone") },
+        text = { Text("Sync now runs on this phone, and $name is on hold. Your notes stay on it. You can change that under Devices.") },
+        confirmButton = { TextButton(onClick = { CloudAccountFlow.heldBySignIn = null }) { Text("OK") } }) }
     if (confirmEnable) AlertDialog(onDismissRequest = { confirmEnable = false }, title = { Text("Enable sync for this vault?") },
         text = { Text("Cloud changes can update and remove synced local files. Recovery copies are kept. Do not use Syncthing or another sync system on the same folder. Confirm that this vault is dedicated to JotDrop Cloud.") },
         confirmButton = { TextButton(onClick = { confirmEnable = false; run { CloudSyncManager.setEnabled(context, true) } }) { Text("Enable cloud sync") } },
@@ -633,6 +677,55 @@ private fun VersionDiff(lines: List<CloudVersionDiff.Line>?) {
 private data class TimeMoment(val at: String, val then: List<CloudMomentFile>, val files: List<MomentEntry>, val trashed: Int, val locked: Int, val cleared: Int)
 
 private fun momentLabel(at: String): String = DateTimeFormatter.ofLocalizedDateTime(FormatStyle.MEDIUM).withZone(ZoneId.systemDefault()).format(Instant.parse(at))
+private fun dayLabel(at: String?): String = at?.let { runCatching { DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM).withZone(ZoneId.systemDefault()).format(Instant.parse(it)) }.getOrNull() } ?: "soon"
+
+private val APP_NAMES = mapOf("android" to "Android app", "web" to "web app", "obsidian" to "Obsidian", "joplin" to "Joplin", "clipper" to "Web Clipper", "mcp" to "AI agent")
+
+/** Which app, when it was last used, and, while the plan syncs fewer devices than are signed in, whether it syncs: words and a sign, never colour alone. */
+private fun deviceLine(device: JSONObject, plan: CloudSyncPlan?): String {
+    if (device.optBoolean("revoked")) return "Access revoked"
+    val seen = device.optString("lastSeenAt").takeIf { it.isNotEmpty() }?.let { runCatching { momentLabel(it) }.getOrDefault(it) }
+    val state = plan?.let { if (device.optBoolean("syncing", true)) "✓ Syncing" else if (it.state == "ending") "On hold from ${dayLabel(it.pauseAt)}" else "On hold" }
+    return listOfNotNull(APP_NAMES[device.optString("app")], seen?.let { "last active $it" }, state).joinToString("  |  ").replaceFirstChar { it.uppercase() }
+}
+
+/** The plan line in "Your cloud" while the plan syncs fewer devices than are signed in. */
+private fun planLine(plan: CloudSyncPlan): String = when {
+    CloudSyncHold.onHold(plan) -> "Sync is on hold on this phone. Your plan syncs ${plan.limit} devices; choose them under Devices."
+    plan.state == "limited" -> "Your plan syncs ${plan.limit} devices. ✓ This phone syncs."
+    plan.thisDevice == "paused" -> "Your plan syncs ${plan.limit} devices. From ${dayLabel(plan.pauseAt)} sync goes on hold on this phone; choose your devices under Devices."
+    else -> "Your plan syncs ${plan.limit} devices. ✓ This phone keeps syncing."
+}
+
+/**
+ * Devices that sync, exactly as many as the plan syncs (Hand-off/ontwerp-sync-pauzeren-boven-free.md, deel 8).
+ * "Sync here instead" ticks this phone first, so you only untick the device that makes room.
+ */
+@Composable
+private fun SyncChoice(plan: CloudSyncPlan, devices: List<JSONObject>, hereId: String?, here: Boolean, busy: Boolean, onSave: (List<String>) -> Unit) {
+    val active = devices.filter { !it.optBoolean("revoked") }
+    val limit = plan.limit ?: return
+    var picked by remember(devices, hereId, here) {
+        mutableStateOf(active.filter { it.optBoolean("syncing", true) }.map { it.getString("id") }.toSet() + listOfNotNull(hereId?.takeIf { here }))
+    }
+    val wait = CloudSyncHold.waitUntil(plan, System.currentTimeMillis())
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.padding(top = 8.dp)) {
+        Text("Devices that sync", style = MaterialTheme.typography.titleMedium)
+        val about = if (plan.state == "ending") "From ${dayLabel(plan.pauseAt)} the others go on hold." else "The others are on hold. After a change you can change again a day later."
+        Text("Your plan syncs $limit devices. Choose which ones. $about Notes stay on every device." + (wait?.let { " You can change your devices again from ${momentLabel(it.toString())}." } ?: ""),
+            style = MaterialTheme.typography.bodyMedium)
+        for (device in active) {
+            val id = device.getString("id")
+            val label = device.getString("name") + (APP_NAMES[device.optString("app")]?.let { " ($it)" } ?: "") + if (id == hereId) ", this phone" else ""
+            CheckRow(id in picked, { picked = if (it) picked + id else picked - id }, label, enabled = !busy && wait == null)
+        }
+        val extra = picked.size - limit
+        if (extra != 0) Text(if (extra > 0) "${picked.size} chosen: untick ${if (extra == 1) "the device that makes" else "$extra devices that make"} room." else "${picked.size} of $limit chosen.",
+            style = MaterialTheme.typography.bodySmall)
+        Button(onClick = { onSave(picked.toList()) }, enabled = !busy && wait == null && extra == 0, modifier = Modifier.heightIn(min = 48.dp)) { Text("Save choice") }
+        Text("JotDrop Plus syncs all your devices. Upgrade on our website.", style = MaterialTheme.typography.bodySmall)
+    }
+}
 
 private class CloudSection(val title: String, val short: String, val hint: String, val icon: ImageVector)
 private val CLOUD_SECTIONS = listOf(

@@ -81,6 +81,8 @@ internal object CloudAccountFlow {
     var totpTurnedOn by mutableStateOf(false)
     /** An authenticator being set up, in settings or in the offer, until it is turned on or cancelled. */
     var totpSetup by mutableStateOf<CloudTotpSetup?>(null)
+    /** Signing in in place of another device put this device on hold: its name, until the person has read it. */
+    var heldBySignIn by mutableStateOf<String?>(null)
     /** Bumped when the offer changed the account, so the account section loads it again. */
     var accountChanged by mutableStateOf(0)
     fun clear() { signup = null; login = null; reset = null; approval = null; deviceChoice = null; waitingFor = null; waitingForPerson = false; provider = null; totpSetup = null }
@@ -94,7 +96,11 @@ private suspend fun withDeviceChoice(connect: suspend (String?) -> Unit) {
     try { connect(null) }
     catch (failure: CloudRequestException) {
         if (failure.code != "device-limit" || failure.devices.isEmpty()) throw failure
-        CloudAccountFlow.deviceChoice = CloudDeviceChoice(failure.serverMessage ?: "This cloud has reached its device limit.", failure.devices) { connect(it) }
+        CloudAccountFlow.deviceChoice = CloudDeviceChoice(failure.serverMessage ?: "This cloud has reached its device limit.", failure.devices) {
+            CloudAccount.takeHeldBySignIn()
+            connect(it)
+            CloudAccountFlow.heldBySignIn = CloudAccount.takeHeldBySignIn()
+        }
     }
 }
 
@@ -172,7 +178,7 @@ private fun CodeField(value: String, onChange: (String) -> Unit, enabled: Boolea
 private const val NEWSLETTER_LABEL = "Email me news about JotDrop."
 
 @Composable
-private fun CheckRow(checked: Boolean, onChange: (Boolean) -> Unit, label: String, enabled: Boolean = true) {
+internal fun CheckRow(checked: Boolean, onChange: (Boolean) -> Unit, label: String, enabled: Boolean = true) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)
         .toggleable(value = checked, onValueChange = onChange, enabled = enabled, role = Role.Checkbox)) {
         Checkbox(checked = checked, onCheckedChange = null, enabled = enabled)

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Sync on hold above the plan's devices (Hand-off/ontwerp-sync-pauzeren-boven-free.md, deel 8): the line on the board.
+         JotDrop Plus in words only: no price and no link (Google Play payments policy, check:android-play-policy). -->
+    <string name="sync_hold_text">La sincronización está en espera en este teléfono. Lo que cambies aquí se queda en este teléfono y se sube en cuanto vuelva a sincronizar.</string>
+    <string name="sync_hold_wait">Podrás volver a cambiar tus dispositivos a partir de %1$s.</string>
+    <string name="sync_hold_here">Sincronizar aquí</string>
+    <string name="sync_hold_devices">Dispositivos</string>
+    <string name="sync_hold_check">Comprobar de nuevo</string>
+    <string name="sync_hold_plus">JotDrop Plus sincroniza todos tus dispositivos. Puedes pasarte a Plus en nuestro sitio web.</string>
+    <string name="sync_ending_text">Tu plan sincroniza %1$d dispositivos. A partir de %2$s la sincronización queda en espera en: %3$s. Tus notas se quedan en ellos.</string>
+    <string name="sync_ending_some">algunos de tus dispositivos</string>
+    <string name="sync_ending_choose">Elegir dispositivos</string>
+    <string name="sync_ending_later">Ahora no</string>
+    <string name="sync_this_phone">este teléfono</string>
+    <string name="sync_device_app">%1$s (%2$s)</string>
+    <string name="sync_app_android">app de Android</string>
+    <string name="sync_app_web">app web</string>
+    <string name="sync_app_obsidian">Obsidian</string>
+    <string name="sync_app_joplin">Joplin</string>
+    <string name="sync_app_clipper">Web Clipper</string>
+    <string name="sync_app_mcp">agente de IA</string>
+</resources>

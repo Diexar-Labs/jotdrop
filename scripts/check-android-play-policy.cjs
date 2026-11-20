@@ -96,6 +96,22 @@ check(aiUi.includes("R.string.ai_report") && aiUi.includes("mailto:hello@jotdrop
 check(aiUi.includes("R.string.ai_answer_label"), "Ask JotDrop must mark an answer as coming from AI");
 check(aiUi.includes("AiConfirmDialog(") && read("android/app/src/main/kotlin/com/diexar/keepcapture/AiAssistant.kt").includes('tool.mode == "confirm"'), "Ask JotDrop must ask before it changes a note");
 
+// Sync on hold above the plan's devices (20 Nov 2026, Hand-off/ontwerp-sync-pauzeren-boven-free.md deel 8): the line on
+// the board and the Cloud screen name JotDrop Plus and the website in words only: no price, no currency, no link, and
+// the line opens nothing but JotDrop's own Devices page.
+for (const locale of ["", "-nl", "-de", "-es", "-fr", "-it"]) {
+  const file = `android/app/src/main/res/values${locale}/strings_sync.xml`;
+  const text = read(file);
+  check(!/€|\$\d|\bEUR\b|\bUSD\b|per month|per year|per maand|per jaar|pro Monat|por mes|par mois|al mese|checkout|stripe/i.test(text), `${file} must not name a price or a checkout`);
+  check(!/https?:\/\/|www\./i.test(text), `${file} must not show a web link`);
+}
+check(read("android/app/src/main/res/values/strings_sync.xml").includes("Upgrade on our website."), "the sync-on-hold Plus line names the website in words only");
+for (const file of ["CloudSyncHold.kt", "CloudSyncHoldUi.kt", "CloudSyncManager.kt", "CloudActivity.kt"]) {
+  const code = read(`android/app/src/main/kotlin/com/diexar/keepcapture/${file}`);
+  check(!/€|\$\d|\bEUR\b|\bUSD\b|per month|per year|checkout|stripe/i.test(code), `${file} must not name a price or a checkout`);
+  if (file.startsWith("CloudSyncHold")) check(!/https?:\/\/|Uri\.parse|ACTION_VIEW|uriHandler|LocalUriHandler/.test(code), `${file} must not open or show a link`);
+}
+
 if (errors.length) {
   for (const error of errors) console.error(`FAIL: ${error}`);
   process.exit(1);

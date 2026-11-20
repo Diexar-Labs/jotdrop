@@ -53,8 +53,16 @@ object CloudAccount {
         return token to JSONObject().put("deviceName", deviceName).put("deviceTokenHash", CloudCrypto.hashToken(token))
     }
 
-    private fun connect(url: String, result: JSONObject, deviceToken: String, vaultKey: String): CloudClient =
-        CloudClient(CloudCredentials(CloudClient.secureOrigin(url), result.getString("vaultId"), result.getString("deviceId"), deviceToken, vaultKey))
+    private fun connect(url: String, result: JSONObject, deviceToken: String, vaultKey: String): CloudClient {
+        val client = CloudClient(CloudCredentials(CloudClient.secureOrigin(url), result.getString("vaultId"), result.getString("deviceId"), deviceToken, vaultKey))
+        heldBySignIn = result.optJSONObject("onHold")?.optString("name")?.takeIf { it.isNotBlank() && it.length <= 80 && it.none { char -> char.code < 32 } }
+        return client
+    }
+
+    // Signing in in place of another device gives this phone a sync place; when that put a device on hold, the server
+    // names it (sync on hold above the plan's devices), and the sign-in screen says so once.
+    @Volatile private var heldBySignIn: String? = null
+    fun takeHeldBySignIn(): String? = heldBySignIn.also { heldBySignIn = null }
 
     private fun kdf(json: JSONObject): CloudKdf = CloudKdf.checked(json.getString("salt"), json.getLong("memory"), json.getLong("passes"), json.getLong("parallelism"))
 

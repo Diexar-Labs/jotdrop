@@ -6,6 +6,7 @@ import android.provider.DocumentsContract
 import android.util.Log
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
+import androidx.work.Data
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
@@ -29,7 +30,8 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 data class CloudSyncStatus(val connected: Boolean, val enabled: Boolean, val server: String, val vaultId: String,
-    val localVault: String?, val lastSynced: String?, val message: String, val conflicts: Int, val oldUpload: Boolean = false, val conflictPaths: List<String> = emptyList())
+    val localVault: String?, val lastSynced: String?, val message: String, val conflicts: Int, val oldUpload: Boolean = false, val conflictPaths: List<String> = emptyList(),
+    val plan: CloudSyncPlan? = null)
 class CloudSyncException(message: String) : Exception(message)
 /** A cloud file without its content, for the Files tab. */
 data class CloudListedFile(val id: String, val path: String, val revision: Int, val deleted: Boolean)
@@ -74,7 +76,59 @@ object CloudSyncManager {
             credentials?.url.orEmpty(), credentials?.vaultId.orEmpty(), Storage.getVaultUri(context)?.toString(),
             settings.optString("lastSynced").takeIf { it.isNotBlank() }, settings.optString("message", "Cloud sync is off. Local notes remain available."), settings.optInt("conflicts"),
             credentials != null && runCatching { oldUploadScopes(store, CloudClient(credentials), CloudVaultAdapter.binding(context)).isNotEmpty() }.getOrDefault(false),
-            settings.optJSONArray("conflictPaths")?.let { paths -> List(paths.length()) { paths.getString(it) } }.orEmpty())
+            settings.optJSONArray("conflictPaths")?.let { paths -> List(paths.length()) { paths.getString(it) } }.orEmpty(), storedPlan(settings))
+    }
+
+    /** plan.sync as the last sync saw it, for the line on the board; null when sync is off or everything syncs. */
+    fun syncPlan(context: Context): CloudSyncPlan? {
+        val store = CloudPreviewStore(context)
+        val settings = store.settings()
+        return if (settings.optBoolean("enabled") && store.credentials() != null) storedPlan(settings) else null
+    }
+
+    private fun JSONObject.text(name: String): String? = if (isNull(name)) null else optString(name).takeIf { it.isNotEmpty() }
+
+    /** plan.sync from a /status answer; anything unknown reads as "everything syncs". */
+    internal fun syncPlanOf(status: JSONObject?): CloudSyncPlan? {
+        val sync = status?.optJSONObject("plan")?.optJSONObject("sync") ?: return null
+        return CloudSyncHold.plan(if (sync.isNull("limit")) null else sync.optInt("limit"), sync.text("state"), sync.text("pauseAt"), sync.text("thisDevice"), sync.text("changeAt"))
+    }
+
+    private fun storedPlan(settings: JSONObject): CloudSyncPlan? {
+        val saved = settings.optJSONObject("syncPlan") ?: return null
+        val devices = saved.optJSONArray("goingOnHold")
+        val going = (0 until (devices?.length() ?: 0)).mapNotNull { index -> devices?.optJSONObject(index)?.let { CloudHoldDevice(it.optString("name"), it.text("app"), it.optBoolean("here")) } }
+        return CloudSyncHold.plan(if (saved.isNull("limit")) null else saved.optInt("limit"), saved.text("state"), saved.text("pauseAt"), saved.text("thisDevice"), saved.text("changeAt"), going)
+    }
+
+    private fun keepPlan(settings: JSONObject, plan: CloudSyncPlan?) {
+        if (plan == null) { settings.remove("syncPlan"); settings.remove("holdCheckedAt"); return }
+        settings.put("syncPlan", JSONObject().put("limit", plan.limit ?: JSONObject.NULL).put("state", plan.state).put("pauseAt", plan.pauseAt ?: JSONObject.NULL)
+            .put("thisDevice", plan.thisDevice).put("changeAt", plan.changeAt ?: JSONObject.NULL)
+            .put("goingOnHold", JSONArray(plan.goingOnHold.map { JSONObject().put("name", it.name).put("app", it.app ?: JSONObject.NULL).put("here", it.here) })))
+        if (!CloudSyncHold.onHold(plan)) settings.remove("holdCheckedAt")
+    }
+
+    /** During the grace: the devices that go on hold when the pause starts, for the notice on the board. */
+    private fun goingOnHold(client: CloudClient): List<CloudHoldDevice> = try {
+        val devices = client.devices().getJSONArray("devices")
+        (0 until devices.length()).map(devices::getJSONObject).filter { !it.optBoolean("revoked") && !it.optBoolean("syncing", true) }
+            .map { CloudHoldDevice(it.optString("name"), it.text("app"), it.optString("id") == client.credentials.deviceId) }
+    } catch (error: Exception) {
+        if (error is CancellationException) throw error
+        emptyList()
+    }
+
+    private fun holdMessage(limit: Int?): String = "Sync is on hold on this phone. " +
+        (if (limit != null) "Your plan syncs $limit devices, and this phone is not one of them. " else "") +
+        "Changes you make here stay on this phone and go up once it syncs again. Choose your devices under Devices."
+
+    /** This phone is on hold: say so once, and remember when the cloud was last asked. */
+    private fun hold(store: CloudPreviewStore, settings: JSONObject, plan: CloudSyncPlan) {
+        keepPlan(settings, plan)
+        settings.put("holdCheckedAt", System.currentTimeMillis()).put("message", holdMessage(plan.limit))
+        store.saveSettings(settings)
+        changed.value++
     }
 
     /** Uploads this device started for a previously chosen local vault; they block enabling and disconnecting. */
@@ -162,10 +216,11 @@ object CloudSyncManager {
     /** A note changed outside the open screens, such as a tick on the home screen. */
     fun notifyNotesChanged() { changed.value++ }
 
-    fun request(context: Context) {
+    /** [check]: the app just opened, so a phone on hold asks the cloud again (otherwise at most every 30 minutes). */
+    fun request(context: Context, check: Boolean = false) {
         try {
             WorkManager.getInstance(context).enqueueUniqueWork(IMMEDIATE, ExistingWorkPolicy.KEEP,
-                OneTimeWorkRequestBuilder<CloudSyncWorker>().setConstraints(network).build())
+                OneTimeWorkRequestBuilder<CloudSyncWorker>().setConstraints(network).setInputData(Data.Builder().putBoolean(CloudSyncWorker.CHECK, check).build()).build())
         } catch (_: Exception) {
             // Scheduling must never turn an already saved/moved note into a failed storage write.
             Log.w("JotDropCloud", "Could not schedule cloud sync; manual and periodic sync remain available")
@@ -605,13 +660,19 @@ object CloudSyncManager {
         if (!status(context).enabled) return@withContext false
         val store = CloudPreviewStore(context)
         val client = client(context) ?: return@withContext false
+        // On hold the groups are refused too: this look waits until the phone syncs again.
+        if (CloudSyncHold.onHold(storedPlan(store.settings()))) return@withContext false
         val known = store.spaces()
         val items = runCatching { CloudSpaces.list(client) }.getOrNull() ?: return@withContext false
         items.any { item -> known.optJSONObject(item.id)?.let { it.optLong("sequence", -1) != item.sequence || it.optBoolean("frozen") != item.frozen || it.optBoolean("gone") } ?: true } ||
             known.keys().asSequence().any { id -> known.optJSONObject(id)?.optBoolean("gone") != true && items.none { it.id == id } }
     }
 
-    suspend fun sync(context: Context) = serialized {
+    /**
+     * [check]: asked by the person (opening the app, Check again, Sync now). On hold (sync on hold above the plan's devices)
+     * this phone stops trying: it asks /status only then or 30 minutes after the last time, and sends nothing else.
+     */
+    suspend fun sync(context: Context, check: Boolean = false) = serialized {
         val coroutine = currentCoroutineContext()
         val checkActive = {
             coroutine.ensureActive()
@@ -622,6 +683,7 @@ object CloudSyncManager {
         val settings = store.settings()
         if (!settings.optBoolean("enabled")) throw CloudSyncException("Enable cloud sync first")
         val client = client(context) ?: throw CloudSyncException("Pair this device first")
+        if (!CloudSyncHold.mayAsk(check, CloudSyncHold.onHold(storedPlan(settings)), settings.optLong("holdCheckedAt"), System.currentTimeMillis())) return@serialized
         val startedAt = System.nanoTime()
         var phase = CloudDiagnostics.Phase.VAULT_VALIDATION
         try {
@@ -643,6 +705,15 @@ object CloudSyncManager {
                 phase = CloudDiagnostics.Phase.STATE_SAVE
                 store.saveSyncState(scope, state)
             }
+            phase = CloudDiagnostics.Phase.REMOTE_LIST
+            // One status request, before anything goes up: whether this phone is on hold, the plan's maximum per file and
+            // whether sealed mail waits (Mail to JotDrop).
+            val cloudStatus = client.call("/status")
+            val plan = syncPlanOf(cloudStatus)?.let { if (it.state == "ending") it.copy(goingOnHold = goingOnHold(client)) else it }
+            if (CloudSyncHold.onHold(plan)) { hold(store, settings, plan!!); return@serialized }
+            val before = settings.toString()
+            keepPlan(settings, plan)
+            if (settings.toString() != before) { store.saveSettings(settings); changed.value++ }
             phase = CloudDiagnostics.Phase.REMOTE_WRITE
             try { finishUpload(store, scope, client, state, uploadActive, local = initial::read) }
             catch (error: CloudRequestException) {
@@ -681,8 +752,6 @@ object CloudSyncManager {
             val index = loadIndex(store, client)
             val seen = loadSeen(store, scope)
             phase = CloudDiagnostics.Phase.REMOTE_LIST
-            // One status request: the plan's maximum per file and whether sealed mail waits (Mail to JotDrop).
-            val cloudStatus = client.call("/status")
             // The plan's maximum per file, and no more than this device can hold a few times over while syncing it.
             val planMax = cloudStatus.optJSONObject("pieces")?.optLong("maxFileBytes")?.takeIf { it > 0 } ?: CloudCrypto.MAX_FILE_BYTES.toLong()
             // Kept for Attach file, which checks a file against it at once, also offline.
@@ -790,6 +859,11 @@ object CloudSyncManager {
             }
         } catch (error: Exception) {
             if (error is CancellationException) throw error
+            // The pause started after the status above: not a failure, this phone stops trying until it may sync again.
+            if (error is CloudRequestException && CloudSyncHold.refused(error.status, error.code)) {
+                hold(store, settings, storedPlan(settings)?.takeIf(CloudSyncHold::onHold) ?: CloudSyncHold.REFUSED)
+                return@serialized
+            }
             Log.w("JotDropCloud", CloudDiagnostics.failure(error, phase, (System.nanoTime() - startedAt) / 1_000_000))
             val message = when (error) {
                 is CloudRequestException -> if (error.status == 401) "Device access was revoked. Local files were kept; pair again." else error.message.orEmpty()
@@ -811,10 +885,12 @@ class CloudSyncWorker(context: Context, parameters: WorkerParameters) : Coroutin
     override suspend fun doWork(): Result {
         return try {
             if (!withContext(Dispatchers.IO) { CloudSyncManager.status(applicationContext).enabled }) return Result.success()
-            CloudSyncManager.sync(applicationContext)
+            CloudSyncManager.sync(applicationContext, inputData.getBoolean(CHECK, false))
             HomeWidgets.refresh(applicationContext)
             Result.success()
         } catch (error: CancellationException) { throw error }
         catch (_: Exception) { if (runAttemptCount < 5) Result.retry() else Result.failure() }
     }
+
+    companion object { const val CHECK = "check" }
 }

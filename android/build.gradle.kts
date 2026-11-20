@@ -156,6 +156,29 @@ tasks.register<JavaExec>("checkVersionDiff") {
     mainClass.set("com.diexar.keepcapture.VersionDiffCheckKt")
 }
 
+// Sync on hold above the plan's devices: when this phone stops trying, and when the board says so.
+val syncHoldClasses = layout.buildDirectory.dir("sync-hold-check")
+val syncHoldSources = files("app/src/main/kotlin/com/diexar/keepcapture/CloudSyncHold.kt", "checks/CloudSyncHoldCheck.kt")
+val syncHoldCompile = tasks.register<JavaExec>("syncHoldCompile") {
+    inputs.files(syncHoldSources)
+    outputs.dir(syncHoldClasses)
+    classpath(kotlinCompiler)
+    mainClass.set("org.jetbrains.kotlin.cli.jvm.K2JVMCompiler")
+    doFirst {
+        args("-Xdisable-default-scripting-plugin", "-no-stdlib", "-no-reflect", "-jvm-target", "17", "-classpath",
+            project(":app").configurations.getByName("debugCompileClasspath").asPath,
+            "-d", syncHoldClasses.get().asFile.absolutePath)
+        args(syncHoldSources.files.map { it.absolutePath })
+    }
+}
+
+tasks.register<JavaExec>("checkSyncHold") {
+    dependsOn(syncHoldCompile)
+    classpath(syncHoldClasses)
+    classpath(provider { project(":app").configurations.getByName("debugCompileClasspath") })
+    mainClass.set("com.diexar.keepcapture.CloudSyncHoldCheckKt")
+}
+
 // A drawing is a PNG with its lines inside; the same format as the web app and the plugins.
 val drawingFormatClasses = layout.buildDirectory.dir("drawing-format-check")
 val drawingFormatSources = files("app/src/main/kotlin/com/diexar/keepcapture/DrawingFormat.kt", "checks/DrawingFormatCheck.kt")
