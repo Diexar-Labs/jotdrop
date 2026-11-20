@@ -70,10 +70,13 @@ export async function status({ home = mcpHome(), profile = 'default', fetcher } 
   identifyClient('mcp', VERSION);
   const client = clientFor(saved, fetcher), mirror = new Mirror({ client, cachePath: profilePaths(home, name).cache });
   await mirror.load();
-  let plan = null, reachable = false, revoked = false;
-  try { plan = (await client.status()).plan?.name ?? null; reachable = true; }
+  let plan = null, reachable = false, revoked = false, sync = null;
+  try { const answer = await client.status(); plan = answer.plan?.name ?? null; sync = answer.plan?.sync ?? null; reachable = true; }
   catch (error) { if (error.status === 401) { reachable = true; revoked = true; } }
-  return { connected: true, profile: name, deviceName: saved.deviceName, url: saved.url, connectedAt: saved.connectedAt, notes: mirror.notes().length, lastSync: mirror.lastSync, plan, reachable, revoked };
+  // Sync on hold: the plan syncs fewer devices than the account has and this agent is not one of them (or will not be from `holdFrom`).
+  const onHold = sync?.state === 'limited' && sync.thisDevice === 'paused';
+  const holdFrom = sync?.state === 'ending' && sync.thisDevice === 'paused' ? sync.pauseAt : null;
+  return { connected: true, profile: name, deviceName: saved.deviceName, url: saved.url, connectedAt: saved.connectedAt, notes: mirror.notes().length, lastSync: mirror.lastSync, plan, reachable, revoked, onHold, holdFrom };
 }
 
 /** Removes this device in the cloud and every file of the profile here. */

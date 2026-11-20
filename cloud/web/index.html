@@ -197,6 +197,7 @@
         <div class="timeline-actions"><button id="timeline-restore" class="primary" type="button" hidden>Restore this moment</button><button id="timeline-close" type="button">Back to now</button></div>
       </section>
       <p id="workspace-message" class="message" role="status" aria-live="polite"></p>
+      <div id="sync-hold" class="plus-nudge" role="status" aria-live="polite" hidden></div>
       <div id="plus-nudge" class="plus-nudge" hidden><p id="plus-reason" role="status"></p><button id="start-trial" class="primary" type="button">Try JotDrop Plus free for 14 days</button><button id="get-plus" class="primary" type="button">Get JotDrop Plus</button><button id="plus-not-now" type="button">Not now</button></div>
       <div id="selection-bar" class="selection-bar" role="toolbar" aria-label="Selected notes" hidden></div>
       <div id="tag-filter" class="tag-filter" role="group" aria-label="Filter by tag" hidden></div>
@@ -206,6 +207,7 @@
       <section id="devices-panel" hidden aria-label="Devices and recovery">
         <h2>Connected devices</h2><p>Revoking access prevents future cloud requests. It cannot erase files already downloaded.</p>
         <div id="device-list"></div>
+        <section id="sync-choice" class="sync-choice" aria-labelledby="sync-choice-heading" hidden></section>
         <div id="old-shared-copies" hidden></div>
         <form id="pair-form"><label for="pair-name">Name of the new device</label><input id="pair-name" maxlength="80" placeholder="My phone" required><button type="submit">Create one-time pairing code</button></form>
         <p>Pairing codes expire after 10 minutes. Treat them like a password and send them only to your own device.</p>

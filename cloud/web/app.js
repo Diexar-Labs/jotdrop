@@ -542,7 +542,7 @@ function showPhoto(attachment, note) {
   $('photo-large').src = url;
   $('photo-large').alt = name;
   $('photo-open-note').hidden = !note || note.deleted || Boolean(moment) || $('editor').open;
-  $('photo-edit-drawing').hidden = !drawing || Boolean(moment) || activeSpace?.frozen || !($('editor').open || (note && !note.deleted));
+  $('photo-edit-drawing').hidden = !drawing || Boolean(moment) || readOnlyHere() || !($('editor').open || (note && !note.deleted));
   if (!$('photo-viewer').open) $('photo-viewer').showModal();
 }
 $('close-photo').addEventListener('click', () => $('photo-viewer').close());
@@ -656,7 +656,7 @@ $('attach-file').addEventListener('change', () => {
 // "Attach file…" in a card's menu, or a file dropped on the card: the file is kept and linked in the note without opening it.
 async function attachToCard(entry, picked) {
   if (!picked.length) return;
-  if (activeSpace?.frozen || moment) throw new Error('This note is read-only here.');
+  if (readOnlyHere() || moment) throw new Error(onHold ? HOLD_READ_ONLY : 'This note is read-only here.');
   const names = await keepAttachments(picked);
   const latest = files.get(entry.id);
   if (!latest || latest.deleted) throw new Error('This note is no longer available. The files are kept in Files.');
@@ -957,7 +957,7 @@ function render() {
         row.dataset.level = String(rowData.level);
         const input = document.createElement('input'); input.type = 'checkbox'; input.checked = task[1] !== ' ';
         input.setAttribute('aria-label', plainPreviewText(task[2]));
-        input.disabled = entry.conflict || $('editor').open || Boolean(moment) || Boolean(activeSpace?.frozen);
+        input.disabled = entry.conflict || $('editor').open || Boolean(moment) || readOnlyHere();
         // Busy instead of disabled while saving: a disabled box loses keyboard focus.
         let saving = false;
         input.addEventListener('click', (event) => { if (saving) event.preventDefault(); });
@@ -1056,7 +1056,7 @@ function render() {
           moveCard(moved, entry, before(event), viewNotes).catch((error) => message(errorText(error)));
         });
       }
-      if (!entry.deleted && !moment && !activeSpace?.frozen && view !== 'trash') fileDropTarget(card, (picked) => attachToCard(entry, picked).catch((error) => message(errorText(error))));
+      if (!entry.deleted && !moment && !readOnlyHere() && view !== 'trash') fileDropTarget(card, (picked) => attachToCard(entry, picked).catch((error) => message(errorText(error))));
       if (selectableIds.has(entry.id)) {
         card.dataset.id = entry.id;
         card.append(iconButton('check', 'Select note', () => toggleSelected(entry.id), 'card-select'));
@@ -1153,12 +1153,12 @@ function render() {
       ]));
       const more = iconButton('more', 'More', () => showMenu(more, [
         { label: 'Download', action: save },
-        ...(moment || activeSpace?.frozen ? [] : [{ label: 'Attach file…', action: () => chooseCardFiles(entry) }]),
+        ...(moment || readOnlyHere() ? [] : [{ label: 'Attach file…', action: () => chooseCardFiles(entry) }]),
         ...(activeSpace ? [{ label: activeSpace.frozen ? 'Copy to my notes' : 'Move to my notes', action: () => moveToOwn(entry) }] : view === 'notes' ? [{ label: 'Share…', action: () => showShare(entry) }, ...(isMarkdown(entry.file.path) ? [{ label: 'Share by link…', action: () => showLink(entry) }, ...(hasChecklist(noteText(entry.file)) ? [{ label: 'Share list by link…', action: () => showLink(entry, 'list') }] : [])] : [])] : []),
         ...(moment ? [] : [{ label: 'Ask JotDrop about this note…', action: () => openAi({ entry }) }, { label: 'Summarize with AI', action: () => openAi({ entry, summarize: true }) }]),
         // Version 2: only on a card that has such a file, never on an earlier moment.
-        ...(moment ? [] : aiFileActions(entry, activeSpace?.frozen).map(([label, kind]) => ({ label, action: () => openAi({ entry, kind }) }))),
-        ...(activeSpace?.frozen ? [] : [{ label: 'Move to trash', action: () => withUndo('Note moved to trash', deleteEntry(entry, true, false)) }]),
+        ...(moment ? [] : aiFileActions(entry, readOnlyHere()).map(([label, kind]) => ({ label, action: () => openAi({ entry, kind }) }))),
+        ...(readOnlyHere() ? [] : [{ label: 'Move to trash', action: () => withUndo('Note moved to trash', deleteEntry(entry, true, false)) }]),
       ]));
       if (activeSpace) actions.append(iconButton('pencil', 'Open note', () => openEditor(entry)), color, more);
       else actions.append(iconButton('pencil', 'Open note', () => openEditor(entry)), color, labels,
@@ -1535,6 +1535,7 @@ async function loadLocal() {
 async function queueFile(path, bytes, expectedRevision, modifiedAt = new Date().toISOString()) {
   const activeClient = client, activeGeneration = generation;
   if (!activeClient) throw new Error('Unlock the workspace before saving.');
+  if (onHold) throw new Error(HOLD_READ_ONLY);
   if (activeSpace?.frozen) throw new Error('This group is read-only.');
   // The server cannot tell notes from attachments in a group, so the free plan's one note is kept here.
   if (activeSpace && expectedRevision === undefined && isMarkdown(path) && spacePlan && spacePlan.name !== 'plus' && [...files.values()].some((entry) => !entry.deleted && isMarkdown(entry.file.path))) throw new Error('The free plan shares one note. JotDrop Plus shares more.');
@@ -1557,6 +1558,7 @@ async function queueFile(path, bytes, expectedRevision, modifiedAt = new Date().
 
 // Gives the Undo step: back where it was. From a card or the open note nothing is asked first, there is Undo (`confirmFirst` false).
 async function deleteEntry(entry, ask = true, confirmFirst = ask) {
+  if (onHold) throw new Error(HOLD_READ_ONLY);
   if (activeSpace?.frozen) throw new Error('This group is read-only.');
   if (confirmFirst && !confirm(`Move "${entry.file.path}" to trash?`)) return;
   // A list link stays on the note, and does not pull the note back: who throws the note away is asked whether the link ends with it.
@@ -1691,8 +1693,145 @@ async function showPlan(activeClient, activeGeneration) {
   $('open-family').hidden = !plan.family;
   $('supporter-badge').hidden = !plan.supporter;
   $('plus-manage').hidden = !plan.subscribed;
+  $('plan-status').textContent += syncLine(plan.sync);
+  await showSync(plan.sync, activeClient, activeGeneration);
   await renderMail(status.mail);
   return status;
+}
+
+// Sync on hold (Hand-off/ontwerp-sync-pauzeren-boven-free.md, deel 8): the account has more devices than its plan syncs,
+// and this browser is not one of the chosen ones. It then stops trying: it asks /status when it opens, on "Check again"
+// and at most every 30 minutes. It is read-only meanwhile, because what is typed here would only live in this browser.
+const HOLD_RECHECK_MS = 30 * 60 * 1000;
+const HOLD_READ_ONLY = 'Sync is on hold on this browser, so notes are read-only here.';
+const HOLD_STATUS = 'Sync is on hold on this browser. Your notes here are read-only.';
+// `syncPlan` is plan.sync of your own cloud; `holdDevices` the device list for the notice before the pause starts.
+let syncPlan, onHold = false, holdCheckedAt = 0, holdDevices = [], holdKey = '', chooseHere = false;
+const readOnlyHere = () => Boolean(activeSpace?.frozen) || onHold;
+const APP_NAMES = { android: 'Android app', web: 'web app', obsidian: 'Obsidian', joplin: 'Joplin', clipper: 'Web Clipper', mcp: 'AI agent' };
+const deviceLabel = (device) => `${device.name}${APP_NAMES[device.app] ? ` (${APP_NAMES[device.app]})` : ''}`;
+const shortDate = (iso) => new Date(iso).toLocaleDateString();
+const shortTime = (iso) => new Date(iso).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+// Words and a sign, never colour alone (Eric is colour blind).
+function syncLine(sync) {
+  if (sync?.state === 'limited') return sync.thisDevice === 'paused' ? '. Sync is on hold on this browser.' : '. ✓ This browser syncs.';
+  if (sync?.state === 'ending') return sync.thisDevice === 'paused' ? `. Sync goes on hold on this browser on ${shortDate(sync.pauseAt)}.` : '. ✓ This browser keeps syncing.';
+  return '';
+}
+async function showSync(sync, activeClient, activeGeneration) {
+  const key = JSON.stringify(sync ?? null);
+  // Which devices go on hold, for the notice before the pause starts: read again only when the plan's answer changes.
+  const devices = sync?.state === 'ending' && key !== holdKey ? (await activeClient.devices()).devices : holdDevices;
+  if (activeGeneration !== generation) return;
+  const before = onHold;
+  syncPlan = sync;
+  holdKey = key;
+  holdDevices = devices;
+  onHold = sync?.state === 'limited' && sync.thisDevice === 'paused';
+  if (onHold) holdCheckedAt = Date.now();
+  renderHold();
+  // Cards and their actions follow: read-only on hold, editable again once it syncs.
+  if (before !== onHold) render();
+}
+function resetHold() {
+  syncPlan = undefined;
+  onHold = false;
+  holdCheckedAt = 0;
+  holdDevices = [];
+  holdKey = '';
+  chooseHere = false;
+  holdNoticeSkipped = '';
+  renderHold();
+}
+// The cloud refused a request because this browser is on hold (in a group too, where /status is refused as well):
+// your own plan, which a device on hold may still read, says the rest.
+function heldByCloud() {
+  onHold = true;
+  holdCheckedAt = Date.now();
+  $('sync-status').textContent = HOLD_STATUS;
+  renderHold();
+  render();
+  const own = ownClient, opened = generation;
+  if (own) void own.status().then((status) => { if (opened === generation && own === ownClient) return showSync(status.plan.sync, own, opened); }).catch(() => {});
+}
+const holdNoticeKey = () => `jotdrop-hold-notice:${ownClient?.credentials.vaultId}`;
+let holdNoticeSkipped = '';
+// "Not now" hides the notice before the pause; it comes back in the last 3 days.
+function holdNoticeHidden(sync) {
+  if (Date.parse(sync.pauseAt) - Date.now() <= 3 * 86400000) return false;
+  if (holdNoticeSkipped === sync.pauseAt) return true;
+  try { return localStorage.getItem(holdNoticeKey()) === sync.pauseAt; } catch { return false; }
+}
+function openDevices(here = false) {
+  chooseHere = here;
+  if (view === 'devices') void renderDevices().catch((error) => message(errorText(error)));
+  else document.querySelector('[data-view="devices"]').click();
+}
+// One line on the board that stays while it lasts, built again only when what it says changes: no repeated messages.
+function renderHold() {
+  const box = $('sync-hold'), hold = syncPlan, plus = Boolean(currentPlan?.checkout && !currentPlan.subscribed);
+  let text = '', wait = '', actions = () => [];
+  if (onHold) {
+    wait = hold?.changeAt && Date.parse(hold.changeAt) > Date.now() ? hold.changeAt : '';
+    const limit = hold?.limit ? `Your plan syncs ${hold.limit} devices, and this browser is not one of them. ` : '';
+    text = `Sync is on hold on this browser. ${limit}Your notes here are read-only. Changes that were already waiting stay on this browser and go up once it syncs again.${wait ? ` You can change your devices again from ${shortTime(wait)}.` : ''}`;
+    actions = () => [...(wait ? [] : [button('Sync here instead', () => openDevices(true), 'primary')]), button('Devices', () => openDevices()), ...(plus ? [button('Get JotDrop Plus', showPlusOffer)] : []), button('Check again', () => sync(true))];
+  } else if (hold?.state === 'ending' && !holdNoticeHidden(hold)) {
+    const own = ownClient?.credentials.deviceId;
+    const names = holdDevices.filter((device) => !device.revoked && !device.syncing).map((device) => (device.id === own ? 'this browser' : deviceLabel(device)));
+    text = `Your plan syncs ${hold.limit} devices. From ${shortDate(hold.pauseAt)} sync goes on hold on: ${names.join(', ') || 'some of your devices'}. Your notes stay on them.`;
+    actions = () => [button('Choose devices', () => openDevices(), 'primary'), ...(plus ? [button('Get JotDrop Plus', showPlusOffer)] : []), button('Not now', () => {
+      holdNoticeSkipped = hold.pauseAt;
+      try { localStorage.setItem(holdNoticeKey(), hold.pauseAt); } catch { /* Hidden for this page only. */ }
+      renderHold();
+    })];
+  }
+  const key = text && `${text}|${plus}`;
+  if (box.dataset.key === key) return;
+  box.dataset.key = key;
+  box.replaceChildren(...(text ? [paragraph(text), ...actions()] : []));
+  box.hidden = !text;
+}
+// Devices & recovery: which devices sync, chosen here. "Sync here instead" ticks this browser first, so you only untick the
+// device that makes room.
+function renderSyncChoice(devices) {
+  const box = $('sync-choice'), hold = syncPlan, here = chooseHere;
+  chooseHere = false;
+  if (!hold || hold.state === 'all' || !hold.limit || activeSpace) { box.hidden = true; box.replaceChildren(); return; }
+  const own = ownClient.credentials.deviceId, active = devices.filter((device) => !device.revoked);
+  const picked = new Set(active.filter((device) => device.syncing).map((device) => device.id));
+  if (here) picked.add(own);
+  const wait = hold.changeAt && Date.parse(hold.changeAt) > Date.now() ? hold.changeAt : '';
+  const count = paragraph('');
+  const save = button('Save choice', async () => {
+    await ownClient.setSyncDevices([...picked]);
+    holdKey = '';
+    message('Saved. The devices you chose sync from now on.');
+    if (syncing) await syncing;
+    await sync(true);
+    await renderDevices();
+  }, 'primary');
+  const update = () => {
+    save.disabled = Boolean(wait) || picked.size !== hold.limit;
+    count.textContent = picked.size === hold.limit ? '' : picked.size > hold.limit ? `${picked.size} chosen: untick ${picked.size - hold.limit === 1 ? 'the device' : `${picked.size - hold.limit} devices`} that ${picked.size - hold.limit === 1 ? 'makes' : 'make'} room.` : `${picked.size} of ${hold.limit} chosen.`;
+  };
+  const rows = active.map((device) => {
+    const label = document.createElement('label'), input = document.createElement('input');
+    label.className = 'check-label';
+    input.type = 'checkbox';
+    input.checked = picked.has(device.id);
+    input.disabled = Boolean(wait);
+    input.addEventListener('change', () => { if (input.checked) picked.add(device.id); else picked.delete(device.id); update(); });
+    label.append(input, `${deviceLabel(device)}${device.id === own ? ', this browser' : ''}, last used ${shortDate(device.lastSeenAt)}`);
+    return label;
+  });
+  const heading = document.createElement('h3');
+  heading.id = 'sync-choice-heading';
+  heading.textContent = 'Devices that sync';
+  const about = hold.state === 'ending' ? `From ${shortDate(hold.pauseAt)} the others go on hold.` : 'The others are on hold. After a change you can change again a day later.';
+  box.replaceChildren(heading, paragraph(`Your plan syncs ${hold.limit} devices. Choose which ones. ${about} Notes stay on every device.${wait ? ` You can change your devices again from ${shortTime(wait)}.` : ''}`), ...rows, count, save);
+  update();
+  box.hidden = false;
 }
 
 /** Another device or person saved first. Changes that do not overlap become one note, which goes up with the next sync. */
@@ -1728,6 +1867,8 @@ async function performSync(signal) {
   // Storage and Plus first, so one slow or failing note does not hide them.
   const legacy = (await showPlan(activeClient, activeGeneration))?.pieces?.legacy;
   if (activeGeneration !== generation) return;
+  // On hold nothing goes up and nothing comes in; changes that were waiting stay here until it syncs again.
+  if (onHold) { $('sync-status').textContent = HOLD_STATUS; return; }
   const keyPrefix = pendingPrefix();
   // A read-only group takes nothing more; what was not sent is copied to your own notes.
   for (const [key, pending] of activeSpace?.frozen ? [] : await store('entries', keyPrefix)) {
@@ -1857,8 +1998,10 @@ async function performSync(signal) {
   if (changed) render();
 }
 
-async function sync() {
+/** `force`: also on hold, as "Check again" does; otherwise a browser on hold asks the cloud at most every 30 minutes. */
+async function sync(force = false) {
   if (!client || syncing || syncPaused) return syncing;
+  if (onHold && !force && Date.now() - holdCheckedAt < HOLD_RECHECK_MS) return;
   const activeGeneration = generation;
   const controller = new AbortController();
   syncController = controller;
@@ -1866,8 +2009,9 @@ async function sync() {
   // Only a sync that takes a while can be paused: a quick check every 30 seconds that showed the button
   // and hid it again added a toolbar row on some widths and moved the whole page (Eric, 27 Oct).
   const showPause = setTimeout(() => { if (syncController === controller) $('pause-sync').hidden = false; }, 1000);
-  syncing = performSync(controller.signal).then(() => checkListLinks(activeGeneration)).then(() => { void checkSharedKeyDaily().catch(() => {}); }).catch((error) => {
+  syncing = performSync(controller.signal).then(() => (onHold ? undefined : checkListLinks(activeGeneration))).then(() => { if (!onHold) void checkSharedKeyDaily().catch(() => {}); }).catch((error) => {
     if (activeGeneration !== generation) return;
+    if (error?.code === 'device-paused') { heldByCloud(); return; }
     // Removed from a group or the group went read-only: that goes for this group only.
     if (activeSpace && (error.status === 401 || error.code === 'space-frozen' || error.code === 'space-unfinished')) void refreshSpaces();
     $('sync-status').textContent = syncPaused ? 'Sync paused. Encrypted drafts stay on this browser. Select Resume sync to continue.' : 'Cloud unavailable. Encrypted drafts stay on this browser.';
@@ -1905,7 +2049,7 @@ function openEditor(entry) {
   renderNoteMedia(entry);
   syncSimple();
   refreshProperties();
-  $('editor-message').textContent = 'Changes are saved only when you select Save note.';
+  $('editor-message').textContent = onHold ? 'Sync is on hold on this browser: you can read this note, but changes cannot be saved here.' : 'Changes are saved only when you select Save note.';
   $('history').hidden = true;
   $('history-list').replaceChildren();
   for (const id of ['note-history', 'note-download', 'note-delete']) $(id).hidden = !entry;
@@ -2621,18 +2765,26 @@ async function renderDevices() {
   renderOldCopies();
   const result = await client.devices();
   $('device-list').replaceChildren();
+  // While the plan syncs fewer devices than there are, each row says whether it syncs: a word and a sign, not a colour.
+  const hold = syncPlan?.state === 'ending' || syncPlan?.state === 'limited' ? syncPlan : null;
   for (const device of result.devices) {
     const row = document.createElement('div');
     row.className = 'device-row';
     const current = device.id === client.credentials.deviceId;
-    row.append(paragraph(`${device.name}${current ? ' (this device)' : ''}${device.revoked ? ' - access revoked' : ''}`));
+    const state = device.revoked || !hold ? '' : device.syncing ? ' · ✓ Syncing' : hold.state === 'ending' ? ` · On hold from ${shortDate(hold.pauseAt)}` : ' · On hold';
+    const about = `${APP_NAMES[device.app] ? ` · ${APP_NAMES[device.app]}` : ''}${device.lastSeenAt ? ` · last used ${shortDate(device.lastSeenAt)}` : ''}`;
+    row.append(paragraph(`${device.name}${current ? ' (this device)' : ''}${device.revoked ? ' - access revoked' : `${about}${state}`}`));
     if (!device.revoked && !current) row.append(button('Revoke access', async () => {
       if (!confirm(`Revoke future cloud access for "${device.name}"?`)) return;
       await client.revokeDevice(device.id);
+      holdKey = '';
+      // A place that comes free goes to this browser when it is on hold (sync pause rule 7): ask again at once.
+      if (onHold) { if (syncing) await syncing; await sync(true); }
       await renderDevices();
     }, 'danger'));
     $('device-list').append(row);
   }
+  renderSyncChoice(result.devices);
 }
 
 // A remembered browser stays signed in across reloads, like Keep: the connection is sealed with a key
@@ -2662,6 +2814,7 @@ async function openWorkspace(connected) {
   spaces.clear();
   goneSpaces.clear();
   syncPaused = false;
+  resetHold();
   $('sync').textContent = 'Sync now';
   generation++;
   cursor = 0;
@@ -2687,6 +2840,8 @@ async function openWorkspace(connected) {
     history.replaceState(null, '', '/');
     message('Thank you. JotDrop Plus turns on as soon as Stripe confirms your payment.');
   }
+  // Signed in in place of a device while the cloud has more devices than its plan syncs (sync pause rule 11).
+  if (connected.onHold) message(`Sync now runs on this browser, and ${connected.onHold.name} is on hold. You can change that in Devices & recovery.`);
   void refreshSpaces().then(offerInvitation);
   await sync();
 }
@@ -2744,6 +2899,7 @@ function lock(notice = '') {
   plusReason = '';
   plusQuiet = false;
   showPlusNudge();
+  resetHold();
   attaching = undefined;
   $('totp-enable').hidden = true;
   $('totp-secret').value = '';
@@ -3193,8 +3349,11 @@ $('lock').addEventListener('click', () => lock());
 // Log out forgets this browser: its connection, staying signed in and its device slot. The notes stay in the cloud.
 $('log-out').addEventListener('click', async () => {
   try {
-    if ((await store('entries', pendingPrefix())).length) throw new Error('Some changes are still waiting to upload. Sync them first, then log out.');
-    if (!confirm('Log out of this browser? Your notes stay in the cloud. To come back, log in again.')) return;
+    const waiting = (await store('entries', pendingPrefix())).length;
+    // On hold they cannot go up, so logging out must still be possible: it says first what stays behind.
+    if (waiting && !onHold) throw new Error('Some changes are still waiting to upload. Sync them first, then log out.');
+    const left = waiting === 1 ? '1 change made on this browser has not reached the cloud. It stays encrypted on this browser and goes' : `${waiting} changes made on this browser have not reached the cloud. They stay encrypted on this browser and go`;
+    if (!confirm(waiting ? `Log out of this browser? Sync is on hold here, so ${left} up only if you log in here again. Your other notes stay in the cloud.` : 'Log out of this browser? Your notes stay in the cloud. To come back, log in again.')) return;
     await store('delete', 'connection');
     await store('delete', 'session');
     // Logging out also forgets the AI key in this browser: it is a password for another service.
@@ -3226,7 +3385,7 @@ for (const [id, interval, plan] of [['buy-month', 'month', 'plus'], ['buy-year',
   try { location.assign((await ownClient.call('/account/checkout', 'POST', { interval, plan, currency: currentPlan?.founderPrice ? undefined : payCurrency() })).url); }
   catch (error) { message(error.code === 'account-required' ? 'The family plan needs an account. Add one in Devices & recovery first.' : errorText(error)); }
 });
-$('sync').addEventListener('click', () => { syncPaused = false; $('sync').textContent = 'Sync now'; message(); void sync(); });
+$('sync').addEventListener('click', () => { syncPaused = false; $('sync').textContent = 'Sync now'; message(); void sync(true); });
 $('pause-sync').addEventListener('click', () => { syncPaused = true; syncController?.abort(); });
 $('search').addEventListener('input', render);
 $('sort').addEventListener('change', render);
@@ -5779,8 +5938,8 @@ window.addEventListener('beforeunload', (event) => {
 setInterval(() => {
   if (!client || document.hidden) return;
   void sync();
-  // Someone who forgot their password waits for this device to approve.
-  void refreshSpaces();
+  // Someone who forgot their password waits for this device to approve. Groups wait while sync is on hold.
+  if (!onHold) void refreshSpaces();
   void listApprovals(ownClient).then((approvals) => {
     if (!approvals.length) return;
     if (view === 'devices') void renderApprovals();

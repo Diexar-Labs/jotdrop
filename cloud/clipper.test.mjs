@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { CLOUD_ORIGIN, clipMarkdown, clipPath, cloudOrigin, createClipperCloud, readPairingCode } from '../chrome-extension/cloud.mjs';
+import { CLOUD_ORIGIN, clipMarkdown, clipPath, cloudOrigin, createClipperCloud, ON_HOLD, readPairingCode } from '../chrome-extension/cloud.mjs';
 import { createCloudServer } from './server.mjs';
 import { CloudClient } from './shared/client.mjs';
 import { base64ToBytes, bytesToBase64, randomToken, sealLocal } from './shared/crypto.mjs';
@@ -69,7 +69,7 @@ test('pairing takes a device place, stays unlocked only in session memory, and d
   assert.equal(local.data.destination, 'cloud');
   const { credentials } = session.data.cloudSession;
   for (const secret of [credentials.token, credentials.vaultKey]) assert.ok(!JSON.stringify(local.data).includes(secret), 'Only sealed keys are stored');
-  assert.deepEqual(await clipper.status(), { connected: true, server: `http://127.0.0.1:${app.port}`, unlocked: true, canStayUnlocked: true, drafts: 0 });
+  assert.deepEqual(await clipper.status(), { connected: true, server: `http://127.0.0.1:${app.port}`, unlocked: true, canStayUnlocked: true, drafts: 0, onHold: false });
   // The clipper is a device like any other: on the free plan (2 devices) the cloud is now full.
   const devices = (await owner.devices()).devices;
   assert.deepEqual(devices.map((device) => [device.name, device.revoked]), [['Synthetic web app', false], ['Web clipper', false]]);
@@ -96,7 +96,40 @@ test('pairing takes a device place, stays unlocked only in session memory, and d
   await assert.rejects(new CloudClient(credentials).status(), (error) => error.status === 401);
   // The freed place can be used again.
   assert.ok((await owner.makePairing('Web clipper')).pairingCode);
-  assert.deepEqual(await clipper.status(), { connected: false, server: null, unlocked: false, canStayUnlocked: true, drafts: 0 });
+  assert.deepEqual(await clipper.status(), { connected: false, server: null, unlocked: false, canStayUnlocked: true, drafts: 0, onHold: false });
+});
+
+test('a clipper on hold keeps the clip as a draft, says so in its own words, and sends it once it syncs again', async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'jotdrop-clipper-hold-'));
+  const enrollmentToken = randomToken(), app = await createCloudServer({ dataDir, enrollmentToken, freeDeviceLimit: 10 });
+  t.after(async () => { await app.close(); await rm(dataDir, { recursive: true, force: true }); });
+  const { client: owner } = await CloudClient.create({ url: `http://127.0.0.1:${app.port}`, enrollmentToken, deviceName: 'Synthetic web app' });
+  const area = () => { const data = {}; return { data, async get(keys) { return structuredClone(keys === null ? data : Object.fromEntries([keys].flat().filter((key) => key in data).map((key) => [key, data[key]]))); }, async set(value) { Object.assign(data, structuredClone(value)); }, async remove(keys) { for (const key of [keys].flat()) delete data[key]; } }; };
+  const local = area();
+  // The server's answer for a device on hold (cloud/sync-pause.test.mjs): 403 device-paused on everything notes go through.
+  let held = false;
+  const fetcher = (url, options) => held && !url.endsWith('/status') ? Promise.resolve(new Response(JSON.stringify({ error: 'Sync is on hold on this device.', code: 'device-paused' }), { status: 403 })) : fetch(url, options);
+  const clipper = createClipperCloud(local, fetcher);
+  const password = 'synthetic pairing passphrase';
+  await clipper.connect((await owner.makePairing('Web clipper')).pairingCode, password);
+  held = true;
+  await assert.rejects(clipper.save({ url: 'https://example.com', title: 'Held clip' }, password, crypto.randomUUID()), (error) => error.code === 'device-paused' && error.message === ON_HOLD);
+  assert.match(ON_HOLD, /This clipper is on hold.*kept as an encrypted draft.*under Devices/);
+  assert.deepEqual([(await clipper.status()).drafts, (await clipper.status()).onHold], [1, true]);
+  assert.equal((await owner.listChanges()).changes.length, 0);
+  // Chosen to sync again: the draft goes up and the notice goes away.
+  held = false;
+  assert.equal(await clipper.resume(password), 1);
+  assert.deepEqual([(await clipper.status()).drafts, (await clipper.status()).onHold], [0, false]);
+  const [change] = (await owner.listChanges()).changes;
+  assert.ok(new TextDecoder().decode((await owner.read(change.id)).file.bytes).includes('# Held clip'));
+  // On hold again, then paired anew: the new pairing starts without the old notice.
+  held = true;
+  await assert.rejects(clipper.save({ url: 'https://example.com', title: 'Second' }, password, crypto.randomUUID()), (error) => error.code === 'device-paused');
+  assert.equal((await clipper.status()).onHold, true);
+  held = false;
+  await clipper.connect((await owner.makePairing('Web clipper again')).pairingCode, password);
+  assert.equal((await clipper.status()).onHold, false);
 });
 
 test('clipper reconciles an error after COMMIT across server restart and preserves genuinely conflicting drafts', async (t) => {

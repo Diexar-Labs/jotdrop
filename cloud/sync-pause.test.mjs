@@ -10,7 +10,7 @@ import { mailHtml, mailText } from './mailer.mjs';
 import { setPlusUntil } from './set-plus.mjs';
 import { setDevicePromise } from './set-device-promise.mjs';
 import { CloudClient } from './shared/client.mjs';
-import { encryptEnvelope, generateVaultKey, hashToken, objectId, randomToken } from './shared/crypto.mjs';
+import { encodeRecovery, encryptEnvelope, generateVaultKey, hashToken, objectId, randomToken } from './shared/crypto.mjs';
 import { copyName, hash, isPreserved, remoteFiles, syncFolder } from './shared/sync.mjs';
 
 // Sync on hold above the free plan's devices (Hand-off/ontwerp-sync-pauzeren-boven-free.md, deel 12).
@@ -258,6 +258,26 @@ test('signing in on a full account always gives the new device a place, and says
   // Not a change of devices: the first change after the start is still free.
   assert.equal((await B.status()).plan.sync.changeAt, null);
   await choose(B, [owner.id('B'), second.answer.deviceId]);
+});
+
+test('the shared client chooses the devices that go on syncing, and says which device went on hold when it signs in in place of one', async (t) => {
+  const cloud = await fixture(t);
+  const owner = await account(cloud, 'rob', FOUR), { A, C } = owner.clients, id = owner.id;
+  const chosen = await C.setSyncDevices([id('C'), id('D')]);
+  assert.deepEqual(chosen.devices.filter((device) => device.syncing).map((device) => device.name).sort(), ['C', 'D']);
+  assert.throws(() => C.setSyncDevices(['phone']), /Invalid device ID/);
+  cloud.advance(7 * DAY + MINUTE);
+  await onHold(A);
+  const recover = (replaceDeviceId, deviceName) => CloudClient.recover({ url: cloud.url(), recoveryCode: encodeRecovery({ vaultId: owner.vaultId, vaultKey: owner.vaultKey, recoveryToken: owner.recoveryToken }), deviceName, replaceDeviceId });
+  // In place of a device that went on syncing: nobody else goes on hold.
+  const first = await recover(id('C'), 'New phone');
+  assert.equal(first.onHold, undefined);
+  await syncs(first);
+  // In place of a device on hold: the chosen device used longest ago makes room, and the client says which.
+  const second = await recover(id('A'), 'New laptop');
+  assert.deepEqual(second.onHold, { id: id('D'), name: 'D' });
+  await syncs(second);
+  await onHold(owner.clients.D);
 });
 
 test('the promise of the old trial mail: recorded once from the trial mails before the new text, its own limit, no mail', async (t) => {

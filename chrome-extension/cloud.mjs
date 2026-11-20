@@ -18,6 +18,8 @@ export const CLOUD_ORIGIN = 'https://app.jotdrop.net';
 const ALIASES = new Set(['https://api.jotdrop.net']);
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]']);
 export const MIN_PASSPHRASE = 12;
+// Sync on hold: the account's plan syncs fewer devices than it has, and this clipper is not one of them. Its drafts wait.
+export const ON_HOLD = 'This clipper is on hold: your JotDrop plan syncs only some of your devices, and this clipper is not one of them. Your clip is kept as an encrypted draft and goes up once the clipper syncs again. Choose your devices in JotDrop under Devices.';
 
 /** The cloud address a pairing code is for, or an error a person can act on. */
 export function cloudOrigin(value) {
@@ -134,6 +136,19 @@ export function createClipperCloud(storage, fetcher = globalThis.fetch, session 
     return Object.entries(data).filter(([key]) => vaultId ? key.startsWith(draftPrefix(vaultId)) : key.startsWith('cloudDraft:'));
   }
 
+  // Remembers that the cloud put this clipper on hold, for the popup and the settings, until a clip goes up again.
+  async function sending(action) {
+    try {
+      const result = await action();
+      await storage.remove('cloudOnHold');
+      return result;
+    } catch (error) {
+      if (error?.code !== 'device-paused') throw error;
+      await storage.set({ cloudOnHold: clock().toISOString() });
+      throw Object.assign(new Error(ON_HOLD), { code: 'device-paused' });
+    }
+  }
+
   return {
     readPairingCode,
     /** Claims a pairing code made in the web app. Clips then go to the cloud unless the person chose Obsidian too. */
@@ -144,16 +159,16 @@ export function createClipperCloud(storage, fetcher = globalThis.fetch, session 
       const sealed = await sealLocal(client.credentials, password);
       const { destination } = await storage.get(['destination']);
       await storage.set({ cloudConnection: sealed, cloudServer: client.credentials.url, destination: destination === 'both' ? 'both' : 'cloud' });
-      await storage.remove('cloudEnabled');
+      await storage.remove(['cloudEnabled', 'cloudOnHold']);
       await area.remove('cloudSession');
       if (keepUnlocked && session) await session.set({ cloudSession: { salt: sealed.salt, credentials: client.credentials } });
       return client.credentials.url;
     },
     /** What the popup and settings show; reads nothing secret. */
     async status() {
-      const { cloudConnection, cloudServer } = await storage.get(['cloudConnection', 'cloudServer']);
+      const { cloudConnection, cloudServer, cloudOnHold } = await storage.get(['cloudConnection', 'cloudServer', 'cloudOnHold']);
       const { cloudSession } = session ? await session.get(['cloudSession']) : {};
-      return { connected: Boolean(cloudConnection), server: cloudServer || (cloudConnection ? CLOUD_ORIGIN : null), unlocked: Boolean(cloudConnection && cloudSession?.salt === cloudConnection.salt), canStayUnlocked: Boolean(session), drafts: (await drafts()).length };
+      return { connected: Boolean(cloudConnection), server: cloudServer || (cloudConnection ? CLOUD_ORIGIN : null), unlocked: Boolean(cloudConnection && cloudSession?.salt === cloudConnection.salt), canStayUnlocked: Boolean(session), drafts: (await drafts()).length, onHold: Boolean(cloudConnection && cloudOnHold) };
     },
     async lock() { await area.remove('cloudSession'); },
     async save(payload, password, captureId, options = {}) {
@@ -166,12 +181,12 @@ export function createClipperCloud(storage, fetcher = globalThis.fetch, session 
         const prepared = await client.prepareWrite(clipPath(payload, captureId, now), encoder.encode(clipMarkdown(payload)), 0, now.toISOString());
         await storage.set({ [key]: prepared });
       }
-      for (const [draftKey, prepared] of await drafts(client.credentials.vaultId)) await commit(client, draftKey, prepared, options);
+      await sending(async () => { for (const [draftKey, prepared] of await drafts(client.credentials.vaultId)) await commit(client, draftKey, prepared, options); });
     },
     async resume(password, options = {}) {
       const client = await unlock(password, options.keepUnlocked);
       let count = 0;
-      for (const [draftKey, prepared] of await drafts(client.credentials.vaultId)) { await commit(client, draftKey, prepared, options); count++; }
+      await sending(async () => { for (const [draftKey, prepared] of await drafts(client.credentials.vaultId)) { await commit(client, draftKey, prepared, options); count++; } });
       return count;
     },
     /**
@@ -191,7 +206,7 @@ export function createClipperCloud(storage, fetcher = globalThis.fetch, session 
         }
       }
       const queued = (await drafts()).map(([key]) => key);
-      await storage.remove(['cloudConnection', 'cloudServer', 'cloudEnabled', ...queued]);
+      await storage.remove(['cloudConnection', 'cloudServer', 'cloudEnabled', 'cloudOnHold', ...queued]);
       const { destination } = await storage.get(['destination']);
       if (destination === 'cloud' || destination === 'both') await storage.set({ destination: 'obsidian' });
       await area.remove('cloudSession');

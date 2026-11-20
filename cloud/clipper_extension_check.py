@@ -244,6 +244,30 @@ def run(channel, extension_dir, workdir):
             assert f"[{ARTICLE_TITLE}](<{article}>)" in note["text"], note["text"]
             assert "#e2e" in card.inner_text(), card.inner_text()
 
+            # On hold (sync pause, Hand-off/ontwerp-sync-pauzeren-boven-free.md deel 8): the cloud refuses the clip with
+            # device-paused. The popup says so in its own words, the clip stays as a draft, and the popup and the settings
+            # say "on hold" until a clip goes up again. The refusal is the server's answer from cloud/sync-pause.test.mjs.
+            held = re.compile(r".*/api/v1/objects/.*")
+            context.route(held, lambda route: route.fulfill(status=403, content_type="application/json", body=json.dumps({"error": "Sync is on hold on this device.", "code": "device-paused"})))
+            popup = page(f"{origin}/popup/popup.html")
+            popup.locator("#status").filter(has_text="Ready").wait_for()
+            popup.locator("#saveBtn").click()
+            popup.locator("#status").filter(has_text="This clipper is on hold").wait_for()
+            assert "kept as an encrypted draft" in popup.locator("#status").inner_text() and "Any queued" not in popup.locator("#status").inner_text()
+            shot(popup, "2b-popup-on-hold")
+            popup = page(f"{origin}/popup/popup.html")
+            popup.locator("#status").filter(has_text="Cloud: on hold. Save keeps the clip as an encrypted draft").wait_for()
+            options.reload(wait_until="networkidle")
+            options.locator("#cloudState").filter(has_text="On hold: your JotDrop plan syncs only some of your devices").wait_for()
+            assert "1 encrypted draft waits to be sent." in options.locator("#cloudState").inner_text()
+            context.unroute(held)
+            # Chosen to sync again: the draft goes up and "on hold" is gone.
+            popup.locator("#cloudResume").click()
+            popup.locator("#status").filter(has_text="Saved drafts confirmed in cloud").wait_for()
+            options.reload(wait_until="networkidle")
+            options.locator("#cloudState").filter(has_text="Unlocked until the browser closes.").wait_for()
+            assert "On hold" not in options.locator("#cloudState").inner_text()
+
             # Both, with the Obsidian background connection: no passphrase needed while unlocked.
             options.reload(wait_until="networkidle")
             options.locator("#destBoth").check()
@@ -278,7 +302,8 @@ def run(channel, extension_dir, workdir):
             popup.locator("#status").filter(has_text="Saved ✓").wait_for()
             assert len(FakeObsidian.clips) == 2 and FakeObsidian.clips[1]["payload"]["pinned"] is True
             count = web.evaluate("async credentials => { const { CloudClient } = await import('/shared/client.mjs'); return (await new CloudClient(credentials).listChanges()).changes.length; }", credentials)
-            assert count == 2, count
+            # The first clip, the one that waited while on hold, and the one to both.
+            assert count == 3, count
 
             # Summarize with AI (0.3): the person's own key in the settings; the page text goes to the chosen service only
             # after the click; the summary, as edited, lands in the Obsidian clip; the key stays in local storage only.
@@ -400,7 +425,7 @@ def run(channel, extension_dir, workdir):
             assert revoked == 401, revoked
             web.locator(".note-card").filter(has_text=ARTICLE_TITLE).first.wait_for()
             assert not errors, errors
-            return {"extension_loaded": ext, "paired_from_web_app": True, "clip_in_web_app": True, "markdown_and_hashtags": True, "keys_sealed_in_local_storage": True, "stay_unlocked_session_only": True, "both_destinations": True, "obsidian_background_unchanged": True, "clipper_is_a_device": True, "cors_allowlist_required": True, "disconnect_signs_out": True, "summarize_with_ai": True}
+            return {"extension_loaded": ext, "paired_from_web_app": True, "clip_in_web_app": True, "markdown_and_hashtags": True, "keys_sealed_in_local_storage": True, "stay_unlocked_session_only": True, "on_hold_keeps_draft": True, "both_destinations": True, "obsidian_background_unchanged": True, "clipper_is_a_device": True, "cors_allowlist_required": True, "disconnect_signs_out": True, "summarize_with_ai": True}
         finally:
             context.close()
             for process in servers:
