@@ -4,13 +4,24 @@ import { ConfirmModal } from "./confirmModal";
 import { accountInfo, approveDevice, changePassword, deleteAccount, disableTotp, enableTotp, listApprovals, newRecoveryCode, rejectDevice, setupTotp } from "../cloud/shared/account.mjs";
 import { decryptEnvelope, encryptEnvelope } from "../cloud/shared/crypto.mjs";
 import { addressHash, mailAddress, mailKeyPair, senderHash } from "../cloud/shared/mail.mjs";
+import { APP_NAMES, type HoldDevice, type SyncPlan, choosing, readSyncPlan, startingChoice, waitUntil } from "./syncHold";
 
-type Device = { id: string; name: string; revoked?: boolean; lastSeenAt?: string };
+type Device = HoldDevice;
 type Approval = { id: string; words: string[] };
-type Plan = { name: string; plusUntil?: string; trialEnds?: string | null; deviceLimit: number; historyDays: number; subscribed?: boolean; supporter?: boolean };
+type Plan = { name: string; plusUntil?: string; trialEnds?: string | null; deviceLimit: number; historyDays: number; subscribed?: boolean; supporter?: boolean; sync?: unknown };
+type Status = { usedBytes: number; quotaBytes: number; plan: Plan };
 
 // Every new account starts with 14 days of Plus; the plan line counts down like the website.
 const trialDays = (p: Plan) => p.trialEnds ? Math.max(1, Math.ceil((Date.parse(p.trialEnds) - Date.now()) / 86400000)) : 0;
+const shortDate = (iso: string) => new Date(iso).toLocaleDateString();
+const shortTime = (iso: string) => new Date(iso).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+
+/** Sync on hold (deel 8): what the plan means for this device, in words and a sign, never colour alone. */
+function syncLine(sync: SyncPlan | null): string {
+  if (sync?.state === "limited") return sync.thisDevice === "paused" ? " Sync is on hold on this device." : " ✓ This device syncs.";
+  if (sync?.state === "ending") return sync.thisDevice === "paused" ? ` Sync goes on hold on this device${sync.pauseAt ? ` on ${shortDate(sync.pauseAt)}` : ""}.` : " ✓ This device keeps syncing.";
+  return "";
+}
 
 // A wrong password or code is also a 401; only "Device access denied" means this device lost access (as on the website).
 const errorText = (error: unknown) => (error as { status?: number }).status === 401 && (!(error instanceof Error) || !error.message || error.message === "Device access denied")
@@ -30,18 +41,21 @@ export function renderCloudAccount(app: App, el: HTMLElement, cloud: CloudContro
   const devices = el.createDiv();
   const security = el.createDiv();
   let stopped = false;
+  // One /status for the plan line and the device choice when the settings open.
+  const opening = client.status() as Promise<Status>;
 
   const showPlan = async () => {
     try {
-      const status = await client.status() as { usedBytes: number; quotaBytes: number; plan: Plan };
+      const status = await opening;
       if (stopped) return;
       plan.empty();
       const p = status.plan;
+      cloud.learnPlan(p.sync);
       const days = trialDays(p);
       const name = days && p.trialEnds ? `JotDrop Plus trial: ${days === 1 ? "1 day" : `${days} days`} left, until ${new Date(p.trialEnds).toLocaleDateString()}. After that you are on Free and nothing is deleted`
         : p.name === "plus" && p.plusUntil ? `JotDrop Plus until ${new Date(p.plusUntil).toLocaleDateString()}` : `Free plan: ${p.deviceLimit} devices, ${p.historyDays} days of history`;
       const origin = client.credentials.url;
-      new Setting(plan).setName("Plan").setDesc(`${name}.${p.supporter ? " ★ Plus supporter." : ""} ${(status.usedBytes / 1048576).toFixed(1)} of ${(status.quotaBytes / 1048576).toFixed(0)} MiB encrypted storage used.`)
+      new Setting(plan).setName("Plan").setDesc(`${name}.${syncLine(readSyncPlan(p.sync))}${p.supporter ? " ★ Plus supporter." : ""} ${(status.usedBytes / 1048576).toFixed(1)} of ${(status.quotaBytes / 1048576).toFixed(0)} MiB encrypted storage used.`)
         .addButton((button) => button.setButtonText(p.name === "plus" && !days ? "Open the website" : "JotDrop Plus on the website").onClick(() => window.open(origin, "_blank")));
       // Like the website: findable, but out of the way.
       if (p.subscribed) {
@@ -148,26 +162,83 @@ export function renderCloudAccount(app: App, el: HTMLElement, cloud: CloudContro
     }
   };
 
-  const showDevices = async () => {
+  const showDevices = async (reading?: Promise<Status>) => {
     try {
-      const result = await client.devices() as { devices: Device[] };
+      const [result, status] = await Promise.all([client.devices() as Promise<{ devices: Device[] }>, reading ?? client.status() as Promise<Status>]);
       if (stopped) return;
       devices.empty();
-      new Setting(devices).setName("Devices").setHeading();
+      // While the plan syncs fewer devices than there are, each row says whether it syncs.
+      const sync = readSyncPlan(status.plan?.sync), limiting = choosing(sync) ? sync : null;
+      const own = client.credentials.deviceId;
+      const wanted = cloud.devicesWanted;
+      cloud.devicesWanted = undefined;
+      const heading = new Setting(devices).setName("Devices").setHeading();
       for (const device of result.devices) {
-        const current = device.id === client.credentials.deviceId;
+        const current = device.id === own;
+        const state = device.revoked || !limiting ? "" : device.syncing ? "✓ Syncing" : limiting.state === "ending" && limiting.pauseAt ? `On hold from ${shortDate(limiting.pauseAt)}` : "On hold";
+        const about = [device.app ? APP_NAMES[device.app] : "", device.lastSeenAt ? `last used ${shortDate(device.lastSeenAt)}` : "", state].filter(Boolean).join(" · ");
         const row = new Setting(devices).setName(`${device.name}${current ? " (this device)" : ""}`)
-          .setDesc(device.revoked ? "Access revoked" : device.lastSeenAt ? `Last used ${new Date(device.lastSeenAt).toLocaleDateString()}` : "");
+          .setDesc(device.revoked ? "Access revoked" : about.charAt(0).toUpperCase() + about.slice(1));
         if (!device.revoked && !current) row.addButton((button) => button.setButtonText("Revoke access").setWarning().onClick(() => {
           new ConfirmModal(app, { title: `Revoke access for ${device.name}?`, message: "That device can no longer reach your cloud. Notes already on it stay there.", confirmLabel: "Revoke access", destructive: true }, async () => {
-            try { await client.revokeDevice(device.id); } catch (error) { new Notice(errorText(error)); }
+            try {
+              await client.revokeDevice(device.id);
+              cloud.resetHoldDevices();
+            } catch (error) { new Notice(errorText(error)); }
+            // A place that comes free goes to this device when it is on hold (sync pause rule 7): ask again at once.
+            if (cloud.onHold) await cloud.syncNow().catch(() => {});
             await showDevices();
           }).open();
         }));
       }
+      const choice = limiting ? showChoice(limiting, result.devices.filter((device) => !device.revoked), own, !!wanted?.here) : null;
       new Setting(devices).setName("Add a device without an account").setDesc("Makes a one-time pairing code, like the website and the Android app.")
         .addButton((button) => button.setButtonText("Make pairing code").onClick(() => new PairingModal(app, cloud).open()));
+      // From the board ("Sync here instead", "Devices", "Choose devices"): the choice in sight.
+      if (wanted) (choice ?? heading.settingEl).scrollIntoView({ block: "start" });
     } catch (error) { devices.empty(); devices.createEl("p", { text: errorText(error) }); }
+  };
+
+  /** Which devices sync, chosen here: exactly as many as the plan syncs. "Sync here instead" ticks this device first. */
+  const showChoice = (sync: SyncPlan, active: Device[], own: string, here: boolean): HTMLElement => {
+    const box = devices.createDiv({ cls: "jotdrop-sync-choice" });
+    const limit = sync.limit as number;
+    const picked = startingChoice(active, here ? own : null);
+    const wait = waitUntil(sync, Date.now());
+    new Setting(box).setName("Devices that sync").setHeading();
+    const about = sync.state === "ending" && sync.pauseAt ? `From ${shortDate(sync.pauseAt)} the others go on hold.` : "The others are on hold. After a change you can change again a day later.";
+    box.createEl("p", { text: `Your plan syncs ${limit} devices. Choose which ones. ${about} Notes stay on every device.${wait ? ` You can change your devices again from ${shortTime(wait)}.` : ""}` });
+    let save: ButtonComponent | undefined;
+    const count = createEl("p", { cls: "jotdrop-sync-choice-count" });
+    const update = () => {
+      save?.setDisabled(!!wait || picked.size !== limit);
+      const over = picked.size - limit;
+      count.setText(over === 0 ? "" : over > 0 ? `${picked.size} chosen: untick ${over === 1 ? "the device" : `${over} devices`} that ${over === 1 ? "makes" : "make"} room.` : `${picked.size} of ${limit} chosen.`);
+    };
+    for (const device of active) {
+      new Setting(box).setName(`${device.name}${device.id === own ? " (this device)" : ""}`)
+        .setDesc([device.app ? APP_NAMES[device.app] : "", device.lastSeenAt ? `last used ${shortDate(device.lastSeenAt)}` : ""].filter(Boolean).join(", "))
+        .addToggle((toggle) => toggle.setValue(picked.has(device.id)).setDisabled(!!wait).onChange((on) => {
+          if (on) picked.add(device.id); else picked.delete(device.id);
+          update();
+        }));
+    }
+    box.appendChild(count);
+    new Setting(box).addButton((button) => {
+      save = button.setButtonText("Save choice").setCta().onClick(async () => {
+        button.setDisabled(true);
+        try {
+          await client.setSyncDevices([...picked]);
+          cloud.resetHoldDevices();
+          new Notice("Saved. The devices you chose sync from now on.");
+        } catch (error) { new Notice(errorText(error)); }
+        // This device may sync again now, or be on hold: one sync says so.
+        await cloud.syncNow().catch(() => {});
+        await showDevices();
+      });
+    });
+    update();
+    return box;
   };
 
   const showSecurity = async () => {
@@ -202,7 +273,7 @@ export function renderCloudAccount(app: App, el: HTMLElement, cloud: CloudContro
   void showPlan();
   void showMail();
   void showApprovals();
-  void showDevices().then(showSecurity);
+  void showDevices(opening).then(showSecurity);
   // A request from a new device waits here while the settings are open.
   const timer = window.setInterval(() => { if (!stopped) void showApprovals(); }, 5000);
   return () => { stopped = true; window.clearInterval(timer); };

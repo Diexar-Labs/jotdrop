@@ -674,7 +674,8 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   // A new sign-in always gets a place (rule 11). When the device it replaced was on hold, a chosen device has to make room:
   // the one that comes last in syncOrder. Not a change of devices, so the day's wait stays as it was.
   function syncPlaceFor(vaultId, deviceId) {
-    if (!syncOn || !one('SELECT 1 FROM sync_pauses WHERE vaultId=?', vaultId)) return null;
+    // With Plus (again) nobody is on hold, also while the hourly sweep has not removed the pause yet (rule 8): the choice stays as it was.
+    if (!syncOn || isPlus(vaultId) || syncExempt(vaultId) || !one('SELECT 1 FROM sync_pauses WHERE vaultId=?', vaultId)) return null;
     run('UPDATE devices SET keepSync=1 WHERE id=?', deviceId);
     const dropped = settleKeepers(vaultId, syncLimit(vaultId), { protect: deviceId });
     return dropped.length ? { id: dropped[0].id, name: dropped[0].name } : null;

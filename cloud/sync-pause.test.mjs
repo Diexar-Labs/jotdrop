@@ -260,6 +260,20 @@ test('signing in on a full account always gives the new device a place, and says
   await choose(B, [owner.id('B'), second.answer.deviceId]);
 });
 
+test('signing in while the account has Plus again, before the hourly sweep removed its pause: nobody goes on hold', async (t) => {
+  // Found in the Obsidian test of 20 Nov 2026: the sign-in said "<name> is on hold" and moved the choice, although Plus syncs every device.
+  const cloud = await fixture(t, { sweepEvery: HOUR });
+  const owner = await account(cloud, 'pia', FOUR, { plus: true });
+  // The pause from before Plus came back; the sweep removes it within the hour. Its choice: A and B.
+  cloud.sql('INSERT INTO sync_pauses(vaultId,createdAt,pauseAt,mailed) VALUES(?,?,?,1)', owner.vaultId, cloud.now() - 8 * DAY, cloud.now() - DAY);
+  cloud.sql('UPDATE devices SET keepSync=CASE WHEN id IN (?,?) THEN 1 ELSE 0 END WHERE vaultId=?', owner.id('A'), owner.id('B'), owner.vaultId);
+  const recovered = await CloudClient.recover({ url: cloud.url(), recoveryCode: encodeRecovery({ vaultId: owner.vaultId, vaultKey: owner.vaultKey, recoveryToken: owner.recoveryToken }), deviceName: 'New tablet' });
+  assert.equal(recovered.onHold, undefined);
+  assert.deepEqual(cloud.sql('SELECT name FROM devices WHERE vaultId=? AND keepSync=1 ORDER BY name', owner.vaultId).map((row) => row.name), ['A', 'B']);
+  for (const client of [...Object.values(owner.clients), recovered]) await syncs(client);
+  assert.equal((await recovered.status()).plan.sync.state, 'all');
+});
+
 test('the shared client chooses the devices that go on syncing, and says which device went on hold when it signs in in place of one', async (t) => {
   const cloud = await fixture(t);
   const owner = await account(cloud, 'rob', FOUR), { A, C } = owner.clients, id = owner.id;

@@ -2176,6 +2176,13 @@ button.jotdrop-provider-github:not(.clickable-icon):hover { background: #32383f;
 .jotdrop-cloud-line-status { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .jotdrop-cloud-line-status::before { content: "· "; }
 .jotdrop-cloud-line-settings { flex: none; }
+/* Sync on hold: the notice before the pause, and the line that stays while this device is on hold. A sign and words, never colour alone. */
+.jotdrop-hold-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 0 0 8px; padding: 8px 10px; border: 1px solid var(--background-modifier-border); border-radius: var(--radius-m); background: var(--background-secondary); color: var(--text-normal); font-size: var(--font-ui-small); }
+.jotdrop-hold-bar.is-hidden { display: none; }
+.jotdrop-hold-bar-icon { display: inline-flex; flex: none; }
+.jotdrop-hold-bar-icon svg { width: 16px; height: 16px; }
+.jotdrop-hold-bar-text { flex: 1 1 18em; min-width: 0; }
+.jotdrop-hold-bar-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 
 /* Playful details from design A (Eric, 27 Oct), as on the website: paper cards a little askew,
    a folded corner like the logo, tape on pinned notes, a pen line through done tasks, a new note
