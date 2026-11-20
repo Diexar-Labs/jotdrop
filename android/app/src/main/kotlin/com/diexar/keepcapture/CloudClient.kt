@@ -278,6 +278,11 @@ class CloudClient(val credentials: CloudCredentials) {
         return revision(call("${objectPath(id)}/restore", "POST", JSONObject().put("revision", version).put("baseRevision", baseRevision)))
     }
     fun devices(): JSONObject = call("/devices")
+    /** The devices that sync when the plan syncs fewer than are signed in: exactly as many as the plan's limit. */
+    fun setSyncDevices(ids: List<String>): JSONObject {
+        require(ids.all(::validId)) { "Invalid device identity" }
+        return call("/devices/syncing", "PUT", JSONObject().put("deviceIds", JSONArray(ids)))
+    }
     fun revokeDevice(id: String) {
         require(validId(id) && id != credentials.deviceId) { "Use another device to revoke this device" }
         call("/devices/$id", "DELETE")

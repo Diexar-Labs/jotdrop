@@ -664,7 +664,8 @@ class NotesListActivity : ThemedComponentActivity() {
         super.onResume()
         tutorialPending.value = Storage.isTutorialPending(this)
         reload(rescheduleReminders = true)
-        CloudSyncManager.request(this)
+        // Opening the app is also when a phone on hold asks the cloud again.
+        CloudSyncManager.request(this, check = true)
     }
 
     /** Pull down on the list: read the folder again and, with cloud sync on, sync right away. */
@@ -672,7 +673,7 @@ class NotesListActivity : ThemedComponentActivity() {
         reload(rescheduleReminders = true)
         if (!withContext(Dispatchers.IO) { CloudSyncManager.status(this@NotesListActivity).enabled }) return
         try {
-            CloudSyncManager.sync(this)
+            CloudSyncManager.sync(this, check = true)
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
@@ -1680,6 +1681,7 @@ private fun NotesListScreen(
                                     },
                                 )
                             }
+                            SyncHoldLine()
                             SearchAndFilterBar(
                                 query = searchQuery,
                                 onQueryChange = { searchQuery = it },

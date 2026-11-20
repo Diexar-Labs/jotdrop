@@ -61,7 +61,7 @@ try {
     encodeText(mailToNote(mail.payload, mail.mailId, mail.receivedAt).path),
     encodeText(mailToNote(mail.payload, mail.mailId, mail.receivedAt).content)].join('\t'));
   const windows = process.platform === 'win32';
-  execFileSync(windows ? process.env.ComSpec || 'cmd.exe' : './gradlew', windows ? ['/d', '/c', 'gradlew.bat checkCloudCrypto checkCloudSync checkVersionDiff checkCloudMail --no-daemon --console=plain'] : ['checkCloudCrypto', 'checkCloudSync', 'checkCloudMail', '--no-daemon', '--console=plain'], {
+  execFileSync(windows ? process.env.ComSpec || 'cmd.exe' : './gradlew', windows ? ['/d', '/c', 'gradlew.bat checkCloudCrypto checkCloudSync checkVersionDiff checkCloudMail checkSyncHold --no-daemon --console=plain'] : ['checkCloudCrypto', 'checkCloudSync', 'checkCloudMail', 'checkSyncHold', '--no-daemon', '--console=plain'], {
     cwd: path.join(root, 'android'), stdio: 'inherit',
     env: { ...process.env, JOTDROP_CRYPTO_INPUT: input, JOTDROP_CRYPTO_OUTPUT: output, JOTDROP_MERGE_INPUT: merges, JOTDROP_MAIL_INPUT: mailInput },
   });
