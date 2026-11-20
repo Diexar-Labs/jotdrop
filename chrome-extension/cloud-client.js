@@ -200,6 +200,10 @@
     const digest = [...new Uint8Array(await crypto.subtle.digest("SHA-256", encoder2.encode(prepared.envelope)))].map((byte) => byte.toString(16).padStart(2, "0")).join("");
     return `/objects/${prepared.id}/uploads/${prepared.baseRevision}/${digest}`;
   }
+  function withOnHold(client, answer) {
+    if (answer?.onHold && validId(answer.onHold.id) && typeof answer.onHold.name === "string") client.onHold = { id: answer.onHold.id, name: answer.onHold.name };
+    return client;
+  }
   var CloudClient = class _CloudClient {
     constructor({ url, vaultId, deviceId, token: deviceToken, vaultKey, fetcher = globalThis.fetch }) {
       if (!validId(vaultId) || !validId(deviceId)) throw new Error("Invalid workspace or device ID.");
@@ -216,7 +220,7 @@
       const recovery = decodeRecovery(recoveryCode), deviceToken = randomToken();
       const recovered = await request(url, "/recover", { method: "POST", body: { vaultId: recovery.vaultId, recoveryToken: recovery.recoveryToken, deviceName: name(deviceName), deviceTokenHash: await hashToken(deviceToken), replaceDeviceId }, fetcher });
       if (recovered.vaultId !== recovery.vaultId) throw new Error("Recovery returned the wrong workspace.");
-      return new _CloudClient({ url, ...recovered, token: deviceToken, vaultKey: recovery.vaultKey, fetcher });
+      return withOnHold(new _CloudClient({ url, ...recovered, token: deviceToken, vaultKey: recovery.vaultKey, fetcher }), recovered);
     }
     call(path, method = "GET", body, { signal, binary = false, raw = false, limit } = {}) {
       const c = this.credentials;
@@ -471,6 +475,14 @@
       if (!validId(id)) throw new Error("Invalid device ID.");
       return this.call(`/devices/${id}`, "DELETE");
     }
+    /**
+     * Which devices go on syncing while the cloud has more devices than its plan syncs (plan.sync in /status): exactly
+     * `plan.sync.limit` signed-in devices. Answers `{ devices }`; 409 'choice-wait' says from when it may change again.
+     */
+    setSyncDevices(deviceIds) {
+      if (!Array.isArray(deviceIds) || !deviceIds.every(validId)) throw new Error("Invalid device ID.");
+      return this.call("/devices/syncing", "PUT", { deviceIds });
+    }
     async makePairing(deviceName) {
       const deviceToken = randomToken(), wrappingKey = randomToken(), claimToken = randomToken();
       const { vaultId, vaultKey } = this.credentials;
@@ -498,6 +510,7 @@
   var ALIASES = /* @__PURE__ */ new Set(["https://api.jotdrop.net"]);
   var LOOPBACK = /* @__PURE__ */ new Set(["127.0.0.1", "localhost", "[::1]"]);
   var MIN_PASSPHRASE = 12;
+  var ON_HOLD = "This clipper is on hold: your JotDrop plan syncs only some of your devices, and this clipper is not one of them. Your clip is kept as an encrypted draft and goes up once the clipper syncs again. Choose your devices in JotDrop under Devices.";
   function cloudOrigin(value) {
     const origin = validateUrl(value);
     if (origin === CLOUD_ORIGIN || ALIASES.has(origin)) return CLOUD_ORIGIN;
@@ -617,6 +630,17 @@ ${neutralizeInlineHashtags(body)}`;
       const data = await storage.get(null);
       return Object.entries(data).filter(([key]) => vaultId ? key.startsWith(draftPrefix(vaultId)) : key.startsWith("cloudDraft:"));
     }
+    async function sending(action) {
+      try {
+        const result = await action();
+        await storage.remove("cloudOnHold");
+        return result;
+      } catch (error) {
+        if (error?.code !== "device-paused") throw error;
+        await storage.set({ cloudOnHold: clock().toISOString() });
+        throw Object.assign(new Error(ON_HOLD), { code: "device-paused" });
+      }
+    }
     return {
       readPairingCode,
       /** Claims a pairing code made in the web app. Clips then go to the cloud unless the person chose Obsidian too. */
@@ -627,16 +651,16 @@ ${neutralizeInlineHashtags(body)}`;
         const sealed = await sealLocal(client.credentials, password);
         const { destination } = await storage.get(["destination"]);
         await storage.set({ cloudConnection: sealed, cloudServer: client.credentials.url, destination: destination === "both" ? "both" : "cloud" });
-        await storage.remove("cloudEnabled");
+        await storage.remove(["cloudEnabled", "cloudOnHold"]);
         await area.remove("cloudSession");
         if (keepUnlocked && session) await session.set({ cloudSession: { salt: sealed.salt, credentials: client.credentials } });
         return client.credentials.url;
       },
       /** What the popup and settings show; reads nothing secret. */
       async status() {
-        const { cloudConnection, cloudServer } = await storage.get(["cloudConnection", "cloudServer"]);
+        const { cloudConnection, cloudServer, cloudOnHold } = await storage.get(["cloudConnection", "cloudServer", "cloudOnHold"]);
         const { cloudSession } = session ? await session.get(["cloudSession"]) : {};
-        return { connected: Boolean(cloudConnection), server: cloudServer || (cloudConnection ? CLOUD_ORIGIN : null), unlocked: Boolean(cloudConnection && cloudSession?.salt === cloudConnection.salt), canStayUnlocked: Boolean(session), drafts: (await drafts()).length };
+        return { connected: Boolean(cloudConnection), server: cloudServer || (cloudConnection ? CLOUD_ORIGIN : null), unlocked: Boolean(cloudConnection && cloudSession?.salt === cloudConnection.salt), canStayUnlocked: Boolean(session), drafts: (await drafts()).length, onHold: Boolean(cloudConnection && cloudOnHold) };
       },
       async lock() {
         await area.remove("cloudSession");
@@ -651,15 +675,19 @@ ${neutralizeInlineHashtags(body)}`;
           const prepared = await client.prepareWrite(clipPath(payload, captureId, now), encoder3.encode(clipMarkdown(payload)), 0, now.toISOString());
           await storage.set({ [key]: prepared });
         }
-        for (const [draftKey, prepared] of await drafts(client.credentials.vaultId)) await commit(client, draftKey, prepared, options);
+        await sending(async () => {
+          for (const [draftKey, prepared] of await drafts(client.credentials.vaultId)) await commit(client, draftKey, prepared, options);
+        });
       },
       async resume(password, options = {}) {
         const client = await unlock(password, options.keepUnlocked);
         let count = 0;
-        for (const [draftKey, prepared] of await drafts(client.credentials.vaultId)) {
-          await commit(client, draftKey, prepared, options);
-          count++;
-        }
+        await sending(async () => {
+          for (const [draftKey, prepared] of await drafts(client.credentials.vaultId)) {
+            await commit(client, draftKey, prepared, options);
+            count++;
+          }
+        });
         return count;
       },
       /**
@@ -686,7 +714,7 @@ ${neutralizeInlineHashtags(body)}`;
           }
         }
         const queued = (await drafts()).map(([key]) => key);
-        await storage.remove(["cloudConnection", "cloudServer", "cloudEnabled", ...queued]);
+        await storage.remove(["cloudConnection", "cloudServer", "cloudEnabled", "cloudOnHold", ...queued]);
         const { destination } = await storage.get(["destination"]);
         if (destination === "cloud" || destination === "both") await storage.set({ destination: "obsidian" });
         await area.remove("cloudSession");

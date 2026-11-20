@@ -66,7 +66,8 @@ export async function request(url, path, { method = 'GET', body, headers = {}, f
   let result;
   try { result = JSON.parse(chunks.join('')); } catch { throw new CloudError('The server did not return a valid response.', response.status); }
   if (!result || typeof result !== 'object' || Array.isArray(result)) throw new CloudError('The server did not return a valid response.', response.status);
-  // `code` names a plan limit ('device-limit' lists the devices to choose from, 'plus-required').
+  // `code` names a plan limit ('device-limit' lists the devices to choose from, 'plus-required', 'device-paused' when sync
+  // is on hold on this device: its plan and devices still answer, plan.sync in /status says more).
   if (!response.ok) throw Object.assign(new CloudError(typeof result.error === 'string' ? result.error : 'Cloud request failed.', response.status, result.currentRevision), { code: result.code, devices: result.devices });
   return result;
 }
@@ -75,6 +76,15 @@ async function uploadPath(prepared) {
   if (!/^[0-9a-f]{64}$/.test(prepared.id) || !Number.isSafeInteger(prepared.baseRevision) || prepared.baseRevision < 0 || prepared.baseRevision >= Number.MAX_SAFE_INTEGER || typeof prepared.envelope !== 'string' || prepared.envelope.length > 8 * 1024 * 1024) throw new Error('Invalid prepared upload.');
   const digest = [...new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(prepared.envelope)))].map((byte) => byte.toString(16).padStart(2, '0')).join('');
   return `/objects/${prepared.id}/uploads/${prepared.baseRevision}/${digest}`;
+}
+
+/**
+ * Signing in in place of a device can put another device on hold when the cloud has more devices than its plan syncs:
+ * the server names it as `onHold: { id, name }`, and the client keeps it so the app can say so.
+ */
+export function withOnHold(client, answer) {
+  if (answer?.onHold && validId(answer.onHold.id) && typeof answer.onHold.name === 'string') client.onHold = { id: answer.onHold.id, name: answer.onHold.name };
+  return client;
 }
 
 export class CloudClient {
@@ -95,7 +105,7 @@ export class CloudClient {
     const recovery = decodeRecovery(recoveryCode), deviceToken = randomToken();
     const recovered = await request(url, '/recover', { method: 'POST', body: { vaultId: recovery.vaultId, recoveryToken: recovery.recoveryToken, deviceName: name(deviceName), deviceTokenHash: await hashToken(deviceToken), replaceDeviceId }, fetcher });
     if (recovered.vaultId !== recovery.vaultId) throw new Error('Recovery returned the wrong workspace.');
-    return new CloudClient({ url, ...recovered, token: deviceToken, vaultKey: recovery.vaultKey, fetcher });
+    return withOnHold(new CloudClient({ url, ...recovered, token: deviceToken, vaultKey: recovery.vaultKey, fetcher }), recovered);
   }
 
   call(path, method = 'GET', body, { signal, binary = false, raw = false, limit } = {}) {
@@ -347,6 +357,14 @@ export class CloudClient {
   status() { return this.call('/status'); }
   devices() { return this.call('/devices'); }
   revokeDevice(id) { if (!validId(id)) throw new Error('Invalid device ID.'); return this.call(`/devices/${id}`, 'DELETE'); }
+  /**
+   * Which devices go on syncing while the cloud has more devices than its plan syncs (plan.sync in /status): exactly
+   * `plan.sync.limit` signed-in devices. Answers `{ devices }`; 409 'choice-wait' says from when it may change again.
+   */
+  setSyncDevices(deviceIds) {
+    if (!Array.isArray(deviceIds) || !deviceIds.every(validId)) throw new Error('Invalid device ID.');
+    return this.call('/devices/syncing', 'PUT', { deviceIds });
+  }
 
   async makePairing(deviceName) {
     const deviceToken = randomToken(), wrappingKey = randomToken(), claimToken = randomToken();

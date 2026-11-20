@@ -266,6 +266,9 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .paper-tip-close { position: absolute; top: .45rem; right: .45rem; padding: .2rem .55rem; border-color: transparent; background: transparent; font-size: 1rem; }
 .device-row, .history-row, .history-plus { padding: 1rem 0; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; justify-content: space-between; }
 .device-row p, .history-row p, .history-plus p { margin: 0; }
+.sync-choice { margin: 1rem 0; padding: 1rem; border: 1.5px solid var(--edge); border-radius: 10px; }
+.sync-choice h3 { margin: 0 0 .5rem; }
+.sync-choice .check-label { display: flex; gap: .5rem; align-items: center; margin: .4rem 0; }
 .history-row.locked { color: var(--muted); }
 .history-diff { flex-basis: 100%; font-size: .9rem; }
 .history-diff p { margin: 0 0 .5rem; color: var(--muted); }

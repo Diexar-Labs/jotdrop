@@ -74,6 +74,27 @@ test('status shows the device, the notes and the plan, never the key', async (t)
   assert.ok(!JSON.stringify(shown).includes(saved.token) && !JSON.stringify(shown).includes(saved.vaultKey));
 });
 
+test('status says when sync is on hold for this agent, or from when it will be', async (t) => {
+  const cloud = await cloudFixture(t);
+  await connect({ pairingCode: await cloud.pairingCode(), home: cloud.home });
+  // The cloud's plan.sync as a server with the pause on gives it (cloud/sync-pause.test.mjs).
+  const withSync = (sync) => async (url, options) => {
+    const response = await fetch(url, options);
+    if (!url.endsWith('/status')) return response;
+    const body = await response.json();
+    return new Response(JSON.stringify({ ...body, plan: { ...body.plan, sync } }), { status: 200 });
+  };
+  const sync = { limit: 2, pauseAt: '2027-01-11T08:00:00.000Z', changeAt: null };
+  const held = await status({ home: cloud.home, fetcher: withSync({ ...sync, state: 'limited', thisDevice: 'paused' }) });
+  assert.deepEqual([held.onHold, held.holdFrom, held.reachable], [true, null, true]);
+  const ending = await status({ home: cloud.home, fetcher: withSync({ ...sync, state: 'ending', thisDevice: 'paused' }) });
+  assert.deepEqual([ending.onHold, ending.holdFrom], [false, '2027-01-11T08:00:00.000Z']);
+  const kept = await status({ home: cloud.home, fetcher: withSync({ ...sync, state: 'limited', thisDevice: 'syncing' }) });
+  assert.deepEqual([kept.onHold, kept.holdFrom], [false, null]);
+  const all = await status({ home: cloud.home });
+  assert.deepEqual([all.onHold, all.holdFrom], [false, null]);
+});
+
 test('disconnect removes the device in the cloud and every file of the profile', async (t) => {
   const cloud = await cloudFixture(t);
   await connect({ pairingCode: await cloud.pairingCode(), home: cloud.home });

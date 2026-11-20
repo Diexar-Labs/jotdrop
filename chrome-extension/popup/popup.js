@@ -98,6 +98,8 @@ async function init() {
     setStatus("Cloud: connect in Settings", "idle");
   } else if (cloudWanted && !cloud.unlocked) {
     setStatus("Cloud: unlock to save", "idle");
+  } else if (cloudWanted && cloud.onHold) {
+    setStatus("Cloud: on hold. Save keeps the clip as an encrypted draft", "idle");
   } else if (cloudWanted) {
     setStatus("Ready", "idle");
   } else if (!settings.token) {
@@ -422,6 +424,9 @@ async function saveCloud(payload, { finish = true } = {}) {
   } catch (error) {
     if (error.code === "locked") {
       outcome = "locked";
+      setStatus(error.message, "error");
+    } else if (error.code === "device-paused") {
+      // Says itself that the clip is kept as a draft.
       setStatus(error.message, "error");
     } else {
       setStatus(controller.signal.aborted ? "Upload paused. Encrypted drafts are kept; select Resume saved drafts to continue." : `${error.message || "Cloud save failed."} Any queued encrypted draft is kept unchanged.`, "error");

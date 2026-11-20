@@ -1,5 +1,5 @@
 import { argon2id } from 'hash-wasm';
-import { CloudClient, request, validateUrl } from './client.mjs';
+import { CloudClient, request, validateUrl, withOnHold } from './client.mjs';
 import { base64ToBytes, bytesToBase64, decodeRecovery, decryptEnvelope, encodeRecovery, encryptEnvelope, generateVaultKey, hashToken, randomToken } from './crypto.mjs';
 import { WORDS } from './words.mjs';
 
@@ -47,7 +47,7 @@ async function newDevice(deviceName) {
   return { deviceToken, fields: { deviceName, deviceTokenHash: await hashToken(deviceToken) } };
 }
 
-const connect = (url, result, deviceToken, vaultKey, fetcher) => new CloudClient({ url, vaultId: result.vaultId, deviceId: result.deviceId, token: deviceToken, vaultKey, fetcher });
+const connect = (url, result, deviceToken, vaultKey, fetcher) => withOnHold(new CloudClient({ url, vaultId: result.vaultId, deviceId: result.deviceId, token: deviceToken, vaultKey, fetcher }), result);
 
 /** Starts a new account and cloud; the server mails a code to confirm the address. `newsletter`: the person ticked "Email me news".
  * `human`: the Turnstile token, when the server asks for a person check (personCheckKey). */

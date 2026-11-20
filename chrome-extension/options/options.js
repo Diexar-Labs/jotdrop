@@ -110,6 +110,7 @@ async function renderCloud() {
   const parts = [`Connected to ${host}.`];
   if (!allowed) parts.push(`Access to ${host} is off: allow it to save clips.`);
   parts.push(state.unlocked ? "Unlocked until the browser closes." : "Locked: the popup asks for the unlock passphrase.");
+  if (state.onHold) parts.push("On hold: your JotDrop plan syncs only some of your devices, and this clipper is not one of them. Clips wait here as encrypted drafts. Choose your devices in JotDrop under Devices.");
   if (state.drafts) parts.push(`${state.drafts} encrypted ${state.drafts === 1 ? "draft waits" : "drafts wait"} to be sent.`);
   $("cloudState").textContent = parts.join(" ");
 }

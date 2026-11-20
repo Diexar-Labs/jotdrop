@@ -12,12 +12,12 @@ import { cloudFixture } from './test-fixture.mjs';
 const NOW = new Date(2026, 10, 9, 10, 15, 0);
 const STAMP = '2026-11-09 101500';
 
-async function setup(t, { fetcher, limiter } = {}) {
+async function setup(t, { fetcher, limiter, now = () => NOW } = {}) {
   const cloud = await cloudFixture(t);
   const claimed = await CloudClient.claim({ pairingCode: await cloud.pairingCode() });
   const client = fetcher ? new CloudClient({ ...claimed.credentials, fetcher }) : claimed;
   const mirror = new Mirror({ client, cachePath: profilePaths(cloud.home, 'default').cache });
-  return { cloud, client, mirror, notes: createNotes({ client, mirror, limiter, now: () => NOW }) };
+  return { cloud, client, mirror, notes: createNotes({ client, mirror, limiter, now }) };
 }
 const ok = (result) => { assert.equal(result.isError, false, result.text); return result; };
 const failed = (result, pattern) => { assert.equal(result.isError, true, result.text); assert.match(result.text, pattern); return result; };
@@ -212,6 +212,38 @@ test('without the cloud, reading answers from the mirror with a notice and writi
   failed(await notes.call('append_to_note', { id: 'notes/Lijst.md', items: ['brood'] }), /cannot reach JotDrop Cloud.*nothing was changed/i);
   offline = false;
   assert.equal(await cloud.read('notes/Lijst.md'), '# Boodschappen\n\n- [ ] melk');
+});
+
+test('on hold, reading answers from the saved copy with a notice, writing explains, and the cloud is asked again after 30 minutes', async (t) => {
+  // The server's answer for a device on hold (cloud/sync-pause.test.mjs): 403 with code device-paused, also for a write.
+  let hold = 'none', asked = 0, clock = NOW.getTime();
+  const paused = () => new Response(JSON.stringify({ error: 'Sync is on hold on this device. The free plan syncs 2 devices, and this is not one of them.', code: 'device-paused' }), { status: 403 });
+  const fetcher = (url, options) => {
+    if (hold === 'all' || (hold === 'writes' && options.method !== 'GET')) { asked++; return Promise.resolve(paused()); }
+    return fetch(url, options);
+  };
+  const { cloud, notes, mirror } = await setup(t, { fetcher, now: () => new Date(clock) });
+  await cloud.write('notes/Lijst.md', '# Boodschappen\n\n- [ ] melk');
+  ok(await notes.call('search_notes', { query: 'boodschappen' }));
+  // The pause starts between reading the changes and saving: the save is refused and explained.
+  hold = 'writes';
+  failed(await notes.call('append_to_note', { id: 'notes/Lijst.md', items: ['brood'] }), /sync is on hold for this agent, so nothing was changed.*Devices in JotDrop/i);
+  hold = 'all';
+  asked = 0;
+  // From now on the saved copy answers, and the cloud is not asked for 30 minutes.
+  const read = ok(await notes.call('read_note', { id: 'notes/Lijst.md' }));
+  assert.match(read.text, /^Sync is on hold for this agent, showing the copy of \d{4}-\d{2}-\d{2}/);
+  assert.match(read.text, /melk/);
+  failed(await notes.call('create_note', { title: 'Nieuw' }), /sync is on hold for this agent, so nothing was changed/i);
+  assert.equal(asked, 0);
+  // The copy on this computer stays: only a removed device loses it.
+  assert.equal(mirror.notes().length, 1);
+  // After 30 minutes the cloud is asked again; once the user chose this agent, it syncs as before.
+  clock += 30 * 60 * 1000;
+  hold = 'none';
+  const again = ok(await notes.call('append_to_note', { id: 'notes/Lijst.md', items: ['brood'] }));
+  assert.doesNotMatch(again.text, /on hold/i);
+  assert.equal(await cloud.read('notes/Lijst.md'), '# Boodschappen\n\n- [ ] melk\n- [ ] brood');
 });
 
 test('error messages never carry the device token or the vault key', async (t) => {

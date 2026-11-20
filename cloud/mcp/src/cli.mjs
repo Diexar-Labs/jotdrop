@@ -102,9 +102,11 @@ async function runStatus(values, { env, stdout, fetcher }) {
   const result = await status({ home: mcpHome(env), profile: profileName(values.profile), fetcher });
   if (!result.connected) { stdout.write(`Profile "${result.profile}" is not connected. Run "jotdrop-mcp connect" with a pairing code from JotDrop.\n`); return 1; }
   const cloud = result.revoked ? 'removed: this device no longer has access (connect again with a new pairing code)' : result.reachable ? 'reachable' : 'not reachable now';
+  const sync = result.onHold ? 'on hold: your plan syncs only some of your devices. Choose this one under Devices in JotDrop, or get JotDrop Plus.'
+    : result.holdFrom ? `goes on hold on ${result.holdFrom.slice(0, 10)}. Choose this one under Devices in JotDrop to keep it syncing.` : '';
   stdout.write([
     `Profile:   ${result.profile}`, `Device:    ${result.deviceName}`, `Address:   ${result.url}`, `Connected: ${result.connectedAt}`,
-    `Plan:      ${result.plan ?? 'unknown'}`, `Notes:     ${result.notes}`, `Last sync: ${result.lastSync ?? 'not yet'}`, `Cloud:     ${cloud}`,
+    `Plan:      ${result.plan ?? 'unknown'}`, `Notes:     ${result.notes}`, `Last sync: ${result.lastSync ?? 'not yet'}`, `Cloud:     ${cloud}`, ...(sync ? [`Sync:      ${sync}`] : []),
   ].join('\n') + '\n');
   return result.revoked ? 1 : 0;
 }
