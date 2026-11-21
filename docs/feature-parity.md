@@ -101,7 +101,7 @@ Stand gemeten op `ee57d58` (feature-branch), bijgewerkt met elke afgeronde funct
 | Dezelfde pauze in Joplin, Web Clipper en jotdrop-mcp: alleen een eigen pauzetekst, geen apparatenlijst; kiezen doe je in de web-app, Android of Obsidian | n.v.t. | n.v.t. | n.v.t. |
 | Koppelcode maken | ja | ja | ja |
 | Nieuw apparaat goedkeuren (4 woorden) | ja | ja (goedkeuren en zelf laten goedkeuren) | ja |
-| Automatisch synchroniseren | ja | ja (notitiemap met Archive/Trash + bijlagen, zelfde regels als Android; stopt bij Syncthing of gekoppelde Obsidian Sync) | ja |
+| Automatisch synchroniseren | ja | ja (notitiemap met Archive/Trash + bijlagen, zelfde regels als Android; stopt bij Syncthing, en bij gekoppelde Obsidian Sync zolang die de JotDrop-mappen op dat apparaat niet uitsluit) | ja |
 | Conflict beoordelen | ja | ja (venster "Review conflicts", ook via knop "Review conflict" op de conflictkaart: deze vault naast de cloudversie, "Keep this vault's version" / "Use the cloud version"; de andere versie en de kopie naar de prullenbak) | ja |
 | Tijdmachine | ja | ja (venster "Time machine": schuif door de minuten met een wijziging, notities van toen, "Restore this moment"; gratis plan: ouder dan 30 dagen = Plus) | ja |
 | Herstelcode opnieuw maken | ja | ja | ja |

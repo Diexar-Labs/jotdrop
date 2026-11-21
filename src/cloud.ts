@@ -154,10 +154,19 @@ class VaultFolder {
 
   /** Two sync systems on the same files make duplicates or lose changes, so the cloud refuses to start. */
   async guard(): Promise<void> {
-    const app = this.plugin.app as unknown as { internalPlugins?: { plugins?: Record<string, { enabled?: boolean; instance?: { vaultId?: string | null } }> } };
+    const app = this.plugin.app as unknown as { internalPlugins?: { plugins?: Record<string, { enabled?: boolean; instance?: { vaultId?: string | null; filter?: { ignoreFolders?: unknown } } }> } };
     // The Sync core plugin is on by default; only a connected remote vault means Obsidian Sync is in use.
     const sync = app.internalPlugins?.plugins?.sync;
-    if (sync?.enabled && sync.instance?.vaultId) throw new Error("Obsidian Sync is on for this vault. Use either Obsidian Sync or JotDrop Cloud, not both: two sync systems on the same notes make duplicates. Turn one of them off.");
+    if (sync?.enabled && sync.instance?.vaultId) {
+      // Obsidian Sync can leave folders alone on this device ("Excluded folders"): like Obsidian, a folder and everything under it.
+      const ignored = sync.instance.filter?.ignoreFolders;
+      const excluded = (folder: string) => Array.isArray(ignored) && ignored.some((entry) => typeof entry === "string" && entry !== "" && (folder === entry || folder.startsWith(`${entry}/`)));
+      // The legacy attachments folder is inside the notes folder or is the attachments folder.
+      const missing = [...new Set([this.notes, this.assets])].filter((folder) => !excluded(folder));
+      // Excluding a folder excludes what is inside it, so only the outer one is named.
+      const named = missing.filter((folder) => !missing.some((other) => folder.startsWith(`${other}/`)));
+      if (named.length) throw new Error(`Obsidian Sync is on for this vault. To use JotDrop Cloud next to it, exclude ${named.map((folder) => `"${folder}"`).join(" and ")} in Settings > Sync > Excluded folders on this device. Or use only one of them: two sync systems on the same notes make duplicates.`);
+    }
     const folders = new Set([""]);
     for (const path of [this.notes, this.assets, this.legacy]) {
       let parent = "";
