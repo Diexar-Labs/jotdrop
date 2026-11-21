@@ -449,7 +449,8 @@ export class AskJotDropModal extends Modal {
       report.usage = { input: answer.usage?.input ?? 0, output: answer.usage?.output ?? 0, ...(answer.usage?.seconds ? { seconds: answer.usage.seconds } : {}) };
       if (answer.stop === "refusal") report.stop = "refusal";
     } catch (error) {
-      const known = error instanceof AiError ? error as AiError & { code: string; detail: string; status: number } : new AiError("bad_response", String((error as Error)?.message ?? "")) as AiError & { code: string; detail: string; status: number };
+      // AiError comes from the shared JavaScript; these are the fields it always sets.
+      const known = (error instanceof AiError ? error : new AiError("bad_response", String((error as Error)?.message ?? ""))) as unknown as { code: string; message: string; detail: string; status: number };
       // JotDrop's own check stops a file before anything goes out.
       if (!known.status && ["unsupported_input", "too_large", "bad_request"].includes(known.code)) report.rounds = 0;
       report.stop = known.code === "timeout" || known.code === "cancelled" ? known.code : known.code === "refusal" ? "refusal" : ["no_key", "no_model", "no_provider", "bad_address"].includes(known.code) ? "off" : "error";
@@ -692,7 +693,7 @@ export class AskJotDropModal extends Modal {
     renderYears();
     const buttons = box.createDiv({ cls: "jotdrop-ai-buttons" });
     const apply = buttons.createEl("button", { text: "Apply", cls: "mod-cta" });
-    apply.addEventListener("click", async () => {
+    apply.addEventListener("click", () => void (async () => {
       try {
         if (!this.receipt) return;
         if (!validExpires(until.value)) throw new Error("Choose how long to keep it, or fill in a date.");
@@ -702,7 +703,7 @@ export class AskJotDropModal extends Modal {
         this.el.status.setText(`Done: in the ${drawer.value ? `${PAPER_DRAWER} / ${drawer.value}` : PAPER_DRAWER}, kept until ${until.value}.`);
         this.plugin.refreshViews();
       } catch (error) { this.el.status.setText(aiErrorText(error, this.config.provider)); }
-    });
+    })());
     buttons.createEl("button", { text: "Do not change" }).addEventListener("click", () => {
       box.hide();
       this.receipt = undefined;

@@ -1,12 +1,13 @@
 {
   "name": "jotdrop",
-  "version": "0.31.6",
+  "version": "0.31.7",
   "description": "A private, open-source Google Keep alternative for Obsidian: a trio of quick-capture card grid, companion Android app, and Chrome web clipper. Install all three for the full Keep experience.",
   "main": "main.js",
   "scripts": {
     "dev": "npm run verify:base && node esbuild.config.mjs",
-    "build": "npm run verify:base && npm run build:plugin",
+    "build": "npm run build:plugin",
     "build:plugin": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+    "lint:obsidian": "eslint src manifest.json package.json LICENSE",
     "verify:base": "node scripts/verify-release-source.mjs base",
     "verify:deploy": "node scripts/verify-release-source.mjs deploy",
     "verify:release": "node scripts/verify-release-source.mjs release",
@@ -130,11 +131,17 @@
     "@tesseract.js-data/nld": "1.0.0",
     "@types/node": "^20.11.0",
     "esbuild": "^0.28.2",
+    "eslint": "^9.39.5",
+    "eslint-plugin-obsidianmd": "^0.6.0",
     "hash-wasm": "4.12.0",
     "obsidian": "latest",
     "qrcode-generator": "2.0.4",
     "tesseract.js": "7.0.0",
     "tslib": "^2.6.2",
-    "typescript": "^5.4.5"
+    "typescript": "^5.4.5",
+    "typescript-eslint": "^8.73.0"
+  },
+  "dependencies": {
+    "tesseract.js-core": "7.0.0"
   }
 }

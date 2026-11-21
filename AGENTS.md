@@ -14,9 +14,13 @@ implementation or release work.
 8. `npm run build` must never copy files into an Obsidian vault. Use the
    explicit `JOTDROP_VAULT_PLUGIN_DIR=... npm run deploy:local` command for a
    clean, committed local deployment.
-9. `npm run dev` and `npm run build` both execute `verify:base` first. Never
-   bypass that gate with `build:plugin`; it exists only as the internal build
-   step after provenance verification.
+9. `npm run dev` executes `verify:base` first. `npm run build` only builds
+   (`build:plugin`), so Obsidian's build verification can rebuild an older tag
+   in a clean checkout; a build is never a release source on its own. The gate
+   stays mandatory around it: CI runs `verify:base` as its own step before the
+   build, `deploy:local` runs `verify:deploy`, `android:release` runs
+   `verify:release`, and release tags run `verify:tag` and `verify:release`.
+   Run `npm run verify:base` yourself before trusting a local build.
 10. Never increase Android `versionCode` to force-install an older source tree.
 11. Debug APK generation and installation are disabled because debug Compose
     builds have unusable scroll performance. Use `compileDebugKotlin` only for

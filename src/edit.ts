@@ -241,7 +241,7 @@ export class EditNoteModal extends Modal {
         // bar or emoji panel scrolls them sideways — never treat either as navigation.
         this.touchOnTextField =
           isTextFieldElement(e.target) ||
-          (e.target instanceof Element && e.target.closest(".jotdrop-format-bar, .jotdrop-emoji-panel") !== null);
+          (e.targetNode !== null && e.targetNode.instanceOf(Element) && e.targetNode.closest(".jotdrop-format-bar, .jotdrop-emoji-panel") !== null);
       },
       { passive: true },
     );

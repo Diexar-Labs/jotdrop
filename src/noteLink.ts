@@ -83,7 +83,7 @@ export class NoteLinkModal extends Modal {
             if (!note) throw new Error("Sync first, then make the link.");
             link = await createListLink(client, { title, text: list }, { origin: client.credentials.url, days: Number(this.days), path: note.path, noteRevision: note.revision });
           } else {
-            link = await createLink(client, linkNote(this.file, text), { origin: client.credentials.url, days: Number(this.days) }) as { address: string };
+            link = await createLink(client, linkNote(this.file, text), { origin: client.credentials.url, days: Number(this.days) });
           }
           made.empty();
           const field = made.createEl("input", { type: "text", cls: "jotdrop-link-field", attr: { readonly: "true", "aria-label": "Link" } });
@@ -150,10 +150,9 @@ export class EndListLinkModal extends Modal {
     const footer = this.contentEl.createDiv({ cls: "jotdrop-confirm-footer" });
     footer.createEl("button", { cls: "jotdrop-confirm-cancel", text: "Keep the link" }).addEventListener("click", () => { this.close(); this.proceed(); });
     const end = footer.createEl("button", { cls: "jotdrop-confirm-ok", text: "End the link" });
-    end.addEventListener("click", async () => {
+    end.addEventListener("click", () => {
       this.close();
-      try { await this.cloud.endListLinks(this.links); } catch (error) { new Notice(errorText(error)); return; }
-      this.proceed();
+      this.cloud.endListLinks(this.links).then(() => this.proceed(), (error) => { new Notice(errorText(error)); });
     });
     window.setTimeout(() => end.focus(), 0);
   }

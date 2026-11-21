@@ -85,7 +85,7 @@ export class ExcalidrawPreviews {
 
   isDrawingFile(file: TFile): boolean {
     if (DRAWING_NAME_RE.test(file.name)) return true;
-    const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter as Record<string, unknown> | undefined;
+    const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
     return frontmatter?.["excalidraw-plugin"] !== undefined;
   }
 

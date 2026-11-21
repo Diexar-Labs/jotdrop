@@ -4,9 +4,10 @@ import { ConfirmModal } from "./confirmModal";
 import { CloudClient } from "../cloud/shared/client.mjs";
 import { acceptInvite, blockMember, createSpace, deleteSpace, leaveSpace, listSpaces, makeInvite, readInvite, removeMember, replaceSpace, reportSpace, saveSpacePrefs, setMemberName, spaceClient, spaceDetails, takeOverSpace, withdrawInvite } from "../cloud/shared/spaces.mjs";
 import { availableProviders, checkApproval, completeApproval, confirmLogin, confirmSignup, logIn, personCheckKey, providerApproval, providerRecover, providerSignUp, providerTicket, requestApproval, resetWithRecoveryCode, signUp, startOver, startProviderSignIn, startReset } from "../cloud/shared/account.mjs";
+import type { LoginPending, SignupPending } from "../cloud/shared/account.mjs";
 import { AuthenticatorModal, RecoveryCodeModal } from "./cloudAccount";
 import { ConflictReviewModal, TimeMachineModal } from "./cloudReview";
-import { base64ToBytes, decryptEnvelope, isSpacePath, MAX_CHUNKED_BYTES, MAX_FILE_BYTES, objectId, sha256Hex } from "../cloud/shared/crypto.mjs";
+import { type Envelope, base64ToBytes, decryptEnvelope, isSpacePath, MAX_CHUNKED_BYTES, MAX_FILE_BYTES, objectId, sha256Hex } from "../cloud/shared/crypto.mjs";
 import { cloudTimeline, conflictOriginal, copyName, fromHex, hash, isPreserved, remoteFiles, restorePlan, syncFolder, syncPath, unavailable } from "../cloud/shared/sync.mjs";
 import { listListLinks, removeListLink, syncList } from "../cloud/shared/list-links.mjs";
 import { splitNote } from "./noteLink";
@@ -65,6 +66,8 @@ type MomentFile = { id: string; revision: number | null; deleted: boolean; locke
 export type CloudVersion = { revision: number; deleted: boolean; updatedAt: string; locked: boolean };
 export type CloudMoment ={ at: string; then: MomentFile[]; files: Array<{ path: string; bytes: Uint8Array }>; trashed: number; locked: number; cleared: number };
 export type Sealed = { key: CryptoKey; iv: Uint8Array; data: ArrayBuffer };
+/** What a prepared upload holds: its path, the content of a small file, and the fingerprint of a large one. */
+type DraftFile = { path: string; content?: string; hash: string };
 
 /** fetch() on top of Obsidian's requestUrl: no CORS, so the same code works on desktop and mobile. */
 export async function cloudFetch(url: string, init: RequestInit = {}): Promise<Response> {
@@ -76,7 +79,7 @@ export async function cloudFetch(url: string, init: RequestInit = {}): Promise<R
   const pending = requestUrl({ url, method: init.method || "GET", headers, contentType: headers["Content-Type"], body, throw: false });
   let response;
   try {
-    response = await (signal ? Promise.race([pending, new Promise<never>((_, reject) => signal.addEventListener("abort", () => reject(signal.reason), { once: true }))]) : pending);
+    response = await (signal ? Promise.race([pending, new Promise<never>((_, reject) => signal.addEventListener("abort", () => reject(signal.reason instanceof Error ? signal.reason : new Error(String(signal.reason))), { once: true }))]) : pending);
   } catch (error) {
     if (signal?.aborted) throw error;
     // fetch reports an unreachable server as a TypeError; the upload code retries on that.
@@ -118,7 +121,7 @@ export async function seal(value: unknown): Promise<Sealed> {
   return { key, iv, data: await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, encoder.encode(JSON.stringify(value))) };
 }
 export async function unseal<T = Session>(saved: Sealed): Promise<T> {
-  return JSON.parse(decoder.decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: new Uint8Array(saved.iv) }, saved.key, saved.data)));
+  return JSON.parse(decoder.decode(await crypto.subtle.decrypt({ name: "AES-GCM", iv: new Uint8Array(saved.iv) }, saved.key, saved.data))) as T;
 }
 
 // The phone first: Obsidian on Android also reports Linux, and an iPad can report Mac; the device list must tell them apart.
@@ -166,7 +169,7 @@ class VaultFolder {
       }
     }
     // Desktop: a Syncthing folder can also start above the vault.
-    if (this.adapter instanceof FileSystemAdapter) {
+    if (Platform.isDesktopApp && this.adapter instanceof FileSystemAdapter) {
       const fs = (window as unknown as { require: (name: string) => typeof import("fs") }).require("fs");
       const path = (window as unknown as { require: (name: string) => typeof import("path") }).require("path");
       for (let dir = this.adapter.getBasePath(); ; dir = path.dirname(dir)) {
@@ -411,10 +414,10 @@ export class CloudController {
 
   register(): void {
     const plugin = this.plugin;
-    plugin.addCommand({ id: "cloud-sync-now", name: "JotDrop Cloud: sync now", callback: () => { void this.syncNow().catch((error) => new Notice(error instanceof Error ? error.message : String(error))); } });
-    plugin.addCommand({ id: "cloud-review-conflicts", name: "JotDrop Cloud: review conflicts", callback: () => new ConflictReviewModal(plugin.app, this).open() });
-    plugin.addCommand({ id: "cloud-shared-groups", name: "JotDrop Cloud: shared groups", callback: () => new SharedGroupsModal(plugin.app, this).open() });
-    plugin.addCommand({ id: "cloud-time-machine", name: "JotDrop Cloud: time machine", callback: () => new TimeMachineModal(plugin.app, this).open() });
+    plugin.addCommand({ id: "cloud-sync-now", name: "Cloud: sync now", callback: () => { void this.syncNow().catch((error) => new Notice(error instanceof Error ? error.message : String(error))); } });
+    plugin.addCommand({ id: "cloud-review-conflicts", name: "Cloud: review conflicts", callback: () => new ConflictReviewModal(plugin.app, this).open() });
+    plugin.addCommand({ id: "cloud-shared-groups", name: "Cloud: shared groups", callback: () => new SharedGroupsModal(plugin.app, this).open() });
+    plugin.addCommand({ id: "cloud-time-machine", name: "Cloud: time machine", callback: () => new TimeMachineModal(plugin.app, this).open() });
     const touched = (path: string) => {
       if (!this.enabled) return;
       const folder = (value: string) => value.replace(/\/+$/, "");
@@ -461,7 +464,7 @@ export class CloudController {
     await this.store.delete("provider");
     if (!params.oauth) throw new Error(params["oauth-error"] || "The sign-in did not finish. Try again.");
     if (!started) throw new Error("This sign-in was started in another vault or app. Start again here.");
-    return await providerTicket({ ...started, ticket: params.oauth, fetcher: cloudFetch }) as ProviderSignIn;
+    return await providerTicket({ ...started, ticket: params.oauth, fetcher: cloudFetch });
   }
 
   private async restore(): Promise<void> {
@@ -642,7 +645,7 @@ export class CloudController {
       if (state.upload) {
         // An upload cut off by a restart: finish it, or keep it as a copy when the cloud moved on.
         const prepared = state.upload;
-        const file = await decryptEnvelope(vaultKey, JSON.parse(prepared.envelope), `jotdrop:object:v1:${vaultId}:${prepared.id}`);
+        const file = await decryptEnvelope<DraftFile>(vaultKey, JSON.parse(prepared.envelope) as Envelope, `jotdrop:object:v1:${vaultId}:${prepared.id}`);
         const path = syncPath(file.path);
         // A large v2 file is not inside its manifest: the local file finishes it, if it is still the same.
         let bytes: Uint8Array | null = typeof file.content === "string" ? base64ToBytes(file.content) : null;
@@ -828,13 +831,13 @@ export class CloudController {
       if (!this.mailWarned) { this.mailWarned = true; new Notice("The mail key on the server does not match this vault. Turn Mail to JotDrop off and on again."); }
       return nothing;
     }
-    const { items } = await client.call("/mail", "GET") as { items: { id: string; receivedAt: string }[] };
+    const { items } = await client.call<{ items: { id: string; receivedAt: string }[] }>("/mail", "GET");
     const handled: { id: string; paths: string[] }[] = [];
     let wrote = false, saved = 0;
     for (const item of items.slice(0, 25)) {
       active();
       try {
-        const detail = await client.call(`/mail/${item.id}`, "GET");
+        const detail = await client.call<{ ephemeralKey: string; body: string }>(`/mail/${item.id}`, "GET");
         const key = await openMailKey(pair.privateKey, pair.publicKey, detail.ephemeralKey, item.id);
         const payload = await openMailBody(key, vaultId, item.id, detail.body);
         const note = mailToNote(payload, item.id, item.receivedAt);
@@ -843,7 +846,7 @@ export class CloudController {
           const path = `attachments/${attachment.name}`;
           paths.push(path);
           if (await folder.get(path)) continue;
-          const part = await client.call(`/mail/${item.id}/parts/${attachment.part}`, "GET");
+          const part = await client.call<{ sealed: string }>(`/mail/${item.id}/parts/${attachment.part}`, "GET");
           if (await folder.compareAndSet(path, null, await openMailPart(key, vaultId, item.id, attachment.part, part.sealed))) wrote = true;
         }
         if (!await folder.get(note.path) && await folder.compareAndSet(note.path, null, new TextEncoder().encode(note.content))) { wrote = true; saved++; }
@@ -914,7 +917,7 @@ export class CloudController {
   }
 
   private async syncSpace(own: CloudClient, space: KnownSpace, active: () => void, signal: AbortSignal): Promise<boolean> {
-    const client = spaceClient(own, space.id, space.key) as CloudClient;
+    const client = spaceClient(own, space.id, space.key);
     const folder = new VaultFolder(this.plugin, this.editing, space.id);
     const key = `space:${space.id}`;
     const state: SpaceState = await this.store.get<SpaceState>(key) ?? { tracked: {}, index: { cursor: 0, objects: {}, pending: {} }, seen: {}, rescued: {} };
@@ -929,7 +932,7 @@ export class CloudController {
     const { vaultKey, vaultId } = client.credentials;
     if (state.upload) {
       const prepared = state.upload;
-      const file = await decryptEnvelope(vaultKey, JSON.parse(prepared.envelope), `jotdrop:object:v1:${vaultId}:${prepared.id}`);
+      const file = await decryptEnvelope<DraftFile>(vaultKey, JSON.parse(prepared.envelope) as Envelope, `jotdrop:object:v1:${vaultId}:${prepared.id}`);
       const path = syncPath(file.path);
       let bytes: Uint8Array | null = typeof file.content === "string" ? base64ToBytes(file.content) : null;
       if (!bytes) { const local = await folder.read(path).catch(() => null); if (local && await sha256Hex(local) === file.hash) bytes = local; }
@@ -1016,7 +1019,7 @@ export class CloudController {
     return this.exclusive(() => action(this.client!));
   }
   details(id: string) { return this.withClient((client) => spaceDetails(client, id)); }
-  invite(id: string, name: string) { return this.withClient(async (client) => (await makeInvite(client, this.spaces.find((space) => space.id === id) as KnownSpace, name, client.credentials.url)).link as string); }
+  invite(id: string, name: string) { return this.withClient(async (client) => (await makeInvite(client, this.spaces.find((space) => space.id === id) as KnownSpace, name, client.credentials.url)).link); }
   withdraw(id: string, inviteId: string) { return this.withClient((client) => withdrawInvite(client, id, inviteId)); }
   takeOver(id: string) { return this.withClient((client) => takeOverSpace(client, id)); }
 
@@ -1037,7 +1040,7 @@ export class CloudController {
       const made = await createSpace(client, groupName, { memberName: me });
       this.spaces = [...this.spaces, { id: made.id, key: made.key, name: groupName, others: [], frozen: false, gone: false, owner: true }];
       await this.saveSpaces();
-      return made.id as string;
+      return made.id;
     });
     const space = this.spaces.find((item) => item.id === target) as KnownSpace;
     const files = await this.withClient(async (client) => (await spaceClient(client, space.id, space.key).status()).plan?.name);
@@ -1153,7 +1156,7 @@ export class CloudController {
     }
     const me = details.members.find((m: { accountId: string }) => m.accountId === details.me.accountId)?.name ?? "Someone";
     const others = details.members.filter((m: { accountId: string }) => m.accountId !== details.me.accountId).map((m: { name: string | null }) => m.name || "Someone").join(", ");
-    await this.withClient((client) => replaceSpace(client, details, { memberName: me }));
+    await this.withClient((client) => replaceSpace(client, { ...details, key: details.key ?? space.key }, { memberName: me }));
     // Right before the folder goes: what was changed since the sync gets a copy in the own notes.
     await this.exclusive(() => this.rescueUnsent(space));
     await this.release(space, false);
@@ -1193,7 +1196,7 @@ export class CloudController {
   private conflictNotice(count: number): void {
     const notice = new Notice(`${count === 1 ? "1 note was" : `${count} notes were`} changed in two places. Both versions are kept.`, 0);
     // Obsidian's notice element; the test stub has none.
-    notice.noticeEl?.createEl("button", { cls: "mod-cta", text: "Resolve now" }).addEventListener("click", () => {
+    notice.messageEl?.createEl("button", { cls: "mod-cta", text: "Resolve now" }).addEventListener("click", () => {
       notice.hide();
       new ConflictReviewModal(this.plugin.app, this).open();
     });
@@ -1300,7 +1303,7 @@ export class CloudController {
     const client = this.client;
     if (!client) throw new Error("Log in to JotDrop Cloud first.");
     const { current } = await cloudTimeline(client);
-    const { objects: then } = await client.snapshot(at) as { objects: MomentFile[] };
+    const { objects: then } = await client.snapshot(at);
     const missing = unavailable(current, then) as MomentFile[];
     const now = new Map(current.map((file: { id: string; revision: number }) => [file.id, file.revision]));
     const open = then.filter((file) => !file.deleted && !missing.includes(file));
@@ -1326,7 +1329,7 @@ export class CloudController {
     let done = 0;
     try {
       await this.exclusive(async () => {
-        for (const step of restorePlan((await cloudTimeline(client)).current, moment.then) as Array<{ id: string; delete?: boolean; revision?: number; baseRevision: number }>) {
+        for (const step of restorePlan((await cloudTimeline(client)).current, moment.then)) {
           if (step.delete) await client.remove(step.id, step.baseRevision);
           else await client.restore(step.id, step.revision, step.baseRevision);
           done++;
@@ -1402,7 +1405,7 @@ export class CloudController {
         message: `${found}. Notes and attachments sync with your JotDrop Cloud, end-to-end encrypted. Changes from your other devices can update and remove notes here; removed notes go to the trash. Do not use Syncthing or Obsidian Sync on these folders at the same time.`,
         confirmLabel: "Turn on cloud sync",
       }, () => { void this.setEnabled(true).catch(fail); });
-      const close = modal.onClose.bind(modal);
+      const close = modal.onClose.bind(modal) as () => void;
       modal.onClose = () => { close(); onDone(); };
       modal.open();
     }, fail);
@@ -1420,7 +1423,8 @@ class HoldSignInModal extends Modal {
   onClose(): void { this.contentEl.empty(); }
 }
 
-type Pending = Awaited<ReturnType<typeof logIn>> & { secondFactor?: string };
+/** After the email and password: a new account waits for its email code, a login for its email or app code. */
+type Pending = (SignupPending | LoginPending) & { secondFactor?: string };
 type LimitError = { code?: string; message?: string; devices?: Array<{ id: string; name: string; lastSeenAt: string }> };
 
 /** Log in or create an account, with the email code, the free device limit, the recovery code and "forgot password". */
@@ -1521,7 +1525,7 @@ export class SharedGroupsModal extends Modal {
     new Setting(el).setName("Your name for the others").addText((input) => input.setValue(me).onChange((value) => { me = value; }));
     this.termsNotice(el, "sharing");
     new Setting(el).addButton((button) => button.setButtonText("Share").setCta().onClick(() => {
-      this.cloud.share(note, choice || null, name, me).then(() => { new Notice("The note is shared. Invite someone with \"JotDrop Cloud: shared groups\"."); this.close(); }, (error) => new Notice((error as Error).message));
+      this.cloud.share(note, choice || null, name, me).then(() => { new Notice("The note is shared. Invite someone with \"Cloud: shared groups\" in the command palette."); this.close(); }, (error) => new Notice((error as Error).message));
     }));
   }
 }
@@ -1635,7 +1639,7 @@ class CloudSignInModal extends Modal {
         const pending = this.signup
           ? await signUp({ url: this.url, email, password, deviceName: deviceName(), newsletter, human, fetcher: cloudFetch })
           : await logIn({ url: this.url, email, password, deviceName: deviceName(), fetcher: cloudFetch });
-        this.code(pending as Pending, email, password);
+        this.code(pending, email, password);
       })));
   }
 
@@ -1687,14 +1691,14 @@ class CloudSignInModal extends Modal {
     const choices = el.createDiv();
     new Setting(el).addButton((button) => button.setButtonText("Continue").setCta().onClick(() => this.busy(button.buttonEl, async () => {
       if (this.signup) {
-        const { client, recoveryCode } = await confirmSignup(pending, code, { fetcher: cloudFetch });
+        const { client, recoveryCode } = await confirmSignup(pending as SignupPending, code, { fetcher: cloudFetch });
         if (!client || !recoveryCode) throw new Error("The server did not finish creating the account. Try again.");
         await this.cloud.finishSignIn(client, email);
         this.done(recoveryCode, password);
         return;
       }
       await this.withDeviceChoice(choices, async (replaceDeviceId) => {
-        await this.cloud.finishSignIn(await confirmLogin(pending, code, { fetcher: cloudFetch, replaceDeviceId }), email);
+        await this.cloud.finishSignIn(await confirmLogin(pending as LoginPending, code, { fetcher: cloudFetch, replaceDeviceId }), email);
         this.done();
       });
     })));

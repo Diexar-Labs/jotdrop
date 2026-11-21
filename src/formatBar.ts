@@ -123,7 +123,7 @@ export function createFormatBar(
       ? indentEdit(ta.value, from, to, command === "indent" ? "in" : "out")
       : applyFormat(ta.value, from, to, command);
     ta.focus();
-    if (edit) applyTextEdit(ta, edit as TextEdit);
+    if (edit) applyTextEdit(ta, edit);
     refresh();
   }
 
@@ -151,7 +151,7 @@ export function createFormatBar(
   let panelScope: Scope | null = null;
   function recentEmoji(): string[] {
     const saved: unknown = app.loadLocalStorage(RECENT_EMOJI);
-    return (Array.isArray(saved) ? saved : []).filter((emoji): emoji is string => EMOJI_NAMES.has(emoji)).slice(0, 8);
+    return (Array.isArray(saved) ? (saved as unknown[]) : []).filter((emoji): emoji is string => typeof emoji === "string" && EMOJI_NAMES.has(emoji)).slice(0, 8);
   }
   function renderPanel(): void {
     panel.empty();
