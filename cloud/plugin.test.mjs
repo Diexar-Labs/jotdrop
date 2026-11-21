@@ -202,9 +202,17 @@ test('the plugin signs in with an account, syncs the real JotDrop folders both w
   v.put('.stfolder', new Uint8Array());
   await assert.rejects(cloud.syncNow(), /Syncthing/);
   v.files.delete('.stfolder');
-  v.plugin.app.internalPlugins.plugins.sync.instance.vaultId = 'remote-vault';
-  await assert.rejects(cloud.syncNow(), /Obsidian Sync/);
-  v.plugin.app.internalPlugins.plugins.sync.instance.vaultId = null;
+  const obsidianSync = v.plugin.app.internalPlugins.plugins.sync.instance;
+  obsidianSync.vaultId = 'remote-vault';
+  await assert.rejects(cloud.syncNow(), /Obsidian Sync is on for this vault\. To use JotDrop Cloud next to it, exclude "Mini Notes" in Settings > Sync > Excluded folders/);
+  // Obsidian Sync may stay on once it leaves the JotDrop folders alone on this device; a name that only starts the same does not count.
+  obsidianSync.filter = { ignoreFolders: ['Mini', 'Other'] };
+  await assert.rejects(cloud.syncNow(), /exclude "Mini Notes"/);
+  obsidianSync.filter.ignoreFolders = ['Other', 'Mini Notes'];
+  await cloud.syncNow();
+  assert.match(cloud.status, /^Synced\./);
+  obsidianSync.vaultId = null;
+  delete obsidianSync.filter;
 
   // Another notes folder would make every note look deleted: sync stops until it is turned on again.
   v.plugin.settings.notesFolder = 'Elsewhere';
@@ -223,6 +231,36 @@ test('the plugin signs in with an account, syncs the real JotDrop folders both w
   await assert.rejects(new CloudController(v.plugin, v.store).syncNow(), /Log in/, 'A restart after logging out stays logged out');
   assert.ok(v.files.has('Mini Notes/Shopping.md'), 'Logging out keeps the notes');
   assert.ok(v.files.has('Other/Private.md') && !(await pathsInCloud())['notes/Private.md'], 'Only the JotDrop folders sync');
+});
+
+test('Obsidian Sync may stay on when it excludes the JotDrop folders on this device, an attachments folder of its own too', async (t) => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'jotdrop-plugin-test-'));
+  const mails = [];
+  const app = await createCloudServer({ dataDir, signupTrial: 0, enrollmentToken: randomToken(), mailer: async (mail) => { mails.push(mail); }, serverKey: randomToken(), freeDeviceLimit: 100 });
+  t.after(async () => { await app.close(); await rm(dataDir, { recursive: true, force: true }); });
+  const url = `http://127.0.0.1:${app.port}`;
+  const v = vault();
+  v.plugin.resolveAssetsFolder = () => 'JotDrop files';
+  const obsidianSync = { vaultId: 'remote-vault', filter: { ignoreFolders: [] } };
+  v.plugin.app.internalPlugins.plugins.sync.instance = obsidianSync;
+  v.put('Mini Notes/Shopping.md', 'Milk');
+  v.put('JotDrop files/photo.jpg', new Uint8Array([1, 2, 3]));
+  const cloud = new CloudController(v.plugin, v.store);
+  const pending = await signUp({ url, email: 'eric@example.com', password: 'correct horse battery', deviceName: 'Obsidian on Windows' });
+  const { client } = await confirmSignup(pending, mails.find((mail) => mail.kind === 'verify').code);
+  await cloud.finishSignIn(client, 'eric@example.com');
+
+  // The switch says which folders Obsidian Sync still takes along, and stays off.
+  await assert.rejects(cloud.setEnabled(true), /exclude "Mini Notes" and "JotDrop files" in Settings > Sync > Excluded folders on this device/);
+  obsidianSync.filter.ignoreFolders = ['Mini Notes'];
+  await assert.rejects(cloud.setEnabled(true), /exclude "JotDrop files" in/);
+  assert.equal(cloud.enabled, false);
+  assert.equal((await client.listChanges()).changes.length, 0, 'Nothing went up');
+
+  obsidianSync.filter.ignoreFolders = ['Mini Notes', 'JotDrop files'];
+  await cloud.setEnabled(true);
+  await cloud.syncNow();
+  assert.match(cloud.status, /Synced\. 2 up, 0 down/);
 });
 
 test('a device signed out from elsewhere asks to log in again, and logging in again keeps the sync baselines', async (t) => {

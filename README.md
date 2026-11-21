@@ -357,7 +357,7 @@ No. Find duplicates compares your notes on your device, without AI, in the web a
 Not by JotDrop. Local notes are readable Markdown files, which is the point. Use your device's encryption and screen lock.
 
 **Can I use JotDrop Cloud and Obsidian Sync together?**
-Not on the same notes. Two sync systems on one folder can produce conflicting changes. Pick one per folder.
+Yes, as long as they don't sync the same notes. In Obsidian, open Settings > Sync > Excluded folders and exclude your JotDrop notes folder, and your attachments folder if it is somewhere else. Do this on every device: Obsidian Sync keeps excluded folders per device. JotDrop checks this before every sync and stops while Obsidian Sync still includes a JotDrop folder.
 
 **Are photos, voice memos and files encrypted as well?**
 Yes. Attachments synced with JotDrop Cloud are encrypted on your device like notes.
