@@ -63,6 +63,15 @@ def check(browser, url, provider):
     laptop.get_by_role("button", name="Continue with Google").wait_for()
     assert laptop.get_by_role("button", name="Continue with GitHub").is_visible()
     assert laptop.locator('[data-provider="google"] svg.provider-logo').is_visible() and laptop.locator('[data-provider="github"] svg.provider-logo').is_visible(), "Each button shows its logo"
+    # Email first, like on Android: Google and GitHub sit below the email form, when logging in and when making an account.
+    def email_first(field):
+        return laptop.locator(field).bounding_box()["y"] < laptop.get_by_role("button", name="Continue with Google").bounding_box()["y"]
+    assert email_first("#login-email"), "Log in: email comes before Google and GitHub"
+    laptop.get_by_role("button", name="Create an account").click()
+    assert email_first("#signup-email"), "Create an account: email comes before Google and GitHub"
+    laptop.screenshot(path=str(Path(tempfile.gettempdir()) / "jotdrop-email-first-signup.png"))
+    laptop.get_by_role("button", name="I already have an account").click()
+    laptop.screenshot(path=str(Path(tempfile.gettempdir()) / "jotdrop-email-first-login.png"))
     as_person("ann")
     laptop.get_by_role("button", name="Continue with Google").click()
     laptop.locator("#provider-title").filter(has_text="Create your JotDrop cloud").wait_for()

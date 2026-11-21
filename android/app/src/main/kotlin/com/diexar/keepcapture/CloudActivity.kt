@@ -90,7 +90,7 @@ class CloudActivity : ThemedComponentActivity() {
     companion object {
         /** From the welcome screen: the screen closes once sync runs. */
         const val EXTRA_WELCOME = "welcome"
-        /** From the welcome screen: "google" or "github", whose sign-in opens at once. */
+        /** From the welcome screen: "google" or "github", whose sign-in opens at once, or "email" for a new account. */
         const val EXTRA_PROVIDER = "provider"
         /** From a conflict copy's card: the file name of the note it belongs to, whose comparison opens at once. */
         const val EXTRA_RESOLVE = "resolve"

@@ -365,7 +365,7 @@ class NotesListActivity : ThemedComponentActivity() {
     }
 
 
-    // Welcome: the notes folder first; with Google or GitHub, the cloud sign-in follows straight away.
+    // Welcome: the notes folder first; with email, Google or GitHub, the cloud sign-in follows straight away.
     private var welcomeProvider: String? = null
     private val pickVaultLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
@@ -1530,7 +1530,8 @@ private fun NotesListScreen(
             }
         },
         floatingActionButton = {
-            Column(horizontalAlignment = Alignment.End) {
+            // No folder yet: nothing can be saved, and the welcome screen's own buttons stay clear.
+            if (state != NotesUiState.NoVault) Column(horizontalAlignment = Alignment.End) {
                 // Voicememo-knop bovenaan de stack. Tijdens opname switcht het
                 // icoon naar Stop + krijgt een rode container — vormverschil
                 // (mic ↔ stop) is de primaire feedback, niet alleen kleur.
@@ -3854,7 +3855,7 @@ private fun EmptyState(text: String, actionLabel: String, onAction: () -> Unit) 
     }
 }
 
-/** First start: a folder for the notes, and with Google or GitHub a free cloud in the same few taps (Eric: many Obsidian users are on GitHub). */
+/** First start: a folder for the notes, and a free cloud in the same few taps. Email first (Eric signs in with email himself), then Google or GitHub (many Obsidian users are on GitHub). */
 @Composable
 private fun WelcomeState(onProvider: (String) -> Unit, onLocal: () -> Unit) {
     Box(modifier = Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
@@ -3866,6 +3867,7 @@ private fun WelcomeState(onProvider: (String) -> Unit, onLocal: () -> Unit) {
             Text(stringResource(R.string.welcome_title), style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onBackground, textAlign = TextAlign.Center)
             Text(stringResource(R.string.welcome_text), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onBackground, textAlign = TextAlign.Center)
             Spacer(Modifier.height(4.dp))
+            Button(onClick = { onProvider("email") }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(stringResource(R.string.welcome_email)) }
             ProviderButton("google", stringResource(R.string.welcome_google), enabled = true, onClick = { onProvider("google") })
             ProviderButton("github", stringResource(R.string.welcome_github), enabled = true, onClick = { onProvider("github") })
             OutlinedButton(onClick = onLocal, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(stringResource(R.string.welcome_local)) }
