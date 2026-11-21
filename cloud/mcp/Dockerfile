@@ -2,11 +2,11 @@
 # The connection (with the key to the notes) lives in the /data volume; the HTTP token comes from JOTDROP_MCP_TOKEN.
 # Never publish the port to the internet: no "ports:" in compose, only the internal network.
 #
-#   docker build --build-arg JOTDROP_MCP_VERSION=0.1.0 -t jotdrop-mcp:0.1.0 .
+#   docker build --build-arg JOTDROP_MCP_VERSION=0.1.1 -t jotdrop-mcp:0.1.1 .
 #   docker compose run --rm jotdrop-mcp jotdrop-mcp connect --code <code from the app>
 FROM node:26-alpine
 
-ARG JOTDROP_MCP_VERSION=0.1.0
+ARG JOTDROP_MCP_VERSION=0.1.1
 RUN npm install --global --no-fund --no-audit "jotdrop-mcp@${JOTDROP_MCP_VERSION}" && npm cache clean --force
 
 ENV JOTDROP_MCP_HOME=/data NODE_ENV=production

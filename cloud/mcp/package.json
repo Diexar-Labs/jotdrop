@@ -1,6 +1,6 @@
 {
   "name": "jotdrop-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Let an AI agent (Claude, Cursor, Hermes, OpenClaw) search, read and write your JotDrop notes over MCP. Runs on your own computer; your notes stay end-to-end encrypted in JotDrop Cloud.",
   "type": "module",
   "bin": {
