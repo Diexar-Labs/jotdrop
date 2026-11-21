@@ -388,7 +388,7 @@ export default class JotDropPlugin extends Plugin {
 
   /** The file picker for "Attach file", attached to the page so mobile webviews also open it. */
   pickAttachments(onPick: (files: File[]) => void): void {
-    const input = document.body.createEl("input", { type: "file", attr: { multiple: "", hidden: "" } });
+    const input = activeDocument.body.createEl("input", { type: "file", attr: { multiple: "", hidden: "" } });
     input.addEventListener("cancel", () => input.remove());
     input.addEventListener("change", () => {
       const picked = Array.from(input.files ?? []);
@@ -415,7 +415,6 @@ export default class JotDropPlugin extends Plugin {
       if (c.file?.extension === "md" || !(await adapter.exists(c.vaultPath))) continue;
       if (adapter instanceof FileSystemAdapter) {
         // Electron's shell — desktop only; not part of Obsidian's plugin TS types.
-        // eslint-disable-next-line @typescript-eslint/no-require-imports -- desktop-only "open in system app", as in the lightbox
         const { shell } = require("electron") as { shell: { openPath(path: string): Promise<string> } };
         const error = await shell.openPath(adapter.getFullPath(c.vaultPath));
         if (error) new Notice(t("notice_error", error));
@@ -539,7 +538,7 @@ export default class JotDropPlugin extends Plugin {
 
   private pickImportFiles(folder: boolean, handle: (picked: File[]) => Promise<void>): void {
     // Attached to the page so mobile webviews also open the picker.
-    const input = document.body.createEl("input", { type: "file", attr: { multiple: "", hidden: "" } });
+    const input = activeDocument.body.createEl("input", { type: "file", attr: { multiple: "", hidden: "" } });
     if (folder) input.webkitdirectory = true;
     input.addEventListener("cancel", () => input.remove());
     input.addEventListener("change", () => {

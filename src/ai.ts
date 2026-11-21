@@ -26,6 +26,9 @@ export type AiConfig = {
 };
 export const AI_OFF: AiConfig = { provider: "", key: "", model: "", baseUrl: "", includeShared: false, synced: 0, syncedVault: "" };
 
+/** A stored text field; anything else (an object from a damaged settings file) counts as empty. */
+const storedText = (value: unknown): string => (typeof value === "string" || typeof value === "number" ? String(value) : "");
+
 const isProvider = (value: unknown): value is AiProviderId => (AI_PROVIDER_IDS as readonly unknown[]).includes(value);
 
 /** What is stored, cleaned: only known fields and a known service; an address only for an own address. */
@@ -38,9 +41,9 @@ export function aiSettings(stored: unknown): AiConfig {
   const synced = Number.isSafeInteger(value.synced) && (value.synced as number) > 0 && typeof value.syncedVault === "string" && value.syncedVault ? value.synced as number : 0;
   return {
     provider,
-    key: keeps ? String(value.key ?? "").trim() : "",
-    model: String(value.model ?? "").trim(),
-    baseUrl: provider === "custom" ? String(value.baseUrl ?? "").trim() : "",
+    key: keeps ? storedText(value.key).trim() : "",
+    model: storedText(value.model).trim(),
+    baseUrl: provider === "custom" ? storedText(value.baseUrl).trim() : "",
     includeShared: Boolean(value.includeShared),
     synced,
     syncedVault: synced ? value.syncedVault as string : "",
@@ -450,7 +453,7 @@ export async function photoJpeg(bytes: Uint8Array, mime: string): Promise<Uint8A
   let bitmap: ImageBitmap;
   try { bitmap = await createImageBitmap(new Blob([bytes as Uint8Array<ArrayBuffer>], { type: mime })); } catch { throw new Error("This photo cannot be read on this device."); }
   const scale = Math.min(1, 2048 / Math.max(bitmap.width, bitmap.height));
-  const canvas = document.createElement("canvas");
+  const canvas = createEl("canvas");
   canvas.width = Math.max(1, Math.round(bitmap.width * scale));
   canvas.height = Math.max(1, Math.round(bitmap.height * scale));
   const context = canvas.getContext("2d");

@@ -15,9 +15,9 @@ interface ConfirmOptions {
  */
 export class ConfirmModal extends Modal {
   private opts: ConfirmOptions;
-  private onConfirm: () => void;
+  private onConfirm: () => void | Promise<void>;
 
-  constructor(app: App, opts: ConfirmOptions, onConfirm: () => void) {
+  constructor(app: App, opts: ConfirmOptions, onConfirm: () => void | Promise<void>) {
     super(app);
     this.opts = opts;
     this.onConfirm = onConfirm;
@@ -41,7 +41,7 @@ export class ConfirmModal extends Modal {
     });
     confirm.addEventListener("click", () => {
       this.close();
-      this.onConfirm();
+      void this.onConfirm();
     });
     window.setTimeout(() => confirm.focus(), 0);
   }

@@ -2,12 +2,12 @@ import { App, ButtonComponent, Modal, Notice, Setting } from "obsidian";
 import type { CloudController } from "./cloud";
 import { ConfirmModal } from "./confirmModal";
 import { accountInfo, approveDevice, changePassword, deleteAccount, disableTotp, enableTotp, listApprovals, newRecoveryCode, rejectDevice, setupTotp } from "../cloud/shared/account.mjs";
-import { decryptEnvelope, encryptEnvelope } from "../cloud/shared/crypto.mjs";
+import { type Envelope, decryptEnvelope, encryptEnvelope } from "../cloud/shared/crypto.mjs";
 import { addressHash, mailAddress, mailKeyPair, senderHash } from "../cloud/shared/mail.mjs";
 import { APP_NAMES, type HoldDevice, type SyncPlan, choosing, readSyncPlan, startingChoice, waitUntil } from "./syncHold";
 
 type Device = HoldDevice;
-type Approval = { id: string; words: string[] };
+type Approval = { id: string; publicKey: string; words: string[] };
 type Plan = { name: string; plusUntil?: string; trialEnds?: string | null; deviceLimit: number; historyDays: number; subscribed?: boolean; supporter?: boolean; sync?: unknown };
 type Status = { usedBytes: number; quotaBytes: number; plan: Plan };
 
@@ -94,7 +94,7 @@ export function renderCloudAccount(app: App, el: HTMLElement, cloud: CloudContro
       return;
     }
     let plain: { address?: string; senders?: string[] } = {};
-    try { plain = await decryptEnvelope(vaultKey, JSON.parse(state.address || ""), "jotdrop:mail-address:v1"); }
+    try { plain = await decryptEnvelope<typeof plain>(vaultKey, JSON.parse(state.address || "") as Envelope, "jotdrop:mail-address:v1"); }
     catch { /* Registered elsewhere with another key: the controls below still work. */ }
     new Setting(mail).setName("Your secret address").setDesc(plain.address ?? "The address could not be read on this device.")
       .addButton((button) => button.setButtonText("Copy").onClick(async () => {

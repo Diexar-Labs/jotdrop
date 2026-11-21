@@ -19,7 +19,7 @@ function ask(app: App, title: string, confirmLabel: string): Promise<boolean> {
   return new Promise((resolve) => {
     let yes = false;
     const modal = new ConfirmModal(app, { title, message: "", confirmLabel, destructive: true }, () => { yes = true; });
-    const close = modal.onClose.bind(modal);
+    const close = modal.onClose.bind(modal) as () => void;
     // The confirm modal closes itself before it calls back, so the answer is read a tick later.
     modal.onClose = () => { close(); window.setTimeout(() => resolve(yes), 0); };
     modal.open();
@@ -84,7 +84,7 @@ export async function saveDrawingFile(plugin: JotDropPlugin, png: Uint8Array, no
 /** The lines inside an attachment, or null when the file is not a JotDrop drawing (or cannot be read). */
 export async function readDrawingAt(app: App, vaultPath: string): Promise<Drawing | null> {
   try {
-    return readDrawing(new Uint8Array(await app.vault.adapter.readBinary(vaultPath))) as Drawing | null;
+    return readDrawing(new Uint8Array(await app.vault.adapter.readBinary(vaultPath)));
   } catch {
     return null;
   }

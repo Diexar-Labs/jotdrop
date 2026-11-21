@@ -2,9 +2,9 @@ import { App, ItemView, Menu, Modal, Notice, Scope, TFile, WorkspaceLeaf, normal
 import { PAPER_DRAWER, drawerLabel, drawerName, inDrawer, isPaperDrawer } from "../cloud/shared/paper.mjs";
 import { cardPreview, tagOnly } from "../cloud/shared/card-preview.mjs";
 import { cardTable } from "../cloud/shared/format-dom.mjs";
-import { type CardTable, type PreviewRow, checklistPreviewRows, previewPlain, wrapTaskText } from "./metadata";
+import { type PreviewRow, checklistPreviewRows, previewPlain, wrapTaskText } from "./metadata";
 import type JotDropPlugin from "./main";
-import { QuickCaptureModal, createNoteInFolder } from "./capture";
+import { QuickCaptureModal } from "./capture";
 import { AttachmentPreviewHint, EditNoteModal } from "./edit";
 import { DrawingModal, saveDrawingFile } from "./drawing";
 import { drawingEmbedBeforeImage, drawingTitle } from "./excalidraw";
@@ -187,10 +187,10 @@ class LabelPickerModal extends Modal {
       cls: "jotdrop-edit-taginput",
       attr: { type: "text", placeholder: t("label_picker_new") },
     });
-    this.newLabelEl.addEventListener("keydown", async (e) => {
+    this.newLabelEl.addEventListener("keydown", (e) => {
       if (e.key === "Enter") {
         e.preventDefault();
-        await this.createNewLabel();
+        void this.createNewLabel();
       }
     });
     this.createBtn = newWrap.createEl("button", { text: t("label_create") });
@@ -733,7 +733,7 @@ export class JotDropView extends ItemView {
   private applyCardSelectionVisual(cardEl: HTMLElement, selected: boolean): void {
     cardEl.toggleClass("is-selected", selected);
     const marker = cardEl.querySelector(".jotdrop-card-select-marker");
-    if (marker instanceof HTMLElement) {
+    if (marker?.instanceOf(HTMLElement)) {
       marker.empty();
       setIcon(marker, selected ? "check-circle-2" : "circle");
     }
@@ -856,7 +856,7 @@ export class JotDropView extends ItemView {
 
   private pickPhoto(withOcr: boolean): void {
     // On a phone the system picker also offers the camera.
-    const input = document.createElement("input");
+    const input = createEl("input");
     input.type = "file";
     input.accept = "image/png,image/jpeg,image/webp,image/gif";
     input.addEventListener("change", () => {
@@ -1220,7 +1220,7 @@ export class JotDropView extends ItemView {
       this.dragInfo = null;
       return;
     }
-    const rect = target!.getBoundingClientRect();
+    const rect = target.getBoundingClientRect();
     const before = e.clientY - rect.top < rect.height / 2;
     void this.performDrop(path, before);
   }
@@ -1921,7 +1921,7 @@ export class JotDropView extends ItemView {
           i
             .setTitle(t("label_delete"))
             .setIcon("trash-2")
-            .onClick(() => { this.promptDeleteLabel(selectedName); }),
+            .onClick(() => { void this.promptDeleteLabel(selectedName); }),
         );
         menu.addSeparator();
       }
@@ -1985,7 +1985,7 @@ export class JotDropView extends ItemView {
         confirmLabel: t("label_delete"),
         destructive: true,
       },
-      () => { this.doDeleteLabel(name); },
+      () => { void this.doDeleteLabel(name); },
     ).open();
   }
 

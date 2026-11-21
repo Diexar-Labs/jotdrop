@@ -69,8 +69,9 @@ export const FILE_KIND_ICON: Record<FileKind, string> = {
  */
 export function cleanFileName(name: string): string {
   const base = name.split(/[\\/]/).pop() ?? "";
-  const cleaned = base
-    .replace(/[\u0000-\u001f<>:"|?*[\]#^]/g, "-")
+  // Control characters (below a space) are replaced one by one, like the characters in the regex.
+  const cleaned = Array.from(base, (c) => (c < " " ? "-" : c)).join("")
+    .replace(/[<>:"|?*[\]#^]/g, "-")
     .replace(/\s+/g, " ")
     .replace(/^[\s.]+/, "")
     .replace(/[\s.]+$/, "");
