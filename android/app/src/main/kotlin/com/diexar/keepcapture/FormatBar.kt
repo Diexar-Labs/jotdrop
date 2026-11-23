@@ -30,9 +30,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.FormatAlignLeft
 import androidx.compose.material.icons.automirrored.filled.FormatAlignRight
+import androidx.compose.material.icons.automirrored.filled.FormatIndentDecrease
+import androidx.compose.material.icons.automirrored.filled.FormatIndentIncrease
 import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FormatAlignCenter
 import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.BorderColor
@@ -178,9 +183,11 @@ private fun BarButton(icon: ImageVector, @StringRes label: Int, foreground: Colo
 
 /**
  * The formatting bar right above the keyboard (design part 5.3, 7.1): Bold · Italic · Heading · Bullets · Numbers ·
- * Checklist · Highlight · Table · Emoji · More (Strikethrough, Quote, Code, Line), and at the end the Markdown switch, always
- * in sight so someone who knows Markdown switches to the raw text in one tap (Eric, 16 Nov). Tapping a button keeps the
- * focus and the keyboard in the text.
+ * Checklist · Indent · Outdent · Highlight · Table · Emoji · More (Strikethrough, Quote, Code, Line), and at the end the
+ * Markdown switch, always in sight so someone who knows Markdown switches to the raw text in one tap (Eric, 16 Nov).
+ * Tapping a button keeps the focus and the keyboard in the text. Indent and Outdent move a list item one level in or
+ * out (design checklists-77, 6.3). Under More also Move up, Move down and Delete item ([onItem] with "up", "down" or
+ * "delete"; [canItem] says which of them the item with the caret can take now).
  */
 @Composable
 internal fun FormatBar(
@@ -189,6 +196,9 @@ internal fun FormatBar(
     foreground: Color,
     onFormat: (String) -> Unit,
     onChecklist: () -> Unit,
+    onIndent: (String) -> Unit,
+    onItem: (String) -> Unit,
+    canItem: (String) -> Boolean,
     onEmoji: (String) -> Unit,
     onMarkdown: () -> Unit,
 ) {
@@ -210,6 +220,8 @@ internal fun FormatBar(
             BarButton(Icons.AutoMirrored.Filled.FormatListBulleted, R.string.format_bullet, foreground, "bullet" in active) { onFormat("bullet") }
             BarButton(Icons.Filled.FormatListNumbered, R.string.format_numbered, foreground, "ordered" in active) { onFormat("ordered") }
             BarButton(Icons.Filled.CheckBox, R.string.action_checklist, foreground, "checklist" in active) { onChecklist() }
+            BarButton(Icons.AutoMirrored.Filled.FormatIndentIncrease, R.string.format_indent, foreground) { onIndent("in") }
+            BarButton(Icons.AutoMirrored.Filled.FormatIndentDecrease, R.string.format_outdent, foreground) { onIndent("out") }
             BarButton(Icons.Filled.BorderColor, R.string.format_highlight, foreground, "highlight" in active) { onFormat("highlight") }
             BarButton(Icons.Filled.GridOn, R.string.format_table, foreground) { onFormat("table") }
             BarButton(Icons.Filled.EmojiEmotions, R.string.format_emoji, foreground) { emojiOpen = !emojiOpen }
@@ -226,6 +238,24 @@ internal fun FormatBar(
                             text = { Text(stringResource(label) + if (command in active) "  ✓" else "") },
                             leadingIcon = { Icon(icon, contentDescription = null) },
                             onClick = { moreOpen = false; onFormat(command) },
+                        )
+                    }
+                    // The item with the caret, on any list line (design checklists-77, 6.4): up and down trade it with its
+                    // sibling, and the menu stays open so it can go on; Delete takes it away with what is under it.
+                    HorizontalDivider()
+                    for ((action, label, icon) in listOf(
+                        Triple("up", R.string.list_move_up, Icons.Filled.ArrowUpward),
+                        Triple("down", R.string.list_move_down, Icons.Filled.ArrowDownward),
+                        Triple("delete", R.string.list_delete_item, Icons.Filled.Close),
+                    )) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(label)) },
+                            leadingIcon = { Icon(icon, contentDescription = null) },
+                            enabled = canItem(action),
+                            onClick = {
+                                if (action == "delete") moreOpen = false
+                                onItem(action)
+                            },
                         )
                     }
                 }

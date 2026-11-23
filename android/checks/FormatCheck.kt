@@ -13,6 +13,9 @@ private fun code(value: String) = Base64.getEncoder().encodeToString(value.toByt
 // The inserted text as UTF-16 units: a random selection can cut an emoji in half, which UTF-8 cannot carry.
 private fun units(value: String) = value.map { it.code.toString(16) }.joinToString(".")
 private fun edit(value: FormatCore.Edit?) = value?.let { "${it.from}:${it.to}:${units(it.insert)}:${it.selFrom}:${it.selTo}" } ?: "null"
+// A move or a drop with the line the item is on; a delete or a menu change with its count.
+private fun placed(value: FormatCore.Moved?) = value?.let { "${edit(it.edit)}:${it.line}" } ?: "null"
+private fun counted(value: FormatCore.Counted?) = value?.let { "${edit(it.edit)}:${it.count}" } ?: "null"
 
 fun main(arguments: Array<String>) {
     val output = File(arguments[0]).readLines().filter { it.isNotBlank() }.map { line ->
@@ -43,6 +46,7 @@ fun main(arguments: Array<String>) {
                 edit(FormatCore.tableEdit(input, fields[2].toInt(), op))
             }
             "levels" -> FormatCore.listLevels(input).joinToString(",")
+            "items" -> FormatCore.listItems(input).joinToString(",")
             // Fields: selection from, to, the line, move (1 or 0).
             "tick" -> FormatCore.tickEdit(input, fields[4].toInt(), fields[5] == "1", fields[2].toInt(), fields[3].toInt())
                 ?.let { "${edit(it.edit)}:${it.line}" } ?: "null"
@@ -50,6 +54,21 @@ fun main(arguments: Array<String>) {
             "indent" -> edit(FormatCore.indentEdit(input, fields[2].toInt(), fields[3].toInt(), fields[4]))
             // Fields: selection from, to, move (1 or 0).
             "checklist" -> edit(FormatCore.checklistEdit(input, fields[2].toInt(), fields[3].toInt(), fields[4] == "1"))
+            // Checklists in an open note (design checklists-77). Fields: selection from, to, the line, "up" or "down".
+            "move" -> placed(FormatCore.moveItemEdit(input, fields[4].toInt(), fields[5], fields[2].toInt(), fields[3].toInt()))
+            // Fields: the line.
+            "slots" -> FormatCore.dropSlots(input, fields[2].toInt()).joinToString(",") { "${it.before}:${it.minLevel}:${it.maxLevel}" }
+            // Fields: selection from, to, the line, the line it lands in front of, the level.
+            "drop" -> placed(FormatCore.dropItemEdit(input, fields[4].toInt(), fields[5].toInt(), fields[6].toInt(), fields[2].toInt(), fields[3].toInt()))
+            // Fields: selection from, to, the line.
+            "delete" -> counted(FormatCore.deleteItemEdit(input, fields[4].toInt(), fields[2].toInt(), fields[3].toInt()))
+            // Fields: the line.
+            "span" -> FormatCore.itemSpan(input, fields[2].toInt())?.let { "${it.line}:${it.end}:${it.count}:${it.place}:${it.of}" } ?: "null"
+            // Fields: selection from, to.
+            "uncheckAll" -> counted(FormatCore.uncheckAllEdit(input, fields[2].toInt(), fields[3].toInt()))
+            "deleteChecked" -> counted(FormatCore.deleteCheckedEdit(input, fields[2].toInt(), fields[3].toInt()))
+            // Fields: selection from, to, the pasted text (base64).
+            "paste" -> edit(FormatCore.pasteLinesEdit(input, fields[2].toInt(), fields[3].toInt(), text(fields.getOrElse(4) { "" })))
             else -> error("Unknown case ${fields[0]}")
         }
     }

@@ -122,6 +122,30 @@
     <string name="format_markdown">Markdown</string>
     <string name="format_emoji_more">Mehr Emoji: über die Emoji-Taste deiner Tastatur.</string>
     <string name="format_table">Tabelle</string>
+    <string name="format_indent">Einrücken</string>
+    <string name="format_outdent">Ausrücken</string>
+    <string name="notice_undone">Rückgängig gemacht</string>
+    <string name="notice_undo_failed">Rückgängig machen nicht möglich. Die Notiz wurde geändert.</string>
+    <!-- Checklists in an open note (issue 77): the grips, the menus and what the strip says. -->
+    <string name="list_move_up">Eintrag nach oben</string>
+    <string name="list_move_down">Eintrag nach unten</string>
+    <string name="list_delete_item">Eintrag löschen</string>
+    <string name="list_delete_item_named">Eintrag löschen: %1$s</string>
+    <string name="list_item_place">%1$d von %2$d</string>
+    <string name="list_uncheck_all">Alle Häkchen entfernen</string>
+    <string name="list_delete_checked">Abgehakte Einträge löschen</string>
+    <string name="notice_item_moved">Eintrag verschoben</string>
+    <string name="notice_item_deleted">Eintrag gelöscht</string>
+    <plurals name="notice_item_deleted_subs">
+        <item quantity="one">Eintrag und %d Untereintrag gelöscht</item>
+        <item quantity="other">Eintrag und %d Untereinträge gelöscht</item>
+    </plurals>
+    <string name="notice_all_unchecked">Alle Häkchen entfernt</string>
+    <plurals name="notice_checked_deleted">
+        <item quantity="one">%d abgehakter Eintrag gelöscht</item>
+        <item quantity="other">%d abgehakte Einträge gelöscht</item>
+    </plurals>
+    <!-- End of the checklist texts. -->
     <string name="table_cell_header">Kopfzeile, Spalte %1$d</string>
     <string name="table_cell">Zeile %1$d, Spalte %2$d</string>
     <string name="table_add_row">Zeile hinzufügen</string>

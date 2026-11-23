@@ -769,6 +769,18 @@ export function listLevels(text) {
 }
 
 /**
+ * Per line the line of the item it belongs to: its own line for a task, bullet or numbered line, the line of its item
+ * for more text under an item, -1 for any other line. An editor that draws lists in levels places more text under its
+ * item with this (design checklists-77, 6.3).
+ * @param {string} text
+ * @returns {number[]}
+ */
+export function listItems(text) {
+  const structure = listStructure(text);
+  return structure.map((_, index) => itemOf(structure, index));
+}
+
+/**
  * Ticks or unticks the task on line `line` (ticking writes a small `x`). With `move` (the setting "Move checked items
  * to the bottom") the task moves along with the lines under it, never past a blank or text line (design part 6):
  * ticked, it goes right under its last open sibling below it; unticked, right above its first ticked sibling above
@@ -993,4 +1005,384 @@ export function checklistEdit(text, selFrom, selTo = selFrom, move = false) {
   if (out === text) return null;
   if (from === to) return replacement(text, out, map(from, true));
   return replacement(text, out, map(from), map(to, true));
+}
+
+// --- Checklists in an open note (design checklists-77, part 7) ----------------------------------------------------
+// Moving, dragging and deleting an item, the note's menu and pasting several lines. Whole lines move or go; a line
+// that moves changes only at its start (its indent, a number).
+
+/** A line of an item with another indent: `own`, the indent of the item, becomes `indent`; what it has more stays. */
+function reindented(line, own, column, indent) {
+  return line.startsWith(own) ? indent + line.slice(own.length)
+    : indent + ' '.repeat(Math.max(0, indentColumns(line) - column)) + line.slice(indentOf(line).length);
+}
+
+/**
+ * The lines in a new order: `order` holds for every new line the old one, and an old line it leaves out is gone. The
+ * last line has no `\n` after it, so the line that ends the text now takes over its ending and the old last line, when
+ * it stays, gets the ending of that line. A CRLF text stays CRLF.
+ */
+function arranged(lines, changed, order) {
+  const next = order.map((index) => changed[index]);
+  const last = lines.length - 1, end = next.length - 1;
+  if (end >= 0 && order[end] !== last) {
+    const moved = order.indexOf(last), middleCr = crOf(lines[order[end]]);
+    if (moved >= 0) next[moved] = withoutCr(next[moved]) + middleCr;
+    next[end] = withoutCr(next[end]) + crOf(lines[last]);
+  }
+  return next;
+}
+
+/**
+ * The one replacement that turns the text into the lines `next` (from `arranged`). A position stays in its own words:
+ * it goes along with its line, and with a new indent or number at the start of that line. From a line that is gone it
+ * goes to the end of the nearest line above that stays; with none above, to the end of the line that is first now.
+ */
+function linesEdit(text, next, order, selFrom, selTo) {
+  const table = lineTable(text), place = table.lines.map(() => -1), starts = [];
+  order.forEach((old, index) => { place[old] = index; });
+  let offset = 0;
+  for (const line of next) { starts.push(offset); offset += line.length + 1; }
+  const map = (pos) => {
+    pos = Math.max(0, Math.min(text.length, pos));
+    let index = table.at(pos);
+    if (place[index] < 0) {
+      while (index >= 0 && place[index] < 0) index--;
+      const stays = index < 0 ? 0 : place[index];
+      return next.length ? starts[stays] + withoutCr(next[stays]).length : 0;
+    }
+    const to = place[index], was = withoutCr(table.lines[index]), now = withoutCr(next[to]), column = pos - table.starts[index];
+    if (column > was.length) return starts[to] + next[to].length;
+    let same = 0;
+    while (same < Math.min(was.length, now.length) && was[was.length - 1 - same] === now[now.length - 1 - same]) same++;
+    return starts[to] + (column >= was.length - same ? column + now.length - was.length : Math.min(column, now.length - same));
+  };
+  const a = map(selFrom), b = map(selTo);
+  return replacement(text, next.join('\n'), Math.min(a, b), Math.max(a, b));
+}
+
+/**
+ * Whether the lists still are what they were after lines moved: every line has its old level and its old main item.
+ * For an item that changed level on purpose (`moved`: its lines `from` to `to`) the levels are `shift` further and the
+ * main item of its first line is `parent`.
+ */
+function sameLists(structure, after, order, moved) {
+  return order.every((old, index) => {
+    const was = structure[old], now = after[index];
+    if (!was || !now) return !was && !now;
+    const inside = moved !== undefined && old >= moved.from && old <= moved.to;
+    const level = inside && was.level >= 0 ? was.level + moved.shift : was.level;
+    const parent = inside && old === moved.from ? moved.parent : was.parent;
+    return now.level === level && (parent < 0 ? now.parent < 0 : now.parent >= 0 && order[now.parent] === parent);
+  });
+}
+
+/**
+ * Moves the item `line` belongs to (a list line, or a line of more text under one) one place `'up'` or `'down'`: it
+ * trades places with the sibling right above or under it, each with the lines under it. Works on tasks, bullets and
+ * numbered lines; two numbered items trade their numbers too, so the list still counts on. Siblings on different
+ * columns (2 spaces next to 4) trade their indents. One replacement plus `line`, the line the item is on now; the
+ * selection stays in its own text. Null for the first or last of its siblings, outside a list, and when more text of
+ * the main item stands between the two.
+ * @param {string} text
+ * @param {number} line
+ * @param {'up' | 'down'} direction
+ * @param {number} [selFrom]
+ * @param {number} [selTo]
+ */
+export function moveItemEdit(text, line, direction, selFrom = 0, selTo = selFrom) {
+  text = String(text);
+  const lines = text.split('\n'), structure = listStructure(text);
+  line = itemOf(structure, line);
+  if (line < 0) return null;
+  const item = structure[line], end = itemEnd(structure, line);
+  let other;
+  if (direction === 'up') {
+    other = previousSibling(structure, line);
+    if (other < 0 || itemEnd(structure, other) + 1 !== line) return null;
+  } else {
+    other = end + 1;
+    const under = structure[other];
+    if (!under || under.level < 0 || under.parent !== item.parent) return null;
+  }
+  const [top, low] = direction === 'up' ? [other, line] : [line, other];
+  const topEnd = low - 1, lowEnd = itemEnd(structure, low);
+  const changed = lines.slice();
+  if (structure[top].column !== structure[low].column) {
+    const topIndent = indentOf(lines[top]), lowIndent = indentOf(lines[low]);
+    for (let index = top; index <= topEnd; index++) changed[index] = reindented(lines[index], topIndent, structure[top].column, lowIndent);
+    for (let index = low; index <= lowEnd; index++) changed[index] = reindented(lines[index], lowIndent, structure[low].column, topIndent);
+  }
+  if (linePrefix(lines[top]).kind === 'ordered' && linePrefix(lines[low]).kind === 'ordered') {
+    const digits = (index) => /\d+/.exec(lines[index])[0];
+    const numbered = (index, number) => changed[index].replace(/\d+/, number);
+    [changed[top], changed[low]] = [numbered(top, digits(low)), numbered(low, digits(top))];
+  }
+  const order = lines.map((_, index) => (index < top || index > lowEnd ? index : index <= top + lowEnd - low ? index + low - top : index - (lowEnd - low + 1)));
+  const next = arranged(lines, changed, order);
+  if (!sameLists(structure, listStructure(next.join('\n')), order)) return null;
+  const edit = linesEdit(text, next, order, selFrom, selTo);
+  return edit && { ...edit, line: direction === 'up' ? top : top + lowEnd - low + 1 };
+}
+
+/**
+ * What dropSlots and dropItemEdit share: the item on `line` and its last line, the text without the item (`rest`, with
+ * its lists in `without`) and every place the item may land, each with `gap`: its line in the text without the item.
+ */
+function dropPlan(text, line) {
+  const lines = text.split('\n'), structure = listStructure(text), item = structure[line];
+  if (!item || item.level < 0) return null;
+  const end = itemEnd(structure, line), size = end - line + 1;
+  // A table cuts the note in pieces; an item stays in its own piece.
+  let first = 0, last = lines.length;
+  for (const run of blocks(text)) {
+    if (run.kind !== 'table') continue;
+    if (run.toLine < line) first = run.toLine + 1;
+    else if (run.fromLine > end) { last = run.fromLine; break; }
+  }
+  const rest = [...lines.slice(0, line), ...lines.slice(end + 1)], without = listStructure(rest.join('\n'));
+  const slots = [];
+  for (let gap = 0; gap <= rest.length; gap++) {
+    const before = gap <= line ? gap : gap + size;
+    if (before < first || before > last) continue;
+    const above = gap > 0 ? without[gap - 1] : null, below = gap < rest.length ? without[gap] : null;
+    const upper = above ? (above.level >= 0 ? gap - 1 : above.parent) : -1;
+    let minLevel = below && below.level >= 0 ? below.level : 0, maxLevel = upper >= 0 ? without[upper].level + 1 : 0;
+    // Before or after a list line, never in the middle of the text of an item.
+    const open = below ? below.level >= 0 : Boolean(above);
+    if (gap === line) {
+      // Its own place always counts, if only to let go there.
+      if (!open || minLevel > item.level || maxLevel < item.level) minLevel = maxLevel = item.level;
+    } else if (!open) continue;
+    slots.push({ before, minLevel, maxLevel, gap });
+  }
+  return { lines, structure, item, end, rest, without, slots };
+}
+
+/**
+ * The places where the list item on line `line` may land when it is dragged, with the lines under it: for every place
+ * { before, minLevel, maxLevel }. It lands in front of line `before` (the number of lines: at the very end). The level
+ * is at most one deeper than the item above that place and at least as deep as the list line under it, so no item gets
+ * another main item by it. A place is before or after a list line, also in another list of the note; not in the middle
+ * of plain text, in a code block, or past a table. Its own place is in the list too (`before` is `line`): there it can
+ * only change level. An empty list when `line` is no list line.
+ * @param {string} text
+ * @param {number} line
+ * @returns {{ before: number, minLevel: number, maxLevel: number }[]}
+ */
+export function dropSlots(text, line) {
+  const plan = dropPlan(String(text), line);
+  return plan ? plan.slots.map(({ before, minLevel, maxLevel }) => ({ before, minLevel, maxLevel })) : [];
+}
+
+/**
+ * Drops the list item on line `line`, with the lines under it, in front of line `before` on `level`: one of the places
+ * of dropSlots. Its indent becomes that of its new siblings, or one tab more than its new main item when it is the
+ * first under it; the lines under it keep their own depth. Nothing is renumbered. One replacement plus `line`, the line
+ * the item is on now; the selection stays in its own text. Null when the place is none of dropSlots, when nothing would
+ * change (its own place and level), and when with mixed indents a line would end up on another level than meant.
+ * @param {string} text
+ * @param {number} line
+ * @param {number} before
+ * @param {number} level
+ * @param {number} [selFrom]
+ * @param {number} [selTo]
+ */
+export function dropItemEdit(text, line, before, level, selFrom = 0, selTo = selFrom) {
+  text = String(text);
+  const plan = dropPlan(text, line), slot = plan?.slots.find((place) => place.before === before);
+  if (!slot || !(level >= slot.minLevel && level <= slot.maxLevel)) return null;
+  const { lines, structure, item, end, rest, without } = plan, gap = slot.gap;
+  if (gap === line && level === item.level) return null;
+  const below = gap < rest.length ? without[gap] : null, above = gap > 0 ? without[gap - 1] : null;
+  let indent, parent;
+  if (below && below.level === level) {
+    indent = indentOf(rest[gap]);
+    parent = below.parent;
+  } else {
+    let upper = above ? (above.level >= 0 ? gap - 1 : above.parent) : -1;
+    if (upper >= 0 && without[upper].level + 1 === level) {
+      indent = `${indentOf(rest[upper])}\t`;
+      parent = upper;
+    } else {
+      while (upper >= 0 && without[upper].level > level) upper = without[upper].parent;
+      if (upper < 0) return null;
+      indent = indentOf(rest[upper]);
+      parent = without[upper].parent;
+    }
+  }
+  const size = end - line + 1, own = indentOf(lines[line]), changed = lines.slice();
+  for (let index = line; index <= end; index++) changed[index] = reindented(lines[index], own, item.column, indent);
+  // The line each line of the text without the item was in the whole text.
+  const old = (index) => (index < line ? index : index + size);
+  const order = [];
+  for (let index = 0; index <= rest.length; index++) {
+    if (index === gap) for (let inner = line; inner <= end; inner++) order.push(inner);
+    if (index < rest.length) order.push(old(index));
+  }
+  const next = arranged(lines, changed, order);
+  const moved = { from: line, to: end, shift: level - item.level, parent: parent < 0 ? -1 : old(parent) };
+  if (!sameLists(structure, listStructure(next.join('\n')), order, moved)) return null;
+  const edit = linesEdit(text, next, order, selFrom, selTo);
+  return edit && { ...edit, line: gap };
+}
+
+/** The text without the lines marked in `gone`, as one replacement (see linesEdit for the selection). */
+function removeLines(text, lines, gone, selFrom, selTo) {
+  const order = [];
+  lines.forEach((_, index) => { if (!gone[index]) order.push(index); });
+  return linesEdit(text, arranged(lines, lines, order), order, selFrom, selTo);
+}
+
+/**
+ * Deletes the item `line` belongs to (a list line, or a line of more text under one) with everything under it. One
+ * replacement plus `count`: the number of list lines that went along (its sub-items, at any depth). A selection in the
+ * item goes to the end of the line above it, where Backspace would leave it too (for the first line of the text: to
+ * the end of the line that comes in its place); elsewhere it stays in its own text. Null outside a list.
+ * @param {string} text
+ * @param {number} line
+ * @param {number} [selFrom]
+ * @param {number} [selTo]
+ */
+export function deleteItemEdit(text, line, selFrom = 0, selTo = selFrom) {
+  text = String(text);
+  const lines = text.split('\n'), structure = listStructure(text);
+  line = itemOf(structure, line);
+  if (line < 0) return null;
+  const end = itemEnd(structure, line), gone = [];
+  let count = 0;
+  for (let index = line; index <= end; index++) {
+    gone[index] = true;
+    if (index > line && structure[index].level >= 0) count++;
+  }
+  return { ...removeLines(text, lines, gone, selFrom, selTo), count };
+}
+
+/**
+ * The item `line` belongs to (a list line, or a line of more text under one), for an editor that shows it while it is
+ * dragged or tells a screen reader where it is: `line`, its own line; `end`, the last line under it; `count`, the list
+ * lines under it (its sub-items, at any depth, as deleteItemEdit counts them); `place` and `of`, the how-manieth it is
+ * among the items with the same main item in its list (1 and up), and how many those are. Null outside a list.
+ * @param {string} text
+ * @param {number} line
+ * @returns {{ line: number, end: number, count: number, place: number, of: number } | null}
+ */
+export function itemSpan(text, line) {
+  const structure = listStructure(String(text)), own = itemOf(structure, line);
+  if (own < 0) return null;
+  const item = structure[own], end = itemEnd(structure, own);
+  let count = 0, place = 0, of = 0;
+  for (let index = own + 1; index <= end; index++) if (structure[index].level >= 0) count++;
+  structure.forEach((other, index) => {
+    if (!other || other.level < 0 || other.series !== item.series || other.parent !== item.parent) return;
+    of++;
+    if (index <= own) place++;
+  });
+  return { line: own, end, count, place, of };
+}
+
+/**
+ * "Uncheck all items": every ticked task gets an empty box. Nothing moves. One replacement plus `count`, the number
+ * of tasks it unticked; null when no task is ticked. Tasks in a code block or quote are no tasks.
+ * @param {string} text
+ * @param {number} [selFrom]
+ * @param {number} [selTo]
+ */
+export function uncheckAllEdit(text, selFrom = 0, selTo = selFrom) {
+  text = String(text);
+  const table = lineTable(text), kinds = lineKinds(text), edits = [];
+  table.lines.forEach((line, index) => {
+    const prefix = kinds[index] === 'text' ? linePrefix(line) : null;
+    if (prefix?.kind !== 'task' || !prefix.checked) return;
+    const box = table.starts[index] + line.indexOf('[', prefix.markFrom + 1) + 1;
+    edits.push({ from: box, to: box + 1, insert: ' ' });
+  });
+  if (!edits.length) return null;
+  const from = Math.max(0, Math.min(selFrom, selTo, text.length)), to = Math.min(text.length, Math.max(selFrom, selTo));
+  return { ...replacement(text, applyEdits(text, edits).text, from, to), count: edits.length };
+}
+
+/**
+ * "Delete checked items": every ticked task goes, with everything under it. A ticked task with an open task somewhere
+ * under it stays, so no open task goes unseen; the ticked tasks under it are judged on their own. One replacement plus
+ * `count`, the number of ticked tasks that went; null when none goes. The selection as in deleteItemEdit.
+ * @param {string} text
+ * @param {number} [selFrom]
+ * @param {number} [selTo]
+ */
+export function deleteCheckedEdit(text, selFrom = 0, selTo = selFrom) {
+  text = String(text);
+  const lines = text.split('\n'), structure = listStructure(text), gone = [];
+  /** The task on a line of a list, or null for a bullet, a numbered line and more text. */
+  const task = (index) => {
+    const prefix = structure[index].level >= 0 ? linePrefix(lines[index]) : null;
+    return prefix?.kind === 'task' ? prefix : null;
+  };
+  let count = 0;
+  for (let index = 0; index < lines.length; index++) {
+    if (!structure[index] || !task(index)?.checked) continue;
+    const end = itemEnd(structure, index);
+    let open = false;
+    for (let under = index + 1; under <= end && !open; under++) open = task(under)?.checked === false;
+    if (open) continue;
+    for (let under = index; under <= end; under++) {
+      gone[under] = true;
+      if (task(under)) count++;
+    }
+    index = end;
+  }
+  if (!count) return null;
+  return { ...removeLines(text, lines, gone, selFrom, selTo), count };
+}
+
+const LINE_BREAK = /\r\n?|\n/;
+// How a pasted line starts: its indent, then a bullet or number of its own, with the box when it is a task.
+const PASTED_SIGN = /^[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+(?:\[([ xX])\](?:[ \t]+|$))?)?/;
+
+/**
+ * Pasting text of more than one line in a list item (`pasted` in place of `from` to `to`): every pasted line becomes
+ * an item of its own, as when it was typed with Enter between the lines. The first line lands at the caret; each next
+ * one gets the indent and sign of the item (the same bullet, the next number, an empty box in a task). A pasted line
+ * loses its own indent, bullet or number; one that is a task keeps its tick, the first one only when it lands at the
+ * start of the item. Blank lines are left out. What stood after the caret ends up behind the last pasted line, with the
+ * caret in front of it. Null (an ordinary paste) when `pasted` has no line break or only blank lines, outside a list
+ * item, in front of the item's own text, or when the selection runs past the end of the line.
+ * @param {string} text
+ * @param {number} from
+ * @param {number} to
+ * @param {string} pasted
+ */
+export function pasteLinesEdit(text, from, to, pasted) {
+  text = String(text);
+  pasted = String(pasted);
+  if (!/[\r\n]/.test(pasted)) return null;
+  const a = Math.max(0, Math.min(from, to, text.length)), b = Math.min(text.length, Math.max(from, to));
+  const lineStart = a === 0 ? 0 : text.lastIndexOf('\n', a - 1) + 1;
+  const next = text.indexOf('\n', a), lineEnd = next < 0 ? text.length : next;
+  const line = text.slice(lineStart, lineEnd), cr = crOf(line);
+  if (b > lineEnd - cr.length) return null;
+  const list = LIST_ITEM.exec(withoutCr(line));
+  if (!list || a < lineStart + list[0].length || !LIST_KINDS.has(linePrefix(line).kind)) return null;
+  if (lineKinds(text)[lineTable(text).at(lineStart)] !== 'text') return null;
+  const rows = [];
+  for (const row of pasted.split(LINE_BREAK)) {
+    const sign = PASTED_SIGN.exec(row), words = row.slice(sign[0].length);
+    if (words.trim()) rows.push({ box: sign[1], words });
+  }
+  if (!rows.length) return null;
+  const edits = [];
+  let insert = rows[0].words;
+  if (a === lineStart + list[0].length && rows[0].box !== undefined) {
+    // At the start of the item the first line brings its tick: into the item's box, or with a box of its own.
+    const box = lineStart + list[0].lastIndexOf('[') + 1;
+    if (list[5] !== undefined) edits.push({ from: box, to: box + 1, insert: rows[0].box });
+    else insert = `[${rows[0].box}] ${insert}`;
+  }
+  rows.slice(1).forEach((row, index) => {
+    const sign = list[2] ?? `${Number(list[3]) + index + 1}${list[4]}`;
+    const box = row.box !== undefined ? `[${row.box}] ` : list[5] !== undefined ? '[ ] ' : '';
+    insert += `${cr}\n${list[1]}${sign} ${box}${row.words}`;
+  });
+  edits.push({ from: a, to: b, insert });
+  return replacement(text, applyEdits(text, edits).text, a + insert.length);
 }

@@ -67,6 +67,7 @@ import androidx.compose.material3.LocalTextStyle
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.text.style.ResolvedTextDirection
 import androidx.compose.foundation.text.ClickableText
@@ -77,6 +78,26 @@ import androidx.compose.material.icons.Icons
 import coil.compose.AsyncImage
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isMetaPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalAccessibilityManager
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
+import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.VerticalAlignBottom
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -269,6 +290,7 @@ private fun EditorScreen(
     onClose: () -> Unit,
 ) {
     val context = LocalContext.current
+    val view = LocalView.current
     val scope = rememberCoroutineScope()
     val dark = isSystemInDarkTheme()
 
@@ -310,6 +332,8 @@ private fun EditorScreen(
     var tableFocus by remember { mutableStateOf<TableFocus?>(null) }
     var confirmTableDelete by remember { mutableStateOf<Int?>(null) }
     var layoutKey by remember { mutableIntStateOf(0) }
+    // What the strip above the formatting bar says after a list action, with Undo (design checklists-77, 6.5).
+    var notice by remember { mutableStateOf<EditorNotice?>(null) }
     // A focus request for a grid that never came (the note went raw) must not catch a later grid.
     LaunchedEffect(tableFocus) { if (tableFocus != null) { delay(1500); tableFocus = null } }
     var originalBody by rememberSaveable { mutableStateOf("") }
@@ -538,30 +562,40 @@ private fun EditorScreen(
         )
     }
 
+    // The Checklist button, through the shared core as in the web app (design checklists-77, 6.4): a task at any
+    // level ticks, a bullet or a numbered line becomes a task, any other line gets a box.
     fun toggleOrInsertChecklist() {
         val current = bodyText
-        val text = current.text
-        val caret = current.selection.start.coerceIn(0, text.length)
-        // Begin van de regel waar de cursor staat.
-        val lineStart = text.lastIndexOf('\n', (caret - 1).coerceAtLeast(0)).let { if (it < 0) 0 else it + 1 }
-        val lineEnd = text.indexOf('\n', caret).let { if (it < 0) text.length else it }
-        val line = text.substring(lineStart, lineEnd)
-
-        val (newLine, caretDelta) = when {
-            // - [ ]  → - [x]
-            line.startsWith("- [ ] ") -> "- [x] " + line.substring(6) to 0
-            line.startsWith("- [ ]") -> "- [x]" + line.substring(5) to 0
-            // - [x]/- [X] → - [ ]
-            line.startsWith("- [x] ") || line.startsWith("- [X] ") -> "- [ ] " + line.substring(6) to 0
-            line.startsWith("- [x]") || line.startsWith("- [X]") -> "- [ ]" + line.substring(5) to 0
-            // Geen checkbox op deze regel — voeg er één in aan begin van regel.
-            else -> "- [ ] " + line to "- [ ] ".length
-        }
-
-        val newText = text.substring(0, lineStart) + newLine + text.substring(lineEnd)
-        val newCaret = (caret + caretDelta).coerceIn(0, newText.length)
-        bodyText = TextFieldValue(text = newText, selection = TextRange(newCaret))
+        val edit = FormatCore.checklistEdit(current.text, current.selection.min, current.selection.max, Storage.getMoveChecked(context)) ?: return
+        val next = TextFieldValue(current.text.replaceRange(edit.from, edit.to, edit.insert), TextRange(edit.selFrom, edit.selTo))
+        // The keyboard may still send a change on the text from before the button: it is replayed on ours.
+        staleBody.settle(current.text, next.text)
+        bodyText = next
         bodyEditing = true
+    }
+
+    /**
+     * One level in or out for the list items the selection touches (design checklists-77, 6.3): the Indent and Outdent
+     * buttons, and Tab and Shift+Tab from a keyboard. False when the selection is on no list line: then Tab stays the
+     * field's own key. On a list line it is ours, also when the item cannot move, as in the web app.
+     */
+    fun indentBody(direction: String): Boolean {
+        val current = bodyText
+        val from = current.selection.min
+        val to = current.selection.max
+        val edit = FormatCore.indentEdit(current.text, from, to, direction)
+        if (edit == null) {
+            val first = current.text.substring(0, from).count { it == '\n' }
+            val last = first + current.text.substring(from, to).count { it == '\n' }
+            val levels = FormatCore.listLevels(current.text)
+            return (first..last).any { levels.getOrElse(it) { -1 } >= 0 } ||
+                FormatCore.indentEdit(current.text, from, to, if (direction == "in") "out" else "in") != null
+        }
+        val next = TextFieldValue(current.text.replaceRange(edit.from, edit.to, edit.insert), TextRange(edit.selFrom, edit.selTo))
+        staleBody.settle(current.text, next.text)
+        bodyText = next
+        bodyEditing = true
+        return true
     }
 
     /** A formatting button (shared core, format.mjs and FormatCore.kt): one small replacement in the body. */
@@ -586,6 +620,119 @@ private fun EditorScreen(
         val edit = FormatCore.tableEdit(current.text, run.fromLine, op) ?: return
         bodyText = TextFieldValue(current.text.replaceRange(edit.from, edit.to, edit.insert), TextRange(edit.selFrom))
         bodyEditing = true
+    }
+
+    /**
+     * Shows [message] with Undo after a list action that just changed the body (an item deleted or moved, the note's
+     * menu). [before] is the body from before the action. A new action takes the place of the one before it.
+     */
+    fun noticeWithUndo(message: String, before: TextFieldValue) {
+        notice = EditorNotice(message, before, bodyText.text)
+    }
+
+    // Undo in the strip: the body from before the action comes back. Typed on since? Then the action is taken back in
+    // the text as it is now, line by line as the sync merges, or not at all: nothing typed is ever written over.
+    fun undoNotice() {
+        val taken = notice ?: return
+        val before = taken.before ?: return
+        val current = bodyText
+        val undone = undoListAction(before.text, before.selection.min, before.selection.max, taken.after, current.text, current.selection.min, current.selection.max)
+        if (undone == null) {
+            notice = EditorNotice(context.getString(R.string.notice_undo_failed))
+            return
+        }
+        staleBody.settle(current.text, undone.text)
+        // A note in its read view stays there: the action that is taken back was no typing either.
+        bodyText = TextFieldValue(undone.text, TextRange(undone.selFrom, undone.selTo))
+        notice = EditorNotice(context.getString(R.string.notice_undone))
+    }
+
+    // A list action from a grip, the More menu, the note's menu, a screen reader or a keyboard (design checklists-77,
+    // part 6): one replacement from the shared core. It is no typing: the keyboard stays as it was and a note in its
+    // read view stays there.
+    fun replaceBody(current: TextFieldValue, edit: FormatCore.Edit, selection: TextRange = TextRange(edit.selFrom, edit.selTo)) {
+        val next = TextFieldValue(current.text.replaceRange(edit.from, edit.to, edit.insert), selection)
+        // The keyboard may still send a change on the text from before the action: it is replayed on ours.
+        staleBody.settle(current.text, next.text)
+        bodyText = next
+    }
+
+    /**
+     * An item let go after a drag by its handle (6.1): it lands in front of line [before], on [level], with what is
+     * under it. The strip says so, with Undo: a drag starts at a touch, so one by accident must be easy to take back.
+     * False when nothing changed.
+     */
+    fun dropItem(line: Int, before: Int, level: Int): Boolean {
+        val current = bodyText
+        val moved = FormatCore.dropItemEdit(current.text, line, before, level, current.selection.min, current.selection.max) ?: return false
+        replaceBody(current, moved.edit)
+        noticeWithUndo(context.getString(R.string.notice_item_moved), current)
+        return true
+    }
+
+    /**
+     * Deletes the item [line] belongs to, with what is under it (6.2); without [line] it is the item with the caret.
+     * No question: the strip says what went, with Undo. False when the line is in no list.
+     */
+    fun deleteItem(line: Int? = null): Boolean {
+        val current = bodyText
+        val at = line ?: lineOf(current.text, current.selection.min)
+        val deleted = FormatCore.deleteItemEdit(current.text, at, current.selection.min, current.selection.max) ?: return false
+        replaceBody(current, deleted.edit)
+        noticeWithUndo(
+            if (deleted.count == 0) context.getString(R.string.notice_item_deleted)
+            else context.resources.getQuantityString(R.plurals.notice_item_deleted_subs, deleted.count, deleted.count),
+            current,
+        )
+        return true
+    }
+
+    /**
+     * Move up or Move down (6.4, 6.7): the item trades places with the sibling above or under it. Without [line] it is
+     * the item with the caret; with [line] a screen reader asked, and hears the new place. False when the line is in
+     * no list; true also when the item cannot go further, so a key pressed for it never types.
+     */
+    fun moveItem(direction: String, line: Int? = null): Boolean {
+        val current = bodyText
+        val at = line ?: lineOf(current.text, current.selection.min)
+        val moved = FormatCore.moveItemEdit(current.text, at, direction, current.selection.min, current.selection.max)
+            ?: return FormatCore.listItems(current.text).getOrElse(at) { -1 } >= 0
+        replaceBody(current, moved.edit)
+        if (line != null) FormatCore.itemSpan(bodyText.text, moved.line)?.let {
+            view.announceForAccessibility(context.getString(R.string.list_item_place, it.place, it.of))
+        }
+        return true
+    }
+
+    // What a screen reader offers on a task's box (6.7): the same moves as the handle, the buttons and the cross, on
+    // that task wherever the caret is. False when nothing changed.
+    fun itemAction(line: Int, action: String): Boolean {
+        val current = bodyText
+        return when (action) {
+            "up", "down" -> moveItem(action, line) && bodyText.text != current.text
+            "delete" -> deleteItem(line)
+            else -> {
+                val start = lineStartOf(current.text, line)
+                val edit = FormatCore.indentEdit(current.text, start, start, action) ?: return false
+                replaceBody(current, edit, TextRange(edit.moved(current.selection.start), edit.moved(current.selection.end)))
+                true
+            }
+        }
+    }
+
+    // The note's menu (6.4): every ticked task gets an empty box again, or goes. The strip says what happened, with Undo.
+    fun uncheckAll() {
+        val current = bodyText
+        val unticked = FormatCore.uncheckAllEdit(current.text, current.selection.min, current.selection.max) ?: return
+        replaceBody(current, unticked.edit)
+        noticeWithUndo(context.getString(R.string.notice_all_unchecked), current)
+    }
+
+    fun deleteChecked() {
+        val current = bodyText
+        val deleted = FormatCore.deleteCheckedEdit(current.text, current.selection.min, current.selection.max) ?: return
+        replaceBody(current, deleted.edit)
+        noticeWithUndo(context.resources.getQuantityString(R.plurals.notice_checked_deleted, deleted.count, deleted.count), current)
     }
 
     // A tap on a box in the open note (#77, Eric 22 Nov): the same tick as on the card, the setting to move included.
@@ -682,6 +829,7 @@ private fun EditorScreen(
         loaded = false
         loadError = null
         parkedUri = null
+        notice = null
         val cachedAttachments = attachmentUris.takeIf { attachmentIndexLoaded }
         val result = withContext(Dispatchers.IO) {
             runCatching {
@@ -1095,6 +1243,34 @@ private fun EditorScreen(
                                         }
                                     },
                                 )
+                                // A note with tasks (design checklists-77, 6.4): untick them all, delete the ticked ones,
+                                // and the setting that moves a ticked task down, with a ✓ when it is on.
+                                if (loaded && loadError == null && remember(bodyText.text) { hasTask(bodyText.text) }) {
+                                    HorizontalDivider()
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.list_uncheck_all)) },
+                                        leadingIcon = { Icon(Icons.Filled.CheckBoxOutlineBlank, null) },
+                                        enabled = !saving && remember(bodyText.text) { FormatCore.uncheckAllEdit(bodyText.text) != null },
+                                        onClick = { editorMenuOpen = false; uncheckAll() },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.list_delete_checked)) },
+                                        leadingIcon = { Icon(Icons.Filled.DeleteSweep, null) },
+                                        enabled = !saving && remember(bodyText.text) { FormatCore.deleteCheckedEdit(bodyText.text) != null },
+                                        onClick = { editorMenuOpen = false; deleteChecked() },
+                                    )
+                                    // The menu stays open, so the ✓ shows at once.
+                                    var moveChecked by remember { mutableStateOf(Storage.getMoveChecked(context)) }
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.move_checked_label) + if (moveChecked) "  ✓" else "") },
+                                        leadingIcon = { Icon(Icons.Filled.VerticalAlignBottom, null) },
+                                        onClick = {
+                                            moveChecked = !moveChecked
+                                            Storage.saveMoveChecked(context, moveChecked)
+                                        },
+                                    )
+                                    HorizontalDivider()
+                                }
                                 for ((kind, label) in listOf("rewrite" to R.string.ai_editor_rewrite, "checklist" to R.string.ai_editor_checklist, "summarize" to R.string.ai_card_summarize)) {
                                     DropdownMenuItem(
                                         text = { Text(stringResource(label)) },
@@ -1295,14 +1471,24 @@ private fun EditorScreen(
                         val changed = if (edit == null && next.composition == null && next.selection.collapsed &&
                             next.text != current.text
                         ) listEnterAfterChange(current.text, next.text, next.selection.start) else null
+                        // Text of several lines that lands in a list item, a paste mostly, becomes an item per line
+                        // (design checklists-77, 6.6). After the two Enters: a word the keyboard finishes along with
+                        // Enter is typing.
+                        val pasted = if (edit == null && changed == null && next.composition == null && next.selection.collapsed &&
+                            next.text != current.text
+                        ) pastedLines(current.text, start, end, next.text, next.selection.start) else null
                         val shown = when {
                             edit != null -> TextFieldValue(
                                 text = current.text.replaceRange(edit.from, edit.to, edit.insert),
-                                selection = TextRange(edit.from + edit.insert.length),
+                                selection = TextRange(edit.caret),
                             )
                             changed != null -> TextFieldValue(
                                 text = changed.first,
                                 selection = TextRange(changed.second),
+                            )
+                            pasted != null -> TextFieldValue(
+                                text = pasted.first,
+                                selection = TextRange(pasted.second),
                             )
                             else -> next
                         }.let { value ->
@@ -1335,6 +1521,8 @@ private fun EditorScreen(
                     bodyEditing = bodyEditing,
                     onEditBody = { bodyEditing = true },
                     onTick = ::tickTask,
+                    onIndent = ::indentBody,
+                    items = ItemActions(drop = ::dropItem, delete = { deleteItem(it) }, act = ::itemAction, moveKey = { moveItem(it) }),
                     title = titleText,
                     onTitleChange = { titleText = it },
                     embedItems = embedItems,
@@ -1406,6 +1594,9 @@ private fun EditorScreen(
                 )
             }
             }
+            if (loaded && loadError == null && parkedUri == null) notice?.let { shown ->
+                NoticeStrip(shown, fg, onUndo = ::undoNotice, onGone = { if (notice === shown) notice = null })
+            }
             if (bodyFocused && loaded && loadError == null && parkedUri == null) {
                 val active = remember(bodyText.text, bodyText.selection) {
                     if (bodyText.text.length > FORMAT_RAW_ABOVE) emptyList()
@@ -1417,6 +1608,14 @@ private fun EditorScreen(
                     foreground = fg,
                     onFormat = ::applyBodyFormat,
                     onChecklist = { toggleOrInsertChecklist() },
+                    onIndent = { indentBody(it) },
+                    // Move up, Move down and Delete item under More (design checklists-77, 6.4), for the item with the caret.
+                    onItem = { action -> if (action == "delete") deleteItem() else moveItem(action) },
+                    canItem = { action ->
+                        val at = lineOf(bodyText.text, bodyText.selection.min)
+                        if (action == "delete") FormatCore.listItems(bodyText.text).getOrElse(at) { -1 } >= 0
+                        else FormatCore.moveItemEdit(bodyText.text, at, action) != null
+                    },
                     onEmoji = ::insertEmoji,
                     onMarkdown = {
                         markdownMode = !markdownMode
@@ -1655,6 +1854,8 @@ private fun EditorBody(
     bodyEditing: Boolean,
     onEditBody: () -> Unit,
     onTick: (Int) -> Unit,
+    onIndent: (String) -> Boolean = { false },
+    items: ItemActions,
     formatted: Boolean = true,
     onBodyFocus: (Boolean) -> Unit = {},
     tableBackground: Color = Color.Transparent,
@@ -1700,10 +1901,11 @@ private fun EditorBody(
         }
     }
     val bodyTooTall = with(density) { bodyLines * bodyStyle.lineHeight.toPx() > 200_000f }
-    // Lines with boxes are as far apart as on the card. A note too long for that keeps its lines, and stays editable.
-    val hasTasks = remember(value.text) { taskBoxes(value.text).isNotEmpty() }
-    val lineHeight = if (formatted && hasTasks && with(density) { bodyLines * taskLineHeight.toPx() <= 200_000f }) taskLineHeight
-        else bodyStyle.lineHeight
+    // A task's line is as high as its row on the card: only that line, its paragraph says so (design checklists-77,
+    // part 5). A note too long for that keeps its lines, and stays editable.
+    val taskLine = if (with(density) { bodyLines * taskLineHeight.toPx() <= 200_000f }) taskLineHeight else androidx.compose.ui.unit.TextUnit.Unspecified
+    // Where the note scrolls and what part of the screen shows it: a task that is dragged to its edge scrolls it.
+    val gripScroll = remember(scrollState) { GripScroll(scrollState) }
     val preview = remember(value.text, foreground, bodyEditing, bodyTooTall) {
         if (bodyEditing || bodyTooTall) androidx.compose.ui.text.AnnotatedString("")
         else renderPreviewAnnotated(value.text, foreground, underlineLinks = false)
@@ -1739,6 +1941,11 @@ private fun EditorBody(
         modifier = Modifier
             .fillMaxSize()
             .padding(horizontal = 16.dp, vertical = 12.dp)
+            .onGloballyPositioned {
+                val bounds = it.boundsInRoot()
+                gripScroll.top = bounds.top
+                gripScroll.bottom = bounds.bottom
+            }
             .verticalScroll(scrollState),
     ) {
         if (embedItems.isNotEmpty()) {
@@ -1851,7 +2058,7 @@ private fun EditorBody(
             TextButton(onClick = onEditBody) {
                 Text(stringResource(R.string.editor_title_edit), color = foreground)
             }
-            if (!split) PreviewText(preview, value.text, lineHeight, onTick, foreground, openLinkLabel, ::openLink, onEditBody, Modifier.fillMaxWidth().heightIn(min = 200.dp).padding(16.dp))
+            if (!split) PreviewText(preview, value.text, value.text, 0, taskLine, formatted, onTick, items, gripScroll, foreground, openLinkLabel, ::openLink, onEditBody, Modifier.fillMaxWidth().heightIn(min = 200.dp).padding(16.dp))
             else Column(Modifier.fillMaxWidth().heightIn(min = 200.dp).padding(16.dp)) {
                 // The same pieces as when editing: text as text with its links, a table as a grid; a tap edits.
                 for ((i, piece) in pieces.withIndex()) key(piece.kind, ordinals[i]) {
@@ -1863,7 +2070,7 @@ private fun EditorBody(
                     ) else {
                         val shown = remember(part, foreground) { renderPreviewAnnotated(part, foreground, underlineLinks = false) }
                         val linesAbove = value.text.substring(0, piece.from).count { it == '\n' }
-                        PreviewText(shown, part, lineHeight, { onTick(linesAbove + it) }, foreground, openLinkLabel, ::openLink, onEditBody, Modifier.fillMaxWidth())
+                        PreviewText(shown, part, value.text, linesAbove, taskLine, formatted, { onTick(linesAbove + it) }, items, gripScroll, foreground, openLinkLabel, ::openLink, onEditBody, Modifier.fillMaxWidth())
                     }
                 }
             }
@@ -1872,10 +2079,15 @@ private fun EditorBody(
                 value = value,
                 onValueChange = { onValueChange(it, null) },
                 onTick = onTick,
-                lineHeight = lineHeight,
+                taskLine = taskLine,
                 formatted = formatted,
                 foreground = foreground,
                 placeholder = true,
+                onIndent = onIndent,
+                whole = value.text,
+                above = 0,
+                scroll = gripScroll,
+                items = items,
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 200.dp)
@@ -1926,10 +2138,15 @@ private fun EditorBody(
                         onValueChange(next, prefix to suffix)
                     },
                     onTick = { line -> onTick(whole.substring(0, prefix).count { it == '\n' } + line) },
-                    lineHeight = lineHeight,
+                    taskLine = taskLine,
                     formatted = true,
                     foreground = foreground,
                     placeholder = false,
+                    onIndent = onIndent,
+                    whole = whole,
+                    above = remember(whole, prefix) { lineOf(whole, prefix) },
+                    scroll = gripScroll,
+                    items = items,
                     modifier = Modifier
                         .fillMaxWidth()
                         .then(if (last) Modifier.heightIn(min = 120.dp) else Modifier)
@@ -1962,6 +2179,10 @@ private fun EditorBody(
 // The height of a task's row on the card, as a line: room for the bigger box and for a finger.
 private val taskLineHeight = 32.sp
 
+// The room around the body's text inside its field (Material's own for a field without a label): the handles and the
+// cross are laid over the text from outside the field and count from the same place.
+private val bodyFieldPadding = 16.dp
+
 /**
  * The body's text field: Material's TextField, built from its parts so the caret's place is known: typing on at the
  * bottom then scrolls the note, instead of going on under the keyboard and the formatting bar (Eric, 16 Nov). A body
@@ -1973,10 +2194,17 @@ private fun BodyTextField(
     value: TextFieldValue,
     onValueChange: (TextFieldValue) -> Unit,
     onTick: (Int) -> Unit,
-    lineHeight: androidx.compose.ui.unit.TextUnit,
+    taskLine: androidx.compose.ui.unit.TextUnit,
     formatted: Boolean,
     foreground: Color,
     placeholder: Boolean,
+    onIndent: (String) -> Boolean,
+    // The whole body and the number of its lines above this field (a body with a table has a field per piece of text),
+    // where the note scrolls, and what the grips on a task ask of the editor.
+    whole: String,
+    above: Int,
+    scroll: GripScroll?,
+    items: ItemActions,
     modifier: Modifier,
 ) {
     val bodyColors = TextFieldDefaults.colors(
@@ -1988,18 +2216,39 @@ private fun BodyTextField(
         focusedIndicatorColor = Color.Transparent,
         unfocusedIndicatorColor = Color.Transparent,
     )
+    // Lists stand in paragraphs of their own (FormatTransformation): a marker's width is measured as it is drawn, so a
+    // line that wraps goes on right under its own words.
+    val bodyStyle = LocalTextStyle.current
+    val metrics = rememberListMetrics(bodyStyle, taskLine, boxStyle)
     // Formatting drawn over the source; the signs stay in the text but take no room (FormatTransformation).
-    val transformation = remember(formatted, foreground, value.text, value.selection) {
+    val transformation = remember(formatted, foreground, value.text, value.selection, metrics) {
         val pair = if (formatted) FormatCore.emptyPair(value.text, value.selection.min, value.selection.max) else null
-        FormatTransformation(formatted, foreground, pair?.from ?: -1, pair?.to ?: -1)
+        FormatTransformation(formatted, foreground, pair?.from ?: -1, pair?.to ?: -1, if (formatted) metrics else null)
     }
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
     val caretView = remember { BringIntoViewRequester() }
     var bodyLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
-    val boxes = remember(formatted, value.text) { if (formatted) taskBoxes(value.text) else emptyList() }
+    // The boxes come out of the same pass that lays the text out for the field.
+    val laid = transformation.laid(value.text)
+    val boxes = laid.boxes
+    // The cross stands on the task with the caret (design checklists-77, part 5): only while this field has the focus
+    // and the caret, or all of a selection, is on one line.
+    val caretLine = remember(value.text, value.selection, focused) {
+        val next = value.text.indexOf('\n', value.selection.min)
+        if (focused && (next < 0 || next >= value.selection.max)) lineOf(value.text, value.selection.min) else -1
+    }
     // A tick leaves the note where the finger is; the caret comes back into view when it or the text changes again.
+    // The same goes for an item that is dropped, and for what a screen reader does to a task: the caret can be elsewhere.
     var ticking by remember { mutableStateOf(false) }
+    val gripActions = remember(items) {
+        ItemActions(
+            drop = { line, before, level -> items.drop(line, before, level).also { if (it) ticking = true } },
+            delete = items.delete,
+            act = { line, action -> items.act(line, action).also { if (it) ticking = true } },
+            moveKey = items.moveKey,
+        )
+    }
     var afterTick by remember { mutableStateOf<kotlin.Pair<String, TextRange>?>(null) }
     val margin = with(LocalDensity.current) { 24.dp.toPx() }
     LaunchedEffect(value.text, value.selection, bodyLayout, focused) {
@@ -2013,12 +2262,29 @@ private fun BodyTextField(
         val caret = layout.getCursorRect(value.selection.end.coerceIn(0, layout.layoutInput.text.length))
         caretView.bringIntoView(caret.copy(top = caret.top - margin, bottom = caret.bottom + margin))
     }
+    // Tab and Shift+Tab from a keyboard change the level of a list item (design checklists-77, 6.3), and Alt with the
+    // arrow up or down moves the item with the caret (6.7). The key going up belongs to the key that went down.
+    var tabTaken by remember { mutableStateOf(false) }
+    var moveTaken by remember { mutableStateOf(false) }
+    // The field and, over it, the handles and the cross: they lie next to the field, not in it, so a finger on them
+    // is no touch of the text (see ListGrips).
+    Box {
     BasicTextField(
         value = value,
         onValueChange = onValueChange,
         visualTransformation = transformation,
-        modifier = modifier,
-        textStyle = LocalTextStyle.current.merge(TextStyle(color = foreground, lineHeight = lineHeight)),
+        modifier = modifier.onPreviewKeyEvent { event ->
+            val arrow = event.key == Key.DirectionUp || event.key == Key.DirectionDown
+            if (event.isCtrlPressed || event.isMetaPressed) false
+            else if (arrow && event.isAltPressed && !event.isShiftPressed) {
+                if (event.type == KeyEventType.KeyDown) items.moveKey(if (event.key == Key.DirectionUp) "up" else "down").also { moveTaken = it }
+                else moveTaken.also { moveTaken = false }
+            }
+            else if (event.key != Key.Tab || event.isAltPressed) false
+            else if (event.type == KeyEventType.KeyDown) onIndent(if (event.isShiftPressed) "out" else "in").also { tabTaken = it }
+            else tabTaken.also { tabTaken = false }
+        },
+        textStyle = bodyStyle.merge(TextStyle(color = foreground)),
         cursorBrush = SolidColor(foreground),
         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
         interactionSource = interaction,
@@ -2029,7 +2295,9 @@ private fun BodyTextField(
                 innerTextField = {
                     Box(Modifier.bringIntoViewRequester(caretView)) {
                         innerTextField()
-                        Box(Modifier.matchParentSize()) { TaskBoxes(boxes, bodyLayout) { ticking = true; onTick(it) } }
+                        Box(Modifier.matchParentSize()) {
+                            TaskBoxes(boxes, bodyLayout, onAction = { line, action -> gripActions.act(above + line, action) }) { ticking = true; onTick(it) }
+                        }
                     }
                 },
                 enabled = true,
@@ -2038,51 +2306,120 @@ private fun BodyTextField(
                 interactionSource = interaction,
                 placeholder = if (placeholder) ({ Text(stringResource(R.string.editor_hint), color = foreground.copy(alpha = 0.5f)) }) else null,
                 colors = bodyColors,
+                contentPadding = PaddingValues(bodyFieldPadding),
             )
         },
     )
+    // Over the text itself, which stands [bodyFieldPadding] inside the field.
+    if (formatted) Box(Modifier.matchParentSize().padding(bodyFieldPadding)) {
+        ListGrips(boxes, laid.starts, bodyLayout, metrics, whole, above, caretLine, foreground, scroll, gripActions)
+    }
+    }
 }
 
 /**
- * A place to tap on each box, laid over the text: a finger wide, reaching into the margin, as high as the line. It takes
+ * A place to tap on each box, laid over the text: 40 dp wide, reaching into the margin, as high as the line. It takes
  * the tap before the text field does, so a tick places no caret and opens no keyboard.
+ *
+ * Only the boxes near what is on the screen get one (design checklists-77, part 5): the screen's height is cut in two,
+ * and the boxes from a screen above the half in view to a screen below it count. A list of 300 tasks is then some 60
+ * places, not 300.
+ *
+ * A screen reader cannot drag a handle, so the box carries the same moves as actions (design checklists-77, 6.7): Move
+ * up, Move down, Indent, Outdent and Delete item, through [onAction] with "up", "down", "in", "out" or "delete".
  */
 @Composable
-private fun TaskBoxes(boxes: List<TaskBox>, layout: TextLayoutResult?, onTick: (Int) -> Unit) {
+private fun TaskBoxes(boxes: List<TaskBox>, layout: TextLayoutResult?, onAction: (Int, String) -> Unit, onTick: (Int) -> Unit) {
     if (layout == null || boxes.isEmpty()) return
     val density = LocalDensity.current
-    val reach = with(density) { 48.dp.toPx() }
+    val actionNames = listOf(
+        "up" to stringResource(R.string.list_move_up),
+        "down" to stringResource(R.string.list_move_down),
+        "in" to stringResource(R.string.format_indent),
+        "out" to stringResource(R.string.format_outdent),
+        "delete" to stringResource(R.string.list_delete_item),
+    )
+    val reach = with(density) { 40.dp.toPx() }
     val slack = with(density) { 4.dp.toPx() }
+    val half = with(density) { LocalConfiguration.current.screenHeightDp.dp.toPx() } / 2
+    var band by remember { mutableIntStateOf(0) }
+    // Every place is counted from the left of the text as it is laid out, so this layer is never mirrored: on a phone
+    // that reads right to left the places stood at the other side of the screen, far from their boxes (seen 22 Nov).
+    CompositionLocalProvider(androidx.compose.ui.platform.LocalLayoutDirection provides androidx.compose.ui.unit.LayoutDirection.Ltr) {
     // Unbounded: a short line makes the text narrower than a finger.
-    Box(Modifier.fillMaxSize().wrapContentSize(Alignment.TopStart, unbounded = true)) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .onGloballyPositioned { band = kotlin.math.floor(-it.positionInWindow().y / half).toInt() }
+            .wrapContentSize(Alignment.TopStart, unbounded = true),
+    ) {
+        val from = (band - 2) * half
+        val to = (band + 5) * half
         for (box in boxes) {
             // The layout can be one frame behind the text.
             if (box.at >= layout.layoutInput.text.length) continue
+            val line = layout.getLineForOffset(box.at)
+            val top = layout.getLineTop(line)
+            if (top < from || top > to) continue
             key(box.line) {
                 val glyph = layout.getBoundingBox(box.at)
-                val line = layout.getLineForOffset(box.at)
-                val top = layout.getLineTop(line)
                 val left = if (layout.getBidiRunDirection(box.at) == ResolvedTextDirection.Rtl) glyph.left - slack
                     else glyph.right + slack - reach
                 Box(
                     Modifier
                         .offset { IntOffset(left.toInt(), top.toInt()) }
-                        .size(48.dp, with(density) { (layout.getLineBottom(line) - top).toDp() })
+                        .size(40.dp, with(density) { (layout.getLineBottom(line) - top).toDp() })
                         .toggleable(value = box.checked, role = Role.Checkbox, onValueChange = { onTick(box.line) })
-                        .semantics { contentDescription = box.label },
+                        .semantics {
+                            contentDescription = box.label
+                            customActions = actionNames.map { (action, name) -> CustomAccessibilityAction(name) { onAction(box.line, action); true } }
+                        },
                 )
             }
         }
     }
+    }
 }
 
-/** The read view of a note with links: the links open, a box ticks, a tap anywhere else edits the note. */
+/**
+ * The measure the lists of a note are placed with (FormatTransformation): a marker's width is measured as it is drawn,
+ * with [box] the style of a task's box, so a line that wraps goes on right under its own words.
+ */
+@Composable
+private fun rememberListMetrics(style: TextStyle, taskLine: androidx.compose.ui.unit.TextUnit, box: androidx.compose.ui.text.SpanStyle): ListMetrics {
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    return remember(measurer, density, style, taskLine, box) {
+        ListMetrics(taskLine, toPx = { with(density) { it.sp.toPx() } }, toSp = { with(density) { it.toSp() } }) { marker ->
+            val probe = androidx.compose.ui.text.AnnotatedString(
+                marker + "a",
+                spanStyles = if (marker.startsWith('☐') || marker.startsWith('☑')) listOf(androidx.compose.ui.text.AnnotatedString.Range(box, 0, 1)) else emptyList(),
+            )
+            measurer.measure(probe, style, softWrap = false).getHorizontalPosition(marker.length, true)
+        }
+    }
+}
+
+// The box of a task in the read view, as renderPreviewAnnotated draws it: bold, and one and a half times the text.
+private val previewBoxStyle = androidx.compose.ui.text.SpanStyle(fontWeight = FontWeight.Bold, fontSize = 1.5.em)
+
+/**
+ * The read view of a note with links: the links open, a box ticks, a tap anywhere else edits the note. With [lists]
+ * (the Markdown switch is off) its lists stand as in the open note, and a task has its handle here too (design
+ * checklists-77, part 5); the cross is not here, as there is no caret. [source] is the text it shows, [whole] the
+ * whole body and [above] the number of its lines above [source].
+ */
 @Composable
 private fun PreviewText(
     preview: androidx.compose.ui.text.AnnotatedString,
     source: String,
-    lineHeight: androidx.compose.ui.unit.TextUnit,
+    whole: String,
+    above: Int,
+    taskLine: androidx.compose.ui.unit.TextUnit,
+    lists: Boolean,
     onTick: (Int) -> Unit,
+    items: ItemActions,
+    scroll: GripScroll?,
     foreground: Color,
     openLinkLabel: String,
     openLink: (String) -> Boolean,
@@ -2097,10 +2434,13 @@ private fun PreviewText(
             .associate { mark -> preview.text.substring(0, mark.start).count { it == '\n' } to mark.start }
         taskBoxes(source).mapNotNull { box -> drawn[box.line]?.let { box.copy(at = it) } }
     }
+    val style = MaterialTheme.typography.bodyLarge
+    val metrics = rememberListMetrics(style, taskLine, previewBoxStyle)
+    val laid = remember(preview, source, metrics, lists) { previewInParagraphs(preview, source, if (lists) metrics else null) }
     Box(modifier, propagateMinConstraints = true) {
         ClickableText(
-            text = preview,
-            style = MaterialTheme.typography.bodyLarge.copy(color = foreground, lineHeight = lineHeight),
+            text = laid.text,
+            style = style.copy(color = foreground),
             onTextLayout = { previewLayout = it },
             modifier = Modifier.fillMaxWidth().semantics {
                 customActions = links.map { link ->
@@ -2118,7 +2458,8 @@ private fun PreviewText(
                 }
             },
         )
-        Box(Modifier.matchParentSize()) { TaskBoxes(boxes, previewLayout, onTick) }
+        if (lists) Box(Modifier.matchParentSize()) { ListGrips(boxes, laid.starts, previewLayout, metrics, whole, above, -1, foreground, scroll, items) }
+        Box(Modifier.matchParentSize()) { TaskBoxes(boxes, previewLayout, onAction = { line, action -> items.act(above + line, action) }, onTick = onTick) }
     }
 }
 
@@ -2134,6 +2475,59 @@ private fun EdgeStrip(label: Int, foreground: Color, onClick: () -> Unit) {
         contentAlignment = Alignment.CenterStart,
     ) {
         Text("+ " + stringResource(label), color = foreground.copy(alpha = 0.65f), style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+/**
+ * What the editor says after a list action (design checklists-77, 6.5). With [before], the body from before the action,
+ * the strip has Undo; [after] is the body right after it, to see whether the note was typed in since. Without [before]
+ * it is a plain word ("Undone").
+ */
+internal class EditorNotice(val message: String, val before: TextFieldValue? = null, val after: String = "")
+
+/**
+ * The strip above the formatting bar: what happened, and Undo. It stays 10 seconds, or as long as the phone's setting
+ * for people who need more time asks, and a word without Undo 4 seconds (house rules of ontwerp-undo-overal). Undo is
+ * bold and underlined, not only a color, and a finger high. TalkBack reads the strip when it comes.
+ */
+@Composable
+private fun NoticeStrip(notice: EditorNotice, foreground: Color, onUndo: () -> Unit, onGone: () -> Unit) {
+    val accessibility = LocalAccessibilityManager.current
+    val gone by rememberUpdatedState(onGone)
+    LaunchedEffect(notice) {
+        val shown = if (notice.before == null) 4_000L else 10_000L
+        delay(accessibility?.calculateRecommendedTimeoutMillis(shown, containsText = true, containsControls = notice.before != null) ?: shown)
+        gone()
+    }
+    Column(Modifier.fillMaxWidth()) {
+        HorizontalDivider(color = foreground.copy(alpha = 0.15f))
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(foreground.copy(alpha = 0.06f))
+                .heightIn(min = 48.dp)
+                .padding(start = 16.dp, end = 4.dp)
+                .semantics { liveRegion = LiveRegionMode.Polite },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(notice.message, color = foreground, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f).padding(vertical = 8.dp))
+            if (notice.before != null) Box(
+                modifier = Modifier
+                    .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(role = Role.Button, onClick = onUndo)
+                    .padding(horizontal = 12.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    stringResource(R.string.drawing_undo),
+                    color = foreground,
+                    fontWeight = FontWeight.Bold,
+                    textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline,
+                    style = MaterialTheme.typography.labelLarge,
+                )
+            }
+        }
     }
 }
 

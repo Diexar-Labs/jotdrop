@@ -437,6 +437,30 @@
     <string name="format_markdown">Markdown</string>
     <string name="format_emoji_more">Meer emoji: gebruik de emojitoets van je toetsenbord.</string>
     <string name="format_table">Tabel</string>
+    <string name="format_indent">Inspringen</string>
+    <string name="format_outdent">Uitspringen</string>
+    <string name="notice_undone">Ongedaan gemaakt</string>
+    <string name="notice_undo_failed">Ongedaan maken lukte niet. De notitie is veranderd.</string>
+    <!-- Checklists in an open note (issue 77): the grips, the menus and what the strip says. -->
+    <string name="list_move_up">Item omhoog</string>
+    <string name="list_move_down">Item omlaag</string>
+    <string name="list_delete_item">Item verwijderen</string>
+    <string name="list_delete_item_named">Item verwijderen: %1$s</string>
+    <string name="list_item_place">%1$d van %2$d</string>
+    <string name="list_uncheck_all">Alle items uitvinken</string>
+    <string name="list_delete_checked">Afgevinkte items verwijderen</string>
+    <string name="notice_item_moved">Item verplaatst</string>
+    <string name="notice_item_deleted">Item verwijderd</string>
+    <plurals name="notice_item_deleted_subs">
+        <item quantity="one">Item en %d subitem verwijderd</item>
+        <item quantity="other">Item en %d subitems verwijderd</item>
+    </plurals>
+    <string name="notice_all_unchecked">Alle items uitgevinkt</string>
+    <plurals name="notice_checked_deleted">
+        <item quantity="one">%d afgevinkt item verwijderd</item>
+        <item quantity="other">%d afgevinkte items verwijderd</item>
+    </plurals>
+    <!-- End of the checklist texts. -->
     <string name="table_cell_header">Kopregel, kolom %1$d</string>
     <string name="table_cell">Rij %1$d, kolom %2$d</string>
     <string name="table_add_row">Rij erbij</string>

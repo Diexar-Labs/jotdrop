@@ -846,6 +846,21 @@ internal object FormatCore {
      */
     fun listLevels(text: String): List<Int> = listStructure(text).map { it?.level ?: -1 }
 
+    /**
+     * Per line the line of the item it belongs to: its own line for a task, bullet or numbered line, the line of its
+     * item for more text under an item, -1 for any other line. As listItems in format.mjs.
+     */
+    fun listItems(text: String): List<Int> {
+        val structure = listStructure(text)
+        return structure.indices.map { itemOf(structure, it) }
+    }
+
+    /** [listLevels] and [listItems] from one reading of the text, for the editor, which asks for both at every key. */
+    fun listLevelsAndItems(text: String): kotlin.Pair<List<Int>, List<Int>> {
+        val structure = listStructure(text)
+        return structure.map { it?.level ?: -1 } to structure.indices.map { itemOf(structure, it) }
+    }
+
     /** A tick as one replacement, plus the line the task is on now. */
     data class Tick(val edit: Edit, val line: Int)
 
@@ -1080,5 +1095,410 @@ internal object FormatCore {
         if (applied.text == text) return null
         return if (from == to) replacement(text, applied.text, applied.map(from, true))
         else replacement(text, applied.text, applied.map(from), applied.map(to, true))
+    }
+
+    // --- Checklists in an open note (design checklists-77, part 7), as the same part of format.mjs -------------------
+    // Moving, dragging and deleting an item, the note's menu and pasting several lines. Whole lines move or go; a line
+    // that moves changes only at its start (its indent, a number).
+
+    /** A move or a drop as one replacement, plus the line the item is on now. */
+    data class Moved(val edit: Edit, val line: Int)
+
+    /** One replacement plus a number: the sub-items that went along, or the tasks that were unticked or deleted. */
+    data class Counted(val edit: Edit, val count: Int)
+
+    /** A place a dragged item may land: in front of line [before], on a level from [minLevel] to [maxLevel]. */
+    data class Slot(val before: Int, val minLevel: Int, val maxLevel: Int)
+
+    /** A line of an item with another indent: [own], the indent of the item, becomes [indent]; what it has more stays. */
+    private fun reindented(line: String, own: String, column: Int, indent: String) =
+        if (line.startsWith(own)) indent + line.substring(own.length)
+        else indent + " ".repeat(maxOf(0, indentColumns(line) - column)) + line.substring(indentOf(line).length)
+
+    /**
+     * The lines in a new order: [order] holds for every new line the old one, and an old line it leaves out is gone.
+     * The last line has no `\n` after it, so the line that ends the text now takes over its ending and the old last
+     * line, when it stays, gets the ending of that line. A CRLF text stays CRLF.
+     */
+    private fun arranged(lines: List<String>, changed: List<String>, order: List<Int>): List<String> {
+        val next = order.map { changed[it] }.toMutableList()
+        val last = lines.size - 1
+        val end = next.size - 1
+        if (end >= 0 && order[end] != last) {
+            val moved = order.indexOf(last)
+            val middleCr = crOf(lines[order[end]])
+            if (moved >= 0) next[moved] = withoutCr(next[moved]) + middleCr
+            next[end] = withoutCr(next[end]) + crOf(lines[last])
+        }
+        return next
+    }
+
+    /**
+     * The one replacement that turns the text into the lines [next] (from [arranged]). A position stays in its own
+     * words: it goes along with its line, and with a new indent or number at the start of that line. From a line that
+     * is gone it goes to the end of the nearest line above that stays; with none above, to the end of the line that is
+     * first now.
+     */
+    private fun linesEdit(text: String, next: List<String>, order: List<Int>, selFrom: Int, selTo: Int): Edit? {
+        val table = Lines(text)
+        val place = IntArray(table.lines.size) { -1 }
+        for ((index, old) in order.withIndex()) place[old] = index
+        val starts = IntArray(next.size)
+        var offset = 0
+        for ((i, line) in next.withIndex()) { starts[i] = offset; offset += line.length + 1 }
+        fun map(position: Int): Int {
+            val pos = position.coerceIn(0, text.length)
+            var index = table.at(pos)
+            if (place[index] < 0) {
+                while (index >= 0 && place[index] < 0) index--
+                val stays = if (index < 0) 0 else place[index]
+                return if (next.isEmpty()) 0 else starts[stays] + withoutCr(next[stays]).length
+            }
+            val to = place[index]
+            val was = withoutCr(table.lines[index])
+            val now = withoutCr(next[to])
+            val column = pos - table.starts[index]
+            if (column > was.length) return starts[to] + next[to].length
+            var same = 0
+            while (same < minOf(was.length, now.length) && was[was.length - 1 - same] == now[now.length - 1 - same]) same++
+            return starts[to] + if (column >= was.length - same) column + now.length - was.length else minOf(column, now.length - same)
+        }
+        val a = map(selFrom)
+        val b = map(selTo)
+        return replacement(text, next.joinToString("\n"), minOf(a, b), maxOf(a, b))
+    }
+
+    /** An item that changed level on purpose: its lines [from] to [to] are [shift] levels further, its first line under [parent]. */
+    private class Shifted(val from: Int, val to: Int, val shift: Int, val parent: Int)
+
+    /**
+     * Whether the lists still are what they were after lines moved: every line has its old level and its old main item,
+     * but for the lines of [moved].
+     */
+    private fun sameLists(structure: List<ListItem?>, after: List<ListItem?>, order: List<Int>, moved: Shifted? = null): Boolean =
+        order.withIndex().all { (index, old) ->
+            val was = structure[old]
+            val now = after[index]
+            if (was == null || now == null) was == null && now == null
+            else {
+                val inside = moved != null && old >= moved.from && old <= moved.to
+                val level = if (moved != null && inside && was.level >= 0) was.level + moved.shift else was.level
+                val parent = if (moved != null && inside && old == moved.from) moved.parent else was.parent
+                now.level == level && (if (parent < 0) now.parent < 0 else now.parent >= 0 && order[now.parent] == parent)
+            }
+        }
+
+    private val firstNumber = Regex("\\d+")
+
+    /**
+     * Moves the item [line] belongs to (a list line, or a line of more text under one) one place "up" or "down": it
+     * trades places with the sibling right above or under it, each with the lines under it, as moveItemEdit in
+     * format.mjs. Two numbered items trade their numbers too; siblings on different columns trade their indents. Null
+     * for the first or last of its siblings, outside a list, and when more text of the main item stands between the two.
+     */
+    fun moveItemEdit(text: String, line: Int, direction: String, selFrom: Int = 0, selTo: Int = selFrom): Moved? {
+        val lines = text.split('\n')
+        val structure = listStructure(text)
+        val own = itemOf(structure, line)
+        if (own < 0) return null
+        val item = structure[own]!!
+        val end = itemEnd(structure, own)
+        val other: Int
+        if (direction == "up") {
+            other = previousSibling(structure, own)
+            if (other < 0 || itemEnd(structure, other) + 1 != own) return null
+        } else {
+            other = end + 1
+            val under = structure.getOrNull(other)
+            if (under == null || under.level < 0 || under.parent != item.parent) return null
+        }
+        val top = if (direction == "up") other else own
+        val low = if (direction == "up") own else other
+        val topEnd = low - 1
+        val lowEnd = itemEnd(structure, low)
+        val topColumn = structure[top]!!.column
+        val lowColumn = structure[low]!!.column
+        val changed = lines.toMutableList()
+        if (topColumn != lowColumn) {
+            val topIndent = indentOf(lines[top])
+            val lowIndent = indentOf(lines[low])
+            for (index in top..topEnd) changed[index] = reindented(lines[index], topIndent, topColumn, lowIndent)
+            for (index in low..lowEnd) changed[index] = reindented(lines[index], lowIndent, lowColumn, topIndent)
+        }
+        if (linePrefix(lines[top]).kind == "ordered" && linePrefix(lines[low]).kind == "ordered") {
+            fun digits(index: Int) = firstNumber.find(lines[index])!!.value
+            val topLine = firstNumber.replaceFirst(changed[top], digits(low))
+            val lowLine = firstNumber.replaceFirst(changed[low], digits(top))
+            changed[top] = topLine
+            changed[low] = lowLine
+        }
+        val order = lines.indices.map { index ->
+            if (index < top || index > lowEnd) index else if (index <= top + lowEnd - low) index + low - top else index - (lowEnd - low + 1)
+        }
+        val next = arranged(lines, changed, order)
+        if (!sameLists(structure, listStructure(next.joinToString("\n")), order)) return null
+        val edit = linesEdit(text, next, order, selFrom, selTo) ?: return null
+        return Moved(edit, if (direction == "up") top else top + lowEnd - low + 1)
+    }
+
+    /** A place of [dropPlan]: a [Slot] plus [gap], its line in the text without the item. */
+    private class DropSlot(val before: Int, val minLevel: Int, val maxLevel: Int, val gap: Int)
+
+    /** What dropSlots and dropItemEdit share: the item and its last line, the text without it and every place it may land. */
+    private class DropPlan(val lines: List<String>, val structure: List<ListItem?>, val item: ListItem, val end: Int,
+                           val rest: List<String>, val without: List<ListItem?>, val slots: List<DropSlot>)
+
+    private fun dropPlan(text: String, line: Int): DropPlan? {
+        val lines = text.split('\n')
+        val structure = listStructure(text)
+        val item = structure.getOrNull(line) ?: return null
+        if (item.level < 0) return null
+        val end = itemEnd(structure, line)
+        val size = end - line + 1
+        // A table cuts the note in pieces; an item stays in its own piece.
+        var first = 0
+        var last = lines.size
+        for (run in blocks(text)) {
+            if (run.kind != "table") continue
+            if (run.toLine < line) first = run.toLine + 1
+            else if (run.fromLine > end) { last = run.fromLine; break }
+        }
+        val rest = lines.subList(0, line) + lines.subList(end + 1, lines.size)
+        val without = listStructure(rest.joinToString("\n"))
+        val slots = mutableListOf<DropSlot>()
+        for (gap in 0..rest.size) {
+            val before = if (gap <= line) gap else gap + size
+            if (before < first || before > last) continue
+            val above = if (gap > 0) without[gap - 1] else null
+            val below = if (gap < rest.size) without[gap] else null
+            val upper = if (above == null) -1 else if (above.level >= 0) gap - 1 else above.parent
+            var minLevel = if (below != null && below.level >= 0) below.level else 0
+            var maxLevel = if (upper >= 0) without[upper]!!.level + 1 else 0
+            // Before or after a list line, never in the middle of the text of an item.
+            val open = if (below != null) below.level >= 0 else above != null
+            if (gap == line) {
+                // Its own place always counts, if only to let go there.
+                if (!open || minLevel > item.level || maxLevel < item.level) { minLevel = item.level; maxLevel = item.level }
+            } else if (!open) continue
+            slots += DropSlot(before, minLevel, maxLevel, gap)
+        }
+        return DropPlan(lines, structure, item, end, rest, without, slots)
+    }
+
+    /**
+     * The places where the list item on line [line] may land when it is dragged, with the lines under it, as dropSlots
+     * in format.mjs. It lands in front of line `before` (the number of lines: at the very end), at most one level
+     * deeper than the item above that place and at least as deep as the list line under it. Before or after a list
+     * line, also in another list of the note; not in plain text, in a code block or past a table. Its own place is in
+     * the list too. Empty when [line] is no list line.
+     */
+    fun dropSlots(text: String, line: Int): List<Slot> =
+        dropPlan(text, line)?.slots?.map { Slot(it.before, it.minLevel, it.maxLevel) } ?: emptyList()
+
+    /**
+     * Drops the list item on line [line], with the lines under it, in front of line [before] on [level]: one of the
+     * places of [dropSlots], as dropItemEdit in format.mjs. Its indent becomes that of its new siblings, or one tab
+     * more than its new main item when it is the first under it. Null when the place is none of dropSlots, when nothing
+     * would change, and when with mixed indents a line would end up on another level than meant.
+     */
+    fun dropItemEdit(text: String, line: Int, before: Int, level: Int, selFrom: Int = 0, selTo: Int = selFrom): Moved? {
+        val plan = dropPlan(text, line) ?: return null
+        val slot = plan.slots.firstOrNull { it.before == before } ?: return null
+        if (level < slot.minLevel || level > slot.maxLevel) return null
+        val lines = plan.lines
+        val item = plan.item
+        val end = plan.end
+        val rest = plan.rest
+        val without = plan.without
+        val gap = slot.gap
+        if (gap == line && level == item.level) return null
+        val below = if (gap < rest.size) without[gap] else null
+        val above = if (gap > 0) without[gap - 1] else null
+        val indent: String
+        val parent: Int
+        if (below != null && below.level == level) {
+            indent = indentOf(rest[gap])
+            parent = below.parent
+        } else {
+            var upper = if (above == null) -1 else if (above.level >= 0) gap - 1 else above.parent
+            if (upper >= 0 && without[upper]!!.level + 1 == level) {
+                indent = indentOf(rest[upper]) + "\t"
+                parent = upper
+            } else {
+                while (upper >= 0 && without[upper]!!.level > level) upper = without[upper]!!.parent
+                if (upper < 0) return null
+                indent = indentOf(rest[upper])
+                parent = without[upper]!!.parent
+            }
+        }
+        val size = end - line + 1
+        val own = indentOf(lines[line])
+        val changed = lines.toMutableList()
+        for (index in line..end) changed[index] = reindented(lines[index], own, item.column, indent)
+        // The line each line of the text without the item was in the whole text.
+        fun old(index: Int) = if (index < line) index else index + size
+        val order = mutableListOf<Int>()
+        for (index in 0..rest.size) {
+            if (index == gap) for (inner in line..end) order += inner
+            if (index < rest.size) order += old(index)
+        }
+        val next = arranged(lines, changed, order)
+        val moved = Shifted(line, end, level - item.level, if (parent < 0) -1 else old(parent))
+        if (!sameLists(plan.structure, listStructure(next.joinToString("\n")), order, moved)) return null
+        val edit = linesEdit(text, next, order, selFrom, selTo) ?: return null
+        return Moved(edit, gap)
+    }
+
+    /** The text without the lines marked in [gone], as one replacement (see [linesEdit] for the selection). */
+    private fun removeLines(text: String, lines: List<String>, gone: BooleanArray, selFrom: Int, selTo: Int): Edit? {
+        val order = lines.indices.filter { !gone[it] }
+        return linesEdit(text, arranged(lines, lines, order), order, selFrom, selTo)
+    }
+
+    /**
+     * Deletes the item [line] belongs to (a list line, or a line of more text under one) with everything under it, as
+     * deleteItemEdit in format.mjs. The count is the number of list lines that went along (its sub-items, at any
+     * depth). A selection in the item goes to the end of the line above it (for the first line of the text: to the
+     * end of the line that comes in its place). Null outside a list.
+     */
+    fun deleteItemEdit(text: String, line: Int, selFrom: Int = 0, selTo: Int = selFrom): Counted? {
+        val lines = text.split('\n')
+        val structure = listStructure(text)
+        val own = itemOf(structure, line)
+        if (own < 0) return null
+        val end = itemEnd(structure, own)
+        val gone = BooleanArray(lines.size)
+        var count = 0
+        for (index in own..end) {
+            gone[index] = true
+            if (index > own && structure[index]!!.level >= 0) count++
+        }
+        val edit = removeLines(text, lines, gone, selFrom, selTo) ?: return null
+        return Counted(edit, count)
+    }
+
+    /** An item as [itemSpan] gives it: its own [line], its last line [end], the list lines under it, and its place among its siblings. */
+    data class ItemSpan(val line: Int, val end: Int, val count: Int, val place: Int, val of: Int)
+
+    /**
+     * The item [line] belongs to (a list line, or a line of more text under one), as itemSpan in format.mjs: its own
+     * line, the last line under it, the number of list lines under it (its sub-items, at any depth, as
+     * [deleteItemEdit] counts them), and the how-manieth it is among the items with the same main item in its list
+     * (1 and up) of how many. Null outside a list.
+     */
+    fun itemSpan(text: String, line: Int): ItemSpan? {
+        val structure = listStructure(text)
+        val own = itemOf(structure, line)
+        if (own < 0) return null
+        val item = structure[own]!!
+        val end = itemEnd(structure, own)
+        val count = (own + 1..end).count { structure[it]!!.level >= 0 }
+        var place = 0
+        var of = 0
+        for ((index, other) in structure.withIndex()) {
+            if (other == null || other.level < 0 || other.series != item.series || other.parent != item.parent) continue
+            of++
+            if (index <= own) place++
+        }
+        return ItemSpan(own, end, count, place, of)
+    }
+
+    /**
+     * "Uncheck all items": every ticked task gets an empty box, nothing moves. The count is the number of tasks it
+     * unticked; null when no task is ticked. Tasks in a code block or quote are no tasks.
+     */
+    fun uncheckAllEdit(text: String, selFrom: Int = 0, selTo: Int = selFrom): Counted? {
+        val table = Lines(text)
+        val kinds = lineKinds(text)
+        val edits = mutableListOf<Change>()
+        for ((index, line) in table.lines.withIndex()) {
+            if (kinds[index] != "text") continue
+            val prefix = linePrefix(line)
+            if (prefix.kind != "task" || !prefix.checked) continue
+            val box = table.starts[index] + line.indexOf('[', prefix.markFrom + 1) + 1
+            edits += Change(box, box + 1, " ")
+        }
+        if (edits.isEmpty()) return null
+        val from = maxOf(0, minOf(selFrom, selTo, text.length))
+        val to = minOf(text.length, maxOf(selFrom, selTo))
+        val edit = replacement(text, applyEdits(text, edits).text, from, to) ?: return null
+        return Counted(edit, edits.size)
+    }
+
+    /**
+     * "Delete checked items": every ticked task goes, with everything under it, as deleteCheckedEdit in format.mjs. A
+     * ticked task with an open task somewhere under it stays; the ticked tasks under it are judged on their own. The
+     * count is the number of ticked tasks that went; null when none goes.
+     */
+    fun deleteCheckedEdit(text: String, selFrom: Int = 0, selTo: Int = selFrom): Counted? {
+        val lines = text.split('\n')
+        val structure = listStructure(text)
+        val gone = BooleanArray(lines.size)
+        /** The task on a line of a list, or null for a bullet, a numbered line and more text. */
+        fun task(index: Int): Prefix? = if (structure[index]!!.level >= 0) linePrefix(lines[index]).takeIf { it.kind == "task" } else null
+        var count = 0
+        var index = 0
+        while (index < lines.size) {
+            val end = if (structure[index] != null && task(index)?.checked == true) itemEnd(structure, index) else -1
+            if (end < 0 || (index + 1..end).any { task(it)?.checked == false }) { index++; continue }
+            for (under in index..end) {
+                gone[under] = true
+                if (task(under) != null) count++
+            }
+            index = end + 1
+        }
+        if (count == 0) return null
+        val edit = removeLines(text, lines, gone, selFrom, selTo) ?: return null
+        return Counted(edit, count)
+    }
+
+    private val pastedBreak = Regex("\r\n?|\n")
+    // How a pasted line starts: its indent, then a bullet or number of its own, with the box when it is a task.
+    private val pastedSign = Regex("""^[ \t]*(?:(?:[-*+]|\d{1,9}[.)])[ \t]+(?:\[([ xX])\](?:[ \t]+|\z))?)?""")
+
+    /**
+     * Pasting text of more than one line in a list item ([pasted] in place of [selFrom] to [selTo]), as pasteLinesEdit
+     * in format.mjs: every pasted line becomes an item of its own, with the indent and sign of the item it lands in. A
+     * pasted line loses its own indent, bullet or number; one that is a task keeps its tick. Blank lines are left out.
+     * Null (an ordinary paste) when [pasted] has no line break or only blank lines, outside a list item, in front of
+     * the item's own text, or when the selection runs past the end of the line.
+     */
+    fun pasteLinesEdit(text: String, selFrom: Int, selTo: Int, pasted: String): Edit? {
+        if (pasted.none { it == '\r' || it == '\n' }) return null
+        val a = maxOf(0, minOf(selFrom, selTo, text.length))
+        val b = minOf(text.length, maxOf(selFrom, selTo))
+        val lineStart = if (a == 0) 0 else text.lastIndexOf('\n', a - 1) + 1
+        val next = text.indexOf('\n', a)
+        val lineEnd = if (next < 0) text.length else next
+        val line = text.substring(lineStart, lineEnd)
+        val cr = crOf(line)
+        if (b > lineEnd - cr.length) return null
+        val list = listItem.find(withoutCr(line)) ?: return null
+        if (a < lineStart + list.value.length || linePrefix(line).kind !in listKinds) return null
+        if (lineKinds(text)[Lines(text).at(lineStart)] != "text") return null
+        // Each pasted line with words on it: the tick of its own box (or null) and its words.
+        val rows = pastedBreak.split(pasted).mapNotNull { row ->
+            val sign = pastedSign.find(row)!!
+            val words = row.substring(sign.value.length)
+            if (jsTrim(words).isEmpty()) null else sign.groups[1]?.value to words
+        }
+        if (rows.isEmpty()) return null
+        val groups = list.groups
+        val boxed = groups[5] != null
+        val edits = mutableListOf<Change>()
+        var insert = rows[0].second
+        val firstTick = rows[0].first
+        if (a == lineStart + list.value.length && firstTick != null) {
+            // At the start of the item the first line brings its tick: into the item's box, or with a box of its own.
+            val box = lineStart + list.value.lastIndexOf('[') + 1
+            if (boxed) edits += Change(box, box + 1, firstTick) else insert = "[$firstTick] $insert"
+        }
+        for ((index, row) in rows.drop(1).withIndex()) {
+            val sign = groups[2]?.value ?: "${groups[3]!!.value.toLong() + index + 1}${groups[4]!!.value}"
+            val box = if (row.first != null) "[${row.first}] " else if (boxed) "[ ] " else ""
+            insert += "$cr\n${groups[1]!!.value}$sign $box${row.second}"
+        }
+        edits += Change(a, b, insert)
+        return replacement(text, applyEdits(text, edits).text, a + insert.length)
     }
 }

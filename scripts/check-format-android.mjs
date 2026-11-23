@@ -7,7 +7,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { activeFormats, applyFormat, backspaceEdit, blocks, cellSource, cellText, checklistEdit, emptyPair, indentEdit, inlineSpans, linePrefix, listEnterEdit, listLevels, parseTable, tableCells, tableEdit, tickEdit } from '../cloud/shared/format.mjs';
+import { activeFormats, applyFormat, backspaceEdit, blocks, cellSource, cellText, checklistEdit, deleteCheckedEdit, deleteItemEdit, dropItemEdit, dropSlots, emptyPair, indentEdit, inlineSpans, itemSpan, linePrefix, listEnterEdit, listItems, listLevels, moveItemEdit, parseTable, pasteLinesEdit, tableCells, tableEdit, tickEdit, uncheckAllEdit } from '../cloud/shared/format.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const code = (value) => Buffer.from(value, 'utf8').toString('base64');
@@ -37,16 +37,29 @@ const answer = {
   },
   backspace: (text, from, to, hidden = '') => edit(backspaceEdit(text, Number(from), hidden.split(';').filter(Boolean).map((range) => range.split('-').map(Number)))),
   levels: (text) => listLevels(text).join(','),
+  items: (text) => listItems(text).join(','),
   tick: (text, from, to, line, move) => {
     const tick = tickEdit(text, Number(line), Number(move) === 1, Number(from), Number(to));
     return tick ? `${edit(tick)}:${tick.line}` : 'null';
   },
   indent: (text, from, to, direction) => edit(indentEdit(text, Number(from), Number(to), direction)),
   checklist: (text, from, to, move) => edit(checklistEdit(text, Number(from), Number(to), Number(move) === 1)),
+  // Checklists in an open note (design checklists-77): a move and a drop answer with the line the item is on, the
+  // others with their count. The pasted text comes in base64.
+  move: (text, from, to, line, direction) => placed(moveItemEdit(text, Number(line), direction, Number(from), Number(to))),
+  slots: (text, line) => dropSlots(text, Number(line)).map((slot) => [slot.before, slot.minLevel, slot.maxLevel].join(':')).join(','),
+  drop: (text, from, to, line, before, level) => placed(dropItemEdit(text, Number(line), Number(before), Number(level), Number(from), Number(to))),
+  delete: (text, from, to, line) => counted(deleteItemEdit(text, Number(line), Number(from), Number(to))),
+  span: (text, line) => { const span = itemSpan(text, Number(line)); return span ? [span.line, span.end, span.count, span.place, span.of].join(':') : 'null'; },
+  uncheckAll: (text, from, to) => counted(uncheckAllEdit(text, Number(from), Number(to))),
+  deleteChecked: (text, from, to) => counted(deleteCheckedEdit(text, Number(from), Number(to))),
+  paste: (text, from, to, pasted) => edit(pasteLinesEdit(text, Number(from), Number(to), Buffer.from(pasted, 'base64').toString('utf8'))),
 };
 // The inserted text as UTF-16 units: a random selection can cut an emoji in half, which UTF-8 cannot carry.
 const units = (value) => Array.from({ length: value.length }, (_, i) => value.charCodeAt(i).toString(16)).join('.');
 function edit(value) { return value ? `${value.from}:${value.to}:${units(value.insert)}:${value.selFrom}:${value.selTo}` : 'null'; }
+function placed(value) { return value ? `${edit(value)}:${value.line}` : 'null'; }
+function counted(value) { return value ? `${edit(value)}:${value.count}` : 'null'; }
 // In apply, active, pair and enter a ¦ marks the caret; two of them mark a selection.
 const unmark = (marked) => {
   const a = marked.indexOf('¦'), b = marked.indexOf('¦', a + 1);
@@ -75,9 +88,18 @@ for (const vector of vectors.apply) cases.push(['apply', ...unmark(vector.text),
 for (const vector of vectors.enter) cases.push(['enter', ...unmark(vector.text)]);
 for (const vector of vectors.backspace) cases.push(['backspace', ...unmark(vector.text), vector.hidden.map((range) => range.join('-')).join(';')]);
 for (const vector of vectors.levels) cases.push(['levels', vector.text]);
+for (const vector of vectors.items) cases.push(['items', vector.text]);
 for (const vector of vectors.tick) cases.push(['tick', ...unmark(vector.text), vector.line, vector.move ? 1 : 0]);
 for (const vector of vectors.indent) cases.push(['indent', ...unmark(vector.text), vector.direction]);
 for (const vector of vectors.checklist) cases.push(['checklist', ...unmark(vector.text), vector.move ? 1 : 0]);
+for (const vector of vectors.move) cases.push(['move', ...unmark(vector.text), vector.line, vector.direction]);
+for (const vector of vectors.slots) cases.push(['slots', vector.text, vector.line]);
+for (const vector of vectors.drop) cases.push(['drop', ...unmark(vector.text), vector.line, vector.before, vector.level]);
+for (const vector of vectors.delete) cases.push(['delete', ...unmark(vector.text), vector.line]);
+for (const vector of vectors.span) cases.push(['span', vector.text, vector.line]);
+for (const vector of vectors.uncheckAll) cases.push(['uncheckAll', ...unmark(vector.text)]);
+for (const vector of vectors.deleteChecked) cases.push(['deleteChecked', ...unmark(vector.text)]);
+for (const vector of vectors.paste) cases.push(['paste', ...unmark(vector.text), code(vector.pasted)]);
 // A table change as fields: fromLine, type, row, column, after, at, align, text (base64); `_` is not set.
 const tableCase = (text, fromLine, op) => ['table', text, fromLine, op.type,
   ...['row', 'column', 'after', 'at', 'align'].map((key) => (op[key] === undefined ? '_' : op[key])), op.text === undefined ? '_' : code(op.text)];
@@ -148,7 +170,7 @@ const listPool = ['- [ ] a', '- [x] b', '- [X] c', '\t- [ ] d', '\t- [x] e', '  
 const itemPool = listPool.filter((line) => /^[ \t]*(?:[-*+] |\d)/.test(line));
 for (let i = 0; i < 800; i++) listTexts.push(Array.from({ length: 1 + Math.floor(random() * 9) }, () => pick(i % 2 ? itemPool : listPool)).join('\n'));
 for (const text of listTexts) {
-  cases.push(['levels', text]);
+  cases.push(['levels', text], ['items', text]);
   const count = text.split('\n').length;
   for (let line = -1; line <= count; line++) {
     for (const move of [0, 1]) {
@@ -171,6 +193,48 @@ const moving = cases.filter(([kind, text, , , line, move]) => kind === 'tick' &&
 assert.ok(moving > 400, `the lists give enough ticks that move (${moving})`);
 const indenting = cases.filter(([kind, text, from, to, direction]) => kind === 'indent' && direction === 'in' && indentEdit(text, from, to, 'in')).length;
 assert.ok(indenting > 400, `the lists give enough items that indent (${indenting})`);
+
+// Checklists in an open note (design checklists-77): the same lists plus the texts of its own cases and the checklists
+// fixture. Every line (and one before and after the text) is moved up and down, deleted and asked for its places; it is
+// dropped on every place, on a level in or just outside the range, and on a line that may be no place at all. The menu
+// runs on the whole text, and a paste lands at the end of every line and somewhere at random.
+const checklistTexts = [...listTexts, ...vectors.slots.map((vector) => vector.text), ...vectors.span.map((vector) => vector.text),
+  ...['move', 'drop', 'delete', 'uncheckAll', 'deleteChecked', 'paste'].flatMap((kind) => vectors[kind].map((vector) => unmark(vector.text)[0])),
+  readFileSync(path.join(root, 'cloud/shared/fixtures/format/checklists.md'), 'utf8')];
+const pastedPool = ['one\ntwo', 'a\r\nb\r\n', '- [x] done\n* [ ] open\n\n1. numbered', '\n\n', 'no break', '  indented\n\tmore\n', 'x\ry', '- \n- [ ]\nlast',
+  '🚆 emoji\n2) two', '[x] loose\n+ plus', '- [X] capital\n\t- [ ] deep\n> quote', ' \n \n'];
+for (const text of checklistTexts) {
+  const count = text.split('\n').length;
+  const selection = () => {
+    const a = Math.floor(random() * (text.length + 1)), b = random() < 0.5 ? a : Math.floor(random() * (text.length + 1));
+    return [Math.min(a, b), Math.max(a, b)];
+  };
+  cases.push(['uncheckAll', text, ...selection()], ['deleteChecked', text, ...selection()]);
+  for (let line = -1; line <= count; line++) {
+    cases.push(['move', text, ...selection(), line, 'up'], ['move', text, ...selection(), line, 'down'], ['delete', text, ...selection(), line], ['slots', text, line], ['span', text, line]);
+    for (const slot of dropSlots(text, line)) {
+      cases.push(['drop', text, ...selection(), line, slot.before, slot.minLevel - 1 + Math.floor(random() * (slot.maxLevel - slot.minLevel + 3))]);
+    }
+    cases.push(['drop', text, ...selection(), line, Math.floor(random() * (count + 3)) - 1, Math.floor(random() * 4)]);
+  }
+  let offset = 0;
+  for (const line of text.split('\n')) {
+    const end = offset + line.length - (line.endsWith('\r') ? 1 : 0), [from, to] = selection();
+    cases.push(['paste', text, end, end, code(pick(pastedPool))], ['paste', text, from, random() < 0.6 ? from : to, code(pick(pastedPool))]);
+    offset += line.length + 1;
+  }
+}
+const tally = (kind, works) => cases.filter(([name, text, ...rest]) => name === kind && works(text, ...rest)).length;
+const trading = tally('move', (text, from, to, line, direction) => moveItemEdit(text, line, direction));
+assert.ok(trading > 1500, `the lists give enough items that trade places (${trading})`);
+const dropping = tally('drop', (text, from, to, line, before, level) => dropItemEdit(text, line, before, level));
+assert.ok(dropping > 5000, `the lists give enough drops (${dropping})`);
+const deleting = tally('delete', (text, from, to, line) => deleteItemEdit(text, line));
+assert.ok(deleting > 2500, `the lists give enough items to delete (${deleting})`);
+const clearing = tally('deleteChecked', (text) => deleteCheckedEdit(text));
+assert.ok(clearing > 300, `the lists give enough ticked tasks to delete (${clearing})`);
+const pasting = tally('paste', (text, from, to, pasted) => pasteLinesEdit(text, from, to, Buffer.from(pasted, 'base64').toString('utf8')));
+assert.ok(pasting > 1500, `the lists give enough pastes that make items (${pasting})`);
 
 const temporary = mkdtempSync(path.join(tmpdir(), 'jotdrop-android-format-'));
 try {
