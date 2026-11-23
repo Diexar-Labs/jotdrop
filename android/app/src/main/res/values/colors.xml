@@ -3,4 +3,11 @@
     <color name="diexar_primary">#315FB4</color>
     <color name="ic_launcher_background">#14213D</color>
     <color name="splash_background">#14213D</color>
+    <color name="settings_page">#FBF8F1</color>
+    <color name="settings_ink">#14213D</color>
+    <color name="settings_panel">#F1EADB</color>
+    <color name="settings_muted">#56607A</color>
+    <color name="settings_accent">#315FB4</color>
+    <color name="settings_on_accent">#FFFFFF</color>
+    <color name="settings_outline">#C9C1AE</color>
 </resources>

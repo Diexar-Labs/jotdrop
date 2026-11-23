@@ -76,7 +76,14 @@ def check(browser, url, provider):
     laptop.get_by_role("button", name="Continue with Google").click()
     laptop.locator("#provider-title").filter(has_text="Create your JotDrop cloud").wait_for()
     assert "Signed in with Google as ann@example.com." in laptop.locator("#provider-text").inner_text()
+    # The choice is asked before the buttons that need it, for a new cloud and for an existing one.
+    for button in ("provider-create", "provider-approve", "provider-recover"):
+        assert laptop.evaluate("id => Boolean(document.getElementById('provider-forget').compareDocumentPosition(document.getElementById(id)) & Node.DOCUMENT_POSITION_FOLLOWING)", button), f"The choice comes before {button}"
     laptop.screenshot(path=str(Path(tempfile.gettempdir()) / "jotdrop-oauth-new.png"))
+    laptop.get_by_role("button", name="Create my JotDrop cloud").click()
+    laptop.locator("#access-message").filter(has_text="Choose whether to stay signed in").wait_for()
+    assert not laptop.locator("#workspace").is_visible(), "No cloud is made before the choice"
+    laptop.locator("#provider-remember").check()
     laptop.get_by_role("button", name="Create my JotDrop cloud").click()
     laptop.locator("#recovery-saved").check()
     laptop.locator("#finish-recovery").click()
@@ -96,6 +103,7 @@ def check(browser, url, provider):
     phone = open_page()
     phone.get_by_role("button", name="Continue with GitHub").click()
     phone.locator("#provider-title").filter(has_text="Open your notes on this browser").wait_for()
+    phone.locator("#provider-remember").check()
     phone.get_by_role("button", name="Approve on a signed-in device").click()
     phone.locator("#approval-words").wait_for()
     words = phone.locator("#approval-words").inner_text().split()

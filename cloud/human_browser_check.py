@@ -34,6 +34,7 @@ def check_human(browser, url, codes):
         page.locator("#signup-password").fill(PASSWORD)
         page.locator("#signup-confirm").fill(PASSWORD)
         page.wait_for_function("() => window.turnstile && document.querySelector('#signup-human [name=\"cf-turnstile-response\"]')?.value")
+        page.locator("#signup-forget").check()
         page.locator('#signup-form button[type="submit"]').click()
 
     sign_up("someone@mailinator.com")

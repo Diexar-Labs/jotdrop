@@ -172,6 +172,7 @@
     <string name="action_remove_tag">Verwijder tag</string>
 
     <string name="section_support">Over JotDrop</string>
+    <string name="app_version">Versie %1$s (build %2$d)</string>
     <string name="privacy_policy">Privacybeleid</string>
 
     <string name="action_ocr_camera">Tekst uit foto (camera)</string>

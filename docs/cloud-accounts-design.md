@@ -181,7 +181,7 @@ Eric koos "Google + goedkeuren" en voegde GitHub toe. Google of GitHub bewijst a
 
 - Wachtwoord-inloggen komt nooit bij een account zonder wachtwoord uit (`prelogin` geeft een nep-salt, `login` weigert).
 - Wachtwoord wijzigen, de authenticator-app en een nieuwe herstelcode vragen het huidige wachtwoord. Zonder wachtwoord antwoordt de server `409` met `code: "no-password"`, en de website legt uit hoe je er een toevoegt.
-- Web: "Stay signed in" staat standaard aan. "Lock workspace" is er alleen met een wachtwoord, want zonder wachtwoord kan niets een vergrendelde browser weer openen; "Log out" blijft.
+- Web: ingelogd blijven of niet is een verplichte keuze zonder voorselectie (sinds 22 nov 2026, issue #80: een voorgevinkt vakje is geen toestemming). "Lock workspace" is er alleen met een wachtwoord, want zonder wachtwoord kan niets een vergrendelde browser weer openen; "Log out" blijft.
 
 **Server-instellingen:** `JOTDROP_CLOUD_GOOGLE_CLIENT_ID`/`_SECRET` en `JOTDROP_CLOUD_GITHUB_CLIENT_ID`/`_SECRET`. Zonder instellingen biedt de server de knoppen niet aan (`GET /auth/providers`). De callback-URL bij Google en GitHub is `<publieke origin>/api/v1/auth/oauth/<google|github>/callback`.
 

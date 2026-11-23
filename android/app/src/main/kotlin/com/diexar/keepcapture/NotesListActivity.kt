@@ -38,6 +38,7 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -3027,10 +3028,7 @@ private fun CompactNotePreview(
                         previouslyChecked = checked
                     }
                     var textLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
-                    val taskModifier = if (index == null) Modifier else Modifier
-                        .heightIn(min = 32.dp)
-                        .toggleable(value = checked, role = Role.Checkbox, onValueChange = { onTask(index) })
-                        .semantics { contentDescription = row.source.text.replace(taskBoxSign, "") }
+                    val taskModifier = if (index == null) Modifier else Modifier.heightIn(min = 32.dp)
                     Box(Modifier.fillMaxWidth().then(taskModifier).padding(start = with(density) { row.indent.toDp() })) {
                         ClickableText(text = row.text, style = if (index == null) style else taskStyle,
                             maxLines = row.lines, overflow = TextOverflow.Ellipsis, onTextLayout = { textLayout = it },
@@ -3041,8 +3039,14 @@ private fun CompactNotePreview(
                             },
                             onClick = { offset ->
                                 val link = row.text.getStringAnnotations("URL", offset, offset).firstOrNull()
-                                if (link != null) onUrl(link.item) else if (index != null) onTask(index) else onOpen()
+                                if (link != null) onUrl(link.item) else onOpen()
                             })
+                        // Only the box ticks (#81): 48 dp wide, reaching into the card's padding, and as high as the row.
+                        if (index != null) Box(Modifier.matchParentSize()) {
+                            Box(Modifier.offset(x = (-14).dp).width(48.dp).fillMaxHeight()
+                                .toggleable(value = checked, role = Role.Checkbox, onValueChange = { onTask(index) })
+                                .semantics { contentDescription = row.source.text.replace(taskBoxSign, "") })
+                        }
                     }
                 }
             }

@@ -41,13 +41,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.aspectRatio
@@ -63,6 +66,9 @@ import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.text.style.ResolvedTextDirection
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -155,6 +161,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
@@ -579,6 +586,16 @@ private fun EditorScreen(
         val edit = FormatCore.tableEdit(current.text, run.fromLine, op) ?: return
         bodyText = TextFieldValue(current.text.replaceRange(edit.from, edit.to, edit.insert), TextRange(edit.selFrom))
         bodyEditing = true
+    }
+
+    // A tap on a box in the open note (#77, Eric 22 Nov): the same tick as on the card, the setting to move included.
+    // It is no typing: the keyboard stays away and a note in its read view stays there.
+    fun tickTask(line: Int) {
+        val current = bodyText
+        val tick = FormatCore.tickEdit(current.text, line, Storage.getMoveChecked(context), current.selection.min, current.selection.max) ?: return
+        val next = TextFieldValue(current.text.replaceRange(tick.edit.from, tick.edit.to, tick.edit.insert), TextRange(tick.edit.selFrom, tick.edit.selTo))
+        staleBody.settle(current.text, next.text)
+        bodyText = next
     }
 
     fun insertEmoji(emoji: String) {
@@ -1317,6 +1334,7 @@ private fun EditorScreen(
                     },
                     bodyEditing = bodyEditing,
                     onEditBody = { bodyEditing = true },
+                    onTick = ::tickTask,
                     title = titleText,
                     onTitleChange = { titleText = it },
                     embedItems = embedItems,
@@ -1636,6 +1654,7 @@ private fun EditorBody(
     onValueChange: (TextFieldValue, kotlin.Pair<Int, Int>?) -> Unit,
     bodyEditing: Boolean,
     onEditBody: () -> Unit,
+    onTick: (Int) -> Unit,
     formatted: Boolean = true,
     onBodyFocus: (Boolean) -> Unit = {},
     tableBackground: Color = Color.Transparent,
@@ -1674,13 +1693,17 @@ private fun EditorBody(
     val density = LocalDensity.current
     val screenWidthDp = LocalConfiguration.current.screenWidthDp
     val bodyStyle = MaterialTheme.typography.bodyLarge
-    val bodyTooTall = remember(value.text, screenWidthDp, density, bodyStyle) {
+    val bodyLines = remember(value.text, screenWidthDp, density, bodyStyle) {
         with(density) {
             val charsPerLine = ((screenWidthDp - 64).dp.toPx() / bodyStyle.fontSize.toPx()).toInt().coerceAtLeast(1)
-            val lines = value.text.lineSequence().sumOf { 1L + it.length / charsPerLine }
-            lines * bodyStyle.lineHeight.toPx() > 200_000f
+            value.text.lineSequence().sumOf { 1L + it.length / charsPerLine }
         }
     }
+    val bodyTooTall = with(density) { bodyLines * bodyStyle.lineHeight.toPx() > 200_000f }
+    // Lines with boxes are as far apart as on the card. A note too long for that keeps its lines, and stays editable.
+    val hasTasks = remember(value.text) { taskBoxes(value.text).isNotEmpty() }
+    val lineHeight = if (formatted && hasTasks && with(density) { bodyLines * taskLineHeight.toPx() <= 200_000f }) taskLineHeight
+        else bodyStyle.lineHeight
     val preview = remember(value.text, foreground, bodyEditing, bodyTooTall) {
         if (bodyEditing || bodyTooTall) androidx.compose.ui.text.AnnotatedString("")
         else renderPreviewAnnotated(value.text, foreground, underlineLinks = false)
@@ -1828,7 +1851,7 @@ private fun EditorBody(
             TextButton(onClick = onEditBody) {
                 Text(stringResource(R.string.editor_title_edit), color = foreground)
             }
-            if (!split) PreviewText(preview, foreground, openLinkLabel, ::openLink, onEditBody, Modifier.fillMaxWidth().heightIn(min = 200.dp).padding(16.dp))
+            if (!split) PreviewText(preview, value.text, lineHeight, onTick, foreground, openLinkLabel, ::openLink, onEditBody, Modifier.fillMaxWidth().heightIn(min = 200.dp).padding(16.dp))
             else Column(Modifier.fillMaxWidth().heightIn(min = 200.dp).padding(16.dp)) {
                 // The same pieces as when editing: text as text with its links, a table as a grid; a tap edits.
                 for ((i, piece) in pieces.withIndex()) key(piece.kind, ordinals[i]) {
@@ -1839,7 +1862,8 @@ private fun EditorBody(
                         modifier = Modifier.padding(vertical = 8.dp),
                     ) else {
                         val shown = remember(part, foreground) { renderPreviewAnnotated(part, foreground, underlineLinks = false) }
-                        PreviewText(shown, foreground, openLinkLabel, ::openLink, onEditBody, Modifier.fillMaxWidth())
+                        val linesAbove = value.text.substring(0, piece.from).count { it == '\n' }
+                        PreviewText(shown, part, lineHeight, { onTick(linesAbove + it) }, foreground, openLinkLabel, ::openLink, onEditBody, Modifier.fillMaxWidth())
                     }
                 }
             }
@@ -1847,6 +1871,8 @@ private fun EditorBody(
             BodyTextField(
                 value = value,
                 onValueChange = { onValueChange(it, null) },
+                onTick = onTick,
+                lineHeight = lineHeight,
                 formatted = formatted,
                 foreground = foreground,
                 placeholder = true,
@@ -1899,6 +1925,8 @@ private fun EditorBody(
                         )
                         onValueChange(next, prefix to suffix)
                     },
+                    onTick = { line -> onTick(whole.substring(0, prefix).count { it == '\n' } + line) },
+                    lineHeight = lineHeight,
                     formatted = true,
                     foreground = foreground,
                     placeholder = false,
@@ -1931,6 +1959,9 @@ private fun EditorBody(
     }
 }
 
+// The height of a task's row on the card, as a line: room for the bigger box and for a finger.
+private val taskLineHeight = 32.sp
+
 /**
  * The body's text field: Material's TextField, built from its parts so the caret's place is known: typing on at the
  * bottom then scrolls the note, instead of going on under the keyboard and the formatting bar (Eric, 16 Nov). A body
@@ -1941,6 +1972,8 @@ private fun EditorBody(
 private fun BodyTextField(
     value: TextFieldValue,
     onValueChange: (TextFieldValue) -> Unit,
+    onTick: (Int) -> Unit,
+    lineHeight: androidx.compose.ui.unit.TextUnit,
     formatted: Boolean,
     foreground: Color,
     placeholder: Boolean,
@@ -1964,10 +1997,19 @@ private fun BodyTextField(
     val focused by interaction.collectIsFocusedAsState()
     val caretView = remember { BringIntoViewRequester() }
     var bodyLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
+    val boxes = remember(formatted, value.text) { if (formatted) taskBoxes(value.text) else emptyList() }
+    // A tick leaves the note where the finger is; the caret comes back into view when it or the text changes again.
+    var ticking by remember { mutableStateOf(false) }
+    var afterTick by remember { mutableStateOf<kotlin.Pair<String, TextRange>?>(null) }
     val margin = with(LocalDensity.current) { 24.dp.toPx() }
     LaunchedEffect(value.text, value.selection, bodyLayout, focused) {
         val layout = bodyLayout
-        if (!focused || layout == null) return@LaunchedEffect
+        val now = value.text to value.selection
+        if (ticking) {
+            ticking = false
+            afterTick = now
+        }
+        if (!focused || layout == null || afterTick == now) return@LaunchedEffect
         val caret = layout.getCursorRect(value.selection.end.coerceIn(0, layout.layoutInput.text.length))
         caretView.bringIntoView(caret.copy(top = caret.top - margin, bottom = caret.bottom + margin))
     }
@@ -1976,7 +2018,7 @@ private fun BodyTextField(
         onValueChange = onValueChange,
         visualTransformation = transformation,
         modifier = modifier,
-        textStyle = LocalTextStyle.current.merge(TextStyle(color = foreground)),
+        textStyle = LocalTextStyle.current.merge(TextStyle(color = foreground, lineHeight = lineHeight)),
         cursorBrush = SolidColor(foreground),
         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
         interactionSource = interaction,
@@ -1984,7 +2026,12 @@ private fun BodyTextField(
         decorationBox = { innerTextField ->
             TextFieldDefaults.DecorationBox(
                 value = value.text,
-                innerTextField = { Box(Modifier.bringIntoViewRequester(caretView)) { innerTextField() } },
+                innerTextField = {
+                    Box(Modifier.bringIntoViewRequester(caretView)) {
+                        innerTextField()
+                        Box(Modifier.matchParentSize()) { TaskBoxes(boxes, bodyLayout) { ticking = true; onTick(it) } }
+                    }
+                },
                 enabled = true,
                 singleLine = false,
                 visualTransformation = transformation,
@@ -1996,10 +2043,46 @@ private fun BodyTextField(
     )
 }
 
-/** The read view of a note with links: the links open, a tap anywhere else edits the note. */
+/**
+ * A place to tap on each box, laid over the text: a finger wide, reaching into the margin, as high as the line. It takes
+ * the tap before the text field does, so a tick places no caret and opens no keyboard.
+ */
+@Composable
+private fun TaskBoxes(boxes: List<TaskBox>, layout: TextLayoutResult?, onTick: (Int) -> Unit) {
+    if (layout == null || boxes.isEmpty()) return
+    val density = LocalDensity.current
+    val reach = with(density) { 48.dp.toPx() }
+    val slack = with(density) { 4.dp.toPx() }
+    // Unbounded: a short line makes the text narrower than a finger.
+    Box(Modifier.fillMaxSize().wrapContentSize(Alignment.TopStart, unbounded = true)) {
+        for (box in boxes) {
+            // The layout can be one frame behind the text.
+            if (box.at >= layout.layoutInput.text.length) continue
+            key(box.line) {
+                val glyph = layout.getBoundingBox(box.at)
+                val line = layout.getLineForOffset(box.at)
+                val top = layout.getLineTop(line)
+                val left = if (layout.getBidiRunDirection(box.at) == ResolvedTextDirection.Rtl) glyph.left - slack
+                    else glyph.right + slack - reach
+                Box(
+                    Modifier
+                        .offset { IntOffset(left.toInt(), top.toInt()) }
+                        .size(48.dp, with(density) { (layout.getLineBottom(line) - top).toDp() })
+                        .toggleable(value = box.checked, role = Role.Checkbox, onValueChange = { onTick(box.line) })
+                        .semantics { contentDescription = box.label },
+                )
+            }
+        }
+    }
+}
+
+/** The read view of a note with links: the links open, a box ticks, a tap anywhere else edits the note. */
 @Composable
 private fun PreviewText(
     preview: androidx.compose.ui.text.AnnotatedString,
+    source: String,
+    lineHeight: androidx.compose.ui.unit.TextUnit,
+    onTick: (Int) -> Unit,
     foreground: Color,
     openLinkLabel: String,
     openLink: (String) -> Boolean,
@@ -2007,25 +2090,36 @@ private fun PreviewText(
     modifier: Modifier,
 ) {
     val links = preview.getStringAnnotations("URL", 0, preview.length)
-    ClickableText(
-        text = preview,
-        style = MaterialTheme.typography.bodyLarge.copy(color = foreground),
-        modifier = modifier.semantics {
-            customActions = links.map { link ->
-                CustomAccessibilityAction(
-                    "$openLinkLabel: ${preview.subSequence(link.start, link.end).text} (${link.item})",
-                ) { openLink(link.item) }
-            }
-        },
-        onClick = { offset ->
-            val url = preview.getStringAnnotations("URL", offset, offset).firstOrNull()?.item
-            if (url == null) {
-                onEditBody()
-            } else {
-                openLink(url)
-            }
-        },
-    )
+    var previewLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
+    // The read view drops signs, so a box stands elsewhere in it; it is on the same line.
+    val boxes = remember(preview, source) {
+        val drawn = preview.getStringAnnotations("CHECKLIST", 0, preview.length)
+            .associate { mark -> preview.text.substring(0, mark.start).count { it == '\n' } to mark.start }
+        taskBoxes(source).mapNotNull { box -> drawn[box.line]?.let { box.copy(at = it) } }
+    }
+    Box(modifier, propagateMinConstraints = true) {
+        ClickableText(
+            text = preview,
+            style = MaterialTheme.typography.bodyLarge.copy(color = foreground, lineHeight = lineHeight),
+            onTextLayout = { previewLayout = it },
+            modifier = Modifier.fillMaxWidth().semantics {
+                customActions = links.map { link ->
+                    CustomAccessibilityAction(
+                        "$openLinkLabel: ${preview.subSequence(link.start, link.end).text} (${link.item})",
+                    ) { openLink(link.item) }
+                }
+            },
+            onClick = { offset ->
+                val url = preview.getStringAnnotations("URL", offset, offset).firstOrNull()?.item
+                if (url == null) {
+                    onEditBody()
+                } else {
+                    openLink(url)
+                }
+            },
+        )
+        Box(Modifier.matchParentSize()) { TaskBoxes(boxes, previewLayout, onTick) }
+    }
 }
 
 /** A strip to type above or below a table at the very start or end of the note (design 5.4). */

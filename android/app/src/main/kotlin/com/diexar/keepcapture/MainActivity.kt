@@ -33,6 +33,9 @@ class MainActivity : ThemedAppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        supportActionBar?.setDisplayHomeAsUpEnabled(true)
+        supportActionBar?.elevation = 0f // Flat, like the Compose top bars.
+        binding.versionText.text = getString(R.string.app_version, BuildConfig.VERSION_NAME, BuildConfig.VERSION_CODE)
 
         binding.pickVaultButton.setOnClickListener {
             pickVaultLauncher.launch(null)
@@ -149,15 +152,28 @@ class MainActivity : ThemedAppCompatActivity() {
         }
     }
 
+    // Settings opens from several screens: the header's arrow goes back to the one it came from, like the Back key.
+    override fun onSupportNavigateUp(): Boolean {
+        finish()
+        return true
+    }
+
     override fun onResume() {
         super.onResume()
         updateStatusBarAppearance()
+        updateNavigationBarAppearance()
         updateUi()
     }
 
     private fun updateStatusBarAppearance() {
         val isDark = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
         WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightStatusBars = !isDark
+    }
+
+    // Dark buttons on paper, light ones on ink.
+    private fun updateNavigationBarAppearance() {
+        val isDark = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
+        WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightNavigationBars = !isDark
     }
 
     private fun updateUi() {

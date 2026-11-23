@@ -27,9 +27,10 @@ def check_compact_cards(browser, url, token):
             page.locator("#note-path").fill(f"notes/{name}.md")
             page.locator("#note-content").fill(f"# {name}\n\n{body}")
             page.locator('#editor-form button[type="submit"]').click()
-            page.locator("#sync-status").filter(has_text="Cloud copy up to date").wait_for()
             card = page.locator(f'.note-card[data-path="notes/{name}.md"]')
             card.locator('.compact-card-preview[data-visible-tasks]').wait_for()
+            # The card first: until it is there the status still says "up to date" about the note before it.
+            page.locator("#sync-status").filter(has_text="Cloud copy up to date").wait_for()
             return card
 
         def state(card):
