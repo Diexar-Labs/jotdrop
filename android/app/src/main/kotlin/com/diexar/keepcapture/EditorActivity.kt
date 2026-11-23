@@ -69,7 +69,6 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.text.style.ResolvedTextDirection
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -2312,7 +2311,7 @@ private fun BodyTextField(
     )
     // Over the text itself, which stands [bodyFieldPadding] inside the field.
     if (formatted) Box(Modifier.matchParentSize().padding(bodyFieldPadding)) {
-        ListGrips(boxes, laid.starts, bodyLayout, metrics, whole, above, caretLine, foreground, scroll, gripActions)
+        ListGrips(boxes, laid.starts, bodyLayout, metrics, whole, above, caretLine, foreground, scroll, gripActions) { ticking = true; onTick(it) }
     }
     }
 }
@@ -2339,8 +2338,6 @@ private fun TaskBoxes(boxes: List<TaskBox>, layout: TextLayoutResult?, onAction:
         "out" to stringResource(R.string.format_outdent),
         "delete" to stringResource(R.string.list_delete_item),
     )
-    val reach = with(density) { 40.dp.toPx() }
-    val slack = with(density) { 4.dp.toPx() }
     val half = with(density) { LocalConfiguration.current.screenHeightDp.dp.toPx() } / 2
     var band by remember { mutableIntStateOf(0) }
     // Every place is counted from the left of the text as it is laid out, so this layer is never mirrored: on a phone
@@ -2362,13 +2359,11 @@ private fun TaskBoxes(boxes: List<TaskBox>, layout: TextLayoutResult?, onAction:
             val top = layout.getLineTop(line)
             if (top < from || top > to) continue
             key(box.line) {
-                val glyph = layout.getBoundingBox(box.at)
-                val left = if (layout.getBidiRunDirection(box.at) == ResolvedTextDirection.Rtl) glyph.left - slack
-                    else glyph.right + slack - reach
+                val left = boxReachLeft(layout, box.at, density)
                 Box(
                     Modifier
                         .offset { IntOffset(left.toInt(), top.toInt()) }
-                        .size(40.dp, with(density) { (layout.getLineBottom(line) - top).toDp() })
+                        .size(BOX_REACH, with(density) { (layout.getLineBottom(line) - top).toDp() })
                         .toggleable(value = box.checked, role = Role.Checkbox, onValueChange = { onTick(box.line) })
                         .semantics {
                             contentDescription = box.label
@@ -2458,7 +2453,7 @@ private fun PreviewText(
                 }
             },
         )
-        if (lists) Box(Modifier.matchParentSize()) { ListGrips(boxes, laid.starts, previewLayout, metrics, whole, above, -1, foreground, scroll, items) }
+        if (lists) Box(Modifier.matchParentSize()) { ListGrips(boxes, laid.starts, previewLayout, metrics, whole, above, -1, foreground, scroll, items, onTick) }
         Box(Modifier.matchParentSize()) { TaskBoxes(boxes, previewLayout, onAction = { line, action -> items.act(above + line, action) }, onTick = onTick) }
     }
 }

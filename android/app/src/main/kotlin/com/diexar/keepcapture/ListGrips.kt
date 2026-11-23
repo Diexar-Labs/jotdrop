@@ -29,6 +29,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
@@ -63,11 +64,14 @@ import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.ResolvedTextDirection
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * The note's scrolling and the part of the screen that shows the note, for a drag that nears its edge (design
@@ -94,11 +98,23 @@ internal class ItemActions(
 /** The body's text starts this far from the screen's edge: the column's 16 dp and the field's own 16 dp. */
 private val BODY_MARGIN = 32.dp
 
-/** The handle's place to touch: from the screen's edge, this wide (design checklists-77, part 5). */
-private val HANDLE_REACH = 40.dp
-
 /** The six dots stand this far from the screen's edge: a drag that starts nearer to it can be the phone's Back (part 18). */
 private val HANDLE_DOTS_AT = 26.dp
+
+/** A finger that rests this long on a handle gets the buzz of picking up before it moves: some people wait for one. */
+private const val HANDLE_REST_MS = 150L
+
+/** A box's place to tap: this wide, and it ends this far past the box (see TaskBoxes). */
+internal val BOX_REACH = 40.dp
+private val BOX_SLACK = 4.dp
+
+/** The left of the place to tap of the box at [at], in the measure of the text as it is laid out. */
+internal fun boxReachLeft(layout: TextLayoutResult, at: Int, density: Density): Float {
+    val glyph = layout.getBoundingBox(at)
+    return with(density) {
+        if (layout.getBidiRunDirection(at) == ResolvedTextDirection.Rtl) glyph.left - BOX_SLACK.toPx() else glyph.right + BOX_SLACK.toPx() - BOX_REACH.toPx()
+    }
+}
 
 /** The cross's place to touch, against the other edge of the screen. */
 private val CROSS_REACH = 36.dp
@@ -146,7 +162,7 @@ private class ItemDrag(
 /** What the grips stand on, as it is now. */
 private class GripsShown(
     val heights: LineHeights, val byLine: Map<Int, TaskBox>, val layout: TextLayoutResult, val metrics: ListMetrics,
-    val whole: String, val above: Int, val mayRtl: Boolean, val actions: ItemActions,
+    val whole: String, val above: Int, val mayRtl: Boolean, val actions: ItemActions, val onTick: (Int) -> Unit,
 ) {
     fun rtl(box: TaskBox) = mayRtl && box.at < layout.layoutInput.text.length && layout.getBidiRunDirection(box.at) == ResolvedTextDirection.Rtl
 }
@@ -163,11 +179,13 @@ private fun CharSequence.hasRightToLeft() = any { it.code in 0x0590..0x08FF || i
  * of the text. In the field, a finger that rests on a handle before it drags was a long press too, and the field
  * picked a word and showed its magnifier under the drag (seen on Eric's phone, 22 Nov).
  *
- * Dragging starts as soon as a finger on a handle moves up or down, with a short buzz. The item's own lines get a
- * frame, a small card with its first words follows the finger, and a thick line with a dot shows where it lands: the
- * text itself stays put until the finger lets go. The line's start shows the level; going sideways picks another one
- * where the place takes it. A drag that starts sideways is left alone: at the screen's edge that is the phone's Back.
- * Near the top or bottom of the view the note scrolls along.
+ * A finger that comes on a handle has the item at once, and that shows: the item's own lines get a frame and the
+ * dots stand full. A short buzz follows when the finger rests there or starts to drag. Some people hold still first
+ * and wait for such a sign (seen in a finger test, 23 Nov); nobody has to. Dragging starts as soon as the finger moves
+ * up or down. A small card with the item's first words follows the finger, and a thick line with a dot shows where it
+ * lands: the text itself stays put until the finger lets go. The line's start shows the level; going sideways picks
+ * another one where the place takes it. A drag that starts sideways is left alone: at the screen's edge that is the
+ * phone's Back. Near the top or bottom of the view the note scrolls along.
  *
  * [boxes] are the tasks, [starts] where each line of this text starts in the text as shown and [layout] how it is laid
  * out. [whole] is the whole body and [above] the number of its lines above this text (a body with a table is shown in
@@ -186,17 +204,22 @@ internal fun ListGrips(
     foreground: Color,
     scroll: GripScroll?,
     actions: ItemActions,
+    onTick: (Int) -> Unit,
 ) {
     if (layout == null || boxes.isEmpty() || starts.isEmpty()) return
     val density = LocalDensity.current
     val haptics = LocalHapticFeedback.current
+    val scope = rememberCoroutineScope()
     // On a phone that reads right to left every line starts at the right; else only a line of such words can.
     val mirrored = LocalLayoutDirection.current == LayoutDirection.Rtl
     val mayRtl = remember(layout, mirrored) { mirrored || layout.layoutInput.text.hasRightToLeft() }
     val byLine = remember(boxes) { boxes.associateBy { it.line } }
-    val shown by rememberUpdatedState(GripsShown(remember(layout, starts) { LineHeights(layout, starts) }, byLine, layout, metrics, whole, above, mayRtl, actions))
+    val shown by rememberUpdatedState(GripsShown(remember(layout, starts) { LineHeights(layout, starts) }, byLine, layout, metrics, whole, above, mayRtl, actions, onTick))
     val margin = with(density) { BODY_MARGIN.roundToPx() }
-    val reach = with(density) { HANDLE_REACH.roundToPx() }
+    // The handle's place to touch: from the screen's edge to where the box of a task that is not a sub-item starts
+    // (design checklists-77, part 5). A finger aimed at the dots comes down up to there (measured 23 Nov).
+    val reach = margin + metrics.toPx(TASK_SHIFT).roundToInt()
+    val boxReach = with(density) { BOX_REACH.toPx() }
     val crossReach = with(density) { CROSS_REACH.roundToPx() }
     val half = with(density) { LocalConfiguration.current.screenHeightDp.dp.toPx() } / 2
     val levelStep = with(density) { DRAG_LEVEL_STEP.dp.toPx() }
@@ -208,6 +231,24 @@ internal fun ListGrips(
     var width by remember { mutableIntStateOf(0) }
     var band by remember { mutableIntStateOf(0) }
     var drag by remember { mutableStateOf<ItemDrag?>(null) }
+    // The lines of the item under a finger that is on its handle and has not moved yet.
+    var held by remember { mutableStateOf<IntRange?>(null) }
+
+    /** The lines of the item on [line], with all that hangs under it. */
+    fun itemLines(line: Int): IntRange? {
+        val now = shown
+        val span = FormatCore.itemSpan(now.whole, now.above + line) ?: return null
+        return line..(span.end - now.above).coerceIn(line, now.heights.lines - 1)
+    }
+
+    /** Whether [at], in this text's own measure, is on the place to tap of the box on [line] (see TaskBoxes). */
+    fun onBox(line: Int, at: Offset): Boolean {
+        val now = shown
+        val box = now.byLine[line] ?: return false
+        if (!now.heights.fits || line >= now.heights.lines || box.at >= now.layout.layoutInput.text.length) return false
+        val left = boxReachLeft(now.layout, box.at, density)
+        return at.x >= left && at.x <= left + boxReach && at.y >= now.heights.top(line) && at.y <= now.heights.firstBottom(line)
+    }
 
     /** The finger of [dragging] in this text's own measure, or null when the text is not on the screen. */
     fun finger(dragging: ItemDrag): Offset? {
@@ -235,7 +276,6 @@ internal fun ListGrips(
         if (level < 0 || slots.isEmpty()) return false
         val end = (span.end - now.above).coerceIn(line, now.heights.lines - 1)
         drag = ItemDrag(line, end, span.count, level, slots, box.label, now.rtl(box), now.whole, at.x).also { it.y = at.y; it.startY = at.y }
-        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
         return true
     }
 
@@ -294,17 +334,20 @@ internal fun ListGrips(
                 band = kotlin.math.floor(-it.positionInWindow().y / half).toInt()
             },
     ) {
-        // The frame around the item on its way, and the line where it lands.
+        // The frame around the item on its way, or under a finger that has not moved yet, and the line where it lands.
         Canvas(Modifier.fillMaxSize()) {
-            val dragging = drag ?: return@Canvas
-            val to = target(dragging) ?: return@Canvas
+            val dragging = drag
+            val to = dragging?.let { target(it) }
             val heights = shown.heights
+            val lines = if (dragging == null) held?.takeIf { heights.fits && it.last < heights.lines } else if (to == null) null else dragging.line..dragging.end
+            if (lines == null) return@Canvas
             val pad = 12.dp.toPx()
-            val top = heights.top(dragging.line)
+            val top = heights.top(lines.first)
             val corner = CornerRadius(8.dp.toPx())
-            val frame = Size(size.width + 2 * pad, heights.bottom(dragging.end) - top)
+            val frame = Size(size.width + 2 * pad, heights.bottom(lines.last) - top)
             drawRoundRect(foreground.copy(alpha = 0.07f), Offset(-pad, top), frame, corner)
             drawRoundRect(foreground.copy(alpha = 0.55f), Offset(-pad, top), frame, corner, style = Stroke(1.5.dp.toPx()))
+            if (dragging == null || to == null) return@Canvas
             val y = if (to.before < heights.lines) heights.top(to.before) else heights.bottom(heights.lines - 1)
             val inset = shown.metrics.toPx(TASK_SHIFT) + shown.metrics.toPx(LEVEL_STEP) * minOf(to.level, LIST_LEVELS_DRAWN - 1)
             val from = if (dragging.rtl) size.width - inset else inset
@@ -337,11 +380,11 @@ internal fun ListGrips(
                         Modifier
                             .offset { IntOffset(if (rtl) width + margin - reach else -margin, top.roundToInt()) }
                             // As high as the task, the lines it wraps to included; the dots stand next to its first line.
-                            .size(HANDLE_REACH, with(density) { (heights.bottom(line) - top).toDp() })
+                            .size(with(density) { reach.toDp() }, with(density) { (heights.bottom(line) - top).toDp() })
                             .onGloballyPositioned { coordinates[0] = it }
                             .drawBehind {
-                                // The item on its way shows its dots full, the others stay calm (a shape, not only a color).
-                                val picked = drag?.line == line
+                                // The item on its way or under a finger shows its dots full, the others stay calm (a shape, not only a color).
+                                val picked = drag?.line == line || held?.first == line
                                 val x = if (rtl) size.width - HANDLE_DOTS_AT.toPx() else HANDLE_DOTS_AT.toPx()
                                 val gap = 3.dp.toPx()
                                 for (column in listOf(-1, 1)) for (row in -1..1) {
@@ -352,8 +395,33 @@ internal fun ListGrips(
                                 awaitEachGesture {
                                     val down = awaitFirstDown(requireUnconsumed = true)
                                     down.consume()
-                                    val start = awaitVerticalTouchSlopOrCancellation(down.id) { change, _ -> change.consume() } ?: return@awaitEachGesture
+                                    // The sign that the finger has the item, before it moves: the frame at once, the buzz when it rests.
+                                    var buzzed = false
+                                    held = itemLines(line)
+                                    val rest = scope.launch {
+                                        delay(HANDLE_REST_MS)
+                                        buzzed = true
+                                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    }
+                                    val start = try {
+                                        awaitVerticalTouchSlopOrCancellation(down.id) { change, _ -> change.consume() }
+                                    } finally {
+                                        rest.cancel()
+                                        held = null
+                                    }
+                                    if (start == null) {
+                                        // The handle lies over a part of the box's own place to tap: a tap there still ticks the box.
+                                        val up = currentEvent.changes.firstOrNull { it.id == down.id }
+                                        val base = origin[0]?.takeIf { it.isAttached }
+                                        if (up != null && !up.pressed && base != null &&
+                                            up.uptimeMillis - down.uptimeMillis < viewConfiguration.longPressTimeoutMillis &&
+                                            (up.position - down.position).getDistance() < viewConfiguration.touchSlop &&
+                                            onBox(line, onScreen(up.position) - base.positionInRoot())
+                                        ) shown.onTick(line)
+                                        return@awaitEachGesture
+                                    }
                                     if (!begin(line, onScreen(start.position))) return@awaitEachGesture
+                                    if (!buzzed) haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                                     val dropped = drag(start.id) { change ->
                                         move(onScreen(change.position))
                                         change.consume()
