@@ -228,6 +228,56 @@ test('a list ticked on two devices merges per line; without the shared version b
   assert.equal(decode(phone.files.get('notes/Shopping.cloud-conflict-r4.md')), '- [x] milk\n- [x] eggs\n- [x] milk\n');
 });
 
+test('a task dragged on one device and ticked or dragged on the other, or ticked on both, syncs to one note, every task once', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'jotdrop-sync-moves-'));
+  const enrollmentToken = randomToken(), app = await createCloudServer({ dataDir: directory, enrollmentToken });
+  t.after(async () => { await app.close(); await rm(directory, { recursive: true, force: true }); });
+  const owner = (await CloudClient.create({ url: `http://127.0.0.1:${app.port}`, enrollmentToken, deviceName: 'Desktop' })).client;
+  const other = await CloudClient.claim({ pairingCode: (await owner.makePairing('Phone')).pairingCode });
+  const desktop = device(owner), phone = device(other);
+  const note = 'notes/Shopping.md';
+  desktop.files.set(note, text('- [ ] milk\n- [ ] eggs\n- [ ] bread\n- [ ] cheese\n'));
+  await desktop.sync();
+  await phone.sync();
+
+  // At home the list is dragged into the order of the shop while the phone ticks that task: the tick goes along.
+  desktop.files.set(note, text('- [ ] eggs\n- [ ] bread\n- [ ] cheese\n- [ ] milk\n'));
+  phone.files.set(note, text('- [x] milk\n- [ ] eggs\n- [ ] bread\n- [ ] cheese\n'));
+  await desktop.sync();
+  assert.deepEqual(await phone.sync(), { uploaded: 1, downloaded: 0, deleted: 0, conflicts: 0, skipped: [] });
+  assert.equal((await desktop.sync()).downloaded, 1);
+  assert.equal(decode(desktop.files.get(note)), '- [ ] eggs\n- [ ] bread\n- [ ] cheese\n- [x] milk\n');
+  assert.equal(decode(phone.files.get(note)), decode(desktop.files.get(note)));
+
+  // Both drag the same task, each to its own place: it is there once, where the cloud has it (the desktop was first).
+  desktop.files.set(note, text('- [ ] bread\n- [ ] cheese\n- [x] milk\n- [ ] eggs\n'));
+  phone.files.set(note, text('- [ ] bread\n- [ ] cheese\n- [ ] eggs\n- [x] milk\n- [ ] tea\n'));
+  await desktop.sync();
+  assert.deepEqual(await phone.sync(), { uploaded: 1, downloaded: 0, deleted: 0, conflicts: 0, skipped: [] });
+  assert.equal((await desktop.sync()).downloaded, 1);
+  assert.equal(decode(desktop.files.get(note)), '- [ ] bread\n- [ ] cheese\n- [x] milk\n- [ ] eggs\n- [ ] tea\n');
+  assert.equal(decode(phone.files.get(note)), decode(desktop.files.get(note)));
+
+  // Both tick the same task. One device has "Move checked items to the bottom" on, so there the task moves as well:
+  // it is there once, ticked, where that device has it. First the desktop moves it (the phone ticks one more task),
+  // then the phone.
+  desktop.files.set(note, text('- [ ] bread\n- [x] milk\n- [ ] eggs\n- [ ] tea\n- [x] cheese\n'));
+  phone.files.set(note, text('- [ ] bread\n- [x] cheese\n- [x] milk\n- [x] eggs\n- [ ] tea\n'));
+  await desktop.sync();
+  assert.deepEqual(await phone.sync(), { uploaded: 1, downloaded: 0, deleted: 0, conflicts: 0, skipped: [] });
+  assert.equal((await desktop.sync()).downloaded, 1);
+  assert.equal(decode(desktop.files.get(note)), '- [ ] bread\n- [x] milk\n- [x] eggs\n- [ ] tea\n- [x] cheese\n');
+  assert.equal(decode(phone.files.get(note)), decode(desktop.files.get(note)));
+  desktop.files.set(note, text('- [x] bread\n- [x] milk\n- [x] eggs\n- [ ] tea\n- [x] cheese\n'));
+  phone.files.set(note, text('- [x] milk\n- [x] eggs\n- [ ] tea\n- [x] bread\n- [x] cheese\n'));
+  await desktop.sync();
+  assert.deepEqual(await phone.sync(), { uploaded: 1, downloaded: 0, deleted: 0, conflicts: 0, skipped: [] });
+  assert.equal((await desktop.sync()).downloaded, 1);
+  assert.equal(decode(desktop.files.get(note)), '- [x] milk\n- [x] eggs\n- [ ] tea\n- [x] bread\n- [x] cheese\n');
+  assert.equal(decode(phone.files.get(note)), decode(desktop.files.get(note)));
+  assert.ok(![...phone.files.keys(), ...desktop.files.keys()].some(isPreserved), 'No copies on either device');
+});
+
 test('a shared space stays out of the vault in both directions; an ordinary folder called Shared does not', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'jotdrop-sync-space-'));
   const enrollmentToken = randomToken(), app = await createCloudServer({ dataDir: directory, enrollmentToken });

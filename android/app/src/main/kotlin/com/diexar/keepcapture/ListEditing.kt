@@ -65,11 +65,16 @@ private fun nextFence(line: String, fence: String?): String? {
     return if (marker[0] == fence[0] && marker.length >= fence.length && match.groupValues[2].isBlank()) null else fence
 }
 
-internal data class ListEnterEdit(val from: Int, val to: Int, val insert: String)
+/**
+ * An Enter in a list as one replacement, and where the caret goes. That is mostly right behind what was put in; an
+ * empty item that goes a level back keeps the caret behind its marker (seen on Eric's phone, 22 Nov: it stood in front
+ * of the box, and the next letter broke the task).
+ */
+internal data class ListEnterEdit(val from: Int, val to: Int, val insert: String, val caret: Int = from + insert.length)
 
 /** Enter in a list, by the shared formatting core (the same cases as the web app), numbered lists included. */
 internal fun listEnterEdit(text: String, start: Int, end: Int = start): ListEnterEdit? =
-    FormatCore.listEnterEdit(text, start, end)?.let { ListEnterEdit(it.from, it.to, it.insert) }
+    FormatCore.listEnterEdit(text, start, end)?.let { ListEnterEdit(it.from, it.to, it.insert, it.selFrom) }
 
 /**
  * The keyboard pressed Enter: [next] has exactly one new line break, just before its collapsed
@@ -94,7 +99,7 @@ internal fun listEnterAfterChange(
     if (!current.regionMatches(0, base, 0, lineStart)) return null
     if (!current.regionMatches(current.length - tail, base, lineEnd, tail)) return null
     val edit = listEnterEdit(base, at, at) ?: return null
-    return base.replaceRange(edit.from, edit.to, edit.insert) to edit.from + edit.insert.length
+    return base.replaceRange(edit.from, edit.to, edit.insert) to edit.caret
 }
 
 /**
@@ -195,6 +200,40 @@ internal class StaleField(private val clock: () -> Long = System::currentTimeMil
     }
 }
 
+/** The body after Undo of a list action, with the selection. */
+internal data class Undone(val text: String, val selFrom: Int, val selTo: Int)
+
+/**
+ * Undo of a list action in the editor (design checklists-77, 6.5). [before] is the body from before the action with its
+ * selection, [after] the body right after it, [now] the body as it is. Nothing typed since: [before] comes back as it
+ * was. Typed on: the action is taken back in [now], line by line as the sync merges two versions, and the selection
+ * stays in its own text. A moved item goes back with what was typed in it since, and once, also when it was moved
+ * again. Null when that cannot be done without writing over something (a line both changed).
+ */
+internal fun undoListAction(before: String, beforeFrom: Int, beforeTo: Int, after: String, now: String, nowFrom: Int, nowTo: Int): Undone? {
+    if (now == after) return Undone(before, beforeFrom, beforeTo)
+    val merged = CloudNoteMerge.mergeText(after, now, before) ?: return null
+    val diff = textDiff(now, merged)
+    val shift = merged.length - now.length
+    val was = now.split('\n')
+    val lines = merged.split('\n')
+    // A place in a line that is there once, before and after, stays in that line, also when Undo takes the line back.
+    fun own(at: Int): Int? {
+        val line = lineOf(now, at)
+        val text = was[line]
+        if (was.count { it == text } != 1 || lines.count { it == text } != 1) return null
+        return lineStartOf(merged, lines.indexOf(text)) + at - lineStartOf(now, line)
+    }
+    fun map(at: Int) = own(at) ?: when {
+        at <= diff.start -> at
+        at >= diff.endA -> at + shift
+        // Inside what changed: a tick back is as long as the tick, so the place holds; else the start of the change.
+        shift == 0 -> at
+        else -> diff.start
+    }
+    return Undone(merged, map(nowFrom), map(nowTo))
+}
+
 /** Display only: one bullet replaces one marker, leaving every source offset intact. */
 internal fun renderListBullets(text: String): String {
     var fence: String? = null
@@ -206,4 +245,47 @@ internal fun renderListBullets(text: String): String {
             line.replaceRange(offset, offset + 1, "\u2022")
         } else line
     }
+}
+
+/**
+ * Text of more than one line that came into a list item in one go, a paste mostly (design checklists-77, 6.6): [next]
+ * is [current] with its selection ([selFrom] to [selTo]) replaced by text that has a line break in it, the caret right
+ * behind it at [nextCaret]. Every line of it becomes an item of its own (FormatCore.pasteLinesEdit). The new text and
+ * caret, or null when [next] is no such change or the core leaves it an ordinary paste. Ask this after the list
+ * Enter: a word a keyboard finishes in the same update as Enter is typing, not a paste.
+ */
+internal fun pastedLines(current: String, selFrom: Int, selTo: Int, next: String, nextCaret: Int): Pair<String, Int>? {
+    if (selFrom < 0 || selTo < selFrom || selTo > current.length || nextCaret > next.length) return null
+    val size = nextCaret - selFrom
+    if (size < 2 || next.length - current.length != size - (selTo - selFrom)) return null
+    val pasted = next.substring(selFrom, nextCaret)
+    if (pasted.none { it == '\n' || it == '\r' }) return null
+    if (!current.regionMatches(0, next, 0, selFrom) || !current.regionMatches(selTo, next, nextCaret, current.length - selTo)) return null
+    val edit = FormatCore.pasteLinesEdit(current, selFrom, selTo, pasted) ?: return null
+    return current.replaceRange(edit.from, edit.to, edit.insert) to edit.selFrom
+}
+
+/** Where a place in the text is after [edit] was made by something else than its own selection: it stays in its own text. */
+internal fun FormatCore.Edit.moved(at: Int): Int = when {
+    at <= from -> at
+    at >= to -> at + insert.length - (to - from)
+    else -> from + minOf(at - from, insert.length)
+}
+
+/** The number of the line that holds place [at] of [text]. */
+internal fun lineOf(text: String, at: Int): Int {
+    var line = 0
+    for (index in 0 until at.coerceIn(0, text.length)) if (text[index] == '\n') line++
+    return line
+}
+
+/** Where line [line] of [text] starts; the end of the text for a line it does not have. */
+internal fun lineStartOf(text: String, line: Int): Int {
+    var at = 0
+    repeat(line) {
+        val next = text.indexOf('\n', at)
+        if (next < 0) return text.length
+        at = next + 1
+    }
+    return at
 }

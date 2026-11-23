@@ -122,6 +122,30 @@
     <string name="format_markdown">Markdown</string>
     <string name="format_emoji_more">Altre emoji: usa il tasto emoji della tastiera.</string>
     <string name="format_table">Tabella</string>
+    <string name="format_indent">Aumenta rientro</string>
+    <string name="format_outdent">Riduci rientro</string>
+    <string name="notice_undone">Azione annullata</string>
+    <string name="notice_undo_failed">Impossibile annullare. La nota è cambiata.</string>
+    <!-- Checklists in an open note (issue 77): the grips, the menus and what the strip says. -->
+    <string name="list_move_up">Sposta su</string>
+    <string name="list_move_down">Sposta giù</string>
+    <string name="list_delete_item">Elimina elemento</string>
+    <string name="list_delete_item_named">Elimina elemento: %1$s</string>
+    <string name="list_item_place">%1$d di %2$d</string>
+    <string name="list_uncheck_all">Togli tutte le spunte</string>
+    <string name="list_delete_checked">Elimina gli elementi spuntati</string>
+    <string name="notice_item_moved">Elemento spostato</string>
+    <string name="notice_item_deleted">Elemento eliminato</string>
+    <plurals name="notice_item_deleted_subs">
+        <item quantity="one">Elemento e %d sottoelemento eliminati</item>
+        <item quantity="other">Elemento e %d sottoelementi eliminati</item>
+    </plurals>
+    <string name="notice_all_unchecked">Tutte le spunte tolte</string>
+    <plurals name="notice_checked_deleted">
+        <item quantity="one">%d elemento spuntato eliminato</item>
+        <item quantity="other">%d elementi spuntati eliminati</item>
+    </plurals>
+    <!-- End of the checklist texts. -->
     <string name="table_cell_header">Intestazione, colonna %1$d</string>
     <string name="table_cell">Riga %1$d, colonna %2$d</string>
     <string name="table_add_row">Aggiungi riga</string>

@@ -122,6 +122,30 @@
     <string name="format_markdown">Markdown</string>
     <string name="format_emoji_more">Plus d\'émojis : utilisez la touche émoji de votre clavier.</string>
     <string name="format_table">Tableau</string>
+    <string name="format_indent">Augmenter le retrait</string>
+    <string name="format_outdent">Diminuer le retrait</string>
+    <string name="notice_undone">Action annulée</string>
+    <string name="notice_undo_failed">Impossible d\'annuler. La note a changé.</string>
+    <!-- Checklists in an open note (issue 77): the grips, the menus and what the strip says. -->
+    <string name="list_move_up">Monter l\'élément</string>
+    <string name="list_move_down">Descendre l\'élément</string>
+    <string name="list_delete_item">Supprimer l\'élément</string>
+    <string name="list_delete_item_named">Supprimer l\'élément : %1$s</string>
+    <string name="list_item_place">%1$d sur %2$d</string>
+    <string name="list_uncheck_all">Décocher tous les éléments</string>
+    <string name="list_delete_checked">Supprimer les éléments cochés</string>
+    <string name="notice_item_moved">Élément déplacé</string>
+    <string name="notice_item_deleted">Élément supprimé</string>
+    <plurals name="notice_item_deleted_subs">
+        <item quantity="one">Élément et %d sous-élément supprimés</item>
+        <item quantity="other">Élément et %d sous-éléments supprimés</item>
+    </plurals>
+    <string name="notice_all_unchecked">Tous les éléments décochés</string>
+    <plurals name="notice_checked_deleted">
+        <item quantity="one">%d élément coché supprimé</item>
+        <item quantity="other">%d éléments cochés supprimés</item>
+    </plurals>
+    <!-- End of the checklist texts. -->
     <string name="table_cell_header">En-tête, colonne %1$d</string>
     <string name="table_cell">Ligne %1$d, colonne %2$d</string>
     <string name="table_add_row">Ajouter une ligne</string>
