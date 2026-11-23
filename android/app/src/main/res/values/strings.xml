@@ -90,7 +90,8 @@
     <string name="tutorial_skip">Skip</string>
     <string name="tutorial_done">Got it</string>
     <string name="welcome_title">Welcome to JotDrop</string>
-    <string name="welcome_text">Your notes, photos and voice memos, saved as plain files on this phone. Continue with Google or GitHub for a free encrypted cloud with 250 MB, to have them on all your devices.</string>
+    <string name="welcome_text">Your notes, photos and voice memos, saved as plain files on this phone. Sign up for a free encrypted cloud with 250 MB to have them on all your devices.</string>
+    <string name="welcome_email">Continue with email</string>
     <string name="welcome_google">Continue with Google</string>
     <string name="welcome_github">Continue with GitHub</string>
     <string name="welcome_local">Use without cloud</string>

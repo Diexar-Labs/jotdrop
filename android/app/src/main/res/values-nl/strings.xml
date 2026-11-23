@@ -88,7 +88,8 @@
     <string name="tutorial_skip">Overslaan</string>
     <string name="tutorial_done">Begrepen</string>
     <string name="welcome_title">Welkom bij JotDrop</string>
-    <string name="welcome_text">Je notities, foto\'s en spraakmemo\'s, als gewone bestanden op deze telefoon. Ga verder met Google of GitHub voor een gratis versleutelde cloud met 250 MB, zodat je ze op al je apparaten hebt.</string>
+    <string name="welcome_text">Je notities, foto\'s en spraakmemo\'s, als gewone bestanden op deze telefoon. Meld je aan voor een gratis versleutelde cloud met 250 MB, zodat je ze op al je apparaten hebt.</string>
+    <string name="welcome_email">Doorgaan met e-mail</string>
     <string name="welcome_google">Doorgaan met Google</string>
     <string name="welcome_github">Doorgaan met GitHub</string>
     <string name="welcome_local">Gebruiken zonder cloud</string>

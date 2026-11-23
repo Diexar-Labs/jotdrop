@@ -222,15 +222,15 @@ internal fun ProviderButton(name: String, label: String, enabled: Boolean, onCli
     }
 }
 
-/** Google or GitHub only say who you are; the key to the notes still comes from your own devices. */
+/** Below the email form, like on the website: Google or GitHub only say who you are; the key to the notes still comes from your own devices. */
 @Composable
 private fun ProviderButtons(providers: List<String>, server: String, busy: Boolean, run: (suspend () -> Unit) -> Unit) {
     if (providers.isEmpty()) return
     val context = LocalContext.current
+    Text("Or continue with:", style = MaterialTheme.typography.bodySmall)
     providers.forEach { name ->
         ProviderButton(name, "Continue with ${PROVIDER_NAMES.getValue(name)}", !busy) { run { startProviderSignIn(context, server, name) } }
     }
-    Text("Or with email and password:", style = MaterialTheme.typography.bodySmall)
 }
 
 /** The privacy policy lives on the cloud server itself. */
@@ -301,11 +301,11 @@ internal fun CloudSignIn(busy: Boolean, run: (suspend () -> Unit) -> Unit, showE
         delay(500)
         providers = runCatching { io { CloudAccount.providers(server) } }.getOrDefault(emptyList()).filter { it in PROVIDER_NAMES }
     }
-    // From the welcome screen: straight to Google or GitHub.
+    // From the welcome screen: email opens a new account, Google or GitHub their own sign-in.
     LaunchedEffect(Unit) {
         val chosen = flow.startProvider ?: return@LaunchedEffect
         flow.startProvider = null
-        run { startProviderSignIn(context, server, chosen) }
+        if (chosen == "email") mode = "signup" else run { startProviderSignIn(context, server, chosen) }
     }
     // Back from the browser: the ticket only works with the verifier this phone kept, and only once.
     LaunchedEffect(flow.providerReturn) {
@@ -453,7 +453,6 @@ internal fun CloudSignIn(busy: Boolean, run: (suspend () -> Unit) -> Unit, showE
             mode == "signup" -> {
                 Text("Create a JotDrop Cloud account", style = MaterialTheme.typography.titleLarge)
                 Text("Your password never leaves this device. It locks your notes before they are uploaded, so the server cannot read them.")
-                ProviderButtons(providers, server, busy, run)
                 EmailField(email, { email = it }, !busy)
                 PasswordField(password, { password = it }, "Password (at least 12 characters)", !busy)
                 PasswordField(confirm, { confirm = it }, "Repeat password", !busy)
@@ -468,6 +467,7 @@ internal fun CloudSignIn(busy: Boolean, run: (suspend () -> Unit) -> Unit, showE
                     } else { flow.signup = io { CloudAccount.signUp(server, email, password, cloudDeviceName(), newsletter) }; password = ""; confirm = "" }
                 } }, enabled = !busy && email.contains('@') && newPasswordProblem(password, confirm) == null) { Text("Create account") }
                 TextButton(onClick = { mode = "signin" }, enabled = !busy) { Text("I already have an account") }
+                ProviderButtons(providers, server, busy, run)
             }
             mode == "forgot" -> {
                 Text("Forgot your password?", style = MaterialTheme.typography.titleLarge)
@@ -483,7 +483,6 @@ internal fun CloudSignIn(busy: Boolean, run: (suspend () -> Unit) -> Unit, showE
             }
             else -> {
                 Text("Sign in to JotDrop Cloud", style = MaterialTheme.typography.titleLarge)
-                ProviderButtons(providers, server, busy, run)
                 EmailField(email, { email = it }, !busy)
                 PasswordField(password, { password = it }, "Password", !busy)
                 serverField()
@@ -492,6 +491,7 @@ internal fun CloudSignIn(busy: Boolean, run: (suspend () -> Unit) -> Unit, showE
                 TextButton(onClick = { mode = "forgot" }, enabled = !busy) { Text("Forgot password?") }
                 TextButton(onClick = { mode = "signup" }, enabled = !busy) { Text("Create an account") }
                 TextButton(onClick = { mode = "pair" }, enabled = !busy) { Text("Use a one-time pairing code") }
+                ProviderButtons(providers, server, busy, run)
                 PrivacyLink({ CloudClient.secureOrigin(server) }, !busy)
             }
         }
