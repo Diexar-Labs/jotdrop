@@ -39,6 +39,7 @@ def check_plans(browser, url, codes, database):
     def log_in(page):
         page.locator("#login-email").fill(EMAIL)
         page.locator("#login-password").fill(PASSWORD)
+        page.locator("#login-forget").check()
         page.locator('#login-form button[type="submit"]').click()
         page.locator("#code-input").fill(code("login"))
         page.locator('#code-form button[type="submit"]').click()
@@ -49,6 +50,7 @@ def check_plans(browser, url, codes, database):
     phone.locator("#signup-email").fill(EMAIL)
     phone.locator("#signup-password").fill(PASSWORD)
     phone.locator("#signup-confirm").fill(PASSWORD)
+    phone.locator("#signup-forget").check()
     phone.locator('#signup-form button[type="submit"]').click()
     phone.locator("#code-input").fill(code("verify"))
     phone.locator('#code-form button[type="submit"]').click()

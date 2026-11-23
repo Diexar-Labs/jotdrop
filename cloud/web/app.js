@@ -321,20 +321,46 @@ function iconButton(icon, label, action, className = '') {
   return element;
 }
 
-// One small popup menu at a time, closed by Escape, an outside click or a choice.
+let taskBoxes = 0;
+
+// One small popup menu at a time, closed by Escape, its own button, a press outside it or a choice.
 let openMenu;
+// The press that closes a menu does nothing else: no note opens, nothing is ticked or selected (#88).
+let closingPress = false;
+document.addEventListener('pointerdown', (event) => {
+  closingPress = Boolean(openMenu) && !openMenu.menu.contains(event.target) && !openMenu.anchor.contains(event.target);
+  if (!closingPress) return;
+  event.stopPropagation();
+  closeMenu();
+}, true);
+// Stopping the click is not enough: the press itself would focus a field, open a list or drag a card.
+for (const type of ['mousedown', 'dragstart']) {
+  document.addEventListener(type, (event) => {
+    if (!closingPress) return;
+    event.preventDefault();
+    event.stopPropagation();
+  }, true);
+}
+document.addEventListener('click', (event) => {
+  // detail is 0 for a key or a script, which never belong to that press.
+  if (!closingPress || !event.detail) return;
+  closingPress = false;
+  event.preventDefault();
+  event.stopPropagation();
+}, true);
 function closeMenu() {
   if (!openMenu) return;
-  const { menu, anchor, onKey, onPointer } = openMenu;
+  const { menu, anchor, onKey } = openMenu;
   openMenu = undefined;
   menu.remove();
   document.removeEventListener('keydown', onKey, true);
-  document.removeEventListener('pointerdown', onPointer, true);
   if (anchor.isConnected) anchor.focus();
 }
 
 function showMenu(anchor, items) {
+  const same = openMenu?.anchor === anchor;
   closeMenu();
+  if (same) return;
   const menu = document.createElement('div');
   menu.className = 'card-menu';
   menu.setAttribute('role', 'menu');
@@ -362,10 +388,8 @@ function showMenu(anchor, items) {
       event.preventDefault();
     }
   };
-  const onPointer = (event) => { if (!menu.contains(event.target) && !anchor.contains(event.target)) closeMenu(); };
   document.addEventListener('keydown', onKey, true);
-  document.addEventListener('pointerdown', onPointer, true);
-  openMenu = { menu, anchor, onKey, onPointer };
+  openMenu = { menu, anchor, onKey };
   menu.firstChild?.focus();
 }
 
@@ -829,7 +853,7 @@ function render() {
     empty.className = 'empty-state';
     const heading = document.createElement('h2');
     heading.textContent = query ? 'No matching files' : labelFilter ? 'No notes with this label yet' : view === 'trash' ? 'Nothing in the trash' : view === 'files' ? 'A place for your attachments' : 'Room for your next thought';
-    empty.append(heading, paragraph(query ? 'Try a different word or filename.' : labelFilter ? 'Give a note this label with the label button on its card or in the editor.' : view === 'notes' ? 'Create a note or upload a Markdown file. Existing notes on your computer are never imported automatically.' : view === 'files' ? `Upload an image, recording, or document, up to ${maxFileText()} each.` : 'Files you move to trash will appear here.'));
+    empty.append(heading, paragraph(query ? 'Try a different word or filename.' : labelFilter ? 'Give a note this label with the label button on its card or in the editor.' : view === 'notes' ? 'Create a note or upload a Markdown file. Existing notes on your computer are never imported automatically.' : view === 'files' ? `Upload an image, recording, or document, up to ${maxFileText()} each.` : view === 'archive' ? 'Notes you archive will appear here.' : 'Files you move to trash will appear here.'));
     if (view === 'notes' && !query && !labelFilter) {
       const hint = document.createElement('p');
       hint.className = 'empty-hint';
@@ -953,9 +977,12 @@ function render() {
         }
         if (!rowData.task) return paragraph(rowData.text, 'note-preview');
         const { task, bodyIndex } = rowData;
-        const row = document.createElement('label'); row.className = 'task-row';
+        // Only the box ticks; the words open the note, like the rest of the card (#81).
+        const row = document.createElement('div'); row.className = 'task-row';
         row.dataset.level = String(rowData.level);
         const input = document.createElement('input'); input.type = 'checkbox'; input.checked = task[1] !== ' ';
+        input.id = `task-box-${++taskBoxes}`;
+        const tick = document.createElement('label'); tick.className = 'task-tick'; tick.htmlFor = input.id;
         input.setAttribute('aria-label', plainPreviewText(task[2]));
         input.disabled = entry.conflict || $('editor').open || Boolean(moment) || readOnlyHere();
         // Busy instead of disabled while saving: a disabled box loses keyboard focus.
@@ -991,7 +1018,7 @@ function render() {
         // Rendering never consumes the stroke: card measurements and re-renders continue it from the tick.
         const struckAgo = input.checked && justStruck?.key === `${entry.file.path}:${bodyIndex}` ? performance.now() - justStruck.at : Infinity;
         if (struckAgo < STRIKE_MS) { row.classList.add('just-struck'); row.style.setProperty('--strike-delay', `${-struckAgo}ms`); }
-        row.append(input, label);
+        row.append(input, label, tick);
         return row;
       };
       const previewControl = cardPreview(preview, previewRows, {
@@ -2979,6 +3006,8 @@ async function finishAccess(connected, { password, remember, recoveryCode }) {
   else await store('delete', 'connection');
   forgetOnClose = !remember;
   codeStep = undefined;
+  // The next person on this page chooses again.
+  for (const radio of $('access').querySelectorAll('.stay-choice input')) radio.checked = false;
   for (const input of $('access').querySelectorAll('input[type="password"], input[inputmode="numeric"], textarea')) input.value = '';
   $('access-message').textContent = '';
   await openWorkspace(connected);
@@ -3150,20 +3179,26 @@ function providerAction(id, action) {
     finally { $(id).disabled = false; }
   });
 }
-const providerAccess = () => ({ remember: $('provider-remember').checked });
+// Storing the sign-in needs consent, so nothing is chosen beforehand. These buttons are no form, so they check it themselves.
+function providerAccess() {
+  if (!$('provider-remember').checked && !$('provider-forget').checked) throw new Error('Choose whether to stay signed in on this browser.');
+  return { remember: $('provider-remember').checked };
+}
 providerAction('provider-create', async () => {
+  const access = providerAccess();
   const { client: connected, recoveryCode } = await providerSignUp(providerSignIn, { deviceName: DEVICE_NAME, newsletter: $('provider-newsletter').checked });
   providerSignIn = undefined;
-  await finishAccess(connected, { ...providerAccess(), recoveryCode });
+  await finishAccess(connected, { ...access, recoveryCode });
 });
 providerAction('provider-recover', async () => {
-  const recoveryCode = $('provider-recovery').value.trim();
-  await withDeviceChoice(async (replaceDeviceId) => finishAccess(await providerRecover(providerSignIn, { recoveryCode, deviceName: DEVICE_NAME, replaceDeviceId }), providerAccess()));
+  const access = providerAccess(), recoveryCode = $('provider-recovery').value.trim();
+  await withDeviceChoice(async (replaceDeviceId) => finishAccess(await providerRecover(providerSignIn, { recoveryCode, deviceName: DEVICE_NAME, replaceDeviceId }), access));
 });
 providerAction('provider-approve', async () => {
+  const access = providerAccess();
   const pending = await providerApproval(providerSignIn);
   providerSignIn = undefined;
-  waitForApproval(pending, (approved, replaceDeviceId) => completeApproval(approved, { deviceName: DEVICE_NAME, replaceDeviceId }), providerAccess(), 'Approved. Opening your notes...');
+  waitForApproval(pending, (approved, replaceDeviceId) => completeApproval(approved, { deviceName: DEVICE_NAME, replaceDeviceId }), access, 'Approved. Opening your notes...');
 });
 
 async function renderApprovals() {

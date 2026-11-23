@@ -125,7 +125,7 @@ main { min-width: 0; padding: 0 2rem 3rem; }
 /* A very long title (a clipped post without a heading) stops after three lines, like the plugin and the app; the note keeps it whole. */
 .note-card h3 { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; }
 .note-card .note-preview { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink); margin: 0 0 1rem; max-height: 210px; overflow: hidden; }
-.compact-card-preview { display: flex; flex-direction: column; gap: .5rem; overflow: hidden; }
+.compact-card-preview { display: flex; flex-direction: column; gap: .5rem; overflow: hidden; margin-left: -14px; padding-left: 14px; }
 .note-card .compact-card-preview > .note-preview { margin: 0; max-height: none; flex: none; }
 .note-card .compact-card-preview > .task-row { margin: 0; flex: none; }
 .compact-card-preview .task-text { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
@@ -170,8 +170,10 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .jd-draw-dot .jd-draw-check { color: #fff; font-size: .75rem; }
 .jd-draw-pen[aria-checked="true"] .jd-draw-dot .jd-draw-check { display: inline; }
 .jd-draw-message { color: var(--muted); font-size: .9rem; min-height: 1.4em; margin: .6rem 0 0; }
-.note-card .task-row { display: flex; gap: .6rem; align-items: baseline; margin: .5rem 0; font-weight: 400; overflow-wrap: anywhere; }
-.task-row input { width: auto; flex: none; }
+.note-card .task-row { position: relative; display: flex; gap: .6rem; align-items: baseline; margin: .5rem 0; font-weight: 400; overflow-wrap: anywhere; }
+.task-row input { position: relative; z-index: 2; width: auto; flex: none; cursor: pointer; }
+/* Only the box ticks: a finger's width around it, as high as the row and the space to the next one. */
+.note-card .task-tick { position: absolute; z-index: 1; left: -14px; width: 44px; top: -.25rem; bottom: -.25rem; margin: 0; cursor: pointer; }
 .property-row { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
 .property-row > label:first-child { flex: 1; }
 #note-properties summary { cursor: pointer; padding-top: 1rem; font-weight: 600; }
@@ -212,7 +214,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); }
 .selection-bar { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; margin-bottom: 1rem; padding: .6rem .8rem; background: var(--surface); border: 2px solid var(--accent); border-radius: 12px; }
 .selection-count { margin: 0 auto 0 0; font-weight: 700; }
 /* Like Keep: a short line at the bottom after archive, trash, restore or pin. Undo is a bold underlined word, never only a colour. */
-.toast { position: fixed; left: 50%; bottom: 1.2rem; z-index: 30; display: flex; align-items: center; gap: .4rem; box-sizing: border-box; min-height: 48px; max-width: min(92vw, 520px); padding: .2rem 1rem; translate: -50% 0; border-radius: 10px; background: var(--ink); color: var(--page); box-shadow: 0 6px 24px rgb(0 0 0 / .25); }
+.toast { position: fixed; left: 50%; bottom: 1.2rem; z-index: 30; display: flex; align-items: center; gap: .4rem; box-sizing: border-box; min-height: 48px; width: max-content; max-width: min(92vw, 520px); padding: .2rem 1rem; translate: -50% 0; border-radius: 10px; background: var(--ink); color: var(--page); box-shadow: 0 6px 24px rgb(0 0 0 / .25); }
 .toast .toast-undo { min-width: 44px; min-height: 44px; margin: 0 -.5rem 0 0; padding: .4rem .7rem; border: 0; border-radius: 8px; background: none; color: inherit; font: inherit; font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
 .toast .toast-undo:focus-visible { outline: 2px solid var(--page); outline-offset: 1px; }
 .note-card:has(.card-pin) h3 { padding-right: 2rem; }
@@ -322,6 +324,8 @@ dialog { overscroll-behavior: contain; }
 .qr svg { display: block; width: 100%; height: auto; border-radius: 6px; }
 .check-label { display: flex; align-items: start; gap: .7rem; margin: 1.2rem 0; cursor: pointer; }
 .check-label input { width: 1.3rem; height: 1.3rem; flex: none; margin-top: .05rem; cursor: pointer; }
+.access .stay-choice { padding: 0 .8rem; }
+.stay-choice .check-label { margin: .7rem 0; }
 @media (max-width: 760px) {
   .workspace { grid-template-columns: 1fr; }
   .sidebar { position: static; max-height: none; overflow: visible; padding: 1rem; border-right: none; border-bottom: 1px solid var(--line); }

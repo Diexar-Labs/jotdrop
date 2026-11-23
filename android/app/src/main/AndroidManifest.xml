@@ -72,7 +72,8 @@
         <activity
             android:name=".MainActivity"
             android:exported="false"
-            android:label="@string/settings_title" />
+            android:label="@string/settings_title"
+            android:theme="@style/Theme.JotDrop.Settings" />
 
         <!-- Ask JotDrop: AI with the user's own key, straight from this phone to the service they chose. -->
         <activity android:name=".AskActivity" android:exported="false" android:label="@string/ai_title" android:windowSoftInputMode="adjustResize" />

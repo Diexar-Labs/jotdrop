@@ -36,6 +36,7 @@ def check_trial(browser, url, codes, shots):
     page.locator("#signup-email").fill(EMAIL)
     page.locator("#signup-password").fill(PASSWORD)
     page.locator("#signup-confirm").fill(PASSWORD)
+    page.locator("#signup-forget").check()
     page.locator('#signup-form button[type="submit"]').click()
     page.locator("#code-input").fill(code("verify"))
     page.locator('#code-form button[type="submit"]').click()

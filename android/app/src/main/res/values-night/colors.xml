@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="settings_page">#0E1626</color>
+    <color name="settings_ink">#FBF8F1</color>
+    <color name="settings_panel">#22325A</color>
+    <color name="settings_muted">#B7BFD0</color>
+    <color name="settings_accent">#F4C458</color>
+    <color name="settings_on_accent">#14213D</color>
+    <color name="settings_outline">#3A4A70</color>
+</resources>

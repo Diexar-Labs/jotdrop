@@ -336,6 +336,14 @@
             android:textAppearance="?attr/textAppearanceSubtitle1"
             android:textStyle="bold" />
 
+        <TextView
+            android:id="@+id/versionText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:textIsSelectable="true"
+            android:textAppearance="?attr/textAppearanceBody2" />
+
         <com.google.android.material.button.MaterialButton
             android:id="@+id/privacyButton"
             style="@style/Widget.Material3.Button.OutlinedButton"

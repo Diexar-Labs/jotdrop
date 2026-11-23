@@ -42,6 +42,9 @@ internal data class FormatTransformation(
 
 private val hiddenStyle = SpanStyle(fontSize = 0.01.sp, color = Color.Transparent, letterSpacing = 0.sp)
 
+// As on the card: one and a half times the text, so it is easy to see and to hit.
+private val boxStyle = SpanStyle(fontSize = 1.5.em)
+
 internal fun formatBody(source: String, formatted: Boolean, foreground: Color, pairFrom: Int = -1, pairTo: Int = -1): AnnotatedString =
     if (!formatted || source.length > FORMAT_RAW_ABOVE) AnnotatedString(renderListBullets(source))
     else layoutBody(source, foreground, pairFrom, pairTo).first
@@ -49,6 +52,24 @@ internal fun formatBody(source: String, formatted: Boolean, foreground: Color, p
 /** The ranges the formatted view hides (signs that take no room), for Backspace: see [deletingIntoSigns]. */
 internal fun hiddenSigns(source: String): List<IntRange> =
     if (source.length > FORMAT_RAW_ABOVE) emptyList() else layoutBody(source, Color.Black, -1, -1).second
+
+/** A task's box in an open note: its line, where the box stands in the text, and what TalkBack reads. */
+internal data class TaskBox(val line: Int, val at: Int, val checked: Boolean, val label: String)
+
+/** The boxes [layoutBody] draws, as places to tap (#77). */
+internal fun taskBoxes(source: String): List<TaskBox> {
+    if (source.length > FORMAT_RAW_ABOVE || '[' !in source) return emptyList()
+    val lines = source.split('\n')
+    val starts = lines.runningFold(0) { at, line -> at + line.length + 1 }
+    return FormatCore.blocks(source).filter { it.kind != "code" && it.kind != "table" }.flatMap { block ->
+        (block.fromLine..block.toLine).mapNotNull { number ->
+            val line = lines[number].removeSuffix("\r")
+            val prefix = FormatCore.linePrefix(line)
+            if (prefix.kind != "task") null
+            else TaskBox(number, starts[number] + line.indexOf('[', prefix.markFrom), prefix.checked, line.substring(prefix.markTo).trim())
+        }
+    }
+}
 
 private fun layoutBody(source: String, foreground: Color, pairFrom: Int, pairTo: Int): kotlin.Pair<AnnotatedString, List<IntRange>> {
     val dark = foreground.luminance() > 0.5f
@@ -120,6 +141,7 @@ private fun layoutBody(source: String, foreground: Color, pairFrom: Int, pairTo:
                     val open = line.indexOf('[', prefix.markFrom)
                     hide(at(prefix.markFrom), at(open))
                     shown[at(open)] = if (prefix.checked) '☑' else '☐'
+                    style(boxStyle, at(open), at(open) + 1)
                     hide(at(open) + 1, at(open) + 3)
                     if (prefix.checked) style(SpanStyle(textDecoration = TextDecoration.LineThrough, color = muted), at(prefix.markTo), lineEnd)
                 }

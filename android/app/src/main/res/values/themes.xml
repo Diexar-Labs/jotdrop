@@ -25,6 +25,23 @@
         <item name="android:windowBackground">@color/splash_background</item>
     </style>
 
+    <!-- Settings is a View screen: the same paper and ink as JotDropTheme (ui/Theme.kt) gives the Compose screens. -->
+    <style name="Theme.JotDrop.Settings" parent="Theme.JotDrop">
+        <item name="android:windowBackground">@color/settings_page</item>
+        <item name="android:colorBackground">@color/settings_page</item>
+        <item name="colorOnBackground">@color/settings_ink</item>
+        <item name="colorSurface">@color/settings_page</item>
+        <item name="colorSurfaceContainer">@color/settings_page</item>
+        <item name="colorOnSurface">@color/settings_ink</item>
+        <item name="colorSurfaceVariant">@color/settings_panel</item>
+        <item name="colorOnSurfaceVariant">@color/settings_muted</item>
+        <item name="colorPrimary">@color/settings_accent</item>
+        <item name="colorOnPrimary">@color/settings_on_accent</item>
+        <item name="colorOutline">@color/settings_outline</item>
+        <item name="android:textColorPrimary">@color/settings_ink</item>
+        <item name="android:textColorSecondary">@color/settings_muted</item>
+    </style>
+
     <style name="Theme.JotDrop.Transparent" parent="Theme.JotDrop">
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:windowIsTranslucent">true</item>
