@@ -43,8 +43,9 @@ export function noteSummary(text, path) {
   // Frontmatter tags only, like the plugin editor; inline #hashtags stay in the text.
   const tags = [...new Set(listField(header, 'tags', true).map((tag) => tag.replace(/^#/, '')).filter(Boolean))];
   // Inline #hashtags count as tags too, as Android's InlineTags.find: outside code, not `\#shared`, never digits only.
+  // The space before a tag is part of the match, not a lookbehind: Safari before iOS 16.4 cannot load a file with one.
   const seen = new Set(tags.map((tag) => tag.toLowerCase()));
-  const inlineTags = [...body.replace(/```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]+`/g, ' ').matchAll(/(?:^|(?<=\s))#([\p{L}\p{N}_/-]+)/gmu)]
+  const inlineTags = [...body.replace(/```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]+`/g, ' ').matchAll(/(?:^|\s)#([\p{L}\p{N}_/-]+)/gmu)]
     .map((match) => match[1]).filter((tag) => /\D/.test(tag) && !seen.has(tag.toLowerCase()) && seen.add(tag.toLowerCase()));
   const color = scalar(header, 'color');
   const order = scalar(header, 'order');

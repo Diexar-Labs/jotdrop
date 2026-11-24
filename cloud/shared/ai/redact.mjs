@@ -2,8 +2,9 @@
 // the big providers' keys (sk-..., AIza...) and anything after Bearer or a key header are hidden by pattern.
 
 const HIDDEN = '[hidden]';
+// No lookbehind here: Safari before iOS 16.4 cannot load a file with one, and the web app loads this file.
 const PATTERNS = [
-  [/(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{8,}/g, HIDDEN],
+  [/(^|[^A-Za-z0-9])sk-[A-Za-z0-9_-]{8,}/g, `$1${HIDDEN}`],
   [/AIza[0-9A-Za-z_-]{20,}/g, HIDDEN],
   [/(Bearer\s+)(?!\[hidden\])[^\s"',;]{6,}/gi, `$1${HIDDEN}`],
   [/((?:x-api-key|x-goog-api-key|api[_-]?key|authorization)["']?\s*[:=]\s*["']?)(?!Bearer\b)(?!\[hidden\])[^\s"',;&}]{6,}/gi, `$1${HIDDEN}`],
