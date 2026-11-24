@@ -68,9 +68,8 @@ object Storage {
     const val DEFAULT_SPEECH_LANG = "nl-NL"
 
     /**
-     * Talen die in de UI worden aangeboden voor spraak-naar-tekst. Bewust beperkt
-     * tot vijf veelgebruikte West-Europese talen + Engels — extra talen kunnen
-     * later via Android-systeeminstellingen toegevoegd worden zonder code-wijziging.
+     * Talen die in de UI worden aangeboden voor spraak-naar-tekst. Bewust een korte
+     * lijst; een taal erbij is één regel (Pools kwam er op verzoek bij, issue #98).
      */
     val SUPPORTED_SPEECH_LANGS: List<Pair<String, String>> = listOf(
         "nl-NL" to "Nederlands",
@@ -79,6 +78,7 @@ object Storage {
         "de-DE" to "Deutsch",
         "fr-FR" to "Français",
         "it-IT" to "Italiano",
+        "pl-PL" to "Polski",
     )
 
     fun getVaultUri(context: Context): Uri? {
