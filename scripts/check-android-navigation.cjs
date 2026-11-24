@@ -87,6 +87,18 @@ const tutorial = source(path.join('ui', 'FirstRunTutorial'));
 const vaultPicked = list.slice(list.indexOf('private val pickVaultLauncher'), list.indexOf('private fun startWelcome('));
 assert(vaultPicked.includes('Storage.setTutorialPending(this, true)'), 'Choosing a folder on the welcome screen must start the tour');
 assert.equal((list.match(/setTutorialPending\([^)]*true\)/g) || []).length, 1, 'The welcome screen must be the only way into the tour, or people updating would get it');
+// Welcome (PB 51652 #9): first only the folder, then one screen with the cloud choice; the form after it does not offer Google or GitHub again.
+const welcomeFolder = list.slice(list.indexOf('private fun WelcomeState('), list.indexOf('private fun WelcomeCloudChoice('));
+assert(welcomeFolder.includes('R.string.welcome_choose_folder') && !welcomeFolder.includes('ProviderButton(') && !welcomeFolder.includes('R.string.welcome_local'), 'The first welcome screen must only ask for the folder');
+const welcomeChoice = list.slice(list.indexOf('private fun WelcomeCloudChoice('), list.indexOf('private fun formatTimestamp('));
+const choiceOrder = ['onChoice("signup")', 'onChoice("signin")', 'onChoice("google")', 'onChoice("github")', 'onChoice(null)'].map(name => welcomeChoice.indexOf(name));
+assert(choiceOrder.every((at, i) => at >= 0 && (i === 0 || at > choiceOrder[i - 1])), 'After the folder: create account and sign in first, then Google, GitHub and without cloud');
+assert(vaultPicked.includes('Storage.setCloudChoicePending(this, true)') && !vaultPicked.includes('CloudActivity'), 'The folder leads to the cloud choice, not straight into a sign-in');
+const accountUi = source('CloudAccountUi');
+const providerRows = (accountUi.match(/ProviderButtons\(providers,/g) || []).length;
+assert(providerRows > 0 && (accountUi.match(/if \(!welcome\) ProviderButtons\(providers,/g) || []).length === providerRows, 'Opened from the welcome screen, the form must not offer Google or GitHub again');
+const welcomeStart = accountUi.slice(accountUi.indexOf('val chosen = flow.startProvider'), accountUi.indexOf('// Back from the browser'));
+assert(welcomeStart.indexOf('startAgain()') > 0 && welcomeStart.indexOf('startAgain()') < welcomeStart.indexOf('mode = chosen'), 'A new choice on the welcome screen must not land on a GitHub or Google sign-in left half done');
 for (const name of ['NEW_NOTE', 'VOICE_MEMO', 'PHOTO', 'PIN']) assert(list.includes(`TutorialTarget.${name}`), `A balloon must point at ${name}`);
 assert(list.includes('FirstRunTutorial('), 'The notes screen must show the tour');
 assert(list.includes('gesturesEnabled = !selectionMode && !isRecording && !tutorialActive'), 'The drawer must not slide open during the tour');

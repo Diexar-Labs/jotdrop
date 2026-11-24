@@ -366,8 +366,7 @@ class NotesListActivity : ThemedComponentActivity() {
     }
 
 
-    // Welcome: the notes folder first; with email, Google or GitHub, the cloud sign-in follows straight away.
-    private var welcomeProvider: String? = null
+    // Welcome: the notes folder first, then one screen to choose a cloud account or none (PB 51652 #9).
     private val pickVaultLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
@@ -375,26 +374,29 @@ class NotesListActivity : ThemedComponentActivity() {
         Storage.persistUriPermission(this, uri)
         Storage.saveVaultUri(this, uri)
         Storage.setTutorialPending(this, true)
+        Storage.setCloudChoicePending(this, true)
         reload(rescheduleReminders = true)
-        welcomeProvider?.let { startActivity(Intent(this, CloudActivity::class.java).putExtra(CloudActivity.EXTRA_WELCOME, true).putExtra(CloudActivity.EXTRA_PROVIDER, it)) }
     }
 
-    private fun startWelcome(provider: String?) {
-        welcomeProvider = provider
+    private fun startWelcome() {
         // Opens in Documents, where "New folder" makes the suggested JotDrop folder.
         pickVaultLauncher.launch(DocumentsContract.buildDocumentUri("com.android.externalstorage.documents", "primary:Documents"))
     }
 
-    override fun onSaveInstanceState(outState: Bundle) {
-        super.onSaveInstanceState(outState)
-        outState.putString("welcomeProvider", welcomeProvider)
+    /** "signup", "signin", "google" or "github" opens that sign-in; the choice stays on screen until an account is connected. Null: without cloud. */
+    private fun chooseCloud(provider: String?) {
+        if (provider != null) {
+            startActivity(Intent(this, CloudActivity::class.java).putExtra(CloudActivity.EXTRA_WELCOME, true).putExtra(CloudActivity.EXTRA_PROVIDER, provider))
+            return
+        }
+        Storage.setCloudChoicePending(this, false)
+        reload(rescheduleReminders = true)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        welcomeProvider = savedInstanceState?.getString("welcomeProvider")
         VoiceMemoRecordingService.restorePending(this)
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -452,6 +454,7 @@ class NotesListActivity : ThemedComponentActivity() {
                         startActivity(Intent(this, MainActivity::class.java))
                     },
                     onWelcome = ::startWelcome,
+                    onCloudChoice = ::chooseCloud,
                     tutorialPendingFlow = tutorialPending.asStateFlow(),
                     onTutorialDone = {
                         Storage.setTutorialPending(this, false)
@@ -696,6 +699,17 @@ class NotesListActivity : ThemedComponentActivity() {
         if (Storage.getVaultUri(this) == null) {
             labelsState.value = emptyList()
             notesState.value = NotesUiState.NoVault
+            return
+        }
+        if (Storage.isCloudChoicePending(this)) {
+            labelsState.value = emptyList()
+            notesState.value = NotesUiState.CloudChoice
+            // Back from the cloud screen with an account: the choice is made, the notes and the tour follow.
+            loadJob = lifecycleScope.launch {
+                if (withContext(Dispatchers.IO) { CloudPreviewStore(this@NotesListActivity).credentials() } == null) return@launch
+                Storage.setCloudChoicePending(this@NotesListActivity, false)
+                reload(rescheduleReminders)
+            }
             return
         }
         val requestEpoch = ++stateEpoch
@@ -998,6 +1012,8 @@ private fun rankForSort(note: NoteSummary, fmt: SimpleDateFormat, mode: NoteSort
 sealed interface NotesUiState {
     data object Loading : NotesUiState
     data object NoVault : NotesUiState
+    /** First start: the folder is chosen, the cloud choice is not made yet. */
+    data object CloudChoice : NotesUiState
     data class Loaded(val notes: List<NoteSummary>) : NotesUiState
     data class Error(val message: String) : NotesUiState
 }
@@ -1013,7 +1029,8 @@ private fun NotesListScreen(
     onRefresh: () -> Unit,
     onPullRefresh: suspend () -> Unit,
     onOpenSettings: () -> Unit,
-    onWelcome: (provider: String?) -> Unit,
+    onWelcome: () -> Unit,
+    onCloudChoice: (provider: String?) -> Unit,
     tutorialPendingFlow: StateFlow<Boolean>,
     onTutorialDone: () -> Unit,
     onNewNote: (String?) -> Unit,
@@ -1531,8 +1548,8 @@ private fun NotesListScreen(
             }
         },
         floatingActionButton = {
-            // No folder yet: nothing can be saved, and the welcome screen's own buttons stay clear.
-            if (state != NotesUiState.NoVault) Column(horizontalAlignment = Alignment.End) {
+            // No folder yet: nothing can be saved, and the welcome screen's own buttons stay clear. Also while the cloud choice is open.
+            if (state != NotesUiState.NoVault && state != NotesUiState.CloudChoice) Column(horizontalAlignment = Alignment.End) {
                 // Voicememo-knop bovenaan de stack. Tijdens opname switcht het
                 // icoon naar Stop + krijgt een rode container — vormverschil
                 // (mic ↔ stop) is de primaire feedback, niet alleen kleur.
@@ -1652,7 +1669,8 @@ private fun NotesListScreen(
         ) {
             when (val s = state) {
                 NotesUiState.Loading -> LoadingSpinner()
-                NotesUiState.NoVault -> WelcomeState(onProvider = { onWelcome(it) }, onLocal = { onWelcome(null) })
+                NotesUiState.NoVault -> WelcomeState(onChooseFolder = onWelcome)
+                NotesUiState.CloudChoice -> WelcomeCloudChoice(onChoice = onCloudChoice)
                 is NotesUiState.Error -> EmptyState(
                     text = stringResource(R.string.error_with_message, s.message),
                     actionLabel = stringResource(R.string.retry),
@@ -3859,9 +3877,9 @@ private fun EmptyState(text: String, actionLabel: String, onAction: () -> Unit) 
     }
 }
 
-/** First start: a folder for the notes, and a free cloud in the same few taps. Email first (Eric signs in with email himself), then Google or GitHub (many Obsidian users are on GitHub). */
+/** First start, step one: only the folder for the notes. The cloud choice follows on its own screen. */
 @Composable
-private fun WelcomeState(onProvider: (String) -> Unit, onLocal: () -> Unit) {
+private fun WelcomeState(onChooseFolder: () -> Unit) {
     Box(modifier = Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -3870,12 +3888,30 @@ private fun WelcomeState(onProvider: (String) -> Unit, onLocal: () -> Unit) {
         ) {
             Text(stringResource(R.string.welcome_title), style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onBackground, textAlign = TextAlign.Center)
             Text(stringResource(R.string.welcome_text), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onBackground, textAlign = TextAlign.Center)
-            Spacer(Modifier.height(4.dp))
-            Button(onClick = { onProvider("email") }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(stringResource(R.string.welcome_email)) }
-            ProviderButton("google", stringResource(R.string.welcome_google), enabled = true, onClick = { onProvider("google") })
-            ProviderButton("github", stringResource(R.string.welcome_github), enabled = true, onClick = { onProvider("github") })
-            OutlinedButton(onClick = onLocal, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(stringResource(R.string.welcome_local)) }
             Text(stringResource(R.string.welcome_folder_hint), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onBackground, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(4.dp))
+            Button(onClick = onChooseFolder, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(stringResource(R.string.welcome_choose_folder)) }
+        }
+    }
+}
+
+/** First start, step two: email first (Eric signs in with email himself), then Google or GitHub (many Obsidian users are on GitHub), or no cloud. */
+@Composable
+private fun WelcomeCloudChoice(onChoice: (String?) -> Unit) {
+    Box(modifier = Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.widthIn(max = 420.dp).verticalScroll(rememberScrollState()),
+        ) {
+            Text(stringResource(R.string.welcome_cloud_title), style = MaterialTheme.typography.headlineSmall, color = MaterialTheme.colorScheme.onBackground, textAlign = TextAlign.Center)
+            Text(stringResource(R.string.welcome_cloud_text), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onBackground, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(4.dp))
+            Button(onClick = { onChoice("signup") }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(stringResource(R.string.welcome_create_account)) }
+            Button(onClick = { onChoice("signin") }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(stringResource(R.string.welcome_sign_in)) }
+            ProviderButton("google", stringResource(R.string.welcome_google), enabled = true, onClick = { onChoice("google") })
+            ProviderButton("github", stringResource(R.string.welcome_github), enabled = true, onClick = { onChoice("github") })
+            OutlinedButton(onClick = { onChoice(null) }, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp)) { Text(stringResource(R.string.welcome_local)) }
         }
     }
 }

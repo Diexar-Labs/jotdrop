@@ -280,9 +280,9 @@ private fun accountProblem(failure: Exception): String = when {
     else -> null
 } ?: "This could not complete. Check the connection and try again."
 
-/** Sign in, create an account or recover access on a device that is not connected yet. */
+/** Sign in, create an account or recover access on a device that is not connected yet. From the welcome screen, Google and GitHub were already offered there. */
 @Composable
-internal fun CloudSignIn(busy: Boolean, run: (suspend () -> Unit) -> Unit, showError: (String) -> Unit, pairing: @Composable () -> Unit) {
+internal fun CloudSignIn(welcome: Boolean, busy: Boolean, run: (suspend () -> Unit) -> Unit, showError: (String) -> Unit, pairing: @Composable () -> Unit) {
     val context = LocalContext.current
     val flow = CloudAccountFlow
     var mode by rememberSaveable { mutableStateOf("signin") }
@@ -301,11 +301,13 @@ internal fun CloudSignIn(busy: Boolean, run: (suspend () -> Unit) -> Unit, showE
         delay(500)
         providers = runCatching { io { CloudAccount.providers(server) } }.getOrDefault(emptyList()).filter { it in PROVIDER_NAMES }
     }
-    // From the welcome screen: email opens a new account, Google or GitHub their own sign-in.
+    // From the welcome screen: "signup" or "signin" opens that form, Google or GitHub their own sign-in.
     LaunchedEffect(Unit) {
         val chosen = flow.startProvider ?: return@LaunchedEffect
         flow.startProvider = null
-        if (chosen == "email") mode = "signup" else run { startProviderSignIn(context, server, chosen) }
+        // A new choice starts clean: a GitHub sign-in left in the browser must not cover the form chosen now.
+        startAgain()
+        if (chosen == "signup" || chosen == "signin") mode = chosen else run { startProviderSignIn(context, server, chosen) }
     }
     // Back from the browser: the ticket only works with the verifier this phone kept, and only once.
     LaunchedEffect(flow.providerReturn) {
@@ -467,7 +469,7 @@ internal fun CloudSignIn(busy: Boolean, run: (suspend () -> Unit) -> Unit, showE
                     } else { flow.signup = io { CloudAccount.signUp(server, email, password, cloudDeviceName(), newsletter) }; password = ""; confirm = "" }
                 } }, enabled = !busy && email.contains('@') && newPasswordProblem(password, confirm) == null) { Text("Create account") }
                 TextButton(onClick = { mode = "signin" }, enabled = !busy) { Text("I already have an account") }
-                ProviderButtons(providers, server, busy, run)
+                if (!welcome) ProviderButtons(providers, server, busy, run)
             }
             mode == "forgot" -> {
                 Text("Forgot your password?", style = MaterialTheme.typography.titleLarge)
@@ -491,7 +493,7 @@ internal fun CloudSignIn(busy: Boolean, run: (suspend () -> Unit) -> Unit, showE
                 TextButton(onClick = { mode = "forgot" }, enabled = !busy) { Text("Forgot password?") }
                 TextButton(onClick = { mode = "signup" }, enabled = !busy) { Text("Create an account") }
                 TextButton(onClick = { mode = "pair" }, enabled = !busy) { Text("Use a one-time pairing code") }
-                ProviderButtons(providers, server, busy, run)
+                if (!welcome) ProviderButtons(providers, server, busy, run)
                 PrivacyLink({ CloudClient.secureOrigin(server) }, !busy)
             }
         }

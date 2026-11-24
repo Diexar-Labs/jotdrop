@@ -57,6 +57,7 @@ object Storage {
     private const val KEY_ONE_COLUMN = "one_column_cards"
     private const val KEY_THEME = "app_theme"
     private const val KEY_TUTORIAL_PENDING = "first_run_tutorial_pending"
+    private const val KEY_CLOUD_CHOICE_PENDING = "first_run_cloud_choice_pending"
     private const val JOURNAL_SEPARATOR = '\n'.code.toByte()
     // Journaal v2: magic + uri + separator + inhoud + CRC32. Oude journalen beginnen met "content:".
     private val JOURNAL_MAGIC = "JDJ2".toByteArray(Charsets.US_ASCII)
@@ -99,6 +100,14 @@ object Storage {
 
     fun setTutorialPending(context: Context, pending: Boolean) {
         PreferenceManager.getDefaultSharedPreferences(context).edit().putBoolean(KEY_TUTORIAL_PENDING, pending).apply()
+    }
+
+    /** Set when the welcome screen's folder is chosen: the cloud choice comes next, until it is made or an account is connected. */
+    fun isCloudChoicePending(context: Context): Boolean =
+        PreferenceManager.getDefaultSharedPreferences(context).getBoolean(KEY_CLOUD_CHOICE_PENDING, false)
+
+    fun setCloudChoicePending(context: Context, pending: Boolean) {
+        PreferenceManager.getDefaultSharedPreferences(context).edit().putBoolean(KEY_CLOUD_CHOICE_PENDING, pending).apply()
     }
 
     fun getSubfolder(context: Context): String {
