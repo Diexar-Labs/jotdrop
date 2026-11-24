@@ -2852,6 +2852,8 @@ async function openWorkspace(connected) {
   $('access').hidden = true;
   $('workspace').hidden = false;
   $('account-actions').hidden = false;
+  // The checklist option only does something in the notes, so it is not in the top bar while signed out (#101).
+  $('move-checked').hidden = false;
   const opened = generation;
   accountInfo(connected).then((account) => { if (generation === opened) showAccountEmail(account); }, () => { if (generation === opened) showAccountEmail(null); });
   $('access-code').value = '';
@@ -2934,6 +2936,7 @@ function lock(notice = '') {
   $('secure-dialog').close();
   $('workspace').hidden = true;
   $('account-actions').hidden = true;
+  $('move-checked').hidden = true;
   showAccountEmail(null);
   $('access').hidden = false;
   void store('get', 'connection').then((saved) => (unlockable(saved) ? showUnlock() : showAccess('login-form')), () => showAccess('login-form'))
