@@ -120,12 +120,32 @@ const byLength = (a, b) => b.length - a.length || (a < b ? -1 : a > b ? 1 : 0);
 /** The words of all languages, folded, longest first, without repeats. */
 export const wordList = (table) => [...new Set(Object.values(table).flat().map(fold))].sort(byLength);
 const HAN = /\p{Script=Han}/u;
-/** The words as one pattern: Chinese anywhere, the others only between non-letters. */
+
+// No lookbehind in this file: Safari before iOS 16.4 cannot load a script that has one, and the web app
+// and the Obsidian plugin load this file. A pattern starts where its lookbehind would stand, and `matchAllAfter`
+// looks at the character before each match instead.
+const WORD_SIGN = /[\p{L}\p{M}\p{N}]$/u, DIGIT = /\d$/u, LETTER = /\p{L}$/u, DATE_SIGN = /[\d/.-]$/u;
+/**
+ * `text.matchAll(pattern)`, but a match right after a character that `before` finds is skipped and the search goes on
+ * one character further, as a lookbehind at the start of the pattern would. With `group`, only a match that filled
+ * that group is checked.
+ */
+function matchAllAfter(text, pattern, before, group = 0) {
+  const re = new RegExp(pattern.source, pattern.flags), found = [];
+  for (let m = re.exec(text); m; m = re.exec(text)) {
+    if (m[group] !== undefined && before.test(text.slice(Math.max(0, m.index - 2), m.index))) re.lastIndex = m.index + (text.codePointAt(m.index) > 0xffff ? 2 : 1);
+    else found.push(m);
+  }
+  return found;
+}
+
+/** The words as one pattern: Chinese anywhere, the others (group 1) only between non-letters; find them with `hits`. */
 const phrases = (table) => {
   const words = wordList(table).map((w) => escape(w).replace(/ /g, '\\s+'));
   const others = words.filter((w) => !HAN.test(w)), han = words.filter((w) => HAN.test(w));
-  return new RegExp([others.length && `(?<![\\p{L}\\p{M}\\p{N}])(?:${others.join('|')})(?![\\p{L}\\p{M}])`, han.length && `(?:${han.join('|')})`].filter(Boolean).join('|'), 'gu');
+  return new RegExp([others.length && `((?:${others.join('|')})(?![\\p{L}\\p{M}]))`, han.length && `(?:${han.join('|')})`].filter(Boolean).join('|'), 'gu');
 };
+const hits = (line, pattern) => matchAllAfter(line, pattern, WORD_SIGN, 1);
 const END = phrases(END_WORDS), PERIOD = phrases(PERIOD_WORDS), BEFORE = phrases(BEFORE_WORDS);
 const SHELF = phrases(SHELF_WORDS), MADE = phrases(MADE_WORDS);
 
@@ -143,18 +163,19 @@ export const monthList = () => {
 };
 const MONTHS = new Map(monthList());
 const M = `(${[...MONTHS.keys()].join('|')})(?![\\p{L}\\p{M}])\\.?(?:\\s*/\\s*\\p{L}+\\.?)?`;
-// Each date form with the order of its groups: year, month (number or word), day; no day = the month's last day.
+// Each date form with the order of its groups (year, month as number or word, day; no day = the month's last day)
+// and what may not stand right before it.
 const FORMS = [
-  [/(?<!\d)(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})(?!\d)\s*[日号號]?/gu, 'ymd'],
-  [/(?<!\d)(\d{4})\s*年\s*(\d{1,2})\s*月/gu, 'ym'],
-  [/(?<!\d)(\d{4})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{1,2})(?!\d)/gu, 'ymd'],
-  [/(?<!\d)(\d{1,2})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{4}|\d{2})(?!\d)/gu, 'dmy'],
-  [new RegExp(`(?<!\\d)(\\d{1,2})(?:st|nd|rd|th|er|e)?\\.?[\\s-]*(?:de\\s+|d')?${M},?[\\s-]*(?:de\\s+|del\\s+)?(\\d{4})(?!\\d)`, 'gu'), 'dMy'],
-  [new RegExp(`(?<!\\p{L})${M}\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s+(\\d{4})(?!\\d)`, 'gu'), 'Mdy'],
-  [new RegExp(`(?<!\\d)(\\d{4})\\.?\\s*(?:m\\.\\s*)?${M}\\s+(\\d{1,2})(?!\\d)`, 'gu'), 'yMd'],
-  [new RegExp(`(?<!\\d)(\\d{4})\\.?\\s*gada\\s+(\\d{1,2})\\.?\\s*${M}`, 'gu'), 'ydM'],
-  [new RegExp(`(?<!\\p{L})${M}\\s+(\\d{4})(?!\\d)`, 'gu'), 'My'],
-  [/(?<![\d/.-])(\d{1,2})\s*\/\s*(\d{4}|\d{2})(?![\d/.-])|(?<![\d/.-])(\d{1,2})\s*[-.]\s*(\d{4})(?![\d/.-])/gu, 'my'],
+  [/(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})(?!\d)\s*[日号號]?/gu, 'ymd', DIGIT],
+  [/(\d{4})\s*年\s*(\d{1,2})\s*月/gu, 'ym', DIGIT],
+  [/(\d{4})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{1,2})(?!\d)/gu, 'ymd', DIGIT],
+  [/(\d{1,2})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{4}|\d{2})(?!\d)/gu, 'dmy', DIGIT],
+  [new RegExp(`(\\d{1,2})(?:st|nd|rd|th|er|e)?\\.?[\\s-]*(?:de\\s+|d')?${M},?[\\s-]*(?:de\\s+|del\\s+)?(\\d{4})(?!\\d)`, 'gu'), 'dMy', DIGIT],
+  [new RegExp(`${M}\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s+(\\d{4})(?!\\d)`, 'gu'), 'Mdy', LETTER],
+  [new RegExp(`(\\d{4})\\.?\\s*(?:m\\.\\s*)?${M}\\s+(\\d{1,2})(?!\\d)`, 'gu'), 'yMd', DIGIT],
+  [new RegExp(`(\\d{4})\\.?\\s*gada\\s+(\\d{1,2})\\.?\\s*${M}`, 'gu'), 'ydM', DIGIT],
+  [new RegExp(`${M}\\s+(\\d{4})(?!\\d)`, 'gu'), 'My', LETTER],
+  [/(\d{1,2})\s*\/\s*(\d{4}|\d{2})(?![\d/.-])|(\d{1,2})\s*[-.]\s*(\d{4})(?![\d/.-])/gu, 'my', DATE_SIGN],
 ];
 const pad = (n) => String(n).padStart(2, '0');
 const lastDay = (year, month) => new Date(Date.UTC(year, month, 0)).getUTCDate();
@@ -185,8 +206,8 @@ function toDay(kind, g) {
 /** The dates in folded `text` with where they stand, in reading order; where two forms overlap, the earlier form in FORMS wins. */
 function spans(text) {
   const taken = [];
-  for (const [pattern, kind] of FORMS) {
-    for (const m of text.matchAll(pattern)) {
+  for (const [pattern, kind, before] of FORMS) {
+    for (const m of matchAllAfter(text, pattern, before)) {
       const start = m.index, end = start + m[0].length;
       if (taken.some((t) => start < t.end && t.start < end)) continue;
       const day = toDay(kind, m);
@@ -226,7 +247,7 @@ function mrzExpiry(lines) {
 /** The first date after a word for the day something was made or packed (same line, else the next). */
 function madeOn(lines) {
   for (let i = 0; i < lines.length; i++) {
-    for (const hit of lines[i].matchAll(MADE)) {
+    for (const hit of hits(lines[i], MADE)) {
       const found = dates(lines[i].slice(hit.index + hit[0].length));
       if (found.length) return found[0];
       const next = dates(lines[i + 1] || '');
@@ -250,7 +271,7 @@ export function findExpiry(text) {
   const offer = (day) => { if (day > best) best = day; };
   lines.forEach((line, i) => {
     for (const [pattern, period] of [[END, false], [PERIOD, true]]) {
-      for (const hit of line.matchAll(pattern)) {
+      for (const hit of hits(line, pattern)) {
         const after = line.slice(hit.index + hit[0].length);
         let found = dates(after);
         // "Best before 9 months from mfg": a shelf life, not a date on the next line.
@@ -258,12 +279,12 @@ export function findExpiry(text) {
         offer(period ? found.reduce((a, b) => (b > a ? b : a), '') : found[0] || '');
       }
     }
-    for (const hit of line.matchAll(BEFORE)) {
+    for (const hit of hits(line, BEFORE)) {
       const before = line.slice(0, hit.index).replace(/[\s:,]+$/u, '');
       const last = spans(before).at(-1);
       if (last && last.end === before.length) offer(last.day);
     }
-    for (const hit of line.matchAll(SHELF)) {
+    for (const hit of hits(line, SHELF)) {
       const term = TERM.exec(line.slice(hit.index + hit[0].length));
       const made = term && madeOn(lines);
       if (made) offer(addTerm(made, Number(term[1]), UNITS.get(term[2])));

@@ -31,6 +31,16 @@ test('browser reads inline hashtags like Android, apart from frontmatter tags', 
   assert.deepEqual(noteSummary('No tags here', 'notes/plain.md').inlineTags, []);
 });
 
+test('inline hashtags: what stands right before the # still counts', () => {
+  const tags = (body) => noteSummary(body, 'notes/test.md').inlineTags;
+  assert.deepEqual(tags('#start'), ['start']);
+  assert.deepEqual(tags('a #space\tb\t#tab\n#line'), ['space', 'tab', 'line']);
+  assert.deepEqual(tags('x #nbsp y　#wide'), ['nbsp', 'wide']); // other spaces count too
+  assert.deepEqual(tags('#one #two #three'), ['one', 'two', 'three']); // right after each other
+  assert.deepEqual(tags('word#glued (#paren) ##double .#dot'), []);
+  assert.deepEqual(tags('#a#b'), ['a']);
+});
+
 test('browser property edits preserve unknown nested YAML, tags, recurrence limits and exact body', () => {
   const body = '# Test\r\n\r\n---\r\nText\r\n---\r\n- [ ] Do it\r\n';
   const text = '---\r\ncustom:\r\n  color: untouched\r\ntags: [keep]\r\njotdrop_labels:\r\n  - Old\r\nreminder_until: "2028-12-31"\r\n---\r\n' + body;
