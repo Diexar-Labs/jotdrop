@@ -91,10 +91,13 @@ var escape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 var byLength = (a, b) => b.length - a.length || (a < b ? -1 : a > b ? 1 : 0);
 var wordList = (table) => [...new Set(Object.values(table).flat().map(fold))].sort(byLength);
 var HAN = /\p{Script=Han}/u;
+var DIGIT = /\d$/u;
+var LETTER = /\p{L}$/u;
+var DATE_SIGN = /[\d/.-]$/u;
 var phrases = (table) => {
   const words = wordList(table).map((w) => escape(w).replace(/ /g, "\\s+"));
   const others = words.filter((w) => !HAN.test(w)), han = words.filter((w) => HAN.test(w));
-  return new RegExp([others.length && `(?<![\\p{L}\\p{M}\\p{N}])(?:${others.join("|")})(?![\\p{L}\\p{M}])`, han.length && `(?:${han.join("|")})`].filter(Boolean).join("|"), "gu");
+  return new RegExp([others.length && `((?:${others.join("|")})(?![\\p{L}\\p{M}]))`, han.length && `(?:${han.join("|")})`].filter(Boolean).join("|"), "gu");
 };
 var END = phrases(END_WORDS);
 var PERIOD = phrases(PERIOD_WORDS);
@@ -114,16 +117,16 @@ var monthList = () => {
 var MONTHS = new Map(monthList());
 var M = `(${[...MONTHS.keys()].join("|")})(?![\\p{L}\\p{M}])\\.?(?:\\s*/\\s*\\p{L}+\\.?)?`;
 var FORMS = [
-  [/(?<!\d)(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})(?!\d)\s*[日号號]?/gu, "ymd"],
-  [/(?<!\d)(\d{4})\s*年\s*(\d{1,2})\s*月/gu, "ym"],
-  [/(?<!\d)(\d{4})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{1,2})(?!\d)/gu, "ymd"],
-  [/(?<!\d)(\d{1,2})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{4}|\d{2})(?!\d)/gu, "dmy"],
-  [new RegExp(`(?<!\\d)(\\d{1,2})(?:st|nd|rd|th|er|e)?\\.?[\\s-]*(?:de\\s+|d')?${M},?[\\s-]*(?:de\\s+|del\\s+)?(\\d{4})(?!\\d)`, "gu"), "dMy"],
-  [new RegExp(`(?<!\\p{L})${M}\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s+(\\d{4})(?!\\d)`, "gu"), "Mdy"],
-  [new RegExp(`(?<!\\d)(\\d{4})\\.?\\s*(?:m\\.\\s*)?${M}\\s+(\\d{1,2})(?!\\d)`, "gu"), "yMd"],
-  [new RegExp(`(?<!\\d)(\\d{4})\\.?\\s*gada\\s+(\\d{1,2})\\.?\\s*${M}`, "gu"), "ydM"],
-  [new RegExp(`(?<!\\p{L})${M}\\s+(\\d{4})(?!\\d)`, "gu"), "My"],
-  [/(?<![\d/.-])(\d{1,2})\s*\/\s*(\d{4}|\d{2})(?![\d/.-])|(?<![\d/.-])(\d{1,2})\s*[-.]\s*(\d{4})(?![\d/.-])/gu, "my"]
+  [/(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})(?!\d)\s*[日号號]?/gu, "ymd", DIGIT],
+  [/(\d{4})\s*年\s*(\d{1,2})\s*月/gu, "ym", DIGIT],
+  [/(\d{4})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{1,2})(?!\d)/gu, "ymd", DIGIT],
+  [/(\d{1,2})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{4}|\d{2})(?!\d)/gu, "dmy", DIGIT],
+  [new RegExp(`(\\d{1,2})(?:st|nd|rd|th|er|e)?\\.?[\\s-]*(?:de\\s+|d')?${M},?[\\s-]*(?:de\\s+|del\\s+)?(\\d{4})(?!\\d)`, "gu"), "dMy", DIGIT],
+  [new RegExp(`${M}\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s+(\\d{4})(?!\\d)`, "gu"), "Mdy", LETTER],
+  [new RegExp(`(\\d{4})\\.?\\s*(?:m\\.\\s*)?${M}\\s+(\\d{1,2})(?!\\d)`, "gu"), "yMd", DIGIT],
+  [new RegExp(`(\\d{4})\\.?\\s*gada\\s+(\\d{1,2})\\.?\\s*${M}`, "gu"), "ydM", DIGIT],
+  [new RegExp(`${M}\\s+(\\d{4})(?!\\d)`, "gu"), "My", LETTER],
+  [/(\d{1,2})\s*\/\s*(\d{4}|\d{2})(?![\d/.-])|(\d{1,2})\s*[-.]\s*(\d{4})(?![\d/.-])/gu, "my", DATE_SIGN]
 ];
 
 // cloud/shared/paper.mjs
