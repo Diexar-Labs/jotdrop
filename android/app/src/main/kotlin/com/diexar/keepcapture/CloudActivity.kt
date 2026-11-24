@@ -90,7 +90,7 @@ class CloudActivity : ThemedComponentActivity() {
     companion object {
         /** From the welcome screen: the screen closes once sync runs. */
         const val EXTRA_WELCOME = "welcome"
-        /** From the welcome screen: "google" or "github", whose sign-in opens at once, or "email" for a new account. */
+        /** From the welcome screen: "google" or "github", whose sign-in opens at once, or "signup" or "signin" for that email form. */
         const val EXTRA_PROVIDER = "provider"
         /** From a conflict copy's card: the file name of the note it belongs to, whose comparison opens at once. */
         const val EXTRA_RESOLVE = "resolve"
@@ -325,7 +325,7 @@ private fun CloudScreen(welcome: Boolean, resolve: String?, onBack: () -> Unit, 
                 if (tab >= 0) tab = -1
                 // Fixed keys: the progress row above comes and goes, and must not reset the forms below.
                 item(key = "sign-in") {
-                    CloudSignIn(busy, ::accountRun, { error = it }) {
+                    CloudSignIn(welcome, busy, ::accountRun, { error = it }) {
                         Text("Pair this device", style = MaterialTheme.typography.titleLarge)
                         Text("Create a one-time pairing code on a connected device. A trusted HTTPS server is required; the local HTTP browser preview cannot pair with Android.")
                         OutlinedTextField(value = pairing, onValueChange = { if (it.length <= 4096) pairing = it }, label = { Text("One-time pairing code") },

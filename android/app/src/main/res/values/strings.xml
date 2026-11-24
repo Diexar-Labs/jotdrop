@@ -90,12 +90,16 @@
     <string name="tutorial_skip">Skip</string>
     <string name="tutorial_done">Got it</string>
     <string name="welcome_title">Welcome to JotDrop</string>
-    <string name="welcome_text">Your notes, photos and voice memos, saved as plain files on this phone. Sign up for a free encrypted cloud with 250 MB to have them on all your devices.</string>
-    <string name="welcome_email">Continue with email</string>
+    <string name="welcome_text">Your notes, photos and voice memos are plain files in a folder on this phone. Choose that folder first. Then you can add a free encrypted cloud, or skip it.</string>
+    <string name="welcome_folder_hint">Tip: make a new folder called JotDrop. Already using Obsidian? Choose your vault.</string>
+    <string name="welcome_choose_folder">Choose a folder</string>
+    <string name="welcome_cloud_title">Want your notes on your other devices too?</string>
+    <string name="welcome_cloud_text">The free JotDrop Cloud holds 250 MB. Your notes are encrypted on this phone before they leave it.</string>
+    <string name="welcome_create_account">Create account</string>
+    <string name="welcome_sign_in">Sign in</string>
     <string name="welcome_google">Continue with Google</string>
     <string name="welcome_github">Continue with GitHub</string>
     <string name="welcome_local">Use without cloud</string>
-    <string name="welcome_folder_hint">First you pick a folder for your notes. Tip: make a new folder called JotDrop. Already using Obsidian? Pick your vault.</string>
     <string name="empty_no_notes">No notes yet. Tap + to start.</string>
     <string name="retry">Try again</string>
 
