@@ -1,5 +1,6 @@
 """Run: python cloud/reload_browser_check.py. Synthetic check: F5 on a browser that stays signed in goes straight
-to the notes and never shows the login form first (Eric, 27 Oct), also when the scripts load slowly."""
+to the notes and never shows the login form first (Eric, 27 Oct), also when the scripts load slowly.
+Issue #101 (24 Nov): "Move checked items to the bottom" sits in the top bar only while signed in, not on the login page."""
 import sys
 import time
 sys.dont_write_bytecode = True
@@ -24,6 +25,7 @@ def check_reload(browser, url, token):
     page.on("pageerror", lambda error: errors.append(str(error)))
     try:
         page.goto(url, wait_until="networkidle")
+        assert page.locator("#move-checked").is_hidden(), "#101: the checklist option shows in the top bar while signed out"
         page.locator("#show-connect").click()
         page.locator("#access-code").fill(token)
         for field in ["#new-password", "#confirm-password"]:
@@ -32,6 +34,7 @@ def check_reload(browser, url, token):
         page.locator("#recovery-saved").check()
         page.locator("#finish-recovery").click()
         page.locator("#sync-status").filter(has_text="Cloud copy up to date").wait_for()
+        assert page.locator("#move-checked").is_visible(), "#101: the checklist option is missing from the top bar while signed in"
 
         # A slow connection: the app's script takes a while to arrive after F5.
         page.add_init_script(f"({WATCH})()")
@@ -51,6 +54,7 @@ def check_reload(browser, url, token):
         page.reload()
         page.locator("#login-form").wait_for()
         assert page.locator("#opening").is_hidden() and page.locator("#workspace").is_hidden()
+        assert page.locator("#move-checked").is_hidden(), "#101: the checklist option shows in the top bar after logging out"
         assert not errors, errors
         return {"frames_checked": len(seen), "no_login_flash_after_reload": True, "logged_out_shows_login": True}
     finally:
