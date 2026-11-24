@@ -192,6 +192,8 @@ var EN = {
   action_close: "Close",
   nav_prev_note: "Previous note",
   nav_next_note: "Next note",
+  action_fullscreen: "Full screen",
+  action_exit_fullscreen: "Leave full screen",
   action_more: "More",
   action_edit: "Edit",
   action_archive: "Archive",
@@ -244,7 +246,7 @@ var EN = {
   ocr_no_simd: "Text recognition needs a newer device. The photo is saved.",
   md_help_button: "Markdown help",
   md_help_title: "Markdown help",
-  md_help_intro: "Type the code on the left to format your note. Obsidian shows the result on the right; JotDrop cards show the text without the codes.",
+  md_help_intro: "Type the code on the left to format your note, or use the buttons above the text. Obsidian shows the result on the right; JotDrop cards show the text without the codes.",
   md_help_type: "Type this",
   md_help_result: "You get",
   md_help_heading: "Heading",
@@ -264,6 +266,58 @@ var EN = {
   md_help_tag: "a tag you can filter on",
   md_help_divider: "a dividing line",
   md_help_table: "a table with columns A and B",
+  md_help_indent: "the list item one level in or out",
+  // The formatting bar of the edit window (design opmaak-editor, part 5.3 and 8)
+  format_bar: "Formatting",
+  format_bold: "Bold",
+  format_italic: "Italic",
+  format_heading: "Heading",
+  format_bullet: "Bulleted list",
+  format_ordered: "Numbered list",
+  format_checklist: "Checklist",
+  format_indent: "Indent",
+  format_outdent: "Outdent",
+  format_highlight: "Highlight",
+  format_table: "Table",
+  format_table_edit: "Edit table",
+  format_emoji: "Emoji",
+  format_more: "More formatting",
+  format_strike: "Strikethrough",
+  format_quote: "Quote",
+  format_code: "Code",
+  format_rule: "Dividing line",
+  emoji_recent: "Recently used",
+  emoji_smileys: "Smileys",
+  emoji_hands: "Hands",
+  emoji_hearts: "Hearts",
+  emoji_ticks: "Ticks and stars",
+  emoji_food: "Food",
+  emoji_travel: "Travel",
+  emoji_symbols: "Symbols",
+  emoji_hint: "More emoji: Windows key + . on Windows, Ctrl + Cmd + Space on a Mac, or the keyboard of your phone.",
+  table_title: "Table",
+  table_bar: "Table tools",
+  table_add_row: "+ Row",
+  table_add_row_label: "Add a row below",
+  table_add_column: "+ Column",
+  table_add_column_label: "Add a column to the right",
+  table_delete_row: "\u2212 Row",
+  table_delete_row_label: "Delete this row",
+  table_delete_column: "\u2212 Column",
+  table_delete_column_label: "Delete this column",
+  table_align_left: "Left",
+  table_align_left_label: "Align left",
+  table_align_center: "Center",
+  table_align_center_label: "Align center",
+  table_align_right: "Right",
+  table_align_right_label: "Align right",
+  table_delete: "Delete table",
+  table_delete_confirm: "Delete this table from the note?",
+  table_done: "Done",
+  table_cell_header: "Header, column {0}",
+  table_cell: "Row {0}, column {1}",
+  table_type_above: "Type above the table",
+  table_type_below: "Type below the table",
   ocr_data_missing: "The text recognition data is damaged. Delete the ocr-data folder in the JotDrop plugin folder and try again. The photo is saved.",
   lightbox_open_in_tab: "Open image in tab",
   lightbox_open_external: "Open externally",
@@ -541,7 +595,31 @@ var EN = {
   color_purple: "Purple",
   color_pink: "Pink",
   color_brown: "Brown",
-  color_gray: "Gray"
+  color_gray: "Gray",
+  // Sync on hold above the plan's devices (Hand-off/ontwerp-sync-pauzeren-boven-free.md, deel 8): only the line on the
+  // board, in all six languages like Android; the cloud settings stay English, like the rest of those screens.
+  hold_status: "Sync is on hold on this device.",
+  hold_limit: "Your plan syncs {0} devices, and this is not one of them.",
+  hold_stays: "Changes you make here stay on this device and go up once it syncs again.",
+  hold_wait: "You can change your devices again from {0}.",
+  hold_here: "Sync here instead",
+  hold_devices: "Devices",
+  hold_check: "Check again",
+  hold_checking: "Checking...",
+  hold_still: "Sync is still on hold on this device.",
+  hold_plus: "JotDrop Plus on the website",
+  ending_text: "Your plan syncs {0} devices. From {1} sync goes on hold on: {2}. Your notes stay on them.",
+  ending_some: "some of your devices",
+  ending_choose: "Choose devices",
+  ending_later: "Not now",
+  hold_this_device: "this device",
+  hold_device_app: "{0} ({1})",
+  hold_app_android: "Android app",
+  hold_app_web: "web app",
+  hold_app_obsidian: "Obsidian",
+  hold_app_joplin: "Joplin",
+  hold_app_clipper: "Web Clipper",
+  hold_app_mcp: "AI agent"
 };
 
 // src/metadata.ts
@@ -566,20 +644,20 @@ function readLabels(value) {
   const seen = /* @__PURE__ */ new Set();
   return values.filter((label) => typeof label === "string").map((label) => label.trim()).filter((label) => {
     const key = label.toLowerCase();
-    if (!label || /[\x00-\x1f\x7f-\x9f]/.test(label) || seen.has(key)) return false;
+    if (!label || /\p{Cc}/u.test(label) || seen.has(key)) return false;
     seen.add(key);
     return true;
   });
 }
 function neutralizeInlineHashtags(text) {
   const skipped = /(`{3,}|~{3,})[\s\S]*?\1|`[^`\n]+`|\[\[[^\]\n]*\]\]|\]\([^)\n]*\)|https?:\/\/[^\s<>]+/g;
-  const hashtag = /(?<![\\\p{L}\p{N}\p{M}_/])#(?=\p{N}*[\p{L}\p{M}_/\p{Extended_Pictographic}-])/gu;
+  const hashtag = /(^|[^\\\p{L}\p{N}\p{M}_/])#(?=\p{N}*[\p{L}\p{M}_/\p{Extended_Pictographic}-])/gu;
   let out = "", at = 0;
   for (const match of text.matchAll(skipped)) {
-    out += text.slice(at, match.index).replace(hashtag, "\\#") + match[0];
+    out += text.slice(at, match.index).replace(hashtag, "$1\\#") + match[0];
     at = match.index + match[0].length;
   }
-  return out + text.slice(at).replace(hashtag, "\\#");
+  return out + text.slice(at).replace(hashtag, "$1\\#");
 }
 
 // src/ogfetch.ts
