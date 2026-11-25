@@ -90,7 +90,7 @@ tasks.register<JavaExec>("checkCloudMail") {
 
 val listEditorClasses = layout.buildDirectory.dir("list-editor-check")
 val listEditorSources = files("app/src/main/kotlin/com/diexar/keepcapture/ListEditing.kt", "app/src/main/kotlin/com/diexar/keepcapture/FormatCore.kt",
-    "app/src/main/kotlin/com/diexar/keepcapture/ListLayout.kt", "app/src/main/kotlin/com/diexar/keepcapture/CloudNoteMerge.kt", "checks/ListEditorCheck.kt")
+    "app/src/main/kotlin/com/diexar/keepcapture/ListLayout.kt", "app/src/main/kotlin/com/diexar/keepcapture/EditHistory.kt", "checks/ListEditorCheck.kt", "checks/EditHistoryCheck.kt")
 val listEditorCompile = tasks.register<JavaExec>("listEditorCompile") {
     inputs.files(listEditorSources)
     outputs.dir(listEditorClasses)
@@ -109,6 +109,14 @@ tasks.register<JavaExec>("checkListEditor") {
     classpath(listEditorClasses)
     classpath(provider { project(":app").configurations.getByName("debugCompileClasspath") })
     mainClass.set("com.diexar.keepcapture.ListEditorCheckKt")
+}
+
+// Undo and Redo in the editor (design checklists-77-v2, part 4): the stack itself, without a screen.
+tasks.register<JavaExec>("checkEditHistory") {
+    dependsOn(listEditorCompile)
+    classpath(listEditorClasses)
+    classpath(provider { project(":app").configurations.getByName("debugCompileClasspath") })
+    mainClass.set("com.diexar.keepcapture.EditHistoryCheckKt")
 }
 
 // TikTok link previews: the video's own data is read from the page, not from oEmbed or the generic title.

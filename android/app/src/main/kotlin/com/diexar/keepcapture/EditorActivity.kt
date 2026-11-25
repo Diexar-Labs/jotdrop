@@ -156,6 +156,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.mutableStateListOf
@@ -172,6 +173,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
@@ -245,7 +247,7 @@ class EditorActivity : ThemedComponentActivity() {
         /**
          * Opent een notitie in de editor. [orderedUris] is optioneel de zichtbare
          * kaartvolgorde (gepind eerst, dan de rest, met actieve filters) — daarmee
-         * kan de editor met swipe/knoppen naar de vorige/volgende notitie.
+         * kan de editor met de knoppen boven de notitie naar de vorige/volgende notitie.
          */
         fun openNoteIntent(
             context: Context,
@@ -344,6 +346,15 @@ private fun EditorScreen(
     // Kop-diepte van de geladen titelregel (1 = `#`, 2 = `##`, …) — gaat mee
     // terug bij opslaan zodat het niveau de round-trip overleeft.
     var titleLevel by rememberSaveable { mutableStateOf(1) }
+    // Undo and Redo (design checklists-77-v2, part 4): the note's stack of changes. It is kept outside this screen, so
+    // it is still there after turning the phone and after the note is closed and opened again. A new note has a name
+    // of its own until it is saved.
+    val newNoteKey = rememberSaveable { "new:" + System.nanoTime() }
+    var history by remember { mutableStateOf(if (loaded) EditHistories.of(currentUri ?: newNoteKey, titleText, bodyText.text) else EditHistory()) }
+    var canUndo by remember { mutableStateOf(history.canUndo) }
+    var canRedo by remember { mutableStateOf(history.canRedo) }
+    // What Undo or Redo just changed: the note scrolls to it.
+    var reveal by remember { mutableStateOf<EditApplied?>(null) }
     // Image-embed-regels (`![[basename]]`) leven los van de editor-tekst zodat ze
     // niet als ruwe markdown in beeld staan. We tonen ze als thumbnail-strip
     // boven het textveld en plakken ze terug bij opslaan.
@@ -382,6 +393,59 @@ private fun EditorScreen(
     var attachmentUris by remember { mutableStateOf<Map<String, Uri>>(emptyMap()) }
     var attachmentIndexLoaded by remember { mutableStateOf(false) }
 
+    fun historyChanged() {
+        canUndo = history.canUndo
+        canRedo = history.canRedo
+        EditHistories.keep(currentUri ?: newNoteKey, history)
+    }
+
+    /**
+     * The one place where the body is written (check:android-navigation counts them). With a [kind] the change goes on
+     * the note's undo stack: typing, a step of its own, or something the editor tidies up; Undo and Redo themselves
+     * pass none. [fieldText] is the text the keyboard built its change on: after a change that is not its own it may
+     * still send one on the text from before, which is then replayed on ours (StaleField).
+     */
+    fun writeBody(next: TextFieldValue, kind: EditKind?, fieldText: String = bodyText.text) {
+        val current = bodyText
+        if (kind != null && next.text != current.text) {
+            history.record(EditField.BODY, current.text, next.text, kind, current.selection.start, current.selection.end, next.selection.start, next.selection.end)
+            historyChanged()
+            // The strip told about the change before this one.
+            notice = null
+        } else if (kind != null && next.selection != current.selection) history.moved()
+        staleBody.settle(fieldText, next.text)
+        bodyText = next
+    }
+
+    /** The one place where the title is written, as [writeBody] is for the body. Its typing is on the same stack. */
+    fun writeTitle(next: String, typed: Boolean = true) {
+        if (typed && next != titleText) {
+            history.record(EditField.TITLE, titleText, next, EditKind.TYPING)
+            historyChanged()
+        }
+        titleText = next
+    }
+
+    /**
+     * Undo and Redo (design checklists-77-v2, 4.1): the last step goes back or comes again, with the caret where it
+     * was, and the note scrolls to what changed. It is no typing: the keyboard stays as it was and a note in its read
+     * view stays there. A stack that no longer fits the note is dropped and nothing happens.
+     */
+    fun stepHistory(redo: Boolean) {
+        if (saving || !loaded || loadError != null) return
+        val current = bodyText
+        val applied = if (redo) history.redo(titleText, current.text) else history.undo(titleText, current.text)
+        historyChanged()
+        if (applied == null) return
+        notice = null
+        writeTitle(applied.title, typed = false)
+        val selection = if (applied.selFrom >= 0) TextRange(applied.selFrom, applied.selTo)
+            else TextRange(current.selection.start.coerceAtMost(applied.body.length), current.selection.end.coerceAtMost(applied.body.length))
+        if (applied.body != current.text || selection != current.selection) writeBody(TextFieldValue(applied.body, selection), null)
+        reveal = applied
+        view.announceForAccessibility(context.getString(if (redo) R.string.notice_redone else R.string.notice_undone))
+    }
+
     fun insertImageEmbed(basename: String) {
         // Embed leeft in een aparte lijst — pas bij opslaan plakken we hem
         // terug aan de body. Voorkomt dat de gebruiker `![[…]]` als ruwe
@@ -406,7 +470,7 @@ private fun EditorScreen(
             }
             val newText = before + insert + after
             val cursorPos = before.length + insert.length
-            bodyText = TextFieldValue(text = newText, selection = TextRange(cursorPos))
+            writeBody(TextFieldValue(text = newText, selection = TextRange(cursorPos)), EditKind.STEP)
             bodyEditing = true
         }
         embedLines.add("![[" + basename + "]]")
@@ -566,10 +630,7 @@ private fun EditorScreen(
     fun toggleOrInsertChecklist() {
         val current = bodyText
         val edit = FormatCore.checklistEdit(current.text, current.selection.min, current.selection.max, Storage.getMoveChecked(context)) ?: return
-        val next = TextFieldValue(current.text.replaceRange(edit.from, edit.to, edit.insert), TextRange(edit.selFrom, edit.selTo))
-        // The keyboard may still send a change on the text from before the button: it is replayed on ours.
-        staleBody.settle(current.text, next.text)
-        bodyText = next
+        writeBody(TextFieldValue(current.text.replaceRange(edit.from, edit.to, edit.insert), TextRange(edit.selFrom, edit.selTo)), EditKind.STEP)
         bodyEditing = true
     }
 
@@ -590,9 +651,7 @@ private fun EditorScreen(
             return (first..last).any { levels.getOrElse(it) { -1 } >= 0 } ||
                 FormatCore.indentEdit(current.text, from, to, if (direction == "in") "out" else "in") != null
         }
-        val next = TextFieldValue(current.text.replaceRange(edit.from, edit.to, edit.insert), TextRange(edit.selFrom, edit.selTo))
-        staleBody.settle(current.text, next.text)
-        bodyText = next
+        writeBody(TextFieldValue(current.text.replaceRange(edit.from, edit.to, edit.insert), TextRange(edit.selFrom, edit.selTo)), EditKind.STEP)
         bodyEditing = true
         return true
     }
@@ -601,9 +660,7 @@ private fun EditorScreen(
     fun applyBodyFormat(command: String) {
         val current = bodyText
         val next = current.withFormat(command) ?: return
-        // The keyboard may still send a change on the text from before the button: it is replayed on ours.
-        staleBody.settle(current.text, next.text)
-        bodyText = next
+        writeBody(next, EditKind.STEP)
         bodyEditing = true
         // A new table becomes a grid at once, with the focus in its first cell (the selection is at its start).
         if (command == "table" && !markdownMode && next.text.length <= FORMAT_RAW_ABOVE) {
@@ -617,72 +674,41 @@ private fun EditorScreen(
         val current = bodyText
         val run = FormatCore.blocks(current.text).filter { it.kind == "table" }.getOrNull(table) ?: return
         val edit = FormatCore.tableEdit(current.text, run.fromLine, op) ?: return
-        bodyText = TextFieldValue(current.text.replaceRange(edit.from, edit.to, edit.insert), TextRange(edit.selFrom))
+        // What is typed in a cell is typing; a row or a column that comes or goes is a step of its own.
+        writeBody(TextFieldValue(current.text.replaceRange(edit.from, edit.to, edit.insert), TextRange(edit.selFrom)), if (op.type == "setCell") EditKind.TYPING else EditKind.STEP)
         bodyEditing = true
     }
 
-    /**
-     * Shows [message] with Undo after a list action that just changed the body (an item deleted or moved, the note's
-     * menu). [before] is the body from before the action. A new action takes the place of the one before it.
-     */
-    fun noticeWithUndo(message: String, before: TextFieldValue) {
-        notice = EditorNotice(message, before, bodyText.text)
-    }
-
-    // Undo in the strip: the body from before the action comes back. Typed on since? Then the action is taken back in
-    // the text as it is now, line by line as the sync merges, or not at all: nothing typed is ever written over.
-    fun undoNotice() {
-        val taken = notice ?: return
-        val before = taken.before ?: return
-        val current = bodyText
-        val undone = undoListAction(before.text, before.selection.min, before.selection.max, taken.after, current.text, current.selection.min, current.selection.max)
-        if (undone == null) {
-            notice = EditorNotice(context.getString(R.string.notice_undo_failed))
-            return
-        }
-        staleBody.settle(current.text, undone.text)
-        // A note in its read view stays there: the action that is taken back was no typing either.
-        bodyText = TextFieldValue(undone.text, TextRange(undone.selFrom, undone.selTo))
-        notice = EditorNotice(context.getString(R.string.notice_undone))
-    }
-
     // A list action from a grip, the More menu, the note's menu, a screen reader or a keyboard (design checklists-77,
-    // part 6): one replacement from the shared core. It is no typing: the keyboard stays as it was and a note in its
-    // read view stays there.
+    // part 6): one replacement from the shared core, and one step for Undo. It is no typing: the keyboard stays as it
+    // was and a note in its read view stays there.
     fun replaceBody(current: TextFieldValue, edit: FormatCore.Edit, selection: TextRange = TextRange(edit.selFrom, edit.selTo)) {
-        val next = TextFieldValue(current.text.replaceRange(edit.from, edit.to, edit.insert), selection)
-        // The keyboard may still send a change on the text from before the action: it is replayed on ours.
-        staleBody.settle(current.text, next.text)
-        bodyText = next
+        writeBody(TextFieldValue(current.text.replaceRange(edit.from, edit.to, edit.insert), selection), EditKind.STEP)
     }
 
     /**
      * An item let go after a drag by its handle (6.1): it lands in front of line [before], on [level], with what is
-     * under it. The strip says so, with Undo: a drag starts at a touch, so one by accident must be easy to take back.
-     * False when nothing changed.
+     * under it. No strip (design checklists-77-v2, 4.5): the move is there to see, and Undo is always in sight. False
+     * when nothing changed.
      */
     fun dropItem(line: Int, before: Int, level: Int): Boolean {
         val current = bodyText
         val moved = FormatCore.dropItemEdit(current.text, line, before, level, current.selection.min, current.selection.max) ?: return false
         replaceBody(current, moved.edit)
-        noticeWithUndo(context.getString(R.string.notice_item_moved), current)
         return true
     }
 
     /**
      * Deletes the item [line] belongs to, with what is under it (6.2); without [line] it is the item with the caret.
-     * No question: the strip says what went, with Undo. False when the line is in no list.
+     * No question, Undo brings it back. The strip only says something when more went than was seen: the items under
+     * it (design checklists-77-v2, 4.5). False when the line is in no list.
      */
     fun deleteItem(line: Int? = null): Boolean {
         val current = bodyText
         val at = line ?: lineOf(current.text, current.selection.min)
         val deleted = FormatCore.deleteItemEdit(current.text, at, current.selection.min, current.selection.max) ?: return false
         replaceBody(current, deleted.edit)
-        noticeWithUndo(
-            if (deleted.count == 0) context.getString(R.string.notice_item_deleted)
-            else context.resources.getQuantityString(R.plurals.notice_item_deleted_subs, deleted.count, deleted.count),
-            current,
-        )
+        if (deleted.count > 0) notice = EditorNotice(context.resources.getQuantityString(R.plurals.notice_item_deleted_subs, deleted.count, deleted.count))
         return true
     }
 
@@ -719,19 +745,20 @@ private fun EditorScreen(
         }
     }
 
-    // The note's menu (6.4): every ticked task gets an empty box again, or goes. The strip says what happened, with Undo.
+    // The note's menu (6.4): every ticked task gets an empty box again, or goes. The strip says what happened: the
+    // menu covered the note, and tasks out of sight changed too. Undo brings them back.
     fun uncheckAll() {
         val current = bodyText
         val unticked = FormatCore.uncheckAllEdit(current.text, current.selection.min, current.selection.max) ?: return
         replaceBody(current, unticked.edit)
-        noticeWithUndo(context.getString(R.string.notice_all_unchecked), current)
+        notice = EditorNotice(context.getString(R.string.notice_all_unchecked))
     }
 
     fun deleteChecked() {
         val current = bodyText
         val deleted = FormatCore.deleteCheckedEdit(current.text, current.selection.min, current.selection.max) ?: return
         replaceBody(current, deleted.edit)
-        noticeWithUndo(context.resources.getQuantityString(R.plurals.notice_checked_deleted, deleted.count, deleted.count), current)
+        notice = EditorNotice(context.resources.getQuantityString(R.plurals.notice_checked_deleted, deleted.count, deleted.count))
     }
 
     // A tap on a box in the open note (#77, Eric 22 Nov): the same tick as on the card, the setting to move included.
@@ -739,18 +766,14 @@ private fun EditorScreen(
     fun tickTask(line: Int) {
         val current = bodyText
         val tick = FormatCore.tickEdit(current.text, line, Storage.getMoveChecked(context), current.selection.min, current.selection.max) ?: return
-        val next = TextFieldValue(current.text.replaceRange(tick.edit.from, tick.edit.to, tick.edit.insert), TextRange(tick.edit.selFrom, tick.edit.selTo))
-        staleBody.settle(current.text, next.text)
-        bodyText = next
+        replaceBody(current, tick.edit)
     }
 
     fun insertEmoji(emoji: String) {
         val current = bodyText
         val start = current.selection.min.coerceIn(0, current.text.length)
         val end = current.selection.max.coerceIn(0, current.text.length)
-        val next = TextFieldValue(current.text.replaceRange(start, end, emoji), TextRange(start + emoji.length))
-        staleBody.settle(current.text, next.text)
-        bodyText = next
+        writeBody(TextFieldValue(current.text.replaceRange(start, end, emoji), TextRange(start + emoji.length)), EditKind.STEP)
         bodyEditing = true
     }
 
@@ -768,7 +791,7 @@ private fun EditorScreen(
         val insert = prefix + text
         val newText = before + insert + after
         val cursorPos = before.length + insert.length
-        bodyText = TextFieldValue(text = newText, selection = TextRange(cursorPos))
+        writeBody(TextFieldValue(text = newText, selection = TextRange(cursorPos)), EditKind.STEP)
         bodyEditing = true
     }
 
@@ -789,7 +812,7 @@ private fun EditorScreen(
         if (result.resultCode != Activity.RESULT_OK || answer.isNullOrBlank()) return@rememberLauncherForActivityResult
         val text = if (result.data?.getBooleanExtra(AskActivity.RESULT_REPLACE, false) == true) AiNoteEdits.draftBody(titleText, answer)
             else AiNoteEdits.appendedText(bodyText.text, answer, null).trimEnd('\r', '\n')
-        bodyText = TextFieldValue(text = text, selection = TextRange(text.length))
+        writeBody(TextFieldValue(text = text, selection = TextRange(text.length)), EditKind.STEP)
         bodyEditing = true
     }
 
@@ -829,6 +852,7 @@ private fun EditorScreen(
         loadError = null
         parkedUri = null
         notice = null
+        reveal = null
         val cachedAttachments = attachmentUris.takeIf { attachmentIndexLoaded }
         val result = withContext(Dispatchers.IO) {
             runCatching {
@@ -876,6 +900,10 @@ private fun EditorScreen(
                 reminderLimit = parsed.meta.reminderLimit
                 reminderDone = parsed.meta.reminderDone
                 currentUri = uriString
+                // The note's own stack when it is as that stack left it; changed since (a tick on the card, the sync,
+                // another device), it starts a new one.
+                history = EditHistories.of(uriString, loadedTitle, loadedBody)
+                historyChanged()
             } catch (e: Throwable) {
                 loadError = context.getString(R.string.parse_error, e.message ?: e.javaClass.simpleName)
             }
@@ -986,8 +1014,20 @@ private fun EditorScreen(
         }
     }
 
+    // The note is saved and will be read back a little different: the edges of the title and the body trimmed, and a
+    // first line that is a heading as the title. The stack takes that as a cleanup, so it still fits the note when it
+    // is opened again (design checklists-77-v2, 4.3). A body with a line that is read back as an attachment gets a new
+    // stack: taking that back would put the attachment in the note twice.
+    fun historySaved(newUri: Uri?) {
+        val (text, embeds) = splitBodyAndEmbeds(combineBodyAndEmbeds(joinHeadingTitle(titleText, bodyText.text, titleLevel), embedLines.toList()))
+        val (title, body) = splitHeadingTitle(text)
+        if (embeds == embedLines.toList()) history.settle(title, body) else history = EditHistory(title, body)
+        if (newUri != null) EditHistories.rename(newNoteKey, newUri.toString())
+        historyChanged()
+    }
+
     fun closeWithSaveIfNeeded() {
-        bodyText = bodyText.withoutEmptyPair()
+        writeBody(bodyText.withoutEmptyPair(), EditKind.CLEANUP)
         val reminderAtSave = reminder
         attemptSaveAndClose(
             scope = scope,
@@ -1011,6 +1051,7 @@ private fun EditorScreen(
             onSavingChange = { saving = it },
             onSaved = { newUri ->
                 if (newUri != null) currentUri = newUri.toString()
+                historySaved(newUri)
                 originalBody = bodyText.text
                 originalTitle = titleText
                 originalEmbeds = embedLines.toList()
@@ -1048,7 +1089,7 @@ private fun EditorScreen(
             scope.launch { loadInto(navUris[target]) }
         }
         if (isDirty && currentUri != null) {
-            bodyText = bodyText.withoutEmptyPair()
+            writeBody(bodyText.withoutEmptyPair(), EditKind.CLEANUP)
             val reminderAtSave = reminder
             attemptSaveAndClose(
                 scope = scope,
@@ -1071,6 +1112,7 @@ private fun EditorScreen(
                 isDirty = true,
                 onSavingChange = { saving = it },
                 onSaved = {
+                    historySaved(null)
                     // Reminder herschedulen zoals de save-knop dat doet.
                     val finalUri = currentUri?.let { Uri.parse(it) }
                     if (finalUri != null) {
@@ -1093,10 +1135,6 @@ private fun EditorScreen(
             proceed()
         }
     }
-
-    // pointerInput-blokken worden niet bij elke recomposition ververst; via
-    // rememberUpdatedState leest de swipe-handler altijd de actuele closure.
-    val onSwipeNavigate by rememberUpdatedState<(Int) -> Unit> { delta -> navigateTo(delta) }
 
     BackHandler(enabled = true) { closeWithSaveIfNeeded() }
 
@@ -1317,7 +1355,7 @@ private fun EditorScreen(
                         IconButton(
                             enabled = !saving && (bodyText.text.isNotBlank() || titleText.isNotBlank() || embedLines.isNotEmpty()) && (isDirty || !isExisting),
                             onClick = {
-                                bodyText = bodyText.withoutEmptyPair()
+                                writeBody(bodyText.withoutEmptyPair(), EditKind.CLEANUP)
                                 val reminderAtSave = reminder
                                 attemptSaveAndClose(
                                     scope = scope,
@@ -1341,6 +1379,7 @@ private fun EditorScreen(
                                     onSavingChange = { saving = it },
                                     onSaved = { newUri ->
                                         if (newUri != null) currentUri = newUri.toString()
+                                        historySaved(newUri)
                                         originalBody = bodyText.text
                                         originalTitle = titleText
                                         originalEmbeds = embedLines.toList()
@@ -1377,26 +1416,10 @@ private fun EditorScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .consumeWindowInsets(padding)
-                .imePadding()
-                // Horizontale swipe = vorige/volgende notitie. detectHorizontalDragGestures
-                // orientation-lockt pas ná horizontale touch-slop, dus verticaal scrollen
-                // en de horizontaal scrollende titel/embed-strip (die de drag zelf
-                // consumeren) triggeren dit nooit.
-                .pointerInput(navEnabled) {
-                    if (!navEnabled) return@pointerInput
-                    var totalDx = 0f
-                    detectHorizontalDragGestures(
-                        onDragStart = { totalDx = 0f },
-                        onHorizontalDrag = { _, dragAmount -> totalDx += dragAmount },
-                        onDragEnd = {
-                            val threshold = 60.dp.toPx()
-                            // Swipe naar links = volgende kaart, naar rechts = vorige.
-                            if (totalDx <= -threshold) onSwipeNavigate(1)
-                            else if (totalDx >= threshold) onSwipeNavigate(-1)
-                        },
-                    )
-                },
+                .imePadding(),
         ) {
+            // The arrows above the note go to the previous and the next one. A swipe over the editor no longer does
+            // (design checklists-77-v2, 4.6): a sideways swipe is for the strip, and for selecting text.
             if (navEnabled) {
                 EditorNavHeader(
                     index = navIndex,
@@ -1498,8 +1521,15 @@ private fun EditorScreen(
                             // the table (a Backspace that joins the line above); then it is the field's own change.
                             if (keep == null || changedOnlyIn(current.text, result.text, keep.first, current.text.length - keep.second)) result else field
                         }
-                        staleBody.settle(field.text, shown.text)
-                        bodyText = shown
+                        // For Undo: a list Enter and a paste of lines are steps of their own, an empty pair that went
+                        // because the caret left it is the editor's own tidying, and the rest is typing.
+                        val kind = when {
+                            shown === field -> EditKind.TYPING
+                            edit != null || changed != null || pasted != null -> EditKind.STEP
+                            next.text == current.text -> EditKind.CLEANUP
+                            else -> EditKind.TYPING
+                        }
+                        writeBody(shown, kind, field.text)
                     },
                     formatted = !markdownMode,
                     tableBackground = bg,
@@ -1509,21 +1539,23 @@ private fun EditorScreen(
                     onTableEdit = ::editTable,
                     onCell = { cellFocus = it },
                     onReplaceBody = { next ->
-                        staleBody.settle(bodyText.text, next.text)
-                        bodyText = next
+                        writeBody(next, EditKind.STEP)
                         bodyEditing = true
                     },
                     onBodyFocus = { focused ->
                         bodyFocused = focused
-                        if (!focused) bodyText = bodyText.withoutEmptyPair()
+                        if (!focused) writeBody(bodyText.withoutEmptyPair(), EditKind.CLEANUP)
                     },
+                    onStep = ::stepHistory,
+                    reveal = reveal,
+                    onRevealed = { if (reveal === it) reveal = null },
                     bodyEditing = bodyEditing,
                     onEditBody = { bodyEditing = true },
                     onTick = ::tickTask,
                     onIndent = ::indentBody,
                     items = ItemActions(drop = ::dropItem, delete = { deleteItem(it) }, act = ::itemAction, moveKey = { moveItem(it) }),
                     title = titleText,
-                    onTitleChange = { titleText = it },
+                    onTitleChange = { writeTitle(it) },
                     embedItems = embedItems,
                     tags = tags,
                     onAddTag = { tag ->
@@ -1594,8 +1626,11 @@ private fun EditorScreen(
             }
             }
             if (loaded && loadError == null && parkedUri == null) notice?.let { shown ->
-                NoticeStrip(shown, fg, onUndo = ::undoNotice, onGone = { if (notice === shown) notice = null })
+                NoticeStrip(shown, fg, onGone = { if (notice === shown) notice = null })
             }
+            // Undo and Redo stand at the start of whichever bar is there, always at the same place (design
+            // checklists-77-v2, 4.4).
+            val steps = UndoRedo(canUndo && !saving, canRedo && !saving, ::stepHistory)
             if (bodyFocused && loaded && loadError == null && parkedUri == null) {
                 val active = remember(bodyText.text, bodyText.selection) {
                     if (bodyText.text.length > FORMAT_RAW_ABOVE) emptyList()
@@ -1605,6 +1640,7 @@ private fun EditorScreen(
                     active = active,
                     markdown = markdownMode,
                     foreground = fg,
+                    steps = steps,
                     onFormat = ::applyBodyFormat,
                     onChecklist = { toggleOrInsertChecklist() },
                     onIndent = { indentBody(it) },
@@ -1621,10 +1657,12 @@ private fun EditorScreen(
                         EditorPrefs.setMarkdown(context, markdownMode)
                     },
                 )
-            } else if (loaded && loadError == null && parkedUri == null) cellFocus?.let { cell ->
-                TableBar(
+            } else if (loaded && loadError == null && parkedUri == null) {
+                val cell = cellFocus
+                if (cell != null) TableBar(
                     cell = cell,
                     foreground = fg,
+                    steps = steps,
                     onOp = { op ->
                         editTable(cell.table, op)
                         // The focus goes with the row or column that was added, or to its neighbour when one went.
@@ -1638,6 +1676,9 @@ private fun EditorScreen(
                     },
                     onDeleteTable = { confirmTableDelete = cell.table },
                 )
+                // No keyboard in the body (the read view, the title, an item moved without a caret): a narrow bar with
+                // only the two, and only while there is something to take back or to do again, as in Keep.
+                else if (canUndo || canRedo) UndoBar(steps, fg)
             }
         }
     }
@@ -1683,10 +1724,10 @@ private fun EditorScreen(
                 val start = sel.start.coerceIn(0, bodyText.text.length)
                 val end = sel.end.coerceIn(0, bodyText.text.length)
                 val newText = bodyText.text.substring(0, start) + insert + bodyText.text.substring(end)
-                bodyText = TextFieldValue(
+                writeBody(TextFieldValue(
                     text = newText,
                     selection = androidx.compose.ui.text.TextRange(start + insert.length)
-                )
+                ), EditKind.STEP)
                 bodyEditing = true
             },
             onDismiss = { showLinkPicker = false },
@@ -1864,6 +1905,10 @@ private fun EditorBody(
     onTableEdit: (Int, FormatCore.TableOp) -> Unit = { _, _ -> },
     onCell: (TableCell?) -> Unit = {},
     onReplaceBody: (TextFieldValue) -> Unit = {},
+    // Undo (false) or Redo (true) from a keyboard, and what one of them just changed: the note scrolls to it.
+    onStep: (Boolean) -> Unit = {},
+    reveal: EditApplied? = null,
+    onRevealed: (EditApplied) -> Unit = {},
     title: String,
     onTitleChange: (String) -> Unit,
     embedItems: List<Pair<String, Uri>>,
@@ -1934,6 +1979,30 @@ private fun EditorBody(
             Toast.makeText(context, context.getString(R.string.toast_error, e.message ?: ""), Toast.LENGTH_SHORT).show()
             false
         }
+    }
+
+    // Ctrl+Z, Ctrl+Y and Ctrl+Shift+Z from a keyboard are the note's own Undo and Redo (design checklists-77-v2, 4.4),
+    // in the title, the body and a table cell. Taken before the field sees the key, so its own history never runs.
+    val stepKeys = Modifier.onPreviewKeyEvent { event ->
+        val redo = if (!event.isCtrlPressed || event.isAltPressed) null else when (event.key) {
+            Key.Z -> event.isShiftPressed
+            Key.Y -> if (event.isShiftPressed) null else true
+            else -> null
+        }
+        if (redo != null && event.type == KeyEventType.KeyDown) onStep(redo)
+        redo != null
+    }
+    // Undo and Redo show what they changed (4.1): the note scrolls to it when it is out of sight.
+    val places = remember { RevealPlaces() }
+    val titleView = remember { BringIntoViewRequester() }
+    val revealScope = rememberCoroutineScope()
+    LaunchedEffect(reveal) {
+        val shown = reveal ?: return@LaunchedEffect
+        // The text is laid out again first, and the field with the caret has seen that this change was no typing.
+        repeat(2) { withFrameNanos {} }
+        // The scrolling goes on after the note is told it is shown: typing right after Undo follows the caret again.
+        revealScope.launch { if (shown.field == EditField.TITLE) titleView.bringIntoView() else places.show(shown.from, shown.to) }
+        onRevealed(shown)
     }
 
     Column(
@@ -2025,7 +2094,7 @@ private fun EditorBody(
         TextField(
             value = title,
             onValueChange = onTitleChange,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().bringIntoViewRequester(titleView).then(stepKeys),
             // De titel is de eerste regel van de body; een titelwijziging herschrijft de onzichtbare tekst.
             enabled = !bodyTooTall,
             singleLine = true,
@@ -2057,7 +2126,7 @@ private fun EditorBody(
             TextButton(onClick = onEditBody) {
                 Text(stringResource(R.string.editor_title_edit), color = foreground)
             }
-            if (!split) PreviewText(preview, value.text, value.text, 0, taskLine, formatted, onTick, items, gripScroll, foreground, openLinkLabel, ::openLink, onEditBody, Modifier.fillMaxWidth().heightIn(min = 200.dp).padding(16.dp))
+            if (!split) PreviewText(preview, value.text, value.text, 0, 0, places, taskLine, formatted, onTick, items, gripScroll, foreground, openLinkLabel, ::openLink, onEditBody, Modifier.fillMaxWidth().heightIn(min = 200.dp).padding(16.dp))
             else Column(Modifier.fillMaxWidth().heightIn(min = 200.dp).padding(16.dp)) {
                 // The same pieces as when editing: text as text with its links, a table as a grid; a tap edits.
                 for ((i, piece) in pieces.withIndex()) key(piece.kind, ordinals[i]) {
@@ -2065,11 +2134,11 @@ private fun EditorBody(
                     if (piece.kind == "table") TableGrid(
                         index = ordinals[i], source = part, foreground = foreground, background = tableBackground, editable = false,
                         focus = null, onFocusDone = {}, onEdit = {}, onCell = {}, onTap = onEditBody,
-                        modifier = Modifier.padding(vertical = 8.dp),
+                        modifier = Modifier.padding(vertical = 8.dp).then(revealWhole(places, piece.from, piece.to)),
                     ) else {
                         val shown = remember(part, foreground) { renderPreviewAnnotated(part, foreground, underlineLinks = false) }
                         val linesAbove = value.text.substring(0, piece.from).count { it == '\n' }
-                        PreviewText(shown, part, value.text, linesAbove, taskLine, formatted, { onTick(linesAbove + it) }, items, gripScroll, foreground, openLinkLabel, ::openLink, onEditBody, Modifier.fillMaxWidth())
+                        PreviewText(shown, part, value.text, linesAbove, piece.from, places, taskLine, formatted, { onTick(linesAbove + it) }, items, gripScroll, foreground, openLinkLabel, ::openLink, onEditBody, Modifier.fillMaxWidth())
                     }
                 }
             }
@@ -2085,12 +2154,16 @@ private fun EditorBody(
                 onIndent = onIndent,
                 whole = value.text,
                 above = 0,
+                offset = 0,
+                places = places,
+                revealing = reveal != null,
                 scroll = gripScroll,
                 items = items,
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 200.dp)
-                    .onFocusChanged { onBodyFocus(it.isFocused) },
+                    .onFocusChanged { onBodyFocus(it.isFocused) }
+                    .then(stepKeys),
             )
         } else {
             // A body with a table: text fields and grids under each other (design 7.2). Each text field shows its own
@@ -2106,7 +2179,8 @@ private fun EditorBody(
                 if (piece.kind == "table") TableGrid(
                     index = ordinals[i], source = part, foreground = foreground, background = tableBackground, editable = true,
                     focus = tableFocus, onFocusDone = onTableFocusDone, onEdit = { op -> onTableEdit(ordinals[i], op) },
-                    onCell = onCell, onTap = {}, modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    onCell = onCell, onTap = {},
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).then(revealWhole(places, piece.from, piece.to)).then(stepKeys),
                 ) else {
                 val prefix = piece.from
                 val suffix = value.text.length - piece.to
@@ -2144,11 +2218,15 @@ private fun EditorBody(
                     onIndent = onIndent,
                     whole = whole,
                     above = remember(whole, prefix) { lineOf(whole, prefix) },
+                    offset = prefix,
+                    places = places,
+                    revealing = reveal != null,
                     scroll = gripScroll,
                     items = items,
                     modifier = Modifier
                         .fillMaxWidth()
                         .then(if (last) Modifier.heightIn(min = 120.dp) else Modifier)
+                        .then(stepKeys)
                         .focusRequester(requester)
                         .onFocusChanged { state ->
                             if (state.isFocused == had) return@onFocusChanged
@@ -2202,6 +2280,11 @@ private fun BodyTextField(
     // where the note scrolls, and what the grips on a task ask of the editor.
     whole: String,
     above: Int,
+    // Where this field's text starts in the body, where it tells how to show a place in its text, and whether Undo or
+    // Redo is showing one now: then the note goes there, not to the caret.
+    offset: Int,
+    places: RevealPlaces,
+    revealing: Boolean,
     scroll: GripScroll?,
     items: ItemActions,
     modifier: Modifier,
@@ -2253,7 +2336,7 @@ private fun BodyTextField(
     LaunchedEffect(value.text, value.selection, bodyLayout, focused) {
         val layout = bodyLayout
         val now = value.text to value.selection
-        if (ticking) {
+        if (ticking || revealing) {
             ticking = false
             afterTick = now
         }
@@ -2261,6 +2344,7 @@ private fun BodyTextField(
         val caret = layout.getCursorRect(value.selection.end.coerceIn(0, layout.layoutInput.text.length))
         caretView.bringIntoView(caret.copy(top = caret.top - margin, bottom = caret.bottom + margin))
     }
+    RevealLines(places, offset, value.text.length, bodyLayout, caretView, margin)
     // Tab and Shift+Tab from a keyboard change the level of a list item (design checklists-77, 6.3), and Alt with the
     // arrow up or down moves the item with the caret (6.7). The key going up belongs to the key that went down.
     var tabTaken by remember { mutableStateOf(false) }
@@ -2402,14 +2486,17 @@ private val previewBoxStyle = androidx.compose.ui.text.SpanStyle(fontWeight = Fo
  * The read view of a note with links: the links open, a box ticks, a tap anywhere else edits the note. With [lists]
  * (the Markdown switch is off) its lists stand as in the open note, and a task has its handle here too (design
  * checklists-77, part 5); the cross is not here, as there is no caret. [source] is the text it shows, [whole] the
- * whole body and [above] the number of its lines above [source].
+ * whole body, [above] the number of its lines above [source] and [offset] where [source] starts in it.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun PreviewText(
     preview: androidx.compose.ui.text.AnnotatedString,
     source: String,
     whole: String,
     above: Int,
+    offset: Int,
+    places: RevealPlaces,
     taskLine: androidx.compose.ui.unit.TextUnit,
     lists: Boolean,
     onTick: (Int) -> Unit,
@@ -2432,12 +2519,15 @@ private fun PreviewText(
     val style = MaterialTheme.typography.bodyLarge
     val metrics = rememberListMetrics(style, taskLine, previewBoxStyle)
     val laid = remember(preview, source, metrics, lists) { previewInParagraphs(preview, source, if (lists) metrics else null) }
+    val textView = remember { BringIntoViewRequester() }
+    // The read view drops signs, so a place stands elsewhere in it; it is on the same line.
+    RevealLines(places, offset, source.length, previewLayout, textView, with(LocalDensity.current) { 24.dp.toPx() }) { at -> laid.starts.getOrElse(lineOf(source, at)) { 0 } }
     Box(modifier, propagateMinConstraints = true) {
         ClickableText(
             text = laid.text,
             style = style.copy(color = foreground),
             onTextLayout = { previewLayout = it },
-            modifier = Modifier.fillMaxWidth().semantics {
+            modifier = Modifier.fillMaxWidth().bringIntoViewRequester(textView).semantics {
                 customActions = links.map { link ->
                     CustomAccessibilityAction(
                         "$openLinkLabel: ${preview.subSequence(link.start, link.end).text} (${link.item})",
@@ -2458,6 +2548,60 @@ private fun PreviewText(
     }
 }
 
+/**
+ * The parts of the body as it is shown (a text field, the read view, a table), for showing a place in its text: Undo
+ * and Redo scroll the note to what they changed (design checklists-77-v2, 4.1). Each part says whether the place is
+ * its own, and brings it into view.
+ */
+internal class RevealPlaces {
+    private val parts = mutableListOf<suspend (Int, Int) -> Boolean>()
+    fun add(part: suspend (Int, Int) -> Boolean) { parts += part }
+    fun remove(part: suspend (Int, Int) -> Boolean) { parts -= part }
+    /** Shows the body from [from] to [to]: the part that holds [from] does it. */
+    suspend fun show(from: Int, to: Int) { for (part in parts.toList()) if (part(from, to)) return }
+}
+
+/**
+ * A text of the body among the [places]: [length] characters that start at [offset] in the body, laid out as [layout].
+ * A place in it is shown by the lines that hold it, with [margin] around them. [shownAt] gives where a place of the
+ * text stands in the text as it is laid out (the read view drops signs).
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun RevealLines(places: RevealPlaces, offset: Int, length: Int, layout: TextLayoutResult?, view: BringIntoViewRequester, margin: Float, shownAt: (Int) -> Int = { it }) {
+    val current by rememberUpdatedState(Triple(offset, length, layout))
+    val shown by rememberUpdatedState(shownAt)
+    DisposableEffect(places) {
+        val part: suspend (Int, Int) -> Boolean = part@{ from, to ->
+            val (start, size, laid) = current
+            if (from < start || from > start + size) return@part false
+            if (laid != null) {
+                val end = laid.layoutInput.text.length
+                val first = laid.getLineForOffset(shown(from - start).coerceIn(0, end))
+                val last = laid.getLineForOffset(shown((to - start).coerceIn(0, size)).coerceIn(0, end))
+                view.bringIntoView(Rect(0f, laid.getLineTop(first) - margin, 1f, laid.getLineBottom(maxOf(first, last)) + margin))
+            }
+            true
+        }
+        places.add(part)
+        onDispose { places.remove(part) }
+    }
+}
+
+/** A table of the body, from [from] to [to], among the [places]: a place in it is shown by the whole table. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun revealWhole(places: RevealPlaces, from: Int, to: Int): Modifier {
+    val view = remember { BringIntoViewRequester() }
+    val range by rememberUpdatedState(from..to)
+    DisposableEffect(places) {
+        val part: suspend (Int, Int) -> Boolean = { at, _ -> (at in range).also { if (it) view.bringIntoView() } }
+        places.add(part)
+        onDispose { places.remove(part) }
+    }
+    return Modifier.bringIntoViewRequester(view)
+}
+
 /** A strip to type above or below a table at the very start or end of the note (design 5.4). */
 @Composable
 private fun EdgeStrip(label: Int, foreground: Color, onClick: () -> Unit) {
@@ -2473,32 +2617,40 @@ private fun EdgeStrip(label: Int, foreground: Color, onClick: () -> Unit) {
     }
 }
 
-/**
- * What the editor says after a list action (design checklists-77, 6.5). With [before], the body from before the action,
- * the strip has Undo; [after] is the body right after it, to see whether the note was typed in since. Without [before]
- * it is a plain word ("Undone").
- */
-internal class EditorNotice(val message: String, val before: TextFieldValue? = null, val after: String = "")
+/** What the strip above the formatting bar says. A new one for each time, so the same words count again. */
+internal class EditorNotice(val message: String)
 
 /**
- * The strip above the formatting bar: what happened, and Undo. It stays 10 seconds, or as long as the phone's setting
- * for people who need more time asks, and a word without Undo 4 seconds (house rules of ontwerp-undo-overal). Undo is
- * bold and underlined, not only a color, and a finger high. TalkBack reads the strip when it comes.
+ * The strip above the formatting bar: what a list action took away when that was more than could be seen (design
+ * checklists-77-v2, 4.5). It has no Undo: that is always in sight in the bar under it. It stays 4 seconds, or as long
+ * as the phone's setting for people who need more time asks. A swipe over it to either side takes it away, and so does
+ * its cross, and the next change. TalkBack reads the strip when it comes.
  */
 @Composable
-private fun NoticeStrip(notice: EditorNotice, foreground: Color, onUndo: () -> Unit, onGone: () -> Unit) {
+private fun NoticeStrip(notice: EditorNotice, foreground: Color, onGone: () -> Unit) {
     val accessibility = LocalAccessibilityManager.current
     val gone by rememberUpdatedState(onGone)
     LaunchedEffect(notice) {
-        val shown = if (notice.before == null) 4_000L else 10_000L
-        delay(accessibility?.calculateRecommendedTimeoutMillis(shown, containsText = true, containsControls = notice.before != null) ?: shown)
+        delay(accessibility?.calculateRecommendedTimeoutMillis(4_000L, containsText = true, containsControls = true) ?: 4_000L)
         gone()
     }
+    // How far the finger has pushed the strip aside.
+    var pushed by remember(notice) { mutableFloatStateOf(0f) }
     Column(Modifier.fillMaxWidth()) {
         HorizontalDivider(color = foreground.copy(alpha = 0.15f))
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                .offset { IntOffset(pushed.toInt(), 0) }
+                .pointerInput(notice) {
+                    detectHorizontalDragGestures(
+                        onDragEnd = { if (kotlin.math.abs(pushed) > 72.dp.toPx()) gone() else pushed = 0f },
+                        onDragCancel = { pushed = 0f },
+                    ) { change, amount ->
+                        change.consume()
+                        pushed += amount
+                    }
+                }
                 .background(foreground.copy(alpha = 0.06f))
                 .heightIn(min = 48.dp)
                 .padding(start = 16.dp, end = 4.dp)
@@ -2506,21 +2658,16 @@ private fun NoticeStrip(notice: EditorNotice, foreground: Color, onUndo: () -> U
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(notice.message, color = foreground, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f).padding(vertical = 8.dp))
-            if (notice.before != null) Box(
+            val dismiss = stringResource(R.string.notice_dismiss)
+            Box(
                 modifier = Modifier
-                    .defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
+                    .size(48.dp)
                     .clip(RoundedCornerShape(8.dp))
-                    .clickable(role = Role.Button, onClick = onUndo)
-                    .padding(horizontal = 12.dp),
+                    .clickable(role = Role.Button) { gone() }
+                    .semantics { contentDescription = dismiss },
                 contentAlignment = Alignment.Center,
             ) {
-                Text(
-                    stringResource(R.string.drawing_undo),
-                    color = foreground,
-                    fontWeight = FontWeight.Bold,
-                    textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline,
-                    style = MaterialTheme.typography.labelLarge,
-                )
+                Icon(Icons.Filled.Close, contentDescription = null, tint = foreground)
             }
         }
     }

@@ -68,7 +68,27 @@ for (const name of ['insertOcrAndEmbed', 'toggleOrInsertChecklist', 'insertText'
   const end = editor.indexOf('\n    fun ', start + 1);
   assert(editor.slice(start, end < 0 ? undefined : end).includes('bodyEditing = true'), `${name} must reveal edits in the raw editor`);
 }
-assert.match(editor, /bodyText = TextFieldValue\(\s+text = newText,[\s\S]*?bodyEditing = true/, 'Inserted wiki links must enter editing mode');
+assert.match(editor, /writeBody\(TextFieldValue\(\s+text = newText,[\s\S]*?bodyEditing = true/, 'Inserted wiki links must enter editing mode');
+// Undo and Redo (design checklists-77-v2, 4.7): every change of the body and the title goes through one place, which
+// puts it on the note's undo stack. A writer next to it would change the note behind the stack's back, and Undo would
+// then drop every step. Loading a note is the one other writer: it takes the note's own stack, or starts a new one.
+const writeBody = editor.slice(editor.indexOf('fun writeBody('), editor.indexOf('fun writeTitle('));
+assert(writeBody.includes('history.record(EditField.BODY,') && writeBody.includes('staleBody.settle(fieldText, next.text)') && writeBody.includes('bodyText = next'), 'writeBody must record the change, settle the keyboard and write the body');
+assert.equal((editor.match(/\bbodyText = (?!bodyText\.text,)/g) || []).length, 2, 'The body is written in writeBody and when a note is loaded, nowhere else');
+const writeTitle = editor.slice(editor.indexOf('fun writeTitle('), editor.indexOf('fun stepHistory('));
+assert(writeTitle.includes('history.record(EditField.TITLE,') && writeTitle.includes('titleText = next'), 'writeTitle must record the change and write the title');
+assert.equal((editor.match(/\btitleText = /g) || []).length, 2, 'The title is written in writeTitle and when a note is loaded, nowhere else');
+assert(!/\bstaleBody\.settle\(/.test(editor.replace(writeBody, '')), 'Only writeBody settles the keyboard: every other writer goes through it');
+const loadNote = editor.slice(editor.indexOf('suspend fun loadInto('), editor.indexOf('fun resolveParked('));
+assert(loadNote.includes('history = EditHistories.of(uriString, loadedTitle, loadedBody)'), 'A loaded note takes its own undo stack, and only when it is as that stack left it');
+assert.equal((editor.match(/historySaved\(/g) || []).length, 4, 'All three save paths must tell the undo stack how the note is read back');
+// The swipe over the editor to the next note is gone (4.6); the only sideways drag left is the one that takes the strip away.
+assert(!editor.includes('onSwipeNavigate'), 'A swipe over the editor must not go to another note');
+assert.equal((editor.match(/detectHorizontalDragGestures\(/g) || []).length, 1, 'The strip is the only thing in the editor that takes a sideways swipe');
+// Undo and Redo stand at the start of every bar, outside what scrolls (4.4).
+const formatBar = source('FormatBar');
+assert.equal((formatBar.match(/lead = \{ UndoRedoButtons\(steps, foreground\) \}/g) || []).length, 2, 'The formatting bar and the table bar both start with Undo and Redo');
+assert(formatBar.includes('internal fun UndoBar(') && editor.includes('else if (canUndo || canRedo) UndoBar(steps, fg)'), 'Without a keyboard in the body the two buttons have a bar of their own, only while there is a step');
 assert(storage.includes('LabelNames.applyChanges(meta.labels, added, removed)'), 'Only user-toggled memberships may change');
 assert(drawer.includes('Storage.addLabel(context, normalized)'), 'Creation must merge a fresh label registry under the write mutex');
 assert(storage.includes('private fun saveLabels('), 'Callers must not overwrite label snapshots without coordination');

@@ -125,7 +125,7 @@
     <string name="format_indent">Aumentar sangría</string>
     <string name="format_outdent">Disminuir sangría</string>
     <string name="notice_undone">Acción deshecha</string>
-    <string name="notice_undo_failed">No se pudo deshacer. La nota ha cambiado.</string>
+    <string name="notice_redone">Acción rehecha</string>
     <!-- Checklists in an open note (issue 77): the grips, the menus and what the strip says. -->
     <string name="list_move_up">Subir elemento</string>
     <string name="list_move_down">Bajar elemento</string>
@@ -134,8 +134,7 @@
     <string name="list_item_place">%1$d de %2$d</string>
     <string name="list_uncheck_all">Desmarcar todos los elementos</string>
     <string name="list_delete_checked">Borrar los elementos marcados</string>
-    <string name="notice_item_moved">Elemento movido</string>
-    <string name="notice_item_deleted">Elemento borrado</string>
+    <string name="notice_dismiss">Cerrar</string>
     <plurals name="notice_item_deleted_subs">
         <item quantity="one">Elemento y %d subelemento borrados</item>
         <item quantity="other">Elemento y %d subelementos borrados</item>

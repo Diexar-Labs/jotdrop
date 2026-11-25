@@ -184,67 +184,6 @@ fun main() {
             check(FormatCore.listLevelsAndItems(text) == (FormatCore.listLevels(text) to FormatCore.listItems(text))) { "Levels and items in one reading: $text" }
         }
     }
-    // Undo of a list action in the editor (design checklists-77, 6.5): the body from before comes back, or the action
-    // is taken back in what was typed since, or nothing happens.
-    run {
-        val before = "- [ ] a\n- [ ] b\n- [ ] c\nslot"
-        val indented = "- [ ] a\n\t- [ ] b\n- [ ] c\nslot"
-        // Nothing typed since: the body from before, with the selection from before.
-        check(undoListAction(before, 3, 5, indented, indented, 9, 9) == Undone(before, 3, 5)) { "Undo right away" }
-        // Typed on another line: the typing stays, the caret stays behind its letter.
-        val typed = "- [ ] aQ\n\t- [ ] b\n- [ ] c\nslot"
-        check(undoListAction(before, 0, 0, indented, typed, 8, 8) == Undone("- [ ] aQ\n- [ ] b\n- [ ] c\nslot", 8, 8)) { "Undo keeps typing: ${undoListAction(before, 0, 0, indented, typed, 8, 8)}" }
-        // A caret behind the change moves along with its text.
-        check(undoListAction(before, 0, 0, indented, typed, typed.length, typed.length)?.selFrom == typed.length - 1) { "Caret behind the change" }
-        // Typed on the line the action changed: refused, nothing is written over.
-        check(undoListAction(before, 0, 0, indented, "- [ ] a\n\t- [ ] bQ\n- [ ] c\nslot", 0, 0) == null) { "Undo on a changed line must be refused" }
-        // A deleted item comes back between the lines typed in around it.
-        check(undoListAction(before, 0, 0, "- [ ] a\n- [ ] c\nslot", "- [ ] a!\n- [ ] c?\nslot", 0, 0)?.text == "- [ ] a!\n- [ ] b\n- [ ] c?\nslot") { "Undo of a delete: ${undoListAction(before, 0, 0, "- [ ] a\n- [ ] c\nslot", "- [ ] a!\n- [ ] c?\nslot", 0, 0)}" }
-        // A moved item goes back while a line was added below.
-        val moved = "- [ ] a\n- [ ] c\n- [ ] b\nslot"
-        check(undoListAction(before, 0, 0, moved, "$moved\nnew", 0, 0)?.text == "$before\nnew") { "Undo of a move: ${undoListAction(before, 0, 0, moved, "$moved\nnew", 0, 0)}" }
-        // Typed in the item that was dragged, or ticked it: it goes back with that, and the caret stays behind its letter.
-        val dragged = "- [ ] c\n- [ ] a\n- [ ] b\nslot"
-        check(undoListAction(before, 0, 0, dragged, "- [ ] cQ\n- [ ] a\n- [ ] b\nslot", 8, 8) == Undone("- [ ] a\n- [ ] b\n- [ ] cQ\nslot", 24, 24)) {
-            "Undo of a drag after typing in the item: ${undoListAction(before, 0, 0, dragged, "- [ ] cQ\n- [ ] a\n- [ ] b\nslot", 8, 8)}"
-        }
-        check(undoListAction(before, 0, 0, dragged, "- [x] c\n- [ ] a\n- [ ] b\nslot", 7, 7)?.text == "- [ ] a\n- [ ] b\n- [x] c\nslot") { "Undo of a drag after a tick on the item" }
-        // Moved again with Move down (which shows no strip of its own): the item is back where it was, once.
-        check(undoListAction(before, 0, 0, dragged, "- [ ] a\n- [ ] c\n- [ ] b\nslot", 15, 15) == Undone(before, 23, 23)) {
-            "Undo of a drag after Move down: ${undoListAction(before, 0, 0, dragged, "- [ ] a\n- [ ] c\n- [ ] b\nslot", 15, 15)}"
-        }
-        // A caret in a line that moved with the item stays in that line; a selection over two lines keeps both ends.
-        val nested = "- [ ] a\n- [ ] b\n\t- [ ] b1\n- [ ] c\nslot"
-        val nestedDragged = "- [ ] b\n\t- [ ] b1\n- [ ] a\n- [ ] c\nslot"
-        check(undoListAction(nested, 0, 0, nestedDragged, "- [ ] b\n\t- [ ] b1\n- [ ] a\n- [ ] c!\nslot", 17, 17) == Undone("- [ ] a\n- [ ] b\n\t- [ ] b1\n- [ ] c!\nslot", 25, 25)) {
-            "Caret in a sub-item that goes back: ${undoListAction(nested, 0, 0, nestedDragged, "- [ ] b\n\t- [ ] b1\n- [ ] a\n- [ ] c!\nslot", 17, 17)}"
-        }
-        // Two equal lines cannot be told apart, now or after Undo: the caret keeps its place in the text, as it did.
-        check(undoListAction("- [x] a\n- [ ] a", 0, 0, "- [ ] a\n- [ ] a", "- [ ] a\n- [ ] a\nx", 7, 7) == Undone("- [x] a\n- [ ] a\nx", 7, 7)) { "Caret in one of two equal lines" }
-        check(undoListAction("- [x] a\n- [ ] b\n- [x] a", 0, 0, "- [ ] a\n- [ ] b\n- [ ] a", "- [ ] a\n- [ ] b!\n- [x] a", 24, 24) == Undone("- [x] a\n- [ ] b!\n- [x] a", 24, 24)) {
-            "Caret in a line that is there twice after Undo: ${undoListAction("- [x] a\n- [ ] b\n- [x] a", 0, 0, "- [ ] a\n- [ ] b\n- [ ] a", "- [ ] a\n- [ ] b!\n- [x] a", 24, 24)}"
-        }
-        // An empty line with the caret, under an item that comes back: the caret stays on its empty line.
-        check(undoListAction("- [ ] a\n\n- [ ] b", 0, 0, "\n- [ ] b", "\n- [ ] b!", 0, 0) == Undone("- [ ] a\n\n- [ ] b!", 8, 8)) {
-            "Caret on an empty line: ${undoListAction("- [ ] a\n\n- [ ] b", 0, 0, "\n- [ ] b", "\n- [ ] b!", 0, 0)}"
-        }
-        // Uncheck all: a task ticked again by hand is the same change as Undo makes; words typed in a task are not.
-        val ticked = "- [x] a\n- [x] b"
-        val cleared = "- [ ] a\n- [ ] b"
-        check(undoListAction(ticked, 0, 0, cleared, "- [x] a\n- [ ] b", 0, 0)?.text == ticked) { "Undo of Uncheck all after a tick" }
-        check(undoListAction(ticked, 0, 0, cleared, "- [ ] a!\n- [ ] b", 0, 0) == null) { "Undo of Uncheck all on a changed task must be refused" }
-        // A tick back is as long as the tick: a caret between two of them holds its place.
-        check(undoListAction(ticked, 0, 0, cleared, "$cleared\nx", 9, 9) == Undone("$ticked\nx", 9, 9)) { "Caret between two ticks: ${undoListAction(ticked, 0, 0, cleared, "$cleared\nx", 9, 9)}" }
-        // A task ticked again with "Move checked items to the bottom" on went down as well: the other ticks come back
-        // and that task stays where it went, with the caret in it.
-        val sorted = "- [ ] c\n- [x] a\n- [x] b"
-        val open = "- [ ] c\n- [ ] a\n- [ ] b"
-        check(undoListAction(sorted, 0, 0, open, "- [ ] c\n- [ ] b\n- [x] a", 23, 23) == Undone("- [ ] c\n- [x] b\n- [x] a", 23, 23)) {
-            "Undo of Uncheck all after a tick that moved the task: ${undoListAction(sorted, 0, 0, open, "- [ ] c\n- [ ] b\n- [x] a", 23, 23)}"
-        }
-        // CRLF lines merge as they are.
-        check(undoListAction("- a\r\n- b\r\n", 0, 0, "- a\r\n\t- b\r\n", "- a!\r\n\t- b\r\n", 0, 0)?.text == "- a!\r\n- b\r\n") { "Undo with CRLF" }
-    }
     // Where a dragged item lands (design checklists-77, 6.1): the place nearest to the finger, the item's own lines as
     // its own place, and the level it has plus the steps the finger went sideways, within what the place takes.
     run {

@@ -200,40 +200,6 @@ internal class StaleField(private val clock: () -> Long = System::currentTimeMil
     }
 }
 
-/** The body after Undo of a list action, with the selection. */
-internal data class Undone(val text: String, val selFrom: Int, val selTo: Int)
-
-/**
- * Undo of a list action in the editor (design checklists-77, 6.5). [before] is the body from before the action with its
- * selection, [after] the body right after it, [now] the body as it is. Nothing typed since: [before] comes back as it
- * was. Typed on: the action is taken back in [now], line by line as the sync merges two versions, and the selection
- * stays in its own text. A moved item goes back with what was typed in it since, and once, also when it was moved
- * again. Null when that cannot be done without writing over something (a line both changed).
- */
-internal fun undoListAction(before: String, beforeFrom: Int, beforeTo: Int, after: String, now: String, nowFrom: Int, nowTo: Int): Undone? {
-    if (now == after) return Undone(before, beforeFrom, beforeTo)
-    val merged = CloudNoteMerge.mergeText(after, now, before) ?: return null
-    val diff = textDiff(now, merged)
-    val shift = merged.length - now.length
-    val was = now.split('\n')
-    val lines = merged.split('\n')
-    // A place in a line that is there once, before and after, stays in that line, also when Undo takes the line back.
-    fun own(at: Int): Int? {
-        val line = lineOf(now, at)
-        val text = was[line]
-        if (was.count { it == text } != 1 || lines.count { it == text } != 1) return null
-        return lineStartOf(merged, lines.indexOf(text)) + at - lineStartOf(now, line)
-    }
-    fun map(at: Int) = own(at) ?: when {
-        at <= diff.start -> at
-        at >= diff.endA -> at + shift
-        // Inside what changed: a tick back is as long as the tick, so the place holds; else the start of the change.
-        shift == 0 -> at
-        else -> diff.start
-    }
-    return Undone(merged, map(nowFrom), map(nowTo))
-}
-
 /** Display only: one bullet replaces one marker, leaving every source offset intact. */
 internal fun renderListBullets(text: String): String {
     var fence: String? = null
