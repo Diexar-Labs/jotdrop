@@ -125,7 +125,7 @@
     <string name="format_indent">Aumenta rientro</string>
     <string name="format_outdent">Riduci rientro</string>
     <string name="notice_undone">Azione annullata</string>
-    <string name="notice_undo_failed">Impossibile annullare. La nota è cambiata.</string>
+    <string name="notice_redone">Azione ripetuta</string>
     <!-- Checklists in an open note (issue 77): the grips, the menus and what the strip says. -->
     <string name="list_move_up">Sposta su</string>
     <string name="list_move_down">Sposta giù</string>
@@ -134,8 +134,7 @@
     <string name="list_item_place">%1$d di %2$d</string>
     <string name="list_uncheck_all">Togli tutte le spunte</string>
     <string name="list_delete_checked">Elimina gli elementi spuntati</string>
-    <string name="notice_item_moved">Elemento spostato</string>
-    <string name="notice_item_deleted">Elemento eliminato</string>
+    <string name="notice_dismiss">Chiudi</string>
     <plurals name="notice_item_deleted_subs">
         <item quantity="one">Elemento e %d sottoelemento eliminati</item>
         <item quantity="other">Elemento e %d sottoelementi eliminati</item>

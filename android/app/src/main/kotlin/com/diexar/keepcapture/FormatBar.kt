@@ -35,6 +35,8 @@ import androidx.compose.material.icons.automirrored.filled.FormatIndentIncrease
 import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.Redo
+import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Close
@@ -156,12 +158,15 @@ internal fun TextFieldValue.backspacing(next: TextFieldValue, formatted: Boolean
     return TextFieldValue(text.replaceRange(edit.from, edit.to, edit.insert), TextRange(edit.selFrom))
 }
 
-/** One button of the bar: an icon with its name for TalkBack; "on" is a frame and a line under it, not only a color. */
+/**
+ * One button of the bar: an icon with its name for TalkBack; "on" is a frame and a line under it, not only a color.
+ * One that can do nothing now ([enabled] false) keeps its shape, faded, and takes no tap.
+ */
 @Composable
-private fun BarButton(icon: ImageVector, @StringRes label: Int, foreground: Color, on: Boolean? = null, onClick: () -> Unit) {
+private fun BarButton(icon: ImageVector, @StringRes label: Int, foreground: Color, on: Boolean? = null, enabled: Boolean = true, onClick: () -> Unit) {
     val name = stringResource(label)
     val shape = RoundedCornerShape(8.dp)
-    val action = if (on == null) Modifier.clickable(role = Role.Button, onClick = onClick)
+    val action = if (on == null) Modifier.clickable(enabled = enabled, role = Role.Button, onClick = onClick)
         else Modifier.toggleable(value = on, role = Role.Switch, onValueChange = { onClick() })
     Box(
         modifier = Modifier
@@ -173,7 +178,7 @@ private fun BarButton(icon: ImageVector, @StringRes label: Int, foreground: Colo
             .semantics { contentDescription = name },
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, contentDescription = null, tint = foreground)
+        Icon(icon, contentDescription = null, tint = foreground.copy(alpha = if (enabled) 1f else 0.35f))
         if (on == true) Box(
             Modifier.align(Alignment.BottomCenter).padding(bottom = 3.dp).width(18.dp).height(2.dp)
                 .background(foreground, RoundedCornerShape(1.dp)),
@@ -181,8 +186,27 @@ private fun BarButton(icon: ImageVector, @StringRes label: Int, foreground: Colo
     }
 }
 
+/** Undo and Redo as a bar shows them (design checklists-77-v2, 4.4): whether each can be done now, and doing it ([step] with true for Redo). */
+internal class UndoRedo(val canUndo: Boolean, val canRedo: Boolean, val step: (redo: Boolean) -> Unit)
+
+/** The two buttons, at the start of every bar and outside what scrolls, so they are always at the same place. */
+@Composable
+private fun UndoRedoButtons(steps: UndoRedo, foreground: Color) {
+    BarButton(Icons.AutoMirrored.Filled.Undo, R.string.drawing_undo, foreground, enabled = steps.canUndo) { steps.step(false) }
+    BarButton(Icons.AutoMirrored.Filled.Redo, R.string.drawing_redo, foreground, enabled = steps.canRedo) { steps.step(true) }
+}
+
+/** The bar without a keyboard in the body (the read view, the title): only Undo and Redo, where they stand in the other bars. */
+@Composable
+internal fun UndoBar(steps: UndoRedo, foreground: Color) {
+    Column(Modifier.fillMaxWidth()) {
+        HorizontalDivider(color = foreground.copy(alpha = 0.15f))
+        Row(Modifier.padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) { UndoRedoButtons(steps, foreground) }
+    }
+}
+
 /**
- * The formatting bar right above the keyboard (design part 5.3, 7.1): Bold · Italic · Heading · Bullets · Numbers ·
+ * The formatting bar right above the keyboard (design part 5.3, 7.1): Undo and Redo, which stay put, then Bold · Italic · Heading · Bullets · Numbers ·
  * Checklist · Indent · Outdent · Highlight · Table · Emoji · More (Strikethrough, Quote, Code, Line), and at the end the
  * Markdown switch, always in sight so someone who knows Markdown switches to the raw text in one tap (Eric, 16 Nov).
  * Tapping a button keeps the focus and the keyboard in the text. Indent and Outdent move a list item one level in or
@@ -194,6 +218,7 @@ internal fun FormatBar(
     active: List<String>,
     markdown: Boolean,
     foreground: Color,
+    steps: UndoRedo,
     onFormat: (String) -> Unit,
     onChecklist: () -> Unit,
     onIndent: (String) -> Unit,
@@ -213,7 +238,7 @@ internal fun FormatBar(
             onEmoji(emoji)
         }
         // The buttons scroll sideways; the Markdown switch stays in sight at the end.
-        ScrollHintRow(foreground, Modifier.padding(horizontal = 4.dp), extra = { MarkdownSwitch(markdown, foreground, onMarkdown) }) {
+        ScrollHintRow(foreground, Modifier.padding(horizontal = 4.dp), lead = { UndoRedoButtons(steps, foreground) }, extra = { MarkdownSwitch(markdown, foreground, onMarkdown) }) {
             BarButton(Icons.Filled.FormatBold, R.string.format_bold, foreground, "bold" in active) { onFormat("bold") }
             BarButton(Icons.Filled.FormatItalic, R.string.format_italic, foreground, "italic" in active) { onFormat("italic") }
             BarButton(Icons.Filled.Title, R.string.format_heading, foreground, "heading" in active) { onFormat("heading") }
@@ -268,12 +293,14 @@ internal fun FormatBar(
  * A row of buttons that scrolls sideways and shows that it does (Eric, 18 Nov: the Table button sat behind the edge and
  * he did not know the bar moved). Where more buttons wait, the row fades out and a small arrow next to it points on; a tap
  * on the arrow moves the row on by a few buttons, and back to the start once the end is in sight. The arrow is a shape,
- * not a color. [extra] (the Markdown switch) stays put at the end, and a swipe that starts on it moves the row too.
+ * not a color. [lead] (Undo and Redo) stays put at the start and [extra] (the Markdown switch) at the end; a swipe that
+ * starts on them moves the row too.
  */
 @Composable
 private fun ScrollHintRow(
     foreground: Color,
     modifier: Modifier = Modifier,
+    lead: (@Composable () -> Unit)? = null,
     extra: (@Composable () -> Unit)? = null,
     content: @Composable RowScope.() -> Unit,
 ) {
@@ -292,6 +319,7 @@ private fun ScrollHintRow(
         ),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        lead?.invoke()
         Row(
             modifier = Modifier
                 .weight(1f)
@@ -347,20 +375,21 @@ private fun ScrollArrow(forward: Boolean, foreground: Color, onClick: () -> Unit
 }
 
 /**
- * The table bar, in the place of the formatting bar while a cell has the focus (design 5.4): Bold, Italic and Highlight
- * for the text in the cell, then Add row · Add column · Delete row · Delete column · Align (left, center, right) ·
+ * The table bar, in the place of the formatting bar while a cell has the focus (design 5.4): Undo and Redo where the
+ * formatting bar has them, then Bold, Italic and Highlight for the text in the cell, then Add row · Add column · Delete row · Delete column · Align (left, center, right) ·
  * Delete table. The row and column buttons have words, not only an icon; an alignment that is on has a frame.
  */
 @Composable
 internal fun TableBar(
     cell: TableCell,
     foreground: Color,
+    steps: UndoRedo,
     onOp: (FormatCore.TableOp) -> Unit,
     onDeleteTable: () -> Unit,
 ) {
     Column(Modifier.fillMaxWidth()) {
         HorizontalDivider(color = foreground.copy(alpha = 0.15f))
-        ScrollHintRow(foreground, Modifier.padding(horizontal = 4.dp)) {
+        ScrollHintRow(foreground, Modifier.padding(horizontal = 4.dp), lead = { UndoRedoButtons(steps, foreground) }) {
             BarButton(Icons.Filled.FormatBold, R.string.format_bold, foreground, "bold" in cell.active) { cell.format("bold") }
             BarButton(Icons.Filled.FormatItalic, R.string.format_italic, foreground, "italic" in cell.active) { cell.format("italic") }
             BarButton(Icons.Filled.BorderColor, R.string.format_highlight, foreground, "highlight" in cell.active) { cell.format("highlight") }

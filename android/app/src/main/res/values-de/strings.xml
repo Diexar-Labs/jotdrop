@@ -125,7 +125,7 @@
     <string name="format_indent">Einrücken</string>
     <string name="format_outdent">Ausrücken</string>
     <string name="notice_undone">Rückgängig gemacht</string>
-    <string name="notice_undo_failed">Rückgängig machen nicht möglich. Die Notiz wurde geändert.</string>
+    <string name="notice_redone">Wiederholt</string>
     <!-- Checklists in an open note (issue 77): the grips, the menus and what the strip says. -->
     <string name="list_move_up">Eintrag nach oben</string>
     <string name="list_move_down">Eintrag nach unten</string>
@@ -134,8 +134,7 @@
     <string name="list_item_place">%1$d von %2$d</string>
     <string name="list_uncheck_all">Alle Häkchen entfernen</string>
     <string name="list_delete_checked">Abgehakte Einträge löschen</string>
-    <string name="notice_item_moved">Eintrag verschoben</string>
-    <string name="notice_item_deleted">Eintrag gelöscht</string>
+    <string name="notice_dismiss">Schließen</string>
     <plurals name="notice_item_deleted_subs">
         <item quantity="one">Eintrag und %d Untereintrag gelöscht</item>
         <item quantity="other">Eintrag und %d Untereinträge gelöscht</item>
