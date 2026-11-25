@@ -435,6 +435,36 @@ test('moving trades two whole items: every line keeps its words and level, and t
   assert.ok(moved >= 100, `only ${moved} moves were tried`);
 });
 
+test('an item passes a sibling with the same text exactly as it passes one with other text', () => {
+  let passed = 0;
+  for (const text of listTexts()) {
+    if (text.includes('\r')) continue;
+    const lines = text.split('\n'), owners = listItems(text);
+    lines.forEach((_, index) => {
+      if (owners[index] !== index) return;
+      // The item once more right under it, and the same with one letter more: a twin and a sibling that differs.
+      const size = itemSize(text, index), block = lines.slice(index, index + size);
+      const build = (first) => [...lines.slice(0, index + size), first, ...block.slice(1), ...lines.slice(index + size)].join('\n');
+      const twin = build(block[0]), other = build(`${block[0]}Z`);
+      if (listLevels(twin).join() !== listLevels(other).join()) return;
+      const caret = lines.slice(0, index).join('\n').length + (index ? 1 : 0), below = caret + block.join('\n').length + 1;
+      for (const [direction, line, at] of [['down', index, caret], ['up', index + size, below]]) {
+        const name = label(text, `line ${index} ${direction}`);
+        const edit = moveItemEdit(twin, line, direction, at), unlike = moveItemEdit(other, line, direction, at);
+        assert.equal(Boolean(edit), Boolean(unlike), `${name}: it moves when a sibling with other text would`);
+        if (!edit) continue;
+        passed++;
+        assert.equal(applied(twin, edit), twin, `${name}: the text stays as it is`);
+        assert.deepEqual([edit.from, edit.to, edit.insert], [twin.length, twin.length, ''], `${name}: nothing is replaced`);
+        assert.equal(edit.line, unlike.line, `${name}: the line the item is on`);
+        const start = direction === 'down' ? below : caret;
+        assert.deepEqual([edit.selFrom, edit.selTo], [start, start], `${name}: the caret went along to the start of the other one`);
+      }
+    });
+  }
+  assert.ok(passed >= 300, `only ${passed} twins were passed`);
+});
+
 test('a drop puts the item on the level asked for and leaves every other line as it is', () => {
   let drops = 0, refused = 0, returned = 0;
   for (const text of listTexts()) {

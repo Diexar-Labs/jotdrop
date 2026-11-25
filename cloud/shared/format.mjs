@@ -1037,8 +1037,10 @@ function arranged(lines, changed, order) {
  * The one replacement that turns the text into the lines `next` (from `arranged`). A position stays in its own words:
  * it goes along with its line, and with a new indent or number at the start of that line. From a line that is gone it
  * goes to the end of the nearest line above that stays; with none above, to the end of the line that is first now.
+ * Null when the lines are the text as it was; with `alike`, a replacement of nothing that only takes the selection
+ * along: two items with the same text traded places.
  */
-function linesEdit(text, next, order, selFrom, selTo) {
+function linesEdit(text, next, order, selFrom, selTo, alike = false) {
   const table = lineTable(text), place = table.lines.map(() => -1), starts = [];
   order.forEach((old, index) => { place[old] = index; });
   let offset = 0;
@@ -1057,8 +1059,9 @@ function linesEdit(text, next, order, selFrom, selTo) {
     while (same < Math.min(was.length, now.length) && was[was.length - 1 - same] === now[now.length - 1 - same]) same++;
     return starts[to] + (column >= was.length - same ? column + now.length - was.length : Math.min(column, now.length - same));
   };
-  const a = map(selFrom), b = map(selTo);
-  return replacement(text, next.join('\n'), Math.min(a, b), Math.max(a, b));
+  const a = map(selFrom), b = map(selTo), after = next.join('\n');
+  if (alike && after === text) return { from: text.length, to: text.length, insert: '', selFrom: Math.min(a, b), selTo: Math.max(a, b) };
+  return replacement(text, after, Math.min(a, b), Math.max(a, b));
 }
 
 /**
@@ -1082,8 +1085,9 @@ function sameLists(structure, after, order, moved) {
  * trades places with the sibling right above or under it, each with the lines under it. Works on tasks, bullets and
  * numbered lines; two numbered items trade their numbers too, so the list still counts on. Siblings on different
  * columns (2 spaces next to 4) trade their indents. One replacement plus `line`, the line the item is on now; the
- * selection stays in its own text. Null for the first or last of its siblings, outside a list, and when more text of
- * the main item stands between the two.
+ * selection stays in its own text. Past a sibling with the same text the note stays as it is: the replacement is
+ * empty and only the selection and `line` go along, so the item can go on from there. Null for the first or last of
+ * its siblings, outside a list, and when more text of the main item stands between the two.
  * @param {string} text
  * @param {number} line
  * @param {'up' | 'down'} direction
@@ -1121,8 +1125,8 @@ export function moveItemEdit(text, line, direction, selFrom = 0, selTo = selFrom
   const order = lines.map((_, index) => (index < top || index > lowEnd ? index : index <= top + lowEnd - low ? index + low - top : index - (lowEnd - low + 1)));
   const next = arranged(lines, changed, order);
   if (!sameLists(structure, listStructure(next.join('\n')), order)) return null;
-  const edit = linesEdit(text, next, order, selFrom, selTo);
-  return edit && { ...edit, line: direction === 'up' ? top : top + lowEnd - low + 1 };
+  const edit = linesEdit(text, next, order, selFrom, selTo, true);
+  return { ...edit, line: direction === 'up' ? top : top + lowEnd - low + 1 };
 }
 
 /**

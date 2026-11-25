@@ -730,11 +730,11 @@ private fun EditorScreen(
     }
 
     // What a screen reader offers on a task's box (6.7): the same moves as the handle, the buttons and the cross, on
-    // that task wherever the caret is. False when nothing changed.
+    // that task wherever the caret is. False when nothing changed; past an item with the same text only the caret can.
     fun itemAction(line: Int, action: String): Boolean {
         val current = bodyText
         return when (action) {
-            "up", "down" -> moveItem(action, line) && bodyText.text != current.text
+            "up", "down" -> moveItem(action, line) && (bodyText.text != current.text || bodyText.selection != current.selection)
             "delete" -> deleteItem(line)
             else -> {
                 val start = lineStartOf(current.text, line)
