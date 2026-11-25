@@ -11,9 +11,10 @@ import java.nio.charset.CodingErrorAction
  * each device writes it (`[a, b]` or a block list, quotes, 10 or 10.0). The text merges per line the same way. Two
  * additions at one place both stay, the cloud's first. A line that moved is followed: a change the other device made
  * to it travels along, a line both devices moved stays once, where the cloud has it, and a line both devices changed
- * the same way stays once too when one of them moved it as well. Anything else (one line changed two ways, a line
- * changed and removed), a missing `base` and any frontmatter this simple reading does not understand give null: then
- * the sync keeps both versions as before.
+ * the same way stays once too when one of them moved it as well. A task is the same task whatever its tick: when the
+ * lines do not merge, or leave a task twice, the ticks are merged on their own first and the lines after that.
+ * Anything else (one line changed two ways, a line changed and removed), a missing `base` and any frontmatter this
+ * simple reading does not understand give null: then the sync keeps both versions as before.
  */
 object CloudNoteMerge {
     class Field(val lines: List<String>, val value: String)
@@ -22,6 +23,10 @@ object CloudNoteMerge {
     private class Change(val start: Int, val end: Int, val lines: List<String>)
     /** The three texts the way the merge per line reads their moves right, the lines both sides moved, and whether what comes of them is whole. */
     private class Followed(val base: List<String>, val local: List<String>, val cloud: List<String>, val both: Set<String>, val whole: (List<String>) -> Boolean)
+    /** The lines of a merge per line, or none; `sure` when no task can stand in them twice. */
+    private class Merged(val lines: List<String>?, val sure: Boolean)
+    /** A task that stands once in a text: its line, the place of its tick in that line, and the tick. */
+    private class Task(val index: Int, val at: Int, val tick: Char)
 
     /** A changed stretch of text bigger than this (base lines times changed lines) is not compared: both versions stay. */
     private const val MERGE_CELLS = 1000000L
@@ -216,14 +221,34 @@ object CloudNoteMerge {
         return lines
     }
 
-    /** The text with both sides' changes, or null when they touch the same lines differently. */
-    private fun mergeLines(old: String, mine: String, theirs: String): String? {
-        val base = old.split('\n')
-        val local = mine.split('\n')
-        val cloud = theirs.split('\n')
-        val own = changes(base, local) ?: return null
-        val other = changes(base, cloud) ?: return null
+    // A task line in three parts: up to its tick, the tick, and from the `]` on.
+    private val task = Regex("([ \\t]*[-*+][ \\t]+\\[)([ xX])(\\](?:[ \\t][\\s\\S]*)?)")
+
+    /** The task a line is, whatever its tick: the line with an empty box. Null for any other line. */
+    private fun taskName(match: MatchResult) = match.groupValues[1] + " " + match.groupValues[3]
+    private fun taskOf(line: String): String? = task.matchEntire(line)?.let(::taskName)
+
+    /**
+     * Whether the changes put a task in twice: only then can the merge per line leave a task twice. A change both sides
+     * made alike is made once. Every day no task is put in twice, and then no line of the note is counted for it.
+     */
+    private fun putTwice(own: List<Change>, other: List<Change>): Boolean {
+        fun mark(change: Change) = "${change.start} ${change.end} ${change.lines.joinToString("\n")}"
+        val made = other.mapTo(HashSet(), ::mark)
+        val put = HashSet<String>()
+        fun again(line: String) = taskOf(line)?.let { !put.add(it) } ?: false
+        return other.any { it.lines.any(::again) } || own.any { mark(it) !in made && it.lines.any(::again) }
+    }
+
+    /**
+     * The lines with both sides' changes and the moves followed, or none when they touch the same lines differently.
+     * Sure when no task can stand in them twice: no move was followed and no task was put in twice.
+     */
+    private fun perLine(base: List<String>, local: List<String>, cloud: List<String>): Merged {
+        val own = changes(base, local) ?: return Merged(null, false)
+        val other = changes(base, cloud) ?: return Merged(null, false)
         var lines = combine(base, own, other)
+        var sure = !putTwice(own, other)
         val moves = followMoves(base, local, cloud, own, other)
         // Per line it collides on a move, or a line both sides moved is in twice: then the moves are followed. A line
         // that stood once never comes out twice; when following cannot be done either, or leaves the note less than
@@ -233,8 +258,71 @@ object CloudNoteMerge {
             val far = changes(moves.base, moves.cloud)
             lines = if (near != null && far != null) combine(moves.base, near, far) else null
             if (lines != null && !moves.whole(lines)) lines = null
+            sure = false
         }
-        return lines?.joinToString("\n")
+        return Merged(lines, sure)
+    }
+
+    /**
+     * The tick two sides leave a task with. The cloud's, when this side left the tick alone or the cloud put it in or
+     * took it out; else this side's: then the cloud changed its letter at most (`x` or `X`). When both put it in, the
+     * cloud's letter stays.
+     */
+    private fun mergedTick(old: Char, mine: Char, theirs: Char) = if (mine == old || (theirs == ' ') != (old == ' ')) theirs else mine
+
+    /**
+     * A task is the same task whatever its tick (design checklists-77-v2, part 8). Of the tasks that stand once in each
+     * of the three texts (the same indent, sign and words; only the tick may differ): [once] tells whether each of them
+     * stands once in the lines given, and [ticked] gives the three texts with their ticks merged, or null when no tick
+     * differs. The merged tick is written into all three texts, so the merge per line after it only has to follow where
+     * the line went.
+     */
+    private class SameTasks(private val texts: List<List<String>>) {
+        private val found = texts.map { lines ->
+            val tasks = HashMap<String, Task?>()
+            for ((index, line) in lines.withIndex()) {
+                val match = task.matchEntire(line) ?: continue
+                val name = taskName(match)
+                tasks[name] = if (tasks.containsKey(name)) null else Task(index, match.groupValues[1].length, match.groupValues[2][0])
+            }
+            tasks
+        }
+        private val same = found[0].keys.filter { name -> found.all { it[name] != null } }
+
+        fun once(lines: List<String>): Boolean {
+            val counts = tally(lines.mapNotNull(::taskOf))
+            return same.all { counts[it] == 1 }
+        }
+
+        fun ticked(): List<List<String>>? {
+            val next = texts.map { it.toMutableList() }
+            var changed = false
+            for (name in same) {
+                val places = found.map { it.getValue(name)!! }
+                val tick = mergedTick(places[0].tick, places[1].tick, places[2].tick)
+                for ((text, place) in places.withIndex()) {
+                    if (place.tick == tick) continue
+                    val line = next[text][place.index]
+                    next[text][place.index] = line.substring(0, place.at) + tick + line.substring(place.at + 1)
+                    changed = true
+                }
+            }
+            return if (changed) next else null
+        }
+    }
+
+    /** The text with both sides' changes, or null when they touch the same lines differently. */
+    private fun mergeLines(old: String, mine: String, theirs: String): String? {
+        val texts = listOf(old, mine, theirs).map { it.split('\n') }
+        val first = perLine(texts[0], texts[1], texts[2])
+        if (first.lines != null && first.sure) return first.lines.joinToString("\n")
+        // Both versions, or maybe a task twice: the ticks first, then the lines again. A task that stood once in all
+        // three never comes out twice: when that cannot be had, both versions stay.
+        val tasks = SameTasks(texts)
+        if (first.lines != null && tasks.once(first.lines)) return first.lines.joinToString("\n")
+        val ticked = tasks.ticked() ?: return null
+        val again = perLine(ticked[0], ticked[1], ticked[2]).lines ?: return null
+        return if (tasks.once(again)) again.joinToString("\n") else null
     }
 
     /**

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { mergeNote } from './merge.mjs';
-import { dragCases, hugeCase, listCases, longCase, randomCases, tickCases } from './merge-cases.mjs';
+import { bothMovedCases, dragCases, hugeCase, listCases, longCase, randomCases, tickCases } from './merge-cases.mjs';
 
 // The same cases run on Android (scripts/check-cloud-android.mjs), so both merge a note the same way.
 const vectors = JSON.parse(readFileSync(new URL('./merge-vectors.json', import.meta.url), 'utf8'));
@@ -63,29 +63,51 @@ test('a task ticked on two devices, on one of them moved to the bottom as well, 
     const result = mergeNote(text(base), text(local), text(cloud));
     const note = result && new TextDecoder().decode(result);
     assert.equal(note, merged, name);
-    if (note === null) continue;
     merges++;
     assert.deepEqual(tasks(note), tasks(base), `${name}: every task once`);
   }
-  assert.equal(merges, 10 + 40 + 38);
+  assert.equal(merges, 10 + 40 + 40);
 });
 
-test('lists ticked, dragged and changed on two devices merge with every line kept and no line twice', () => {
-  const tally = (value) => { const counts = new Map(); for (const line of value.split('\n')) counts.set(line, (counts.get(line) ?? 0) + 1); return counts; };
+test('a task ticked and moved to the bottom on both devices stays one task, whatever else one of them ticked', () => {
+  // Both devices have "Move checked items to the bottom" on: per line the task is gone at one place and new at another
+  // on each of them, and it came out twice (design checklists-77-v2, part 8). A task is the same task whatever its tick.
+  const words = (value, ticked) => value.split('\n').filter((line) => line.startsWith(ticked ? '- [x] ' : '- [ ] ')).map((line) => line.slice(6)).sort();
+  let merges = 0;
+  for (const { name, base, local, cloud, ticked } of bothMovedCases()) {
+    const result = mergeNote(text(base), text(local), text(cloud));
+    assert.ok(result, `${name}: must merge`);
+    const note = new TextDecoder().decode(result);
+    assert.deepEqual([...words(note, false), ...words(note, true)].sort(), [...words(base, false), ...words(base, true)].sort(), `${name}: every task once`);
+    assert.deepEqual(words(note, true), ticked, `${name}: the ticks of both devices`);
+    merges++;
+  }
+  assert.equal(merges, 4 * 3 * (2 + 6 + 12 + 20 + 30 + 42));
+});
+
+test('lists ticked, dragged and changed on two devices merge with every line kept and no line or task twice', () => {
+  const tally = (lines) => { const counts = new Map(); for (const line of lines) counts.set(line, (counts.get(line) ?? 0) + 1); return counts; };
+  // The task a line is, whatever its tick; every task of these lists is written `- [ ] words`.
+  const task = (line) => line.replace(/^- \[x\] /, '- [ ] ');
   let merges = 0;
   for (const { name, base, local, cloud } of listCases(20000)) {
-    const before = tally(base), sides = [local, cloud].map(tally);
+    const texts = [base, local, cloud].map((value) => value.split('\n'));
+    const before = tally(texts[0]), sides = [tally(texts[1]), tally(texts[2])];
     const once = [...before.keys()].filter((line) => line && sides.every((side) => side.get(line) === 1));
+    // A task that stands once in all three texts, ticked or not, is one task: it stays once (design checklists-77-v2, part 8).
+    const tasks = texts.map((lines) => tally(lines.map(task)));
+    const same = [...tasks[0].keys()].filter((line) => line && tasks.every((counts) => counts.get(line) === 1));
     for (const [mine, theirs] of [[local, cloud], [cloud, local]]) {
       const merged = mergeNote(text(base), text(mine), text(theirs));
       if (merged === null) continue;
       merges++;
-      const counts = tally(new TextDecoder().decode(merged));
+      const lines = new TextDecoder().decode(merged).split('\n'), counts = tally(lines), names = tally(lines.map(task));
       for (const side of sides) for (const [line, count] of side) assert.ok((counts.get(line) ?? 0) >= count - (before.get(line) ?? 0), `${name}: "${line}" was lost`);
       for (const line of once) assert.equal(counts.get(line), 1, `${name}: "${line}" must stay once`);
+      for (const line of same) assert.equal(names.get(line), 1, `${name}: the task "${line}" must stay once`);
     }
   }
-  assert.ok(merges > 25000, `Too few lists merged: ${merges}`);
+  assert.ok(merges > 27000, `Too few lists merged: ${merges}`);
 });
 
 test('a very long note merges', () => {

@@ -4,9 +4,10 @@
 // each device writes it (`[a, b]` or a block list, quotes, 10 or 10.0). The text merges per line the same way. Two
 // additions at one place both stay, the cloud's first. A line that moved is followed: a change the other device made
 // to it travels along, a line both devices moved stays once, where the cloud has it, and a line both devices changed
-// the same way stays once too when one of them moved it as well. Anything else (one line changed two ways, a line
-// changed and removed), a missing `base` and any frontmatter this simple reading does not understand give null: then
-// the sync keeps both versions as before.
+// the same way stays once too when one of them moved it as well. A task is the same task whatever its tick: when the
+// lines do not merge, or leave a task twice, the ticks are merged on their own first and the lines after that.
+// Anything else (one line changed two ways, a line changed and removed), a missing `base` and any frontmatter this
+// simple reading does not understand give null: then the sync keeps both versions as before.
 
 const utf8 = (bytes) => {
   try { return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); } catch { return null; }
@@ -180,12 +181,32 @@ function combine(base, own, other) {
   return lines;
 }
 
-/** The text with both sides' changes, or null when they touch the same lines differently. */
-function mergeLines(old, mine, theirs) {
-  const base = old.split('\n'), local = mine.split('\n'), cloud = theirs.split('\n');
+// A task line in three parts: up to its tick, the tick, and from the `]` on.
+const TASK = /^([ \t]*[-*+][ \t]+\[)([ xX])(\](?:[ \t][\s\S]*)?)$/;
+
+/** The task a line is, whatever its tick: the line with an empty box. Null for any other line. */
+const taskName = (match) => match && `${match[1]} ${match[3]}`;
+const taskOf = (line) => taskName(TASK.exec(line));
+
+/**
+ * Whether the changes put a task in twice: only then can the merge per line leave a task twice. A change both sides
+ * made alike is made once. Every day no task is put in twice, and then no line of the note is counted for it.
+ */
+function putTwice(own, other) {
+  const mark = ([start, end, lines]) => `${start} ${end} ${lines.join('\n')}`;
+  const made = new Set(other.map(mark)), put = new Set();
+  const again = (line) => { const task = taskOf(line); return task !== null && put.size === put.add(task).size; };
+  return other.some((change) => change[2].some(again)) || own.some((change) => !made.has(mark(change)) && change[2].some(again));
+}
+
+/**
+ * The lines with both sides' changes and the moves followed, or none when they touch the same lines differently.
+ * `sure` when no task can stand in them twice: no move was followed and no task was put in twice.
+ */
+function perLine(base, local, cloud) {
   const own = changes(base, local), other = changes(base, cloud);
-  if (!own || !other) return null;
-  let lines = combine(base, own, other);
+  if (!own || !other) return { lines: null, sure: false };
+  let lines = combine(base, own, other), sure = !putTwice(own, other);
   const moves = followMoves(base, local, cloud, own, other);
   // Per line it collides on a move, or a line both sides moved is in twice: then the moves are followed. A line that
   // stood once never comes out twice; when following cannot be done either, or leaves the note less than whole, both
@@ -194,8 +215,69 @@ function mergeLines(old, mine, theirs) {
     const [from, near, far] = moves.texts, nearChanges = changes(from, near), farChanges = changes(from, far);
     lines = nearChanges && farChanges ? combine(from, nearChanges, farChanges) : null;
     if (lines && !moves.whole(lines)) lines = null;
+    sure = false;
   }
-  return lines && lines.join('\n');
+  return { lines, sure };
+}
+
+/**
+ * The tick two sides leave a task with. The cloud's, when this side left the tick alone or the cloud put it in or took
+ * it out; else this side's: then the cloud changed its letter at most (`x` or `X`). When both put it in, the cloud's
+ * letter stays.
+ */
+const mergedTick = (old, mine, theirs) => (mine === old || (theirs === ' ') !== (old === ' ') ? theirs : mine);
+
+/**
+ * A task is the same task whatever its tick (design checklists-77-v2, part 8). Of the tasks that stand once in each of
+ * the three texts (the same indent, sign and words; only the tick may differ): `once` tells whether each of them
+ * stands once in the lines given, and `ticked` gives the three texts with their ticks merged, or null when no tick
+ * differs. The merged tick is written into all three texts, so the merge per line after it only has to follow where
+ * the line went.
+ */
+function sameTasks(texts) {
+  const found = texts.map((lines) => {
+    const tasks = new Map();
+    lines.forEach((line, index) => {
+      const match = TASK.exec(line);
+      if (!match) return;
+      const task = taskName(match);
+      tasks.set(task, tasks.has(task) ? null : { index, at: match[1].length, tick: match[2] });
+    });
+    return tasks;
+  });
+  const same = [...found[0].keys()].filter((task) => found.every((tasks) => tasks.get(task)));
+  const once = (lines) => {
+    const counts = tally(lines.map(taskOf));
+    return same.every((task) => counts.get(task) === 1);
+  };
+  const ticked = () => {
+    const next = texts.map((lines) => [...lines]);
+    let changed = false;
+    for (const task of same) {
+      const places = found.map((tasks) => tasks.get(task)), tick = mergedTick(...places.map((place) => place.tick));
+      for (const [text, { index, at, tick: was }] of places.entries()) {
+        if (was === tick) continue;
+        next[text][index] = `${next[text][index].slice(0, at)}${tick}${next[text][index].slice(at + 1)}`;
+        changed = true;
+      }
+    }
+    return changed ? next : null;
+  };
+  return { once, ticked };
+}
+
+/** The text with both sides' changes, or null when they touch the same lines differently. */
+function mergeLines(old, mine, theirs) {
+  const texts = [old, mine, theirs].map((text) => text.split('\n'));
+  const first = perLine(...texts);
+  if (first.lines && first.sure) return first.lines.join('\n');
+  // Both versions, or maybe a task twice: the ticks first, then the lines again. A task that stood once in all three
+  // never comes out twice: when that cannot be had, both versions stay.
+  const tasks = sameTasks(texts);
+  if (first.lines && tasks.once(first.lines)) return first.lines.join('\n');
+  const ticked = tasks.ticked();
+  const again = ticked && perLine(...ticked).lines;
+  return again && tasks.once(again) ? again.join('\n') : null;
 }
 
 /** The merged note's bytes, or null when the two versions really disagree. */
