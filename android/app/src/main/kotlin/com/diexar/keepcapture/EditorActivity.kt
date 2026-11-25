@@ -72,6 +72,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.LocalTextSelectionColors
+import androidx.compose.foundation.text.selection.TextSelectionColors
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material.icons.Icons
 import coil.compose.AsyncImage
@@ -688,14 +690,14 @@ private fun EditorScreen(
 
     /**
      * An item let go after a drag by its handle (6.1): it lands in front of line [before], on [level], with what is
-     * under it. No strip (design checklists-77-v2, 4.5): the move is there to see, and Undo is always in sight. False
-     * when nothing changed.
+     * under it. No strip (design checklists-77-v2, 4.5): the move is there to see, and Undo is always in sight. The
+     * body after the drop, or null when nothing was dropped.
      */
-    fun dropItem(line: Int, before: Int, level: Int): Boolean {
+    fun dropItem(line: Int, before: Int, level: Int): String? {
         val current = bodyText
-        val moved = FormatCore.dropItemEdit(current.text, line, before, level, current.selection.min, current.selection.max) ?: return false
+        val moved = FormatCore.dropItemEdit(current.text, line, before, level, current.selection.min, current.selection.max) ?: return null
         replaceBody(current, moved.edit)
-        return true
+        return bodyText.text
     }
 
     /**
@@ -2126,7 +2128,7 @@ private fun EditorBody(
             TextButton(onClick = onEditBody) {
                 Text(stringResource(R.string.editor_title_edit), color = foreground)
             }
-            if (!split) PreviewText(preview, value.text, value.text, 0, 0, places, taskLine, formatted, onTick, items, gripScroll, foreground, openLinkLabel, ::openLink, onEditBody, Modifier.fillMaxWidth().heightIn(min = 200.dp).padding(16.dp))
+            if (!split) PreviewText(preview, value.text, value.text, 0, 0, places, taskLine, formatted, onTick, items, gripScroll, foreground, tableBackground, openLinkLabel, ::openLink, onEditBody, Modifier.fillMaxWidth().heightIn(min = 200.dp).padding(16.dp))
             else Column(Modifier.fillMaxWidth().heightIn(min = 200.dp).padding(16.dp)) {
                 // The same pieces as when editing: text as text with its links, a table as a grid; a tap edits.
                 for ((i, piece) in pieces.withIndex()) key(piece.kind, ordinals[i]) {
@@ -2138,7 +2140,7 @@ private fun EditorBody(
                     ) else {
                         val shown = remember(part, foreground) { renderPreviewAnnotated(part, foreground, underlineLinks = false) }
                         val linesAbove = value.text.substring(0, piece.from).count { it == '\n' }
-                        PreviewText(shown, part, value.text, linesAbove, piece.from, places, taskLine, formatted, { onTick(linesAbove + it) }, items, gripScroll, foreground, openLinkLabel, ::openLink, onEditBody, Modifier.fillMaxWidth())
+                        PreviewText(shown, part, value.text, linesAbove, piece.from, places, taskLine, formatted, { onTick(linesAbove + it) }, items, gripScroll, foreground, tableBackground, openLinkLabel, ::openLink, onEditBody, Modifier.fillMaxWidth())
                     }
                 }
             }
@@ -2150,6 +2152,7 @@ private fun EditorBody(
                 taskLine = taskLine,
                 formatted = formatted,
                 foreground = foreground,
+                background = tableBackground,
                 placeholder = true,
                 onIndent = onIndent,
                 whole = value.text,
@@ -2214,6 +2217,7 @@ private fun EditorBody(
                     taskLine = taskLine,
                     formatted = true,
                     foreground = foreground,
+                    background = tableBackground,
                     placeholder = false,
                     onIndent = onIndent,
                     whole = whole,
@@ -2274,6 +2278,8 @@ private fun BodyTextField(
     taskLine: androidx.compose.ui.unit.TextUnit,
     formatted: Boolean,
     foreground: Color,
+    // The note's own color: an item that is dragged lies on it, over the lines it passes.
+    background: Color,
     placeholder: Boolean,
     onIndent: (String) -> Boolean,
     // The whole body and the number of its lines above this field (a body with a table has a field per piece of text),
@@ -2314,6 +2320,12 @@ private fun BodyTextField(
     // The boxes come out of the same pass that lays the text out for the field.
     val laid = transformation.laid(value.text)
     val boxes = laid.boxes
+    // With the Markdown switch on the text is the source itself: a task has its handle and its cross there too (design
+    // checklists-77-v2, 5.4), on the same places in the text. Its `[ ]` is text there, not a box to tap.
+    val rawTasks = remember(formatted, value.text) { if (formatted) emptyList() else taskBoxes(value.text) }
+    val rawStarts = remember(formatted, value.text) { if (formatted) IntArray(0) else lineStarts(value.text) }
+    // What is drawn with the text itself: the dots of the handles, and the text in bands while an item is dragged.
+    val bands = remember { ItemBands() }
     // The cross stands on the task with the caret (design checklists-77, part 5): only while this field has the focus
     // and the caret, or all of a selection, is on one line.
     val caretLine = remember(value.text, value.selection, focused) {
@@ -2325,7 +2337,7 @@ private fun BodyTextField(
     var ticking by remember { mutableStateOf(false) }
     val gripActions = remember(items) {
         ItemActions(
-            drop = { line, before, level -> items.drop(line, before, level).also { if (it) ticking = true } },
+            drop = { line, before, level -> items.drop(line, before, level).also { if (it != null) ticking = true } },
             delete = items.delete,
             act = { line, action -> items.act(line, action).also { if (it) ticking = true } },
             moveKey = items.moveKey,
@@ -2352,6 +2364,7 @@ private fun BodyTextField(
     // The field and, over it, the handles and the cross: they lie next to the field, not in it, so a finger on them
     // is no touch of the text (see ListGrips).
     Box {
+    HandlesWhileStill(bands, focused) {
     BasicTextField(
         value = value,
         onValueChange = onValueChange,
@@ -2371,18 +2384,11 @@ private fun BodyTextField(
         cursorBrush = SolidColor(foreground),
         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
         interactionSource = interaction,
-        onTextLayout = { bodyLayout = it },
+        onTextLayout = { bodyLayout = it; bands.layout = it },
         decorationBox = { innerTextField ->
             TextFieldDefaults.DecorationBox(
                 value = value.text,
-                innerTextField = {
-                    Box(Modifier.bringIntoViewRequester(caretView)) {
-                        innerTextField()
-                        Box(Modifier.matchParentSize()) {
-                            TaskBoxes(boxes, bodyLayout, onAction = { line, action -> gripActions.act(above + line, action) }) { ticking = true; onTick(it) }
-                        }
-                    }
-                },
+                innerTextField = { Box(Modifier.bringIntoViewRequester(caretView).then(bands.modifier)) { innerTextField() } },
                 enabled = true,
                 singleLine = false,
                 visualTransformation = transformation,
@@ -2393,11 +2399,30 @@ private fun BodyTextField(
             )
         },
     )
-    // Over the text itself, which stands [bodyFieldPadding] inside the field.
-    if (formatted) Box(Modifier.matchParentSize().padding(bodyFieldPadding)) {
-        ListGrips(boxes, laid.starts, bodyLayout, metrics, whole, above, caretLine, foreground, scroll, gripActions) { ticking = true; onTick(it) }
+    }
+    // Over the text itself, which stands [bodyFieldPadding] inside the field. The boxes' places to tap lie here too,
+    // under the handles: in the field a finger that stayed on a box was a long press as well, and picked a word.
+    Box(Modifier.matchParentSize().padding(bodyFieldPadding)) {
+        if (formatted) {
+            TaskBoxes(boxes, bodyLayout, onAction = { line, action -> gripActions.act(above + line, action) }) { ticking = true; onTick(it) }
+            ListGrips(bands, boxes, laid.starts, bodyLayout, metrics, whole, above, caretLine, foreground, background, scroll, gripActions) { ticking = true; onTick(it) }
+        } else ListGrips(bands, rawTasks, rawStarts, bodyLayout, metrics, whole, above, caretLine, foreground, background, scroll, gripActions, raw = true) {}
     }
     }
+}
+
+/**
+ * The drop under the caret and the handles of a selection are the text field's own and stand where the text is laid
+ * out. While an item is dragged the lines are drawn elsewhere (see [ItemBands]), so they are not shown from the moment
+ * a finger has an item until every line is on its place again. Only a field with the focus ([focused]) has them, and
+ * only what reads these colors is composed again for it, not the editor around the field: with 300 tasks that was a
+ * frame of 40 to 100 ms when a drag began (measured 25 Nov).
+ */
+@Composable
+private fun HandlesWhileStill(bands: ItemBands, focused: Boolean, content: @Composable () -> Unit) {
+    val colors = LocalTextSelectionColors.current
+    val hidden = remember(colors) { TextSelectionColors(Color.Transparent, colors.backgroundColor) }
+    CompositionLocalProvider(LocalTextSelectionColors provides if (focused && bands.busy) hidden else colors, content = content)
 }
 
 /**
@@ -2503,6 +2528,7 @@ private fun PreviewText(
     items: ItemActions,
     scroll: GripScroll?,
     foreground: Color,
+    background: Color,
     openLinkLabel: String,
     openLink: (String) -> Boolean,
     onEditBody: () -> Unit,
@@ -2520,14 +2546,15 @@ private fun PreviewText(
     val metrics = rememberListMetrics(style, taskLine, previewBoxStyle)
     val laid = remember(preview, source, metrics, lists) { previewInParagraphs(preview, source, if (lists) metrics else null) }
     val textView = remember { BringIntoViewRequester() }
+    val bands = remember { ItemBands() }
     // The read view drops signs, so a place stands elsewhere in it; it is on the same line.
     RevealLines(places, offset, source.length, previewLayout, textView, with(LocalDensity.current) { 24.dp.toPx() }) { at -> laid.starts.getOrElse(lineOf(source, at)) { 0 } }
     Box(modifier, propagateMinConstraints = true) {
         ClickableText(
             text = laid.text,
             style = style.copy(color = foreground),
-            onTextLayout = { previewLayout = it },
-            modifier = Modifier.fillMaxWidth().bringIntoViewRequester(textView).semantics {
+            onTextLayout = { previewLayout = it; bands.layout = it },
+            modifier = Modifier.fillMaxWidth().bringIntoViewRequester(textView).then(bands.modifier).semantics {
                 customActions = links.map { link ->
                     CustomAccessibilityAction(
                         "$openLinkLabel: ${preview.subSequence(link.start, link.end).text} (${link.item})",
@@ -2543,7 +2570,7 @@ private fun PreviewText(
                 }
             },
         )
-        if (lists) Box(Modifier.matchParentSize()) { ListGrips(boxes, laid.starts, previewLayout, metrics, whole, above, -1, foreground, scroll, items, onTick) }
+        if (lists) Box(Modifier.matchParentSize()) { ListGrips(bands, boxes, laid.starts, previewLayout, metrics, whole, above, -1, foreground, background, scroll, items, onTick = onTick) }
         Box(Modifier.matchParentSize()) { TaskBoxes(boxes, previewLayout, onAction = { line, action -> items.act(above + line, action) }, onTick = onTick) }
     }
 }

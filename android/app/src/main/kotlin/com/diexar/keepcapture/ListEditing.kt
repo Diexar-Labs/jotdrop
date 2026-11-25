@@ -245,6 +245,14 @@ internal fun lineOf(text: String, at: Int): Int {
     return line
 }
 
+/** Where every line of [text] starts. */
+internal fun lineStarts(text: String): IntArray {
+    val starts = IntArray(text.count { it == '\n' } + 1)
+    var line = 1
+    for ((index, char) in text.withIndex()) if (char == '\n') starts[line++] = index + 1
+    return starts
+}
+
 /** Where line [line] of [text] starts; the end of the text for a line it does not have. */
 internal fun lineStartOf(text: String, line: Int): Int {
     var at = 0

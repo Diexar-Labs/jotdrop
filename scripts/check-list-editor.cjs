@@ -114,7 +114,7 @@ const fs = require("node:fs");
   // Typing on at the bottom keeps the caret above the keyboard and the formatting bar (Eric, 16 Nov).
   assert.match(android, /caretView\.bringIntoView\(/);
   assert.match(android, /Modifier\.bringIntoViewRequester\(caretView\)/);
-  assert.match(android, /onTextLayout = \{ bodyLayout = it \}/);
+  assert.match(android, /onTextLayout = \{ bodyLayout = it; bands\.layout = it \}/);
   const transformation = fs.readFileSync("android/app/src/main/kotlin/com/diexar/keepcapture/FormatTransformation.kt", "utf8");
   assert.match(transformation, /renderListBullets\(source\)/);
   assert.match(transformation, /OffsetMapping\.Identity/);

@@ -519,7 +519,11 @@
     { "name": "past a code block", "text": "- [ ] a¦\n```\ncode\n```\n- [ ] b", "line": 0, "before": 5, "level": 0, "expect": "```\ncode\n```\n- [ ] b\n- [ ] a¦", "expectLine": 4 },
     { "name": "not past a table", "text": "- [ ] a¦\n\n| x |\n|---|\n\n- [ ] b", "line": 0, "before": 6, "level": 0, "expect": null },
     { "name": "a task in a code block", "text": "```\n- [ ] a¦\n- [ ] b\n```", "line": 1, "before": 3, "level": 0, "expect": null },
-    { "name": "dropped past an item with the same text nothing changes", "text": "- [ ] a\n- [ ] b\n- [ ] b¦", "line": 2, "before": 1, "level": 0, "expect": null }
+    { "name": "dropped past an item with the same text: the text stays as it is and the caret goes along", "text": "- [ ] a\n- [ ] b\n- [ ] b¦", "line": 2, "before": 1, "level": 0, "expect": "- [ ] a\n- [ ] b¦\n- [ ] b", "expectLine": 1 },
+    { "name": "dropped down past two items with the same text", "text": "- [ ] ¦b\n- [ ] b\n- [ ] b\n- [ ] c", "line": 0, "before": 3, "level": 0, "expect": "- [ ] b\n- [ ] b\n- [ ] ¦b\n- [ ] c", "expectLine": 2 },
+    { "name": "dropped past an item with the same text and the same sub-items: a caret in a sub-item goes along", "text": "- a\n\t- a1\n- a\n\t- a1¦\n- b", "line": 2, "before": 0, "level": 0, "expect": "- a\n\t- a1¦\n- a\n\t- a1\n- b", "expectLine": 0 },
+    { "name": "dropped past an item with the same text a caret elsewhere stays", "text": "- [ ] b\n- [ ] b\n- [ ] c¦", "line": 1, "before": 0, "level": 0, "expect": "- [ ] b\n- [ ] b\n- [ ] c¦", "expectLine": 0 },
+    { "name": "dropped past an item with the same text and on from there: the text changes as past any other", "text": "- [ ] a\n- [ ] b\n- [ ] b¦", "line": 2, "before": 0, "level": 0, "expect": "- [ ] b¦\n- [ ] a\n- [ ] b", "expectLine": 0 }
   ],
   "_delete": "deleteItemEdit: the item `line` belongs to goes, with everything under it. A ¦ marks the caret before and after; `expectCount` is the number of list lines that went along.",
   "delete": [
