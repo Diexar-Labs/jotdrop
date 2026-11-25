@@ -265,6 +265,17 @@ private fun checkMerge() {
     check(syncListPhone().let { it.uploaded == 1 && it.conflicts == 0 })
     check(syncListDesktop().downloaded == 1)
     check(String(listDesktop.files.getValue(list)) == "- [x] milk\n- [x] eggs\n- [ ] tea\n- [x] bread\n- [x] cheese\n" && listDesktop.files.getValue(list).contentEquals(listPhone.files.getValue(list)))
+    // Both devices have "Move checked items to the bottom" on and tick the same task; the phone ticks another task too.
+    // A task is the same task whatever its tick: it is there once, with the ticks of both (design checklists-77-v2, part 8).
+    listDesktop.files[list] = "- [ ] milk\n- [ ] eggs\n- [ ] bread\n- [ ] cheese\n".toByteArray()
+    syncListDesktop()
+    syncListPhone()
+    listDesktop.files[list] = "- [ ] eggs\n- [ ] bread\n- [ ] cheese\n- [x] milk\n".toByteArray()
+    listPhone.files[list] = "- [ ] bread\n- [ ] cheese\n- [x] eggs\n- [x] milk\n".toByteArray()
+    syncListDesktop()
+    check(syncListPhone().let { it.uploaded == 1 && it.conflicts == 0 })
+    check(syncListDesktop().downloaded == 1)
+    check(String(listDesktop.files.getValue(list)) == "- [ ] bread\n- [ ] cheese\n- [x] milk\n- [x] eggs\n" && listDesktop.files.getValue(list).contentEquals(listPhone.files.getValue(list)))
     check(listDesktop.copies.isEmpty() && listPhone.copies.isEmpty())
     // Without the shared version it is both versions, as before, with nothing lost.
     listRemote.history.clear()
@@ -294,7 +305,7 @@ private fun checkMerge() {
     check(syncSpaces().deleted == 0 && !spaceRemote.files.getValue(oldCopy).deleted)
     for (path in listOf("notes/Shared/not-an-id/List.md", "notes/Shared/3f2a1c9e-8b7d-4e6f-a5c4-1d2e3f4a5b6c.md", "notes/Other/3f2a1c9e-8b7d-4e6f-a5c4-1d2e3f4a5b6c/List.md")) check(!CloudSyncEngine.isSpacePath(path)) { path }
 
-    println("Native merge checks passed: $cases shared cases, a daily reminder on two devices, text and fields from different devices, ticks on different lines, a task dragged here and ticked or dragged there, a task ticked on both and moved on one, overlaps keep both versions, shared spaces stay out of the vault")
+    println("Native merge checks passed: $cases shared cases, a daily reminder on two devices, text and fields from different devices, ticks on different lines, a task dragged here and ticked or dragged there, a task ticked on both and moved on one, a task ticked and moved on both, overlaps keep both versions, shared spaces stay out of the vault")
 }
 
 private fun checkScale() {

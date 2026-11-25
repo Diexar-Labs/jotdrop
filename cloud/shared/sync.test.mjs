@@ -275,6 +275,19 @@ test('a task dragged on one device and ticked or dragged on the other, or ticked
   assert.equal((await desktop.sync()).downloaded, 1);
   assert.equal(decode(desktop.files.get(note)), '- [x] milk\n- [x] eggs\n- [ ] tea\n- [x] bread\n- [x] cheese\n');
   assert.equal(decode(phone.files.get(note)), decode(desktop.files.get(note)));
+
+  // Both devices have "Move checked items to the bottom" on and tick the same task; the phone ticks another task too.
+  // A task is the same task whatever its tick: it is there once, with the ticks of both (design checklists-77-v2, part 8).
+  desktop.files.set(note, text('- [ ] milk\n- [ ] eggs\n- [ ] bread\n- [ ] cheese\n'));
+  await desktop.sync();
+  await phone.sync();
+  desktop.files.set(note, text('- [ ] eggs\n- [ ] bread\n- [ ] cheese\n- [x] milk\n'));
+  phone.files.set(note, text('- [ ] bread\n- [ ] cheese\n- [x] eggs\n- [x] milk\n'));
+  await desktop.sync();
+  assert.deepEqual(await phone.sync(), { uploaded: 1, downloaded: 0, deleted: 0, conflicts: 0, skipped: [] });
+  assert.equal((await desktop.sync()).downloaded, 1);
+  assert.equal(decode(desktop.files.get(note)), '- [ ] bread\n- [ ] cheese\n- [x] milk\n- [x] eggs\n');
+  assert.equal(decode(phone.files.get(note)), decode(desktop.files.get(note)));
   assert.ok(![...phone.files.keys(), ...desktop.files.keys()].some(isPreserved), 'No copies on either device');
 });
 

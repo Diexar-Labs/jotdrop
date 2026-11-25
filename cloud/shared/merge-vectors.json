@@ -280,18 +280,18 @@
     "merged": "- [ ] eggs\n- [ ] bread\n- [ ] tea\n- [x] milk\n- [ ] rice\n- [x] cheese\n"
   },
   {
-    "name": "a line moved here; there it was ticked and a line added right below it: both versions stay",
+    "name": "a task moved here; there it was ticked and a line added right below it: the tick travels along",
     "base": "- [ ] milk\n- [ ] eggs\n- [ ] bread\n- [ ] cheese\n",
     "local": "- [ ] eggs\n- [ ] bread\n- [ ] cheese\n- [ ] milk\n",
     "cloud": "- [x] milk\n- [ ] tea\n- [ ] eggs\n- [ ] bread\n- [ ] cheese\n",
-    "merged": null
+    "merged": "- [ ] tea\n- [ ] eggs\n- [ ] bread\n- [ ] cheese\n- [x] milk\n"
   },
   {
-    "name": "a line moved here; there it was ticked and the line below it removed: both versions stay",
+    "name": "a task moved here; there it was ticked and the line below it removed: the tick travels along",
     "base": "- [ ] milk\n- [ ] eggs\n- [ ] bread\n- [ ] cheese\n",
     "local": "- [ ] eggs\n- [ ] bread\n- [ ] cheese\n- [ ] milk\n",
     "cloud": "- [x] milk\n- [ ] bread\n- [ ] cheese\n",
-    "merged": null
+    "merged": "- [ ] bread\n- [ ] cheese\n- [x] milk\n"
   },
   {
     "name": "a card pinned and a line moved here, the line ticked there",
@@ -448,18 +448,18 @@
     "merged": null
   },
   {
-    "name": "a task ticked there; here it became another task and its ticked text stands elsewhere: both versions stay",
+    "name": "a task ticked there; here it stands ticked at the bottom and another task stands where it stood: the task once, ticked",
     "base": "- [ ] milk\n- [ ] eggs\n- [ ] bread\n",
     "local": "- [ ] oat milk\n- [ ] eggs\n- [ ] bread\n- [x] milk\n",
     "cloud": "- [x] milk\n- [ ] eggs\n- [ ] bread\n",
-    "merged": null
+    "merged": "- [ ] oat milk\n- [ ] eggs\n- [ ] bread\n- [x] milk\n"
   },
   {
-    "name": "the same, with another task dragged here: both versions stay",
+    "name": "the same, with another task dragged here",
     "base": "- [ ] milk\n- [ ] eggs\n- [ ] bread\n- [ ] cheese\n- [ ] tea\n",
     "local": "- [ ] oat milk\n- [ ] eggs\n- [ ] cheese\n- [ ] bread\n- [ ] tea\n- [x] milk\n",
     "cloud": "- [x] milk\n- [ ] eggs\n- [ ] bread\n- [ ] cheese\n- [ ] tea\n",
-    "merged": null
+    "merged": "- [ ] oat milk\n- [ ] eggs\n- [ ] cheese\n- [ ] bread\n- [ ] tea\n- [x] milk\n"
   },
   {
     "name": "a task ticked here; there it is gone and its ticked text stands twice: both versions stay",
@@ -497,17 +497,234 @@
     "merged": null
   },
   {
-    "name": "a task ticked on both devices next to a task both dragged: both versions stay, no task twice",
+    "name": "a task ticked on both devices next to a task both dragged: the dragged task goes where the cloud has it, no task twice",
     "base": "- [ ] milk\n- [ ] eggs\n- [ ] bread\n- [ ] cheese\n",
     "local": "- [x] milk\n- [ ] cheese\n- [x] eggs\n- [ ] bread\n",
     "cloud": "- [ ] cheese\n- [ ] new\n- [ ] milk\n- [x] eggs\n- [ ] bread\n",
-    "merged": null
+    "merged": "- [ ] cheese\n- [ ] new\n- [x] milk\n- [x] eggs\n- [ ] bread\n"
   },
   {
     "name": "a line moved here and changed there, another line changed here into that same text and removed there: both versions stay",
     "base": "P\na\nX\nb\n",
     "local": "a\nT\nb\nP\n",
     "cloud": "T\na\nb\n",
+    "merged": null
+  },
+  {
+    "name": "a task ticked and moved to the bottom on both devices, another task too there: every task once",
+    "base": "- [ ] milk\n- [ ] eggs\n- [ ] bread\n- [ ] cheese\n",
+    "local": "- [ ] eggs\n- [ ] bread\n- [ ] cheese\n- [x] milk\n",
+    "cloud": "- [ ] bread\n- [ ] cheese\n- [x] eggs\n- [x] milk\n",
+    "merged": "- [ ] bread\n- [ ] cheese\n- [x] eggs\n- [x] milk\n"
+  },
+  {
+    "name": "a task ticked and moved to the bottom on both devices, another task too here: every task once",
+    "base": "- [ ] milk\n- [ ] eggs\n- [ ] bread\n- [ ] cheese\n",
+    "local": "- [ ] bread\n- [ ] cheese\n- [x] eggs\n- [x] milk\n",
+    "cloud": "- [ ] eggs\n- [ ] bread\n- [ ] cheese\n- [x] milk\n",
+    "merged": "- [ ] bread\n- [ ] cheese\n- [x] milk\n- [x] eggs\n"
+  },
+  {
+    "name": "a task ticked and moved to the bottom on both devices, there after another task that went the same way",
+    "base": "- [ ] milk\n- [ ] eggs\n- [ ] bread\n- [ ] cheese\n",
+    "local": "- [ ] eggs\n- [ ] bread\n- [ ] cheese\n- [x] milk\n",
+    "cloud": "- [ ] bread\n- [ ] cheese\n- [x] milk\n- [x] eggs\n",
+    "merged": "- [ ] bread\n- [ ] cheese\n- [x] milk\n- [x] eggs\n"
+  },
+  {
+    "name": "a task unticked and moved up on both devices, another task ticked and moved there",
+    "base": "- [ ] milk\n- [x] eggs\n- [x] bread\n",
+    "local": "- [ ] milk\n- [ ] bread\n- [x] eggs\n",
+    "cloud": "- [ ] bread\n- [x] milk\n- [x] eggs\n",
+    "merged": "- [ ] bread\n- [x] milk\n- [x] eggs\n"
+  },
+  {
+    "name": "a task ticked on both devices next to a task both dragged, from the other device: the dragged task goes where the cloud has it",
+    "base": "- [ ] milk\n- [ ] eggs\n- [ ] bread\n- [ ] cheese\n",
+    "local": "- [ ] cheese\n- [ ] new\n- [ ] milk\n- [x] eggs\n- [ ] bread\n",
+    "cloud": "- [x] milk\n- [ ] cheese\n- [x] eggs\n- [ ] bread\n",
+    "merged": "- [ ] new\n- [x] milk\n- [ ] cheese\n- [x] eggs\n- [ ] bread\n"
+  },
+  {
+    "name": "a task moved here and ticked there with a line added below it; a sub-task has the same words and is another task",
+    "base": "- [ ] milk\n- [ ] eggs\n- [ ] bread\n\t- [ ] milk\n",
+    "local": "- [ ] eggs\n- [ ] bread\n\t- [ ] milk\n- [ ] milk\n",
+    "cloud": "- [x] milk\n- [ ] tea\n- [ ] eggs\n- [ ] bread\n\t- [ ] milk\n",
+    "merged": "- [ ] tea\n- [ ] eggs\n- [ ] bread\n\t- [ ] milk\n- [x] milk\n"
+  },
+  {
+    "name": "the same; a task with another sign has the same words and is another task",
+    "base": "- [ ] milk\n- [ ] eggs\n- [ ] bread\n* [ ] milk\n",
+    "local": "- [ ] eggs\n- [ ] bread\n* [ ] milk\n- [ ] milk\n",
+    "cloud": "- [x] milk\n- [ ] tea\n- [ ] eggs\n- [ ] bread\n* [ ] milk\n",
+    "merged": "- [ ] tea\n- [ ] eggs\n- [ ] bread\n* [ ] milk\n- [x] milk\n"
+  },
+  {
+    "name": "the same; a task with one space more before its box is another task",
+    "base": "- [ ] milk\n- [ ] eggs\n- [ ] bread\n-  [ ] milk\n",
+    "local": "- [ ] eggs\n- [ ] bread\n-  [ ] milk\n- [ ] milk\n",
+    "cloud": "- [x] milk\n- [ ] tea\n- [ ] eggs\n- [ ] bread\n-  [ ] milk\n",
+    "merged": "- [ ] tea\n- [ ] eggs\n- [ ] bread\n-  [ ] milk\n- [x] milk\n"
+  },
+  {
+    "name": "the same task stands twice here: it is no one task, both versions stay",
+    "base": "- [ ] milk\n- [ ] eggs\n- [ ] bread\n",
+    "local": "- [ ] eggs\n- [ ] bread\n- [ ] milk\n- [x] milk\n",
+    "cloud": "- [x] milk\n- [ ] tea\n- [ ] eggs\n- [ ] bread\n",
+    "merged": null
+  },
+  {
+    "name": "the same task stands twice in the shared version: both versions stay",
+    "base": "- [ ] milk\n- [ ] eggs\n- [ ] bread\n- [x] milk\n",
+    "local": "- [ ] eggs\n- [ ] bread\n- [ ] milk\n",
+    "cloud": "- [x] milk\n- [ ] tea\n- [ ] eggs\n- [ ] bread\n",
+    "merged": null
+  },
+  {
+    "name": "a task with a star moved here; there it was ticked and a line added right below it",
+    "base": "* [ ] milk\n- [ ] eggs\n- [ ] bread\n",
+    "local": "- [ ] eggs\n- [ ] bread\n* [ ] milk\n",
+    "cloud": "* [x] milk\n- [ ] tea\n- [ ] eggs\n- [ ] bread\n",
+    "merged": "- [ ] tea\n- [ ] eggs\n- [ ] bread\n* [x] milk\n"
+  },
+  {
+    "name": "the same for a task with a plus",
+    "base": "+ [ ] milk\n- [ ] eggs\n- [ ] bread\n",
+    "local": "- [ ] eggs\n- [ ] bread\n+ [ ] milk\n",
+    "cloud": "+ [x] milk\n- [ ] tea\n- [ ] eggs\n- [ ] bread\n",
+    "merged": "- [ ] tea\n- [ ] eggs\n- [ ] bread\n+ [x] milk\n"
+  },
+  {
+    "name": "the same for a task with a tab after its sign",
+    "base": "-\t[ ] milk\n- [ ] eggs\n- [ ] bread\n",
+    "local": "- [ ] eggs\n- [ ] bread\n-\t[ ] milk\n",
+    "cloud": "-\t[x] milk\n- [ ] tea\n- [ ] eggs\n- [ ] bread\n",
+    "merged": "- [ ] tea\n- [ ] eggs\n- [ ] bread\n-\t[x] milk\n"
+  },
+  {
+    "name": "the same for a task with a tab after its box",
+    "base": "- [ ]\tmilk\n- [ ] eggs\n- [ ] bread\n",
+    "local": "- [ ] eggs\n- [ ] bread\n- [ ]\tmilk\n",
+    "cloud": "- [x]\tmilk\n- [ ] tea\n- [ ] eggs\n- [ ] bread\n",
+    "merged": "- [ ] tea\n- [ ] eggs\n- [ ] bread\n- [x]\tmilk\n"
+  },
+  {
+    "name": "the same for sub-tasks under a tab",
+    "base": "- [ ] list\n\t- [ ] milk\n\t- [ ] eggs\n\t- [ ] bread\n",
+    "local": "- [ ] list\n\t- [ ] eggs\n\t- [ ] bread\n\t- [ ] milk\n",
+    "cloud": "- [ ] list\n\t- [x] milk\n\t- [ ] tea\n\t- [ ] eggs\n\t- [ ] bread\n",
+    "merged": "- [ ] list\n\t- [ ] tea\n\t- [ ] eggs\n\t- [ ] bread\n\t- [x] milk\n"
+  },
+  {
+    "name": "the same for sub-tasks under two spaces",
+    "base": "- [ ] list\n  - [ ] milk\n  - [ ] eggs\n  - [ ] bread\n",
+    "local": "- [ ] list\n  - [ ] eggs\n  - [ ] bread\n  - [ ] milk\n",
+    "cloud": "- [ ] list\n  - [x] milk\n  - [ ] tea\n  - [ ] eggs\n  - [ ] bread\n",
+    "merged": "- [ ] list\n  - [ ] tea\n  - [ ] eggs\n  - [ ] bread\n  - [x] milk\n"
+  },
+  {
+    "name": "a task with no words is a task",
+    "base": "- [ ]\n- [ ] eggs\n- [ ] bread\n",
+    "local": "- [ ] eggs\n- [ ] bread\n- [ ]\n",
+    "cloud": "- [x]\n- [ ] tea\n- [ ] eggs\n- [ ] bread\n",
+    "merged": "- [ ] tea\n- [ ] eggs\n- [ ] bread\n- [x]\n"
+  },
+  {
+    "name": "no space after the sign: no task, both versions stay",
+    "base": "-[ ] milk\n- [ ] eggs\n- [ ] bread\n",
+    "local": "- [ ] eggs\n- [ ] bread\n-[ ] milk\n",
+    "cloud": "-[x] milk\n- [ ] tea\n- [ ] eggs\n- [ ] bread\n",
+    "merged": null
+  },
+  {
+    "name": "no space after the box: no task, both versions stay",
+    "base": "- [ ]milk\n- [ ] eggs\n- [ ] bread\n",
+    "local": "- [ ] eggs\n- [ ] bread\n- [ ]milk\n",
+    "cloud": "- [x]milk\n- [ ] tea\n- [ ] eggs\n- [ ] bread\n",
+    "merged": null
+  },
+  {
+    "name": "a numbered line with a box is no task, both versions stay",
+    "base": "1. [ ] milk\n- [ ] eggs\n- [ ] bread\n",
+    "local": "- [ ] eggs\n- [ ] bread\n1. [ ] milk\n",
+    "cloud": "1. [x] milk\n- [ ] tea\n- [ ] eggs\n- [ ] bread\n",
+    "merged": null
+  },
+  {
+    "name": "another letter in the box is no tick, both versions stay",
+    "base": "- [ ] milk\n- [ ] eggs\n- [ ] bread\n",
+    "local": "- [ ] eggs\n- [ ] bread\n- [ ] milk\n",
+    "cloud": "- [o] milk\n- [ ] tea\n- [ ] eggs\n- [ ] bread\n",
+    "merged": null
+  },
+  {
+    "name": "a ticked task moved here; there it was unticked and a line added right below it: it comes out unticked",
+    "base": "- [x] milk\n- [ ] eggs\n- [ ] bread\n",
+    "local": "- [ ] eggs\n- [ ] bread\n- [x] milk\n",
+    "cloud": "- [ ] milk\n- [ ] tea\n- [ ] eggs\n- [ ] bread\n",
+    "merged": "- [ ] tea\n- [ ] eggs\n- [ ] bread\n- [ ] milk\n"
+  },
+  {
+    "name": "a ticked task moved here; there its x became an X and a line was added right below it: the letter travels along",
+    "base": "- [x] milk\n- [ ] eggs\n- [ ] bread\n",
+    "local": "- [ ] eggs\n- [ ] bread\n- [x] milk\n",
+    "cloud": "- [X] milk\n- [ ] tea\n- [ ] eggs\n- [ ] bread\n",
+    "merged": "- [ ] tea\n- [ ] eggs\n- [ ] bread\n- [X] milk\n"
+  },
+  {
+    "name": "a task ticked on both devices, with an x here and an X there: one note, the letter of the cloud stays",
+    "base": "- [ ] milk\n- [ ] eggs\n",
+    "local": "- [x] milk\n- [ ] eggs\n",
+    "cloud": "- [X] milk\n- [ ] eggs\n",
+    "merged": "- [X] milk\n- [ ] eggs\n"
+  },
+  {
+    "name": "a task ticked on both devices, with an X here and an x there: one note, the letter of the cloud stays",
+    "base": "- [ ] milk\n- [ ] eggs\n",
+    "local": "- [X] milk\n- [ ] eggs\n",
+    "cloud": "- [x] milk\n- [ ] eggs\n",
+    "merged": "- [x] milk\n- [ ] eggs\n"
+  },
+  {
+    "name": "a task unticked here; there its x became an X and a line was added right below it: the tick taken out counts",
+    "base": "- [x] milk\n- [ ] eggs\n",
+    "local": "- [ ] milk\n- [ ] eggs\n",
+    "cloud": "- [X] milk\n- [ ] tea\n- [ ] eggs\n",
+    "merged": "- [ ] milk\n- [ ] tea\n- [ ] eggs\n"
+  },
+  {
+    "name": "a task unticked there with a line added right below it; here its x became an X: the tick taken out counts",
+    "base": "- [x] milk\n- [ ] eggs\n",
+    "local": "- [X] milk\n- [ ] eggs\n",
+    "cloud": "- [ ] milk\n- [ ] tea\n- [ ] eggs\n",
+    "merged": "- [ ] milk\n- [ ] tea\n- [ ] eggs\n"
+  },
+  {
+    "name": "a task ticked with a capital X moved here; there it was unticked and a line added right below it",
+    "base": "- [X] milk\n- [ ] eggs\n- [ ] bread\n",
+    "local": "- [ ] eggs\n- [ ] bread\n- [X] milk\n",
+    "cloud": "- [ ] milk\n- [ ] tea\n- [ ] eggs\n- [ ] bread\n",
+    "merged": "- [ ] tea\n- [ ] eggs\n- [ ] bread\n- [ ] milk\n"
+  },
+  {
+    "name": "a task moved here; there it was ticked with a capital X and a line added right below it: the capital stays",
+    "base": "- [ ] milk\n- [ ] eggs\n- [ ] bread\n",
+    "local": "- [ ] eggs\n- [ ] bread\n- [ ] milk\n",
+    "cloud": "- [X] milk\n- [ ] tea\n- [ ] eggs\n- [ ] bread\n",
+    "merged": "- [ ] tea\n- [ ] eggs\n- [ ] bread\n- [X] milk\n"
+  },
+  {
+    "name": "a task deleted here, another deleted there where a third was unticked and moved up: the lines merge as they are",
+    "base": "- [ ] milk\n- [ ] eggs\n- [x] bread\n",
+    "local": "- [ ] eggs\n- [x] bread\n",
+    "cloud": "- [ ] bread\n- [ ] milk\n",
+    "merged": "- [ ] bread\n"
+  },
+  {
+    "name": "a task ticked and moved on both devices next to changes that do not merge: both versions stay rather than the task twice",
+    "base": "- [ ] milk\n- [ ] eggs\n- [ ] bread\n- [ ] cheese\n- [ ] tea\n- [x] rice\n- [x] salt\n",
+    "local": "- [ ] eggs\n- [ ] bread\n- [ ] cheese\n- [ ] tea!\n- [ ] salt\n- [x] milk\n- [x] rice\n",
+    "cloud": "- [ ] eggs\n- [ ] bread\n- [ ] cheese\n- [ ] tea\n- [ ] new b0\n- [x] milk\n- [x] rice\n- [x] salt\n",
     "merged": null
   },
   {

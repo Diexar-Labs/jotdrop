@@ -52,36 +52,65 @@ export function dragCases() {
   return cases;
 }
 
+// A list of tasks as text, and a tick as the editor makes it: with `move` ("Move checked items to the bottom") the task
+// goes right under the last open task below it.
+const taskList = (tasks) => tasks.map(({ word, ticked }) => `- [${ticked ? 'x' : ' '}] ${word}`).join('\n') + '\n';
+const tickTask = (tasks, word, move) => {
+  const at = tasks.findIndex((task) => task.word === word), last = tasks.findLastIndex((task) => !task.ticked);
+  const next = tasks.map((task) => task.word === word ? { word, ticked: true } : task);
+  if (move && last > at) next.splice(last, 0, next.splice(at, 1)[0]);
+  return next;
+};
+
 /**
  * A list where two devices tick the same task, one of them with "Move checked items to the bottom": there the task
  * goes right under the last open task below it. For every task, alone and with every other task ticked as well, on the
  * device where the task stayed or on the one where it moved. `merged` is the note the merge must give: the task once,
- * where the device that moved it has it. Null where both versions stay.
+ * where the device that moved it has it.
  */
 export function tickCases() {
   const open = ['milk', 'eggs', 'bread', 'cheese', 'tea'];
   const base = [...open.map((word) => ({ word })), { word: 'rice', ticked: true }, { word: 'salt', ticked: true }];
-  const list = (tasks) => tasks.map(({ word, ticked }) => `- [${ticked ? 'x' : ' '}] ${word}`).join('\n') + '\n';
-  const tick = (tasks, word, move) => {
-    const at = tasks.findIndex((task) => task.word === word), last = tasks.findLastIndex((task) => !task.ticked);
-    const next = tasks.map((task) => task.word === word ? { word, ticked: true } : task);
-    if (move && last > at) next.splice(last, 0, next.splice(at, 1)[0]);
-    return next;
-  };
+  const list = taskList, tick = tickTask;
   const cases = [];
   const both = (name, here, there, merged) => cases.push(
     { name: `${name}, moved here`, base: list(base), local: list(here), cloud: list(there), merged },
     { name: `${name}, moved there`, base: list(base), local: list(there), cloud: list(here), merged });
-  for (const [at, word] of open.entries()) {
+  for (const word of open) {
     const moved = tick(base, word, true), stayed = tick(base, word, false);
     both(`${word} ticked on both devices`, moved, stayed, list(moved));
-    for (const [next, other] of open.entries()) {
+    for (const other of open) {
       if (other === word) continue;
       both(`${word} ticked on both devices, ${other} too where it stayed`, moved, tick(stayed, other, false), list(tick(moved, other, false)));
       // The last two open tasks, ticked from the top down, end up the other way round: line for line that reads as each
-      // changed into the other, so which line the task became cannot be told and both versions stay.
-      const two = tick(moved, other, true), swapped = at === open.length - 2 && next === open.length - 1;
-      both(`${word} ticked on both devices, ${other} too where it moved`, two, stayed, swapped ? null : list(two));
+      // changed into the other. With the ticks merged first (design checklists-77-v2, part 8) the tasks are told apart.
+      const two = tick(moved, other, true);
+      both(`${word} ticked on both devices, ${other} too where it moved`, two, stayed, list(two));
+    }
+  }
+  return cases;
+}
+
+/**
+ * A list where both devices have "Move checked items to the bottom" on and tick the same task, and one of them ticks
+ * another task too, before or after it (design checklists-77-v2, part 8). Per line the task both ticked is gone at one
+ * place and new at another on each device, and it came out twice. For 2 to 7 open tasks with 0 to 2 ticked ones under
+ * them, every pair of tasks, from both devices. `ticked` holds the words that are ticked afterwards: the merge must
+ * give one note with every task once and those ticks.
+ */
+export function bothMovedCases() {
+  const words = ['milk', 'eggs', 'bread', 'cheese', 'tea', 'rice', 'salt'];
+  const cases = [];
+  for (let open = 2; open <= words.length; open++) for (let done = 0; done <= 2; done++) {
+    const tasks = [...words.slice(0, open).map((word) => ({ word })), ...['jam', 'oil'].slice(0, done).map((word) => ({ word, ticked: true }))];
+    const base = taskList(tasks), before = ['jam', 'oil'].slice(0, done);
+    for (const word of words.slice(0, open)) for (const other of words.slice(0, open)) {
+      if (other === word) continue;
+      const one = taskList(tickTask(tasks, word, true)), ticked = [...before, word, other].sort();
+      for (const [order, two] of [['after', taskList(tickTask(tickTask(tasks, word, true), other, true))], ['before', taskList(tickTask(tickTask(tasks, other, true), word, true))]]) {
+        const name = `${open} open and ${done} ticked tasks: ${word} ticked and moved on both devices, ${other} too ${order} it`;
+        cases.push({ name: `${name}, here`, base, local: two, cloud: one, ticked }, { name: `${name}, there`, base, local: one, cloud: two, ticked });
+      }
     }
   }
   return cases;
