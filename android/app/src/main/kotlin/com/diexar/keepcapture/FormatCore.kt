@@ -1303,8 +1303,10 @@ internal object FormatCore {
     /**
      * Drops the list item on line [line], with the lines under it, in front of line [before] on [level]: one of the
      * places of [dropSlots], as dropItemEdit in format.mjs. Its indent becomes that of its new siblings, or one tab
-     * more than its new main item when it is the first under it. Null when the place is none of dropSlots, when nothing
-     * would change, and when with mixed indents a line would end up on another level than meant.
+     * more than its new main item when it is the first under it. Dropped past items with the same text the note stays as
+     * it is: the replacement is empty and only the selection and the line go along, as in [moveItemEdit]. Null when the
+     * place is none of dropSlots, on its own place and level, and when with mixed indents a line would end up on
+     * another level than meant.
      */
     fun dropItemEdit(text: String, line: Int, before: Int, level: Int, selFrom: Int = 0, selTo: Int = selFrom): Moved? {
         val plan = dropPlan(text, line) ?: return null
@@ -1350,7 +1352,7 @@ internal object FormatCore {
         val next = arranged(lines, changed, order)
         val moved = Shifted(line, end, level - item.level, if (parent < 0) -1 else old(parent))
         if (!sameLists(plan.structure, listStructure(next.joinToString("\n")), order, moved)) return null
-        val edit = linesEdit(text, next, order, selFrom, selTo) ?: return null
+        val edit = linesEdit(text, next, order, selFrom, selTo, alike = true) ?: return null
         return Moved(edit, gap)
     }
 

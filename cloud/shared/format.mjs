@@ -1183,8 +1183,10 @@ export function dropSlots(text, line) {
  * Drops the list item on line `line`, with the lines under it, in front of line `before` on `level`: one of the places
  * of dropSlots. Its indent becomes that of its new siblings, or one tab more than its new main item when it is the
  * first under it; the lines under it keep their own depth. Nothing is renumbered. One replacement plus `line`, the line
- * the item is on now; the selection stays in its own text. Null when the place is none of dropSlots, when nothing would
- * change (its own place and level), and when with mixed indents a line would end up on another level than meant.
+ * the item is on now; the selection stays in its own text. Dropped past items with the same text the note stays as it
+ * is: the replacement is empty and only the selection and the line go along, as in moveItemEdit. Null when the place is
+ * none of dropSlots, on its own place and level, and when with mixed indents a line would end up on another level than
+ * meant.
  * @param {string} text
  * @param {number} line
  * @param {number} before
@@ -1227,7 +1229,7 @@ export function dropItemEdit(text, line, before, level, selFrom = 0, selTo = sel
   const next = arranged(lines, changed, order);
   const moved = { from: line, to: end, shift: level - item.level, parent: parent < 0 ? -1 : old(parent) };
   if (!sameLists(structure, listStructure(next.join('\n')), order, moved)) return null;
-  const edit = linesEdit(text, next, order, selFrom, selTo);
+  const edit = linesEdit(text, next, order, selFrom, selTo, true);
   return edit && { ...edit, line: gap };
 }
 

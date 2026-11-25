@@ -82,6 +82,113 @@ internal fun dropTarget(
     return DropTarget(slot.before, (level.coerceIn(slot.minLevel, slot.maxLevel) + steps).coerceIn(slot.minLevel, slot.maxLevel))
 }
 
+/** A line an item is dragged past takes this long to make room, and an item that is let go this long to reach its place. */
+internal const val SLIDE_MS = 120f
+
+/**
+ * The room the lines of a text make for an item that is dragged (design checklists-77-v2, 5.1 and 5.2). The text does
+ * not change during a drag: the lines between the item's own place ([line] to [end], of [lines] lines) and the place
+ * where it would land are only drawn a block further, [height] pixels, each on its way there for [SLIDE_MS].
+ */
+internal class RoomMade(val line: Int, val end: Int, val lines: Int, val height: Float) {
+    private val shift = FloatArray(lines)
+
+    // The lines that stand off their place or are on their way to one: none while [from] is past [until].
+    var from = Int.MAX_VALUE
+        private set
+    var until = -1
+        private set
+
+    /** How far line [index] stands from its own place now. */
+    fun of(index: Int): Float = if (index < from || index > until) 0f else shift[index]
+
+    /**
+     * One frame, [seconds] long: every line between the item's own place and line [before], in front of which it would
+     * land (null: nowhere), goes toward a block further, the others back to their own place. True when a line moved.
+     */
+    fun slide(before: Int?, seconds: Float): Boolean {
+        val step = height * seconds * 1000f / SLIDE_MS
+        var first = 0
+        var last = -1
+        var far = 0f
+        if (before != null && before < line) { first = before; last = line - 1; far = height }
+        else if (before != null && before > end + 1) { first = end + 1; last = before - 1; far = -height }
+        val low = if (last >= first) minOf(from, first) else from
+        val high = if (last >= first) maxOf(until, last) else until
+        var moved = false
+        var nextFrom = Int.MAX_VALUE
+        var nextUntil = -1
+        var index = low
+        while (index <= high) {
+            val goal = if (index in first..last) far else 0f
+            val now = shift[index]
+            if (now != goal) {
+                shift[index] = if (now < goal) minOf(goal, now + step) else maxOf(goal, now - step)
+                moved = true
+            }
+            if (shift[index] != 0f || goal != 0f) {
+                if (index < nextFrom) nextFrom = index
+                nextUntil = index
+            }
+            index++
+        }
+        from = nextFrom
+        until = nextUntil
+        return moved
+    }
+
+    /**
+     * The finger let go. Where every line stands now, for the lines as they are numbered once the item has landed in
+     * front of line [before] (null: it went back to its own place): the same order as FormatCore.dropItemEdit makes.
+     * [top] gives the top of a line as it is laid out now and [itemTop] is where the item itself stands.
+     */
+    fun settling(before: Int?, top: (Int) -> Float, itemTop: Float): Settling {
+        val size = end - line + 1
+        val first = if (before == null) line else if (before <= line) before else before - size
+        val low = minOf(from, line, first)
+        val high = maxOf(until, end, first + size - 1)
+        val was = FloatArray(high - low + 1) { Float.NaN }
+        for (index in low..high) {
+            if (index in line..end) continue
+            val now = when {
+                before == null -> index
+                before <= line && index >= before && index < line -> index + size
+                before > end && index > end && index < before -> index - size
+                else -> index
+            }
+            was[now - low] = top(index) + of(index)
+        }
+        return Settling(first, first + size - 1, low, was, itemTop)
+    }
+}
+
+/**
+ * An item that was let go, and the lines around it, on their way to their places in the text as it is after the drop.
+ * [line] to [end] are the item's lines in that text. [was] holds where line [low] and on stood when the finger let go
+ * (no number for the item's own lines) and [itemTop] where the item stood.
+ */
+internal class Settling(val line: Int, val end: Int, val low: Int, private val was: FloatArray, private val itemTop: Float) {
+    // How far every line and the item stand from their place in the new layout: known once that is there.
+    private var off: FloatArray? = null
+    private var itemOff = 0f
+
+    /** The new text is laid out, with [top] the top of each of its lines: from here the ways to go are known. */
+    fun resolve(top: (Int) -> Float) {
+        if (off != null) return
+        off = FloatArray(was.size) { if (was[it].isNaN()) 0f else was[it] - top(low + it) }
+        itemOff = itemTop - top(line)
+    }
+
+    /** How far line [index] stands from its place with [left] of the way to go (1 when the finger let go, then down to 0). */
+    fun of(index: Int, left: Float): Float {
+        val far = off ?: return 0f
+        return if (index < low || index >= low + far.size) 0f else far[index - low] * left
+    }
+
+    /** The same for the item itself. */
+    fun ofItem(left: Float): Float = itemOff * left
+}
+
 /**
  * The places of [dropTarget] for the item on line [line] of a piece of the body (a body with a table is shown in
  * pieces), in the piece's own line numbers. [whole] is the whole body and [above] the number of its lines above the

@@ -232,6 +232,83 @@ fun main() {
         check(land(two, 0, 41f) == DropTarget(5, 0)) { "In the text between two lists, nearer to the second: ${land(two, 0, 41f)}" }
         check(dropTarget(emptyList(), 0, 0, 0, 1, 5f, 0, top, bottom) == null) { "No place, no landing" }
     }
+    // The room lines make for an item that is dragged (design checklists-77-v2, 5.1 and 5.2): the lines between its own
+    // place and where it would land go a block further in SLIDE_MS, and when the finger lets go every line is found
+    // again on the line it has after the drop.
+    run {
+        // Six lines of 10 high; the item is line 2 alone.
+        val top = { line: Int -> line * 10f }
+        val room = RoomMade(2, 2, 6, 10f)
+        // In hundredths of a pixel: the time of a frame is no round number.
+        fun near(a: Float, b: Float) = kotlin.math.abs(a - b) < 0.01f
+        fun shifts() = (0 until 6).map { Math.round(room.of(it) * 100f) / 100f }
+        check(!room.slide(null, 1f) && shifts().all { it == 0f } && room.from > room.until) { "No place, no room made: ${shifts()}" }
+        check(!room.slide(2, 1f) && shifts().all { it == 0f }) { "Its own place makes no room: ${shifts()}" }
+        // In front of line 0: lines 0 and 1 go a block down, half of the way in half the time, and never further.
+        check(room.slide(0, SLIDE_MS / 2000f) && shifts() == listOf(5f, 5f, 0f, 0f, 0f, 0f)) { "Half the way down: ${shifts()}" }
+        check(room.from == 0 && room.until == 1) { "The lines that are away: ${room.from} to ${room.until}" }
+        check(room.slide(0, 1f) && shifts() == listOf(10f, 10f, 0f, 0f, 0f, 0f) && !room.slide(0, 1f)) { "All the way down: ${shifts()}" }
+        // On to behind line 4: lines 0 and 1 go back while lines 3 and 4 come up.
+        check(room.slide(5, SLIDE_MS / 4000f) && shifts() == listOf(7.5f, 7.5f, 0f, -2.5f, -2.5f, 0f)) { "Turning round: ${shifts()}" }
+        check(room.from == 0 && room.until == 4) { "Both sides are away: ${room.from} to ${room.until}" }
+        check(room.slide(5, 1f) && shifts() == listOf(0f, 0f, 0f, -10f, -10f, 0f) && room.from == 3 && room.until == 4) { "All the way up: ${shifts()}" }
+        check(room.slide(6, 1f) && shifts() == listOf(0f, 0f, 0f, -10f, -10f, -10f)) { "After the text: ${shifts()}" }
+        check(room.slide(null, 1f) && shifts().all { it == 0f } && room.from > room.until && !room.slide(null, 1f)) { "Back again: ${shifts()}" }
+        // Let go while lines further on are still on their way back (the finger came back from the end of the list): those
+        // keep their own number, and have the rest of their way to go.
+        val late = RoomMade(0, 0, 4, 10f)
+        late.slide(4, 1f)
+        late.slide(2, SLIDE_MS / 2000f)
+        val left = late.settling(2, top, 12f)
+        left.resolve(top)
+        check(left.line == 1 && left.end == 1 && (0..3).map { Math.round(left.of(it, 1f) * 100f) / 100f } == listOf(0f, 0f, -5f, -5f) && near(left.ofItem(1f), 2f)) { "Let go while lines go back: item on ${left.line}, ${(0..3).map { left.of(it, 1f) }}" }
+
+        // Every item of a note to every place it has: once the lines have made all their room, the note as it is drawn
+        // has the order FormatCore.dropItemEdit gives it, so nothing jumps when the text changes.
+        val note = "- [ ] a\n\t- [ ] a1\n\t- [ ] a2\n- [ ] b\n\ntext\n\n- [ ] c\n\t- [ ] c1\n- [ ] d\n- [ ] d"
+        val lines = note.split('\n')
+        var tried = 0
+        for (line in lines.indices) for (slot in FormatCore.dropSlots(note, line)) for (level in slot.minLevel..slot.maxLevel) {
+            val name = "line $line in front of ${slot.before} on level $level"
+            val end = FormatCore.itemSpan(note, line)!!.end
+            val moved = FormatCore.dropItemEdit(note, line, slot.before, level) ?: continue
+            val after = note.replaceRange(moved.edit.from, moved.edit.to, moved.edit.insert).split('\n')
+            val made = RoomMade(line, end, lines.size, (end - line + 1) * 10f)
+            made.slide(slot.before, 1f)
+            val order = IntArray(lines.size) { -1 }
+            for (index in lines.indices) {
+                val now = if (index in line..end) moved.line + index - line else index + (made.of(index) / 10f).toInt()
+                check(now in lines.indices && order[now] < 0) { "$name: two lines on one place" }
+                order[now] = index
+            }
+            check(order.map { lines[it].trim() } == after.map { it.trim() }) { "$name: drawn ${order.map { lines[it].trim() }}, the text has ${after.map { it.trim() }}" }
+            // Let go there: the item is on its new lines and every line stands where the new text has it.
+            val there = made.settling(slot.before, top, 123f)
+            there.resolve(top)
+            check(there.line == moved.line && there.end == moved.line + end - line) { "$name: the item's lines after the drop: ${there.line} to ${there.end}" }
+            check(lines.indices.all { there.of(it, 1f) == 0f }) { "$name: a line is off its place: ${lines.indices.map { there.of(it, 1f) }}" }
+            check(near(there.ofItem(1f), 123f - top(moved.line)) && near(there.ofItem(0.5f), there.ofItem(1f) / 2) && there.ofItem(0f) == 0f) { "$name: the item's way: ${there.ofItem(1f)}" }
+            // Let go when the lines are half on their way: each has the other half to go.
+            val half = RoomMade(line, end, lines.size, (end - line + 1) * 10f)
+            half.slide(slot.before, SLIDE_MS / 2000f)
+            val halfway = half.settling(slot.before, top, top(moved.line))
+            check(lines.indices.all { halfway.of(it, 1f) == 0f }) { "$name: a way to go before the new text is laid out" }
+            halfway.resolve(top)
+            for (index in lines.indices) {
+                if (index in line..end) continue
+                val now = order.indexOf(index)
+                check(near(halfway.of(now, 1f), -made.of(index) / 2) && near(halfway.of(now, 0.5f), -made.of(index) / 4) && halfway.of(now, 0f) == 0f) { "$name: line $index half on its way has ${halfway.of(now, 1f)} to go" }
+            }
+            check((there.line..there.end).all { halfway.of(it, 1f) == 0f } && halfway.ofItem(1f) == 0f) { "$name: the item's own lines" }
+            // Broken off there: the item goes back to its own place and so do the lines.
+            val back = half.settling(null, top, 55f)
+            back.resolve(top)
+            check(back.line == line && back.end == end && near(back.ofItem(1f), 55f - top(line))) { "$name: back to its own place: ${back.line} to ${back.end}" }
+            check(lines.indices.all { near(back.of(it, 1f), half.of(it)) }) { "$name: the lines on their way back: ${lines.indices.map { back.of(it, 1f) }}" }
+            tried++
+        }
+        check(tried >= 40) { "Only $tried drops were tried" }
+    }
     // A body with a table is shown in pieces: the places of an item are those of the whole body that lie in its piece,
     // in the piece's own lines.
     run {
@@ -285,6 +362,7 @@ fun main() {
         check(listOf(-1, 0, 3, 4, 7, 8, 9, 13, 99).map { lineOf(text, it) } == listOf(0, 0, 0, 1, 1, 2, 3, 3, 3)) { "The line of a place: ${listOf(-1, 0, 3, 4, 7, 8, 9, 13, 99).map { lineOf(text, it) }}" }
         check((0..5).map { lineStartOf(text, it) } == listOf(0, 4, 8, 9, 13, 13)) { "The start of a line: ${(0..5).map { lineStartOf(text, it) }}" }
         for (line in 0..3) check(lineOf(text, lineStartOf(text, line)) == line) { "Line $line and back" }
+        check(lineStarts(text).toList() == listOf(0, 4, 8, 9) && lineStarts("").toList() == listOf(0) && lineStarts("a\n").toList() == listOf(0, 2)) { "Where the lines start: ${lineStarts(text).toList()}" }
     }
     // The note's menu offers its checklist items only when the note has a task in a list.
     check(hasTask("text\n- a\n\t- [x] b") && hasTask("* [ ] star") && !hasTask("- a\n1. b") && !hasTask("```\n- [ ] code\n```") && !hasTask("> - [ ] quote") && !hasTask("see [link](https://example.com)") && !hasTask("- a bullet with a [link](https://example.com)\n1. b")) { "Which notes have a task" }
