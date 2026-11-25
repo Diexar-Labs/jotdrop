@@ -1137,9 +1137,10 @@ internal object FormatCore {
      * The one replacement that turns the text into the lines [next] (from [arranged]). A position stays in its own
      * words: it goes along with its line, and with a new indent or number at the start of that line. From a line that
      * is gone it goes to the end of the nearest line above that stays; with none above, to the end of the line that is
-     * first now.
+     * first now. Null when the lines are the text as it was; with [alike], a replacement of nothing that only takes the
+     * selection along: two items with the same text traded places.
      */
-    private fun linesEdit(text: String, next: List<String>, order: List<Int>, selFrom: Int, selTo: Int): Edit? {
+    private fun linesEdit(text: String, next: List<String>, order: List<Int>, selFrom: Int, selTo: Int, alike: Boolean = false): Edit? {
         val table = Lines(text)
         val place = IntArray(table.lines.size) { -1 }
         for ((index, old) in order.withIndex()) place[old] = index
@@ -1165,7 +1166,9 @@ internal object FormatCore {
         }
         val a = map(selFrom)
         val b = map(selTo)
-        return replacement(text, next.joinToString("\n"), minOf(a, b), maxOf(a, b))
+        val after = next.joinToString("\n")
+        if (alike && after == text) return Edit(text.length, text.length, "", minOf(a, b), maxOf(a, b))
+        return replacement(text, after, minOf(a, b), maxOf(a, b))
     }
 
     /** An item that changed level on purpose: its lines [from] to [to] are [shift] levels further, its first line under [parent]. */
@@ -1193,8 +1196,10 @@ internal object FormatCore {
     /**
      * Moves the item [line] belongs to (a list line, or a line of more text under one) one place "up" or "down": it
      * trades places with the sibling right above or under it, each with the lines under it, as moveItemEdit in
-     * format.mjs. Two numbered items trade their numbers too; siblings on different columns trade their indents. Null
-     * for the first or last of its siblings, outside a list, and when more text of the main item stands between the two.
+     * format.mjs. Two numbered items trade their numbers too; siblings on different columns trade their indents. Past a
+     * sibling with the same text the note stays as it is: the replacement is empty and only the selection and the line
+     * go along, so the item can go on from there. Null for the first or last of its siblings, outside a list, and when
+     * more text of the main item stands between the two.
      */
     fun moveItemEdit(text: String, line: Int, direction: String, selFrom: Int = 0, selTo: Int = selFrom): Moved? {
         val lines = text.split('\n')
@@ -1237,7 +1242,7 @@ internal object FormatCore {
         }
         val next = arranged(lines, changed, order)
         if (!sameLists(structure, listStructure(next.joinToString("\n")), order)) return null
-        val edit = linesEdit(text, next, order, selFrom, selTo) ?: return null
+        val edit = linesEdit(text, next, order, selFrom, selTo, alike = true) ?: return null
         return Moved(edit, if (direction == "up") top else top + lowEnd - low + 1)
     }
 

@@ -455,7 +455,20 @@
     { "name": "plain text", "text": "text¦\n- a", "line": 0, "direction": "down", "expect": null },
     { "name": "in a code block", "text": "```\n- a\n- b¦\n```", "line": 2, "direction": "up", "expect": null },
     { "name": "a selection goes along with its item", "text": "- [ ] a\n- [ ] ¦b¦\n- [ ] c", "line": 1, "direction": "up", "expect": "- [ ] ¦b¦\n- [ ] a\n- [ ] c", "expectLine": 0 },
-    { "name": "a caret in another item stays in that item", "text": "- [ ] a\n- [ ] b\n- [ ] ¦c", "line": 1, "direction": "down", "expect": "- [ ] a\n- [ ] ¦c\n- [ ] b", "expectLine": 2 }
+    { "name": "a caret in another item stays in that item", "text": "- [ ] a\n- [ ] b\n- [ ] ¦c", "line": 1, "direction": "down", "expect": "- [ ] a\n- [ ] ¦c\n- [ ] b", "expectLine": 2 },
+    { "name": "up past an item with the same text: the text stays as it is and the caret goes along", "text": "- [ ] a\n- [ ] b\n- [ ] b¦\n- [ ] c", "line": 2, "direction": "up", "expect": "- [ ] a\n- [ ] b¦\n- [ ] b\n- [ ] c", "expectLine": 1 },
+    { "name": "down past an item with the same text", "text": "- [ ] a\n- [ ] ¦b\n- [ ] b\n- [ ] c", "line": 1, "direction": "down", "expect": "- [ ] a\n- [ ] b\n- [ ] ¦b\n- [ ] c", "expectLine": 2 },
+    { "name": "past the same text it can go on: the next move trades with the item above", "text": "- [ ] a\n- [ ] b¦\n- [ ] b\n- [ ] c", "line": 1, "direction": "up", "expect": "- [ ] b¦\n- [ ] a\n- [ ] b\n- [ ] c", "expectLine": 0 },
+    { "name": "sub-items with the same text", "text": "- a\n\t- x\n\t- x¦\n- b", "line": 2, "direction": "up", "expect": "- a\n\t- x¦\n\t- x\n- b", "expectLine": 1 },
+    { "name": "two items with the same text and the same sub-items: the caret in a sub-item goes along", "text": "- a\n\t- a1¦\n- a\n\t- a1\n- b", "line": 0, "direction": "down", "expect": "- a\n\t- a1\n- a\n\t- a1¦\n- b", "expectLine": 2 },
+    { "name": "the same words but other sub-items: the text changes as always", "text": "- a¦\n\t- a1\n- a", "line": 0, "direction": "down", "expect": "- a\n- a¦\n\t- a1", "expectLine": 1 },
+    { "name": "numbered items with the same words trade their numbers, so the text stays", "text": "1. x\n2. x¦\n3. y", "line": 1, "direction": "up", "expect": "1. x¦\n2. x\n3. y", "expectLine": 0 },
+    { "name": "the same text on 4 and 2 spaces", "text": "- a\n    - b\n  - b¦", "line": 2, "direction": "up", "expect": "- a\n    - b¦\n  - b", "expectLine": 1 },
+    { "name": "CRLF: the same text at the end of the note", "text": "- a\r\n- a¦", "line": 1, "direction": "up", "expect": "- a¦\r\n- a", "expectLine": 0 },
+    { "name": "a caret in the other of two items with the same text goes the other way", "text": "- [ ] ¦b\n- [ ] b", "line": 1, "direction": "up", "expect": "- [ ] b\n- [ ] ¦b", "expectLine": 0 },
+    { "name": "a caret outside two items with the same text stays", "text": "- [ ] b\n- [ ] b\n- [ ] c¦", "line": 1, "direction": "up", "expect": "- [ ] b\n- [ ] b\n- [ ] c¦", "expectLine": 0 },
+    { "name": "a selection goes along past the same text", "text": "- [ ] b\n- [ ] ¦b¦", "line": 1, "direction": "up", "expect": "- [ ] ¦b¦\n- [ ] b", "expectLine": 0 },
+    { "name": "an empty task past an empty task", "text": "- [ ] \n- [ ] ¦", "line": 1, "direction": "up", "expect": "- [ ] ¦\n- [ ] ", "expectLine": 0 }
   ],
   "_slots": "dropSlots: where the list item on `line` may land when dragged, as [before, minLevel, maxLevel]: in front of line `before` (the number of lines: at the end), on a level from minLevel to maxLevel.",
   "slots": [
@@ -505,7 +518,8 @@
     { "name": "a selection in another item stays in that item", "text": "- [ ] a\n- [ ] b\n- [ ] ¦c¦", "line": 0, "before": 3, "level": 0, "expect": "- [ ] b\n- [ ] ¦c¦\n- [ ] a", "expectLine": 2 },
     { "name": "past a code block", "text": "- [ ] a¦\n```\ncode\n```\n- [ ] b", "line": 0, "before": 5, "level": 0, "expect": "```\ncode\n```\n- [ ] b\n- [ ] a¦", "expectLine": 4 },
     { "name": "not past a table", "text": "- [ ] a¦\n\n| x |\n|---|\n\n- [ ] b", "line": 0, "before": 6, "level": 0, "expect": null },
-    { "name": "a task in a code block", "text": "```\n- [ ] a¦\n- [ ] b\n```", "line": 1, "before": 3, "level": 0, "expect": null }
+    { "name": "a task in a code block", "text": "```\n- [ ] a¦\n- [ ] b\n```", "line": 1, "before": 3, "level": 0, "expect": null },
+    { "name": "dropped past an item with the same text nothing changes", "text": "- [ ] a\n- [ ] b\n- [ ] b¦", "line": 2, "before": 1, "level": 0, "expect": null }
   ],
   "_delete": "deleteItemEdit: the item `line` belongs to goes, with everything under it. A ¦ marks the caret before and after; `expectCount` is the number of list lines that went along.",
   "delete": [
