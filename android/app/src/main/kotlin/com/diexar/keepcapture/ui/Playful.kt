@@ -80,12 +80,19 @@ fun reducedMotion(): Boolean {
     return remember(resolver) { Settings.Global.getFloat(resolver, Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f }
 }
 
-/** The paper behind a card: askew by [tilt] degrees, with its edge and a folded bottom-right corner. */
-fun DrawScope.drawPaper(fill: Brush, edge: Color, edgeWidth: Float, page: Color, fold: Color, tilt: Float) {
+/**
+ * The paper behind a card: askew by [tilt] degrees, with its edge and a folded bottom-right corner. A [highlight] edge
+ * (a selected card, a drop target) is a frame around the card, not the paper's own edge: it goes on top, so the cut-off
+ * part of the corner does not cover it (#109), as the outline does on the website.
+ */
+fun DrawScope.drawPaper(fill: Brush, edge: Color, edgeWidth: Float, page: Color, fold: Color, tilt: Float, highlight: Boolean = false) {
     val corner = CornerRadius(10.dp.toPx())
     rotate(tilt) {
+        val drawEdge = {
+            drawRoundRect(edge, topLeft = Offset(edgeWidth / 2, edgeWidth / 2), size = size.copy(size.width - edgeWidth, size.height - edgeWidth), cornerRadius = corner, style = Stroke(edgeWidth))
+        }
         drawRoundRect(fill, cornerRadius = corner)
-        drawRoundRect(edge, topLeft = Offset(edgeWidth / 2, edgeWidth / 2), size = size.copy(size.width - edgeWidth, size.height - edgeWidth), cornerRadius = corner, style = Stroke(edgeWidth))
+        if (!highlight) drawEdge()
         val w = size.width
         val h = size.height
         val f = 16.dp.toPx()
@@ -93,6 +100,7 @@ fun DrawScope.drawPaper(fill: Brush, edge: Color, edgeWidth: Float, page: Color,
         drawPath(Path().apply { moveTo(w + 1, h - f - 1); lineTo(w + 1, h + 1); lineTo(w - f - 1, h + 1); close() }, page)
         drawPath(Path().apply { moveTo(w - f, h); lineTo(w - f, h - f); lineTo(w, h - f); close() }, fold)
         drawPath(Path().apply { moveTo(w - f, h); lineTo(w - f, h - f); lineTo(w, h - f) }, edge, style = Stroke(1.dp.toPx()))
+        if (highlight) drawEdge()
     }
 }
 

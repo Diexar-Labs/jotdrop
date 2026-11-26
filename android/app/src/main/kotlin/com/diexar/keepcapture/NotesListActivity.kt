@@ -3181,7 +3181,7 @@ private fun NoteCard(
                 alpha = (p / 0.4f).coerceAtMost(1f)
                 rotationZ = -3f * (1f - p)
             }
-            .drawBehind { drawPaper(brush, edgeColor, edgeWidth, page, fold, tilt) }
+            .drawBehind { drawPaper(brush, edgeColor, edgeWidth, page, fold, tilt, highlight = isSelected || isDropTarget) }
             // Tape lies on top of the card, a photo included (Eric, 27 Oct).
             .drawWithContent {
                 drawContent()

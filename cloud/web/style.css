@@ -414,11 +414,12 @@ dialog { overscroll-behavior: contain; }
 .note-card:is(:hover, .is-hovered, :has(:focus-visible)) :is(.card-paper, .card-tape, img.card-cover) { translate: -2px -2px; }
 .note-card:is(:hover, .is-hovered, :has(:focus-visible)) .card-paper { box-shadow: 5px 5px 0 var(--amber); }
 /* The shadow lies under the folded corner then, so the cut-off bit shows amber too, not the page. */
-.note-card:is(:hover, .is-hovered, :has(:focus-visible)) .card-paper::after { background: linear-gradient(to top left, var(--amber) 50%, color-mix(in oklab, var(--note) 78%, var(--ink)) 50%); }
-/* One pixel past the paper's edge, so the turned paper's border does not shine through the cut-off bit as a thin line (Eric, 27 Oct). */
+.note-card:is(:hover, .is-hovered, :has(:focus-visible)) .card-paper::after { background-color: var(--amber); }
+/* One pixel past the paper's edge, so the turned paper's border does not shine through the cut-off bit as a thin line (Eric, 27 Oct).
+   The cut-off bit's colour fades with the shadow, so no cream triangle lies on the shadow while it comes or goes (#109). */
 .card-paper::after { content: ""; position: absolute; right: -2px; bottom: -2px; width: 17px; height: 17px; border-top-left-radius: 5px;
-  background: linear-gradient(to top left, var(--page) 50%, color-mix(in oklab, var(--note) 78%, var(--ink)) 50%);
-  filter: drop-shadow(-1px -1px 0 color-mix(in oklab, var(--line) 70%, var(--ink))); }
+  background: linear-gradient(to top left, transparent 50%, color-mix(in oklab, var(--note) 78%, var(--ink)) 50%) var(--page);
+  filter: drop-shadow(-1px -1px 0 color-mix(in oklab, var(--line) 70%, var(--ink))); transition: background-color .15s ease; }
 .note-card.is-pinned .card-tape::before { content: ""; position: absolute; top: -9px; left: 50%; width: 78px; height: 20px; translate: -50% 0; rotate: -4deg;
   background: color-mix(in srgb, var(--amber) 62%, transparent);
   clip-path: polygon(0 0, 100% 0, 94% 50%, 100% 100%, 0 100%, 6% 50%); }
@@ -455,7 +456,7 @@ html { scrollbar-color: color-mix(in srgb, var(--ink) 35%, transparent) transpar
   :is(#new-note, button.primary):not(:disabled):active { translate: 3px 3px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  :is(.card-paper, .card-tape, img.card-cover) { transition: none; }
+  :is(.card-paper, .card-tape, img.card-cover), .card-paper::after { transition: none; }
   .note-card.is-dropped, .note-card.just-pinned .card-tape::before { animation: fade-in .2s ease-out; }
   .card-stamp { animation: stamp-fade 1.8s ease-out forwards; }
 }
