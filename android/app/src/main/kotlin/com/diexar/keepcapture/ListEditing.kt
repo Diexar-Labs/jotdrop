@@ -81,12 +81,14 @@ internal fun listEnterEdit(text: String, start: Int, end: Int = start): ListEnte
  * cursor, and nothing else changed outside the line the cursor was on. That line may differ a
  * little, because keyboards often replace the word being typed (autocorrect, a suggestion) in the
  * same update as the line break. Returns the new text and cursor, or null when this was not a
- * plain Enter on a list line.
+ * plain Enter on a list line. [enter] is what Enter does there: among the ticked items that is
+ * [checkedEnterEdit].
  */
 internal fun listEnterAfterChange(
     current: String,
     next: String,
     nextCursor: Int,
+    enter: (String, Int) -> ListEnterEdit? = { text, at -> listEnterEdit(text, at, at) },
 ): Pair<String, Int>? {
     val at = nextCursor - 1
     if (at < 0 || at >= next.length || next[at] != '\n') return null
@@ -98,8 +100,65 @@ internal fun listEnterAfterChange(
     if (tail > current.length || lineStart > current.length - tail) return null
     if (!current.regionMatches(0, base, 0, lineStart)) return null
     if (!current.regionMatches(current.length - tail, base, lineEnd, tail)) return null
-    val edit = listEnterEdit(base, at, at) ?: return null
+    val edit = enter(base, at) ?: return null
     return base.replaceRange(edit.from, edit.to, edit.insert) to edit.caret
+}
+
+/**
+ * Enter among the ticked items of a list (design checklists-77-v2, 6.1): the ticked item is not split. A new empty
+ * task comes at the bottom of the open tasks of that list, as "+ List item" makes one, with the caret in it. Null when
+ * the caret at [at] is in no list.
+ */
+internal fun checkedEnterEdit(text: String, at: Int): ListEnterEdit? =
+    FormatCore.addItemEdit(text, lineOf(text, at))?.edit?.let { ListEnterEdit(it.from, it.to, it.insert, it.selFrom) }
+
+/**
+ * Enter on an empty item that stands right above the ticked items of its list, when those are shown as a part of their
+ * own (design checklists-77-v2, part 6; Eric, 26 Nov): the list is left at its end. Anywhere else Enter takes the sign
+ * of an empty item away and leaves an empty line there, but here that line would cut the ticked items off as a list of
+ * their own. So the empty item goes, and the caret comes on a new empty line under the ticked items. A CRLF text stays
+ * CRLF. Null when the caret at [at] is in no such item.
+ */
+internal fun leaveAboveChecked(text: String, at: Int): ListEnterEdit? {
+    val line = lineOf(text, at)
+    val tail = FormatCore.checkedTail(text).firstOrNull { it.from == line + 1 } ?: return null
+    val starts = lineStarts(text)
+    // Only where the core's own Enter takes the sign away and leaves the caret at the start of the line: an empty
+    // item on the main level, the caret behind its sign.
+    val plain = FormatCore.listEnterEdit(text, at, at) ?: return null
+    val from = starts[line]
+    val ticked = starts[line + 1]
+    if (plain.from != from || plain.insert.isNotEmpty() || plain.selFrom != from) return null
+    val to = if (tail.to + 1 < starts.size) starts[tail.to + 1] - 1 else text.length
+    val kept = text.substring(ticked, to)
+    if (to == text.length) {
+        // The ticked items end the text: their last line gets the `\r` of a CRLF text, the new one ends the text without.
+        val cr = if (ticked >= 2 && text[ticked - 2] == '\r' && !kept.endsWith("\r")) "\r" else ""
+        return ListEnterEdit(from, to, "$kept$cr\n")
+    }
+    val cr = if (kept.endsWith("\r")) "\r" else ""
+    return ListEnterEdit(from, to, "$kept\n$cr", from + kept.length + 1)
+}
+
+/**
+ * [text] with an empty line under it, to type on: a tap in the room under ticked items that end the note asks for it
+ * (design checklists-77-v2, part 6; Eric, 26 Nov). The line above it gets the `\r` of a CRLF text. Saving takes an
+ * empty line at the end of a note away again, so one that is not typed on leaves nothing in the note.
+ */
+internal fun withLineUnder(text: String): String {
+    val before = text.lastIndexOf('\n')
+    return text + (if (before > 0 && text[before - 1] == '\r' && !text.endsWith("\r")) "\r" else "") + "\n"
+}
+
+/**
+ * Whether [next] is [current] after a Backspace at the start of the item on the first line of the ticked items, which
+ * start at [from] in both (design checklists-77-v2, 6.1): there is no line above it in that part to join, and its box
+ * must stay. The caret stood in front of the item's words, or right behind its box.
+ */
+internal fun backspaceAtChecked(current: String, caret: Int, next: String, from: Int): Boolean {
+    if (next.length >= current.length || caret < from || caret > current.length) return false
+    val end = current.indexOf('\n', from).let { if (it < 0) current.length else it }
+    return caret <= minOf(end, from + FormatCore.linePrefix(current.substring(from, end).removeSuffix("\r")).markTo)
 }
 
 /**
@@ -218,9 +277,10 @@ internal fun renderListBullets(text: String): String {
  * is [current] with its selection ([selFrom] to [selTo]) replaced by text that has a line break in it, the caret right
  * behind it at [nextCaret]. Every line of it becomes an item of its own (FormatCore.pasteLinesEdit). The new text and
  * caret, or null when [next] is no such change or the core leaves it an ordinary paste. Ask this after the list
- * Enter: a word a keyboard finishes in the same update as Enter is typing, not a paste.
+ * Enter: a word a keyboard finishes in the same update as Enter is typing, not a paste. With [checked] the item is
+ * among the ticked items of a list, and every task it becomes is ticked (design checklists-77-v2, 6.1).
  */
-internal fun pastedLines(current: String, selFrom: Int, selTo: Int, next: String, nextCaret: Int): Pair<String, Int>? {
+internal fun pastedLines(current: String, selFrom: Int, selTo: Int, next: String, nextCaret: Int, checked: Boolean = false): Pair<String, Int>? {
     if (selFrom < 0 || selTo < selFrom || selTo > current.length || nextCaret > next.length) return null
     val size = nextCaret - selFrom
     if (size < 2 || next.length - current.length != size - (selTo - selFrom)) return null
@@ -228,7 +288,18 @@ internal fun pastedLines(current: String, selFrom: Int, selTo: Int, next: String
     if (pasted.none { it == '\n' || it == '\r' }) return null
     if (!current.regionMatches(0, next, 0, selFrom) || !current.regionMatches(selTo, next, nextCaret, current.length - selTo)) return null
     val edit = FormatCore.pasteLinesEdit(current, selFrom, selTo, pasted) ?: return null
-    return current.replaceRange(edit.from, edit.to, edit.insert) to edit.selFrom
+    val text = current.replaceRange(edit.from, edit.to, edit.insert)
+    if (!checked) return text to edit.selFrom
+    // The lines the paste made, the item it landed in included: an empty box among them gets its tick.
+    val first = lineOf(current, selFrom)
+    val lines = text.split('\n').toMutableList()
+    for (index in first..first + lines.size - current.count { it == '\n' } - 1) {
+        val prefix = FormatCore.linePrefix(lines[index].removeSuffix("\r"))
+        if (prefix.kind != "task" || prefix.checked) continue
+        val box = lines[index].indexOf('[', prefix.markFrom) + 1
+        lines[index] = lines[index].substring(0, box) + "x" + lines[index].substring(box + 1)
+    }
+    return lines.joinToString("\n") to edit.selFrom
 }
 
 /** Where a place in the text is after [edit] was made by something else than its own selection: it stays in its own text. */

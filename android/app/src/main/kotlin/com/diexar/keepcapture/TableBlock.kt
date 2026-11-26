@@ -55,60 +55,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 
-/**
- * The body in the formatted view when it holds a table (design opmaak-editor 7.2): pieces of whole lines, text (with
- * code) and tables, with one `\n` between two pieces. The body text stays the only source; the pieces are only how it
- * is shown. A body without a table is one text piece and keeps the one field it always had.
- */
-internal data class BodyPiece(val kind: String, val from: Int, val to: Int)
-
-internal fun bodyPieces(text: String): List<BodyPiece> {
-    val out = mutableListOf<BodyPiece>()
-    for (block in FormatCore.blocks(text)) {
-        val kind = if (block.kind == "table") "table" else "text"
-        val last = out.lastOrNull()
-        if (kind == "text" && last?.kind == "text") out[out.size - 1] = last.copy(to = block.to)
-        else out += BodyPiece(kind, block.from, block.to)
-    }
-    return out
-}
-
-/** Whether [after] can be [before] with only its part between [from] and [to] changed. */
-internal fun changedOnlyIn(before: String, after: String, from: Int, to: Int): Boolean =
-    from in 0..to && to <= before.length && after.length >= from + (before.length - to) &&
-        after.regionMatches(0, before, 0, from) && after.regionMatches(after.length - (before.length - to), before, to, before.length - to)
-
-/**
- * The pieces stay as they are while a text piece has the focus, so typing never splits the field under the caret
- * (a table typed by hand turns into a grid when the focus leaves). Any other change lays the body out again.
- */
-internal class PieceLayout {
-    private var text: String? = null
-    private var key: Any? = null
-    private var pieces: List<BodyPiece> = emptyList()
-    /** The text piece that has the focus, or -1. */
-    var focused = -1
-
-    fun update(next: String, key: Any): List<BodyPiece> {
-        val before = text
-        if (before == next && key == this.key) return pieces
-        val piece = pieces.getOrNull(focused)
-        pieces = if (before != null && key == this.key && piece?.kind == "text" && changedOnlyIn(before, next, piece.from, piece.to)) {
-            val delta = next.length - before.length
-            pieces.mapIndexed { i, it ->
-                when {
-                    i < focused -> it
-                    i == focused -> it.copy(to = it.to + delta)
-                    else -> it.copy(from = it.from + delta, to = it.to + delta)
-                }
-            }
-        } else bodyPieces(next)
-        text = next
-        this.key = key
-        return pieces
-    }
-}
-
 /** The cell that has the focus, for the table bar: [format] applies Bold, Italic or Highlight to the text in it. */
 internal data class TableCell(
     val table: Int, val row: Int, val column: Int, val rows: Int, val columns: Int,

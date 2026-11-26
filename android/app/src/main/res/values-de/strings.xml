@@ -135,6 +135,13 @@
     <string name="list_uncheck_all">Alle Häkchen entfernen</string>
     <string name="list_delete_checked">Abgehakte Einträge löschen</string>
     <string name="notice_dismiss">Schließen</string>
+    <string name="list_add_item">Listeneintrag</string>
+    <plurals name="checked_items">
+        <item quantity="one">%d abgehakter Eintrag</item>
+        <item quantity="other">%d abgehakte Einträge</item>
+    </plurals>
+    <string name="checked_items_show">Abgehakte Einträge einblenden</string>
+    <string name="checked_items_hide">Abgehakte Einträge ausblenden</string>
     <plurals name="notice_item_deleted_subs">
         <item quantity="one">Eintrag und %d Untereintrag gelöscht</item>
         <item quantity="other">Eintrag und %d Untereinträge gelöscht</item>

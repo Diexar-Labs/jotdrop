@@ -466,6 +466,13 @@
     <string name="list_uncheck_all">Uncheck all items</string>
     <string name="list_delete_checked">Delete checked items</string>
     <string name="notice_dismiss">Dismiss</string>
+    <string name="list_add_item">List item</string>
+    <plurals name="checked_items">
+        <item quantity="one">%d checked item</item>
+        <item quantity="other">%d checked items</item>
+    </plurals>
+    <string name="checked_items_show">Show checked items</string>
+    <string name="checked_items_hide">Hide checked items</string>
     <plurals name="notice_item_deleted_subs">
         <item quantity="one">Item and %d sub-item deleted</item>
         <item quantity="other">Item and %d sub-items deleted</item>

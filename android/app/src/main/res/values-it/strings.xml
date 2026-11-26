@@ -135,6 +135,13 @@
     <string name="list_uncheck_all">Togli tutte le spunte</string>
     <string name="list_delete_checked">Elimina gli elementi spuntati</string>
     <string name="notice_dismiss">Chiudi</string>
+    <string name="list_add_item">Elemento dell\'elenco</string>
+    <plurals name="checked_items">
+        <item quantity="one">%d elemento spuntato</item>
+        <item quantity="other">%d elementi spuntati</item>
+    </plurals>
+    <string name="checked_items_show">Mostra gli elementi spuntati</string>
+    <string name="checked_items_hide">Nascondi gli elementi spuntati</string>
     <plurals name="notice_item_deleted_subs">
         <item quantity="one">Elemento e %d sottoelemento eliminati</item>
         <item quantity="other">Elemento e %d sottoelementi eliminati</item>
