@@ -135,6 +135,13 @@
     <string name="list_uncheck_all">Desmarcar todos los elementos</string>
     <string name="list_delete_checked">Borrar los elementos marcados</string>
     <string name="notice_dismiss">Cerrar</string>
+    <string name="list_add_item">Elemento de lista</string>
+    <plurals name="checked_items">
+        <item quantity="one">%d elemento marcado</item>
+        <item quantity="other">%d elementos marcados</item>
+    </plurals>
+    <string name="checked_items_show">Mostrar los elementos marcados</string>
+    <string name="checked_items_hide">Ocultar los elementos marcados</string>
     <plurals name="notice_item_deleted_subs">
         <item quantity="one">Elemento y %d subelemento borrados</item>
         <item quantity="other">Elemento y %d subelementos borrados</item>

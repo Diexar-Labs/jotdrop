@@ -135,6 +135,13 @@
     <string name="list_uncheck_all">Décocher tous les éléments</string>
     <string name="list_delete_checked">Supprimer les éléments cochés</string>
     <string name="notice_dismiss">Fermer</string>
+    <string name="list_add_item">Élément de liste</string>
+    <plurals name="checked_items">
+        <item quantity="one">%d élément coché</item>
+        <item quantity="other">%d éléments cochés</item>
+    </plurals>
+    <string name="checked_items_show">Afficher les éléments cochés</string>
+    <string name="checked_items_hide">Masquer les éléments cochés</string>
     <plurals name="notice_item_deleted_subs">
         <item quantity="one">Élément et %d sous-élément supprimés</item>
         <item quantity="other">Élément et %d sous-éléments supprimés</item>

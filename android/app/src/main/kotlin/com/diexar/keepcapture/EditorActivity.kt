@@ -102,7 +102,9 @@ import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddAPhoto
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Draw
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.AttachFile
@@ -181,6 +183,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.CustomAccessibilityAction
@@ -335,6 +338,12 @@ private fun EditorScreen(
     var tableFocus by remember { mutableStateOf<TableFocus?>(null) }
     var confirmTableDelete by remember { mutableStateOf<Int?>(null) }
     var layoutKey by remember { mutableIntStateOf(0) }
+    // The ticked items of a list as a part of their own under a header (design checklists-77-v2, part 6): only with
+    // "Move checked items to the bottom". [acts] counts the changes to the body that were not typed: those cut that
+    // part out again at once. Whether the part is folded is kept per note, on this phone.
+    var moveChecked by remember { mutableStateOf(Storage.getMoveChecked(context)) }
+    var acts by remember { mutableIntStateOf(0) }
+    var checkedFolded by rememberSaveable { mutableStateOf(initialUri?.let { EditorPrefs.checkedFolded(context, it.toString()) } == true) }
     // What the strip above the formatting bar says after a list action, with Undo (design checklists-77, 6.5).
     var notice by remember { mutableStateOf<EditorNotice?>(null) }
     // A focus request for a grid that never came (the note went raw) must not catch a later grid.
@@ -405,10 +414,12 @@ private fun EditorScreen(
      * The one place where the body is written (check:android-navigation counts them). With a [kind] the change goes on
      * the note's undo stack: typing, a step of its own, or something the editor tidies up; Undo and Redo themselves
      * pass none. [fieldText] is the text the keyboard built its change on: after a change that is not its own it may
-     * still send one on the text from before, which is then replayed on ours (StaleField).
+     * still send one on the text from before, which is then replayed on ours (StaleField). [typed]: the change came
+     * from the body's field itself.
      */
-    fun writeBody(next: TextFieldValue, kind: EditKind?, fieldText: String = bodyText.text) {
+    fun writeBody(next: TextFieldValue, kind: EditKind?, fieldText: String = bodyText.text, typed: Boolean = false) {
         val current = bodyText
+        if (!typed && next.text != current.text) acts++
         if (kind != null && next.text != current.text) {
             history.record(EditField.BODY, current.text, next.text, kind, current.selection.start, current.selection.end, next.selection.start, next.selection.end)
             historyChanged()
@@ -722,6 +733,8 @@ private fun EditorScreen(
     fun moveItem(direction: String, line: Int? = null): Boolean {
         val current = bodyText
         val at = line ?: lineOf(current.text, current.selection.min)
+        // An item does not go past the header of the ticked items (design checklists-77-v2, 6.1), as when it is dragged.
+        if (moveChecked && !markdownMode && crossesChecked(current.text, at, direction)) return true
         val moved = FormatCore.moveItemEdit(current.text, at, direction, current.selection.min, current.selection.max)
             ?: return FormatCore.listItems(current.text).getOrElse(at) { -1 } >= 0
         replaceBody(current, moved.edit)
@@ -769,6 +782,20 @@ private fun EditorScreen(
         val current = bodyText
         val tick = FormatCore.tickEdit(current.text, line, Storage.getMoveChecked(context), current.selection.min, current.selection.max) ?: return
         replaceBody(current, tick.edit)
+    }
+
+    // "+ List item" (design checklists-77-v2, 6.1): a new empty task at the bottom of the open tasks of the list [line]
+    // is in, with the caret in it. The editor gives that place the focus, so the keyboard opens.
+    fun addItem(line: Int) {
+        val current = bodyText
+        val added = FormatCore.addItemEdit(current.text, line) ?: return
+        replaceBody(current, added.edit)
+        bodyEditing = true
+    }
+
+    fun foldChecked(folded: Boolean) {
+        checkedFolded = folded
+        currentUri?.let { EditorPrefs.setCheckedFolded(context, it, folded) }
     }
 
     fun insertEmoji(emoji: String) {
@@ -902,6 +929,7 @@ private fun EditorScreen(
                 reminderLimit = parsed.meta.reminderLimit
                 reminderDone = parsed.meta.reminderDone
                 currentUri = uriString
+                checkedFolded = EditorPrefs.checkedFolded(context, uriString)
                 // The note's own stack when it is as that stack left it; changed since (a tick on the card, the sync,
                 // another device), it starts a new one.
                 history = EditHistories.of(uriString, loadedTitle, loadedBody)
@@ -1053,6 +1081,8 @@ private fun EditorScreen(
             onSavingChange = { saving = it },
             onSaved = { newUri ->
                 if (newUri != null) currentUri = newUri.toString()
+                // A new note has its name now: what was folded in it stays folded.
+                if (newUri != null && checkedFolded) EditorPrefs.setCheckedFolded(context, newUri.toString(), true)
                 historySaved(newUri)
                 originalBody = bodyText.text
                 originalTitle = titleText
@@ -1299,7 +1329,6 @@ private fun EditorScreen(
                                         onClick = { editorMenuOpen = false; deleteChecked() },
                                     )
                                     // The menu stays open, so the ✓ shows at once.
-                                    var moveChecked by remember { mutableStateOf(Storage.getMoveChecked(context)) }
                                     DropdownMenuItem(
                                         text = { Text(stringResource(R.string.move_checked_label) + if (moveChecked) "  ✓" else "") },
                                         leadingIcon = { Icon(Icons.Filled.VerticalAlignBottom, null) },
@@ -1475,7 +1504,7 @@ private fun EditorScreen(
                 else -> EditorBody(
                     showReminder = Storage.spaceIdOf(initialUri) == null,
                     value = bodyText,
-                    onValueChange = { field, keep ->
+                    onValueChange = { field, keep, checked ->
                         val current = bodyText
                         // Right after a list edit the field can still send changes on the text from before it.
                         val replayed = staleBody.replay(current.text, field.text)
@@ -1486,22 +1515,35 @@ private fun EditorScreen(
                         )).let { current.backspacing(it, !markdownMode) }
                         val start = current.selection.min
                         val end = current.selection.max
+                        // Among the ticked items of a list ([checked], design checklists-77-v2, 6.1) three things keep
+                        // that part ticked: Enter makes a new task with the open tasks and splits nothing, a paste of
+                        // lines makes ticked tasks, and Backspace at the start of the first item does nothing. Right
+                        // above that part, Enter on an empty item leaves the list at its end: under the ticked items
+                        // (Eric, 26 Nov). [reached]: such an Enter changed the body outside the field it was typed in.
+                        val aboveChecked = !checked && keep != null && moveChecked && !markdownMode
+                        var reached = false
+                        val reaching: (String, Int) -> ListEnterEdit? = { text, at ->
+                            (if (checked) checkedEnterEdit(text, at) else if (aboveChecked) leaveAboveChecked(text, at) else null)?.also { reached = true }
+                        }
+                        val enter: (String, Int) -> ListEnterEdit? = { text, at -> reaching(text, at) ?: listEnterEdit(text, at, at) }
                         // Only a committed single newline; leave bulk edits and IME composition alone.
                         val edit = if (next.composition == null && next.selection.collapsed &&
                             next.selection.start == start + 1 &&
                             next.text == current.text.replaceRange(start, end, "\n")
-                        ) listEnterEdit(current.text, start, end) else null
+                        ) (if (checked || start == end) reaching(current.text, start) else null) ?: listEnterEdit(current.text, start, end) else null
                         // Keyboards often swap the word being typed in the same update as Enter.
                         val changed = if (edit == null && next.composition == null && next.selection.collapsed &&
                             next.text != current.text
-                        ) listEnterAfterChange(current.text, next.text, next.selection.start) else null
+                        ) listEnterAfterChange(current.text, next.text, next.selection.start, enter) else null
                         // Text of several lines that lands in a list item, a paste mostly, becomes an item per line
                         // (design checklists-77, 6.6). After the two Enters: a word the keyboard finishes along with
                         // Enter is typing.
                         val pasted = if (edit == null && changed == null && next.composition == null && next.selection.collapsed &&
                             next.text != current.text
-                        ) pastedLines(current.text, start, end, next.text, next.selection.start) else null
+                        ) pastedLines(current.text, start, end, next.text, next.selection.start, checked) else null
+                        val held = checked && keep != null && current.selection.collapsed && backspaceAtChecked(current.text, start, next.text, keep.first)
                         val shown = when {
+                            held -> current
                             edit != null -> TextFieldValue(
                                 text = current.text.replaceRange(edit.from, edit.to, edit.insert),
                                 selection = TextRange(edit.caret),
@@ -1521,7 +1563,10 @@ private fun EditorScreen(
                         }.let { current.leavingEmptyPair(it) }.let { result ->
                             // A text piece next to a table: what the pipeline makes of its change may not reach into
                             // the table (a Backspace that joins the line above); then it is the field's own change.
-                            if (keep == null || changedOnlyIn(current.text, result.text, keep.first, current.text.length - keep.second)) result else field
+                            // Enter among the ticked items is meant to reach out of them: its task comes above them.
+                            // And Enter on an empty item above them reaches past them.
+                            if (keep == null || reached ||
+                                changedOnlyIn(current.text, result.text, keep.first, current.text.length - keep.second)) result else field
                         }
                         // For Undo: a list Enter and a paste of lines are steps of their own, an empty pair that went
                         // because the caret left it is the editor's own tidying, and the rest is typing.
@@ -1531,8 +1576,15 @@ private fun EditorScreen(
                             next.text == current.text -> EditKind.CLEANUP
                             else -> EditKind.TYPING
                         }
-                        writeBody(shown, kind, field.text)
+                        // Enter among the ticked items put a task in front of them, and Enter on an empty item above
+                        // them put the caret under them: that is no typing in the field it came from.
+                        writeBody(shown, kind, field.text, typed = !reached)
                     },
+                    checkedParts = moveChecked,
+                    acts = acts,
+                    folded = checkedFolded,
+                    onFold = ::foldChecked,
+                    onAddItem = ::addItem,
                     formatted = !markdownMode,
                     tableBackground = bg,
                     layoutKey = layoutKey,
@@ -1651,7 +1703,7 @@ private fun EditorScreen(
                     canItem = { action ->
                         val at = lineOf(bodyText.text, bodyText.selection.min)
                         if (action == "delete") FormatCore.listItems(bodyText.text).getOrElse(at) { -1 } >= 0
-                        else FormatCore.moveItemEdit(bodyText.text, at, action) != null
+                        else FormatCore.moveItemEdit(bodyText.text, at, action) != null && !(moveChecked && !markdownMode && crossesChecked(bodyText.text, at, action))
                     },
                     onEmoji = ::insertEmoji,
                     onMarkdown = {
@@ -1890,9 +1942,17 @@ private fun EditorScreen(
 private fun EditorBody(
     showReminder: Boolean = true,
     value: TextFieldValue,
-    // The second value: from a text piece of a body with a table, how much of the body before and after that piece
-    // must stay as it is (null: the whole body is one field).
-    onValueChange: (TextFieldValue, kotlin.Pair<Int, Int>?) -> Unit,
+    // The second value: from a piece of a body that is shown in pieces, how much of the body before and after that
+    // piece must stay as it is (null: the whole body is one field). The third: the piece holds the ticked items of a list.
+    onValueChange: (TextFieldValue, kotlin.Pair<Int, Int>?, Boolean) -> Unit,
+    // The ticked end of a list as a part of its own (design checklists-77-v2, part 6): whether the body has such parts
+    // ("Move checked items to the bottom" is on), how many changes to it were not typed, whether the parts are folded,
+    // and "+ List item" for the list a line is in.
+    checkedParts: Boolean = false,
+    acts: Int = 0,
+    folded: Boolean = false,
+    onFold: (Boolean) -> Unit = {},
+    onAddItem: (Int) -> Unit = {},
     bodyEditing: Boolean,
     onEditBody: () -> Unit,
     onTick: (Int) -> Unit,
@@ -1957,20 +2017,53 @@ private fun EditorBody(
         else renderPreviewAnnotated(value.text, foreground, underlineLinks = false)
     }
     val previewLinks = preview.getStringAnnotations("URL", 0, preview.length)
-    // A body with a table is shown in pieces (text, table, text) in the formatted view; without a table it stays one field.
+    // A body with a table is shown in pieces (text, table, text) in the formatted view, and so is one with the ticked
+    // end of a list ([checkedParts]); without either it stays one field.
     val pieceLayout = remember { PieceLayout() }
     var relayout by remember { mutableIntStateOf(0) }
     var focusText by remember { mutableStateOf<Int?>(null) }
-    val pieces = if (formatted && !bodyTooTall && value.text.length <= FORMAT_RAW_ABOVE) {
-        pieceLayout.update(value.text, Triple(layoutKey, relayout, formatted))
-    } else emptyList()
+    // The piece that holds the caret should get the focus: "+ List item" puts the caret in its new task.
+    var focusCaret by remember { mutableStateOf(false) }
+    val laidOut = formatted && value.text.length <= FORMAT_RAW_ABOVE
+    val pieces = when {
+        bodyTooTall -> emptyList()
+        laidOut -> pieceLayout.update(value.text, listOf(layoutKey, relayout, checkedParts), checkedParts, value.selection.min, acts)
+        // With the Markdown switch on, and in a note too long to format, the body is one text.
+        else -> pieceLayout.whole(value.text)
+    }
     // A note that is only a table is one piece too: it is still a grid (with the strips above and below to type in).
-    val split = pieces.size > 1 || pieces.singleOrNull()?.kind == "table"
-    // Each piece's number among its own kind: the keys text-0, table-0, text-1 keep a field's focus when only its text changes.
+    val split = pieces.size > 1 || pieces.singleOrNull()?.let { it.kind != "text" } == true
+    // A table's and a text piece's number among its own kind. A table keeps its grid by it; a text or checked piece
+    // keeps its field by its id (see PieceLayout).
     val ordinals = remember(pieces) {
         var texts = 0
         var tables = 0
-        pieces.map { if (it.kind == "table") tables++ else texts++ }
+        pieces.map { if (it.kind == "table") tables++ else if (it.kind == "text") texts++ else -1 }
+    }
+    // "+ List item" under the last list of the note when nothing stands under it (design checklists-77-v2, 6.1): the
+    // line it stands under, or -1. A list with ticked items at its end has the row above their header.
+    val addAtEnd = remember(value.text, pieces, checkedParts, laidOut) {
+        if (!checkedParts || !laidOut || pieces.isEmpty() || pieces.last().kind == "checked") -1 else endsInTaskList(value.text)
+    }
+    // A tick, a drop and what a screen reader does to a task leave the note where the finger is: the caret can be
+    // elsewhere, also in another piece that the task leaves or comes into. Every field of the body sees this count.
+    var quiet by remember { mutableIntStateOf(0) }
+    val quietTick: (Int) -> Unit = { quiet++; onTick(it) }
+    val quietItems = remember(items) {
+        ItemActions(
+            drop = { line, before, level -> items.drop(line, before, level).also { if (it != null) quiet++ } },
+            delete = items.delete,
+            act = { line, action -> items.act(line, action).also { if (it) quiet++ } },
+            moveKey = items.moveKey,
+        )
+    }
+    val addItem: (Int) -> Unit = { onAddItem(it); focusCaret = true }
+    // Ticked items that end the note have no text under them to put the caret in: a tap in the room under them asks for
+    // an empty line there, with the caret on it (Eric, 26 Nov).
+    val typeUnder: () -> Unit = {
+        val text = withLineUnder(value.text)
+        onReplaceBody(TextFieldValue(text, TextRange(text.length)))
+        focusCaret = true
     }
     val openLinkLabel = stringResource(R.string.action_open_link)
     fun openLink(url: String): Boolean {
@@ -2000,6 +2093,8 @@ private fun EditorBody(
     val revealScope = rememberCoroutineScope()
     LaunchedEffect(reveal) {
         val shown = reveal ?: return@LaunchedEffect
+        // What changed among ticked items that are folded away shows again: Undo never works out of sight.
+        if (folded && shown.field == EditField.BODY && pieces.any { it.kind == "checked" && shown.from >= it.from && shown.from <= it.to }) onFold(false)
         // The text is laid out again first, and the field with the caret has seen that this change was no typing.
         repeat(2) { withFrameNanos {} }
         // The scrolling goes on after the note is told it is shown: typing right after Undo follows the caret again.
@@ -2128,63 +2223,51 @@ private fun EditorBody(
             TextButton(onClick = onEditBody) {
                 Text(stringResource(R.string.editor_title_edit), color = foreground)
             }
-            if (!split) PreviewText(preview, value.text, value.text, 0, 0, places, taskLine, formatted, onTick, items, gripScroll, foreground, tableBackground, openLinkLabel, ::openLink, onEditBody, Modifier.fillMaxWidth().heightIn(min = 200.dp).padding(16.dp))
-            else Column(Modifier.fillMaxWidth().heightIn(min = 200.dp).padding(16.dp)) {
-                // The same pieces as when editing: text as text with its links, a table as a grid; a tap edits.
-                for ((i, piece) in pieces.withIndex()) key(piece.kind, ordinals[i]) {
+            if (!split) PreviewText(preview, value.text, value.text, 0, 0, places, taskLine, formatted, onTick, items, gripScroll, foreground, tableBackground, openLinkLabel, ::openLink, onEditBody, Modifier.fillMaxWidth().then(if (addAtEnd < 0) Modifier.heightIn(min = 200.dp) else Modifier).padding(16.dp), bounded = addAtEnd >= 0)
+            else Column(Modifier.fillMaxWidth().then(if (addAtEnd < 0 && pieces.last().kind != "checked") Modifier.heightIn(min = 200.dp) else Modifier).padding(16.dp)) {
+                // The same pieces as when editing: text as text with its links, a table as a grid; a tap edits. The
+                // ticked items of a list stand under their header here too.
+                for ((i, piece) in pieces.withIndex()) key(if (piece.kind == "table") "table" else "field", if (piece.kind == "table") ordinals[i] else piece.id) {
                     val part = value.text.substring(piece.from, piece.to)
+                    if (piece.kind == "checked") CheckedHeader(part, folded, foreground, 0.dp, onAdd = { addItem(lineOf(value.text, piece.from)) }, onFold = onFold)
                     if (piece.kind == "table") TableGrid(
                         index = ordinals[i], source = part, foreground = foreground, background = tableBackground, editable = false,
                         focus = null, onFocusDone = {}, onEdit = {}, onCell = {}, onTap = onEditBody,
                         modifier = Modifier.padding(vertical = 8.dp).then(revealWhole(places, piece.from, piece.to)),
-                    ) else {
+                    ) else if (piece.kind != "checked" || !folded) {
                         val shown = remember(part, foreground) { renderPreviewAnnotated(part, foreground, underlineLinks = false) }
                         val linesAbove = value.text.substring(0, piece.from).count { it == '\n' }
-                        PreviewText(shown, part, value.text, linesAbove, piece.from, places, taskLine, formatted, { onTick(linesAbove + it) }, items, gripScroll, foreground, tableBackground, openLinkLabel, ::openLink, onEditBody, Modifier.fillMaxWidth())
+                        PreviewText(shown, part, value.text, linesAbove, piece.from, places, taskLine, formatted, { onTick(linesAbove + it) }, items, gripScroll, foreground, tableBackground, openLinkLabel, ::openLink, onEditBody, Modifier.fillMaxWidth(), placeOf(pieces, i), bounded = true)
                     }
                 }
             }
-        } else if (!split) {
-            BodyTextField(
-                value = value,
-                onValueChange = { onValueChange(it, null) },
-                onTick = onTick,
-                taskLine = taskLine,
-                formatted = formatted,
-                foreground = foreground,
-                background = tableBackground,
-                placeholder = true,
-                onIndent = onIndent,
-                whole = value.text,
-                above = 0,
-                offset = 0,
-                places = places,
-                revealing = reveal != null,
-                scroll = gripScroll,
-                items = items,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 200.dp)
-                    .onFocusChanged { onBodyFocus(it.isFocused) }
-                    .then(stepKeys),
-            )
+            if (addAtEnd >= 0) AddItemRow(foreground, 16.dp) { addItem(addAtEnd) }
+            if (split && pieces.last().kind == "checked") RoomUnder(typeUnder)
         } else {
-            // A body with a table: text fields and grids under each other (design 7.2). Each text field shows its own
-            // part of the body; its changes go back as a change of the whole body, through the same input pipeline.
+            // The body's pieces under each other: a text field for each piece of text, a grid for a table (design 7.2),
+            // and a field under a header for the ticked items of a list. Mostly that is one text field with the whole
+            // body. Each field shows its own part of the body; its changes go back as a change of the whole body,
+            // through the same input pipeline. One loop for every body: a field then stays the same field when the
+            // body goes from one piece to several, and the keyboard with it.
             val first = pieces.first()
             if (first.kind == "table") EdgeStrip(R.string.table_type_above, foreground) {
                 val cr = if (value.text.substring(first.from, value.text.indexOf('\n', first.from).let { if (it < 0) first.to else it }).endsWith("\r")) "\r" else ""
                 onReplaceBody(TextFieldValue("$cr\n$cr\n" + value.text, TextRange(0)))
                 focusText = 0
             }
-            for ((i, piece) in pieces.withIndex()) key(piece.kind, ordinals[i]) {
+            // The key is the first thing in every round, and no round is left early: a field then goes along when its
+            // piece gets another place among the pieces (a jump in the loop, or a condition around the key, would keep
+            // every field in its own round, and the keyboard would close when the caret's task is ticked).
+            for ((i, piece) in pieces.withIndex()) key(if (piece.kind == "table") "table" else "field", if (piece.kind == "table") ordinals[i] else piece.id) {
                 val part = value.text.substring(piece.from, piece.to)
+                // The ticked items of a list: "+ List item" and their header above them, and nothing of them when folded.
+                if (piece.kind == "checked") CheckedHeader(part, folded, foreground, bodyFieldPadding, onAdd = { addItem(lineOf(value.text, piece.from)) }, onFold = onFold)
                 if (piece.kind == "table") TableGrid(
                     index = ordinals[i], source = part, foreground = foreground, background = tableBackground, editable = true,
                     focus = tableFocus, onFocusDone = onTableFocusDone, onEdit = { op -> onTableEdit(ordinals[i], op) },
                     onCell = onCell, onTap = {},
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp).then(revealWhole(places, piece.from, piece.to)).then(stepKeys),
-                ) else {
+                ) else if (piece.kind != "checked" || !folded) {
                 val prefix = piece.from
                 val suffix = value.text.length - piece.to
                 fun local(at: Int) = (at - prefix).coerceIn(0, part.length)
@@ -2192,17 +2275,23 @@ private fun EditorBody(
                 val pieceValue = TextFieldValue(part, TextRange(local(value.selection.start), local(value.selection.end)),
                     composition?.let { TextRange(it.start - prefix, it.end - prefix) })
                 val whole = value.text
+                val checked = piece.kind == "checked"
+                // The whole body in one field.
+                val alone = pieces.size == 1
                 var had by remember { mutableStateOf(false) }
                 val requester = remember { FocusRequester() }
                 val last = i == pieces.lastIndex
-                LaunchedEffect(focusText) {
-                    if (focusText == ordinals[i] || (focusText == Int.MAX_VALUE && last)) {
+                val holdsCaret = value.selection.min >= piece.from && value.selection.min <= piece.to
+                LaunchedEffect(focusText, focusCaret, holdsCaret) {
+                    if ((piece.kind == "text" && (focusText == ordinals[i] || (focusText == Int.MAX_VALUE && last))) || (focusCaret && holdsCaret)) {
                         withFrameNanos {}
                         runCatching { requester.requestFocus() }
                         focusText = null
+                        focusCaret = false
                     }
                 }
                 DisposableEffect(Unit) { onDispose { if (had) { pieceLayout.focused = -1; onBodyFocus(false) } } }
+                val linesAbove = remember(whole, prefix) { lineOf(whole, prefix) }
                 BodyTextField(
                     value = pieceValue,
                     onValueChange = { field ->
@@ -2211,38 +2300,47 @@ private fun EditorBody(
                             TextRange(field.selection.start + prefix, field.selection.end + prefix),
                             field.composition?.let { TextRange(it.start + prefix, it.end + prefix) },
                         )
-                        onValueChange(next, prefix to suffix)
+                        onValueChange(next, if (alone && !checked) null else prefix to suffix, checked)
                     },
-                    onTick = { line -> onTick(whole.substring(0, prefix).count { it == '\n' } + line) },
+                    onTick = { line -> quietTick(linesAbove + line) },
                     taskLine = taskLine,
-                    formatted = true,
+                    formatted = formatted,
                     foreground = foreground,
                     background = tableBackground,
-                    placeholder = false,
+                    placeholder = alone && !checked,
                     onIndent = onIndent,
                     whole = whole,
-                    above = remember(whole, prefix) { lineOf(whole, prefix) },
+                    above = linesAbove,
                     offset = prefix,
                     places = places,
                     revealing = reveal != null,
+                    quiet = quiet,
                     scroll = gripScroll,
-                    items = items,
+                    items = quietItems,
+                    place = placeOf(pieces, i),
+                    // Only a text that is the whole body, with no row of the editor under it, lets an item go past its edge.
+                    bounded = !alone || checked || addAtEnd >= 0,
+                    // The ticked items and the text around them stand as close as the lines of one text: their rows are between them.
+                    roomAbove = if (checked || pieces.getOrNull(i - 1)?.kind == "checked") 0.dp else bodyFieldPadding,
+                    roomUnder = if (pieces.getOrNull(i + 1)?.let { it.kind != "table" } == true || (last && addAtEnd >= 0)) 0.dp else bodyFieldPadding,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .then(if (last) Modifier.heightIn(min = 120.dp) else Modifier)
+                        .then(if (last && !checked && addAtEnd < 0) Modifier.heightIn(min = if (alone) 200.dp else 120.dp) else Modifier)
                         .then(stepKeys)
                         .focusRequester(requester)
                         .onFocusChanged { state ->
                             if (state.isFocused == had) return@onFocusChanged
                             had = state.isFocused
-                            if (had) pieceLayout.focused = i
-                            else if (pieceLayout.focused == i) { pieceLayout.focused = -1; relayout++ }
+                            if (had) pieceLayout.focused = piece.id
+                            else if (pieceLayout.focused == piece.id) { pieceLayout.focused = -1; relayout++ }
                             onBodyFocus(had)
                         },
                 )
                 }
             }
+            if (addAtEnd >= 0) AddItemRow(foreground, bodyFieldPadding) { addItem(addAtEnd) }
             val end = pieces.last()
+            if (end.kind == "checked") RoomUnder(typeUnder)
             if (end.kind == "table") EdgeStrip(R.string.table_type_below, foreground) {
                 val cr = if (value.text.substring(end.from, value.text.indexOf('\n', end.from).let { if (it < 0) end.to else it }).endsWith("\r")) "\r" else ""
                 val text = value.text + "$cr\n$cr\n"
@@ -2287,14 +2385,24 @@ private fun BodyTextField(
     whole: String,
     above: Int,
     // Where this field's text starts in the body, where it tells how to show a place in its text, and whether Undo or
-    // Redo is showing one now: then the note goes there, not to the caret.
+    // Redo is showing one now: then the note goes there, not to the caret. [quiet] counts the ticks, the drops and
+    // what a screen reader did to a task anywhere in the body: those leave the note where it is too.
     offset: Int,
     places: RevealPlaces,
     revealing: Boolean,
+    quiet: Int,
     scroll: GripScroll?,
     items: ItemActions,
+    // How this field lies among the pieces of the body when the ticked end of a list is one, whether it is one of
+    // several pieces (an item that is dragged then stays inside it), and the room above and under its text: none on
+    // the side where the rows around the ticked items stand.
+    place: PiecePlace = PiecePlace.FREE,
+    bounded: Boolean = false,
+    roomAbove: androidx.compose.ui.unit.Dp = bodyFieldPadding,
+    roomUnder: androidx.compose.ui.unit.Dp = bodyFieldPadding,
     modifier: Modifier,
 ) {
+    val room = PaddingValues(start = bodyFieldPadding, top = roomAbove, end = bodyFieldPadding, bottom = roomUnder)
     val bodyColors = TextFieldDefaults.colors(
         focusedContainerColor = Color.Transparent,
         unfocusedContainerColor = Color.Transparent,
@@ -2333,23 +2441,16 @@ private fun BodyTextField(
         if (focused && (next < 0 || next >= value.selection.max)) lineOf(value.text, value.selection.min) else -1
     }
     // A tick leaves the note where the finger is; the caret comes back into view when it or the text changes again.
-    // The same goes for an item that is dropped, and for what a screen reader does to a task: the caret can be elsewhere.
-    var ticking by remember { mutableStateOf(false) }
-    val gripActions = remember(items) {
-        ItemActions(
-            drop = { line, before, level -> items.drop(line, before, level).also { if (it != null) ticking = true } },
-            delete = items.delete,
-            act = { line, action -> items.act(line, action).also { if (it) ticking = true } },
-            moveKey = items.moveKey,
-        )
-    }
+    // The same goes for an item that is dropped, and for what a screen reader does to a task: the caret can be elsewhere,
+    // also in another field of the body ([quiet] counts them for all fields).
+    val heard = remember { intArrayOf(quiet) }
     var afterTick by remember { mutableStateOf<kotlin.Pair<String, TextRange>?>(null) }
     val margin = with(LocalDensity.current) { 24.dp.toPx() }
-    LaunchedEffect(value.text, value.selection, bodyLayout, focused) {
+    LaunchedEffect(value.text, value.selection, bodyLayout, focused, quiet) {
         val layout = bodyLayout
         val now = value.text to value.selection
-        if (ticking || revealing) {
-            ticking = false
+        if (quiet != heard[0] || revealing) {
+            heard[0] = quiet
             afterTick = now
         }
         if (!focused || layout == null || afterTick == now) return@LaunchedEffect
@@ -2395,18 +2496,18 @@ private fun BodyTextField(
                 interactionSource = interaction,
                 placeholder = if (placeholder) ({ Text(stringResource(R.string.editor_hint), color = foreground.copy(alpha = 0.5f)) }) else null,
                 colors = bodyColors,
-                contentPadding = PaddingValues(bodyFieldPadding),
+                contentPadding = room,
             )
         },
     )
     }
     // Over the text itself, which stands [bodyFieldPadding] inside the field. The boxes' places to tap lie here too,
     // under the handles: in the field a finger that stayed on a box was a long press as well, and picked a word.
-    Box(Modifier.matchParentSize().padding(bodyFieldPadding)) {
+    Box(Modifier.matchParentSize().padding(room)) {
         if (formatted) {
-            TaskBoxes(boxes, bodyLayout, onAction = { line, action -> gripActions.act(above + line, action) }) { ticking = true; onTick(it) }
-            ListGrips(bands, boxes, laid.starts, bodyLayout, metrics, whole, above, caretLine, foreground, background, scroll, gripActions) { ticking = true; onTick(it) }
-        } else ListGrips(bands, rawTasks, rawStarts, bodyLayout, metrics, whole, above, caretLine, foreground, background, scroll, gripActions, raw = true) {}
+            TaskBoxes(boxes, bodyLayout, onAction = { line, action -> items.act(above + line, action) }, onTick = onTick)
+            ListGrips(bands, boxes, laid.starts, bodyLayout, metrics, whole, above, caretLine, foreground, background, scroll, items, place = place, bounded = bounded, onTick = onTick)
+        } else ListGrips(bands, rawTasks, rawStarts, bodyLayout, metrics, whole, above, caretLine, foreground, background, scroll, items, raw = true) {}
     }
     }
 }
@@ -2533,6 +2634,8 @@ private fun PreviewText(
     openLink: (String) -> Boolean,
     onEditBody: () -> Unit,
     modifier: Modifier,
+    place: PiecePlace = PiecePlace.FREE,
+    bounded: Boolean = false,
 ) {
     val links = preview.getStringAnnotations("URL", 0, preview.length)
     var previewLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
@@ -2570,7 +2673,7 @@ private fun PreviewText(
                 }
             },
         )
-        if (lists) Box(Modifier.matchParentSize()) { ListGrips(bands, boxes, laid.starts, previewLayout, metrics, whole, above, -1, foreground, background, scroll, items, onTick = onTick) }
+        if (lists) Box(Modifier.matchParentSize()) { ListGrips(bands, boxes, laid.starts, previewLayout, metrics, whole, above, -1, foreground, background, scroll, items, place = place, bounded = bounded, onTick = onTick) }
         Box(Modifier.matchParentSize()) { TaskBoxes(boxes, previewLayout, onAction = { line, action -> items.act(above + line, action) }, onTick = onTick) }
     }
 }
@@ -2627,6 +2730,86 @@ private fun revealWhole(places: RevealPlaces, from: Int, to: Int): Modifier {
         onDispose { places.remove(part) }
     }
     return Modifier.bringIntoViewRequester(view)
+}
+
+/** How piece [index] of [pieces] lies for an item that is dragged in it: see [PiecePlace]. */
+private fun placeOf(pieces: List<BodyPiece>, index: Int): PiecePlace = when {
+    pieces[index].kind == "checked" -> PiecePlace.CHECKED
+    pieces.getOrNull(index - 1)?.kind == "checked" -> PiecePlace.UNDER_CHECKED
+    else -> PiecePlace.FREE
+}
+
+/** The words of the rows around the ticked items of a list stand where the words of a task stand: past its box. */
+private val CHECKED_ROW_ICON = 20.dp
+
+/**
+ * "+ List item" (design checklists-77-v2, 6.1): a row that puts a new empty task at the bottom of the open tasks of a
+ * list. [inset] is the room between the row's edge and the body's text.
+ */
+@Composable
+private fun AddItemRow(foreground: Color, inset: androidx.compose.ui.unit.Dp, onClick: () -> Unit) {
+    val shift = with(LocalDensity.current) { TASK_SHIFT.sp.toDp() }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 44.dp)
+            .clickable(role = Role.Button, onClick = onClick)
+            .padding(start = inset + shift, end = inset),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Filled.Add, contentDescription = null, tint = foreground.copy(alpha = 0.65f), modifier = Modifier.size(CHECKED_ROW_ICON))
+        Spacer(Modifier.width(5.dp))
+        Text(stringResource(R.string.list_add_item), color = foreground.copy(alpha = 0.65f), style = MaterialTheme.typography.bodyLarge)
+    }
+}
+
+/**
+ * The rows above the ticked items of a list (design checklists-77-v2, 6.1): "+ List item", and the header that counts
+ * the ticked tasks in [part] and folds them away or shows them again. Folded and open differ in the arrow's shape, not
+ * only in a color.
+ */
+@Composable
+private fun CheckedHeader(part: String, folded: Boolean, foreground: Color, inset: androidx.compose.ui.unit.Dp, onAdd: () -> Unit, onFold: (Boolean) -> Unit) {
+    val count = remember(part) { listRows(part).count { it?.kind == "task" } }
+    val shift = with(LocalDensity.current) { TASK_SHIFT.sp.toDp() }
+    AddItemRow(foreground, inset, onAdd)
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 44.dp)
+            .clickable(
+                onClickLabel = stringResource(if (folded) R.string.checked_items_show else R.string.checked_items_hide),
+                role = Role.Button,
+                onClick = { onFold(!folded) },
+            )
+            .padding(start = inset + shift, end = inset),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            if (folded) Icons.AutoMirrored.Filled.KeyboardArrowRight else Icons.Filled.KeyboardArrowDown,
+            contentDescription = null, tint = foreground.copy(alpha = 0.65f), modifier = Modifier.size(CHECKED_ROW_ICON),
+        )
+        Spacer(Modifier.width(5.dp))
+        Text(pluralStringResource(R.plurals.checked_items, count, count), color = foreground.copy(alpha = 0.65f), style = MaterialTheme.typography.bodyLarge)
+    }
+}
+
+/**
+ * The room under ticked items that end the note (design checklists-77-v2, part 6; Eric, 26 Nov): there is no text there
+ * to put the caret in, so a tap in it asks for a line to type on ([onClick]). It is as high as the room an empty last
+ * text has, and shows nothing: a note that is only a list looks as calm as it did. A screen reader names it as the
+ * place to write.
+ */
+@Composable
+private fun RoomUnder(onClick: () -> Unit) {
+    val name = stringResource(R.string.editor_hint)
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(120.dp)
+            .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null, role = Role.Button, onClick = onClick)
+            .semantics { contentDescription = name },
+    )
 }
 
 /** A strip to type above or below a table at the very start or end of the note (design 5.4). */

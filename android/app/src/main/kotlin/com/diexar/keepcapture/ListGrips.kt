@@ -131,9 +131,11 @@ private fun CharSequence.hasRightToLeft() = any { it.code in 0x0590..0x08FF || i
  *
  * [boxes] are the tasks, [starts] where each line of this text starts in the text as shown and [layout] how it is laid
  * out. [whole] is the whole body and [above] the number of its lines above this text (a body with a table is shown in
- * pieces). [caret] is the line with the caret, or -1: no cross (the read view has no caret). With [raw] the text shows
- * its Markdown signs: a list is not moved aside there, so the handle is as wide as the margin, and a tap on it ticks
- * nothing. A screen reader does not see the handles (it cannot drag): the box has the same moves as actions.
+ * pieces; [place] says how this piece lies when the ticked end of a list is one: an item is not dragged past the header
+ * of the ticked items, and with [bounded] it is not drawn outside its own piece either). [caret] is the line with the
+ * caret, or -1: no cross (the read view has no caret). With [raw] the text shows its Markdown signs: a list is not moved
+ * aside there, so the handle is as wide as the margin, and a tap on it ticks nothing. A screen reader does not see the
+ * handles (it cannot drag): the box has the same moves as actions.
  */
 @Composable
 internal fun ListGrips(
@@ -150,6 +152,8 @@ internal fun ListGrips(
     scroll: GripScroll?,
     actions: ItemActions,
     raw: Boolean = false,
+    place: PiecePlace = PiecePlace.FREE,
+    bounded: Boolean = false,
     onTick: (Int) -> Unit,
 ) {
     DisposableEffect(bands) { onDispose { bands.clear() } }
@@ -181,6 +185,8 @@ internal fun ListGrips(
     bands.shown = GripsShown(
         heights, starts, boxes, byLine, layout, whole, above, mayRtl, actions, onTick, foreground, background, scroll,
         caret = caret,
+        place = place,
+        bounded = bounded,
         margin = margin.toFloat(),
         dotsAt = with(density) { (if (raw) HANDLE_DOTS_RAW else HANDLE_DOTS_AT).toPx() },
         crossAt = crossReach / 2f,
@@ -229,7 +235,7 @@ internal fun ListGrips(
         val box = now.byLine[line] ?: return null
         val span = FormatCore.itemSpan(now.whole, now.above + line) ?: return null
         val level = FormatCore.listLevels(now.whole).getOrElse(now.above + line) { -1 }
-        val slots = dropSlotsIn(now.whole, now.above, line)
+        val slots = dropSlotsIn(now.whole, now.above, line, lines.lines, now.place)
         val base = bands.origin?.takeIf { it.isAttached }
         if (level < 0 || slots.isEmpty() || base == null) return null
         val end = (span.end - now.above).coerceIn(line, lines.lines - 1)
@@ -252,7 +258,7 @@ internal fun ListGrips(
         bands.drag = null
         if (now == null || lines == null || base == null || !lines.fits || now.whole != dragging.whole || lines.lines != dragging.lines) return
         // Where the item stands now, as it is drawn.
-        val top = lines.top(dragging.line) + dragging.y - base.positionInRoot().y - dragging.grab
+        val top = lines.top(dragging.line) + bands.blockOff(now, lines, dragging, base.positionInRoot().y)
         val levels = if (to == null) 0 else minOf(to.level, LIST_LEVELS_DRAWN - 1) - minOf(dragging.level, LIST_LEVELS_DRAWN - 1)
         val after = if (to != null && (to.before != dragging.line || to.level != dragging.level)) now.actions.drop(now.above + dragging.line, now.above + to.before, to.level) else null
         // On its new place the item stands on its new level by itself; an item that goes back comes from the side.

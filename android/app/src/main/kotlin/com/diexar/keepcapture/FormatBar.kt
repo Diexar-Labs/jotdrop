@@ -102,6 +102,16 @@ internal object EditorPrefs {
         val recent = (listOf(emoji) + recentEmoji(context).filter { it != emoji }).take(8)
         prefs(context).edit().putString("recent_emoji", recent.joinToString(" ")).apply()
     }
+
+    // The notes whose ticked items are folded away (design checklists-77-v2, 6.1): open is the rule, so only these are
+    // kept, the last 300, the newest first. [note] is the note's address.
+    private fun foldedNotes(context: Context): List<String> =
+        prefs(context).getString("checked_folded", "").orEmpty().split('\n').filter { it.isNotEmpty() }
+    fun checkedFolded(context: Context, note: String): Boolean = note in foldedNotes(context)
+    fun setCheckedFolded(context: Context, note: String, folded: Boolean) {
+        val others = foldedNotes(context).filter { it != note }
+        prefs(context).edit().putString("checked_folded", ((if (folded) listOf(note) else emptyList()) + others).take(300).joinToString("\n")).apply()
+    }
 }
 
 /** The same emoji, in the same groups, as the web app (cloud/web/app.js, EMOJI). TalkBack reads each emoji's own name. */

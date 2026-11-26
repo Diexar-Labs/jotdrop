@@ -90,7 +90,7 @@ tasks.register<JavaExec>("checkCloudMail") {
 
 val listEditorClasses = layout.buildDirectory.dir("list-editor-check")
 val listEditorSources = files("app/src/main/kotlin/com/diexar/keepcapture/ListEditing.kt", "app/src/main/kotlin/com/diexar/keepcapture/FormatCore.kt",
-    "app/src/main/kotlin/com/diexar/keepcapture/ListLayout.kt", "app/src/main/kotlin/com/diexar/keepcapture/EditHistory.kt", "checks/ListEditorCheck.kt", "checks/EditHistoryCheck.kt")
+    "app/src/main/kotlin/com/diexar/keepcapture/ListLayout.kt", "app/src/main/kotlin/com/diexar/keepcapture/BodyPieces.kt", "app/src/main/kotlin/com/diexar/keepcapture/EditHistory.kt", "checks/ListEditorCheck.kt", "checks/EditHistoryCheck.kt")
 val listEditorCompile = tasks.register<JavaExec>("listEditorCompile") {
     inputs.files(listEditorSources)
     outputs.dir(listEditorClasses)

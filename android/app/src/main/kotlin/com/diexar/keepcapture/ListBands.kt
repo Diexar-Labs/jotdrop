@@ -75,6 +75,9 @@ internal class GripsShown(
     val foreground: Color, val background: Color, val scroll: GripScroll?,
     // The line with the caret, or -1: a task has its cross there, in the other margin.
     val caret: Int,
+    // How this text lies among the pieces of the body: an item stays on its side of the header of the ticked items.
+    // [bounded]: the body is shown in more than one piece, and an item that is dragged is drawn inside its own.
+    val place: PiecePlace, val bounded: Boolean,
     // In pixels: the room between the screen's edge and the text, where the dots and the cross stand in it, a level of
     // a list, and half a screen (the dots near what is in sight are drawn). [pad] is how far the frame around an item
     // reaches out of the text: its dots stand in it.
@@ -183,6 +186,16 @@ internal class ItemBands {
         return LineHeights(laid, now.starts).also { measured = it }
     }
 
+    /**
+     * How far the item of [dragging] is drawn from its own place: where the finger has it, with [base] the top of this
+     * text on the screen. In a body that is shown in pieces it stops at the edge of its own piece ([keptInPiece]).
+     */
+    fun blockOff(now: GripsShown, heights: LineHeights, dragging: ItemDrag, base: Float): Float {
+        val off = dragging.y - base - dragging.grab
+        return if (!now.bounded) off
+        else keptInPiece(off, heights.top(dragging.line), heights.bottom(dragging.end), heights.top(0), heights.bottom(heights.lines - 1))
+    }
+
     fun clear() {
         shown = null
         drag = null
@@ -242,7 +255,7 @@ internal class ItemBands {
             val to = dragging.to
             val levels = if (to == null) 0 else minOf(to.level, LIST_LEVELS_DRAWN - 1) - minOf(dragging.level, LIST_LEVELS_DRAWN - 1)
             blockX = levels * now.levelStep * if (dragging.rtl) -1f else 1f
-            blockY = if (base == null) 0f else dragging.y - base - dragging.grab
+            blockY = if (base == null) 0f else blockOff(now, heights, dragging, base)
             glow = 1f
             lifted = 1f
             reach = dragging.height

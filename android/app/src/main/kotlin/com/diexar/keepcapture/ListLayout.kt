@@ -51,6 +51,17 @@ internal fun listRows(text: String): List<ListRow?> {
 /** Whether [text] has a task in a list: then the note's menu offers its checklist items (design checklists-77, 6.4). */
 internal fun hasTask(text: String): Boolean = '[' in text && listRows(text).any { it?.kind == "task" }
 
+/**
+ * The last line of [text] when the note ends in a list with a task in it, else -1: "+ List item" then stands under the
+ * note (design checklists-77-v2, 6.1). A note that ends in plain text is told from its last line alone.
+ */
+internal fun endsInTaskList(text: String): Int {
+    val last = text.substring(text.lastIndexOf('\n') + 1)
+    if (last.isBlank() || (FormatCore.linePrefix(last.removeSuffix("\r")).kind == "" && last[0] != ' ' && last[0] != '\t')) return -1
+    val rows = listRows(text)
+    return if (rows.lastOrNull()?.shifted == true) rows.size - 1 else -1
+}
+
 /** While an item is dragged, the finger going this far sideways, in dp, is one level in or out (design checklists-77, 6.1). */
 internal const val DRAG_LEVEL_STEP = 28f
 
@@ -192,7 +203,42 @@ internal class Settling(val line: Int, val end: Int, val low: Int, private val w
 /**
  * The places of [dropTarget] for the item on line [line] of a piece of the body (a body with a table is shown in
  * pieces), in the piece's own line numbers. [whole] is the whole body and [above] the number of its lines above the
- * piece. The core keeps an item between the tables around it, which is the piece it is shown in.
+ * piece, which has [lines] lines. The core keeps an item between the tables around it; the ticked end of a list is a
+ * piece too (design checklists-77-v2, 6.1), and there the item stays in the piece it is shown in: [place] says how that
+ * piece lies. At the top of the ticked items an item lands as a main item only, or it would hang under the open task
+ * above them. In front of the first line of a piece under ticked items it would join those, so that is no place.
  */
-internal fun dropSlotsIn(whole: String, above: Int, line: Int): List<FormatCore.Slot> =
-    FormatCore.dropSlots(whole, above + line).map { it.copy(before = it.before - above) }
+internal fun dropSlotsIn(whole: String, above: Int, line: Int, lines: Int, place: PiecePlace = PiecePlace.FREE): List<FormatCore.Slot> =
+    FormatCore.dropSlots(whole, above + line).mapNotNull { slot ->
+        val before = slot.before - above
+        when {
+            before < 0 || before > lines -> null
+            before == 0 && place == PiecePlace.UNDER_CHECKED -> null
+            before == 0 && place == PiecePlace.CHECKED -> slot.copy(before = 0, maxLevel = 0)
+            else -> slot.copy(before = before)
+        }
+    }
+
+/**
+ * How far an item that is dragged is drawn from its own place when the body is shown in pieces (design
+ * checklists-77-v2, part 6): it stops at the edge of the piece it is shown in. The other pieces draw themselves, so an
+ * item that went on would stand through their text. [off] is how far the finger took it, [itemTop] and [itemBottom]
+ * are where its own lines stand, [pieceTop] and [pieceBottom] the top of the piece's first line and the bottom of its
+ * last. Where the item lands is not decided here.
+ */
+internal fun keptInPiece(off: Float, itemTop: Float, itemBottom: Float, pieceTop: Float, pieceBottom: Float): Float =
+    maxOf(minOf(off, pieceBottom - itemBottom), pieceTop - itemTop)
+
+/**
+ * Whether Move up or Move down ([direction] "up" or "down") would take the item [line] belongs to past the header of
+ * the ticked items (design checklists-77-v2, 6.1): the item it would trade places with is in the ticked end of the
+ * list and the item itself is not, or the other way round. False too when the item has no such neighbour.
+ */
+internal fun crossesChecked(text: String, line: Int, direction: String): Boolean {
+    val moved = FormatCore.moveItemEdit(text, line, direction) ?: return false
+    val span = FormatCore.itemSpan(text, line) ?: return false
+    val other = if (direction == "up") moved.line else span.end + 1
+    val tails = FormatCore.checkedTail(text)
+    fun ticked(at: Int) = tails.any { at >= it.from && at <= it.to }
+    return ticked(span.line) != ticked(other)
+}

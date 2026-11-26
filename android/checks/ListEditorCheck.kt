@@ -316,7 +316,7 @@ fun main() {
     // in the piece's own lines.
     run {
         val whole = "- [ ] a\n- [ ] b\n\n| x |\n|---|\n\n- [ ] c\n\t- [ ] d\n- [ ] e"
-        fun slots(above: Int, line: Int) = dropSlotsIn(whole, above, line).map { "${it.before}:${it.minLevel}:${it.maxLevel}" }
+        fun slots(above: Int, line: Int) = dropSlotsIn(whole, above, line, if (above == 0) 3 else 4).map { "${it.before}:${it.minLevel}:${it.maxLevel}" }
         // The piece above the table: lines 0 to 2 (the last one is empty).
         check(slots(0, 0) == listOf("0:0:0", "2:0:1")) { "Above the table: ${slots(0, 0)}" }
         // The piece under it starts on line 5 of the body: its lines 1, 2 and 3 are the list.
@@ -324,13 +324,13 @@ fun main() {
         check(slots(5, 3) == listOf("1:0:0", "2:1:1", "3:0:2")) { "Under the table: ${slots(5, 3)}" }
         // An item with a sub-item: the place in front of the next item is its own (its own line).
         check(slots(5, 1) == listOf("1:0:0", "4:0:1")) { "Under the table, an item with a sub-item: ${slots(5, 1)}" }
-        check(dropSlotsIn(whole, 5, 0).isEmpty()) { "A line that is no list line has no places" }
+        check(dropSlotsIn(whole, 5, 0, 4).isEmpty()) { "A line that is no list line has no places" }
         // The core keeps an item between the tables around it, so every place lies in the piece the item is shown in.
         for (line in listOf(6, 7, 8)) check(FormatCore.dropSlots(whole, line).all { it.before in 5..9 }) { "An item under the table stays under it: line $line" }
         for (line in listOf(0, 1)) check(FormatCore.dropSlots(whole, line).all { it.before in 0..3 }) { "An item above the table stays above it: line $line" }
         // Without a table the piece is the body.
         val plain = "- [ ] a\n- [ ] b"
-        check(dropSlotsIn(plain, 0, 0) == FormatCore.dropSlots(plain, 0)) { "One piece" }
+        check(dropSlotsIn(plain, 0, 0, 2) == FormatCore.dropSlots(plain, 0)) { "One piece" }
     }
     // Pasting several lines in a list item (design checklists-77, 6.6): the editor sees a change, finds the pasted text
     // in it and makes an item of every line. A word a keyboard finishes along with Enter is no paste.
@@ -369,5 +369,235 @@ fun main() {
     }
     // The note's menu offers its checklist items only when the note has a task in a list.
     check(hasTask("text\n- a\n\t- [x] b") && hasTask("* [ ] star") && !hasTask("- a\n1. b") && !hasTask("```\n- [ ] code\n```") && !hasTask("> - [ ] quote") && !hasTask("see [link](https://example.com)") && !hasTask("- a bullet with a [link](https://example.com)\n1. b")) { "Which notes have a task" }
+    checkedParts()
     println("Android list editor checks passed")
+}
+
+/**
+ * The ticked end of a list as a part of its own (design checklists-77-v2, part 6): the pieces the body is shown in, the
+ * field that keeps the focus when they are laid out again, where an item may be dragged, and the three rules that keep
+ * the part ticked.
+ */
+private fun checkedParts() {
+    fun shown(text: String, checked: Boolean = true) = bodyPieces(text, checked).map { it.kind + ":" + text.substring(it.from, it.to) }
+    val list = "- [ ] a\n- [ ] b\n- [x] c\n- [x] d"
+    check(shown(list) == listOf("text:- [ ] a\n- [ ] b", "checked:- [x] c\n- [x] d")) { "A list with ticked tasks at its end: ${shown(list)}" }
+    check(shown(list, false) == listOf("text:$list")) { "Without the setting the body is one piece: ${shown(list, false)}" }
+    check(shown("intro\n- [ ] a\n- [x] c\n\nend") == listOf("text:intro\n- [ ] a", "checked:- [x] c", "text:\nend")) { "Text above and below: ${shown("intro\n- [ ] a\n- [x] c\n\nend")}" }
+    check(shown("- [x] a\n- [x] b") == listOf("checked:- [x] a\n- [x] b")) { "Only ticked tasks: ${shown("- [x] a\n- [x] b")}" }
+    check(shown("- [ ] a\n- [x] b\n\n- [x] c\n- [ ] d\n- [x] e") == listOf("text:- [ ] a", "checked:- [x] b", "text:\n- [x] c\n- [ ] d", "checked:- [x] e")) { "Two lists: ${shown("- [ ] a\n- [x] b\n\n- [x] c\n- [ ] d\n- [x] e")}" }
+    check(shown("- [ ] a\n- [x] b\n\t- [x] s") == listOf("text:- [ ] a", "checked:- [x] b\n\t- [x] s")) { "A ticked task with its sub-task" }
+    check(shown("- [ ] a\n- [x] b\n\t- [ ] s") == listOf("text:- [ ] a\n- [x] b\n\t- [ ] s")) { "A ticked task with an open sub-task is not done" }
+    check(shown("- [ ] a\n- [x] b\n") == listOf("text:- [ ] a", "checked:- [x] b", "text:")) { "An empty last line is a place to type: ${shown("- [ ] a\n- [x] b\n")}" }
+    check(bodyPieces("", true) == listOf(BodyPiece("text", 0, 0)) && bodyPieces("") == listOf(BodyPiece("text", 0, 0)) && shown("plain") == listOf("text:plain")) { "A body is always a piece: ${bodyPieces("")}" }
+    val table = "| a | b |\n|---|---|\n| 1 | 2 |"
+    check(shown("- [ ] a\n- [x] b\n\n$table\n\n- [x] c") == listOf("text:- [ ] a", "checked:- [x] b", "text:", "table:$table", "text:", "checked:- [x] c")) { "Around a table: ${shown("- [ ] a\n- [x] b\n\n$table\n\n- [x] c")}" }
+
+    // Whatever the note holds: the pieces are the whole text with one line break between two, and the checked ones are
+    // exactly the ticked ends the core finds.
+    val lines = listOf("- [ ] a", "- [x] b", "\t- [x] s", "\t- [ ] o", "text", "", "- bullet", "1. one", "* [X] star", "    - [x] deep", table, "```\n- [x] code\n```")
+    val random = java.util.Random(77)
+    val notes = (0 until 4000).map { (0 until random.nextInt(9)).joinToString("\n") { lines[random.nextInt(lines.size)] } }
+    var withChecked = 0
+    for (note in notes) {
+        val pieces = bodyPieces(note, true)
+        check(pieces.joinToString("\n") { note.substring(it.from, it.to) } == note) { "The pieces are not the note: $note" }
+        val starts = lineStarts(note)
+        val tails = FormatCore.checkedTail(note).map { tail -> starts[tail.from] to (if (tail.to + 1 < starts.size) starts[tail.to + 1] - 1 else note.length) }
+        check(pieces.filter { it.kind == "checked" }.map { it.from to it.to } == tails) { "The checked pieces are not the ticked ends: $note" }
+        check(pieces.filter { it.kind == "table" } == bodyPieces(note).filter { it.kind == "table" }) { "The tables are not where they were: $note" }
+        // The first ticked item is a main item, so a place at the top of the ticked items always takes one: the editor
+        // only has to keep an item there from hanging under the open task above (dropSlotsIn).
+        for (piece in pieces.filter { it.kind == "checked" }) {
+            val above = lineOf(note, piece.from)
+            for (line in above..lineOf(note, piece.to)) check(FormatCore.dropSlots(note, line).filter { it.before == above }.all { it.minLevel == 0 }) { "A place at the top of ticked items that takes no main item: $note, line $line" }
+        }
+        if (tails.isNotEmpty()) withChecked++
+    }
+    check(withChecked > 500) { "Too few notes with ticked ends to tell: $withChecked" }
+
+    // The field with the focus keeps its piece's id, and the piece that holds the caret gets it when they are laid out again.
+    run {
+        val layout = PieceLayout()
+        val text = "- [ ] a\n- [ ] b\n- [x] c"
+        var pieces = layout.update(text, 0, true, 0, 0)
+        check(pieces == listOf(BodyPiece("text", 0, 15, 0), BodyPiece("checked", 16, 23, 1))) { "Laid out the first time: $pieces" }
+        // Typing in the open tasks: the pieces only move along.
+        layout.focused = 0
+        val typed = "- [ ] ax\n- [ ] b\n- [x] c"
+        pieces = layout.update(typed, 0, true, 8, 0)
+        check(pieces == listOf(BodyPiece("text", 0, 16, 0), BodyPiece("checked", 17, 24, 1))) { "After a letter: $pieces" }
+        // A box ticked by typing stays in the field it was typed in.
+        val hand = "- [ ] ax\n- [x] b\n- [x] c"
+        pieces = layout.update(hand, 0, true, 8, 0)
+        check(pieces.map { it.kind to hand.substring(it.from, it.to) } == listOf("text" to "- [ ] ax\n- [x] b", "checked" to "- [x] c")) { "A tick that was typed: $pieces" }
+        // A tick on the task with the caret is no typing: the ticked items are cut out again, and the field goes along with the caret.
+        val tick = FormatCore.tickEdit(hand, 0, true, 8, 8)!!
+        val ticked = hand.replaceRange(tick.edit.from, tick.edit.to, tick.edit.insert)
+        pieces = layout.update(ticked, 0, true, tick.edit.selFrom, 1)
+        check(pieces.map { it.kind to it.id } == listOf("checked" to 0) && ticked.lines().all { it.startsWith("- [x] ") }) { "After the last open task was ticked: $pieces in $ticked" }
+    }
+    run {
+        val layout = PieceLayout()
+        val text = "- [ ] a\n- [ ] b\n- [x] c"
+        layout.update(text, 0, true, 0, 0)
+        layout.focused = 0
+        // The caret is in `a`, which is ticked and moves under `b`: the field with the focus shows the ticked items now.
+        val tick = FormatCore.tickEdit(text, 0, true, 7, 7)!!
+        val ticked = text.replaceRange(tick.edit.from, tick.edit.to, tick.edit.insert)
+        check(ticked == "- [ ] b\n- [x] a\n- [x] c") { "The tick: $ticked" }
+        var pieces = layout.update(ticked, 0, true, tick.edit.selFrom, 1)
+        check(pieces.map { it.kind to it.id } == listOf("text" to 1, "checked" to 0)) { "The focus went along with its task: $pieces" }
+        // Enter there makes a task with the open ones and the caret goes to it: so does the field.
+        val enter = checkedEnterEdit(ticked, tick.edit.selFrom)!!
+        val entered = ticked.replaceRange(enter.from, enter.to, enter.insert)
+        check(entered == "- [ ] b\n- [ ] \n- [x] a\n- [x] c" && enter.caret == 14) { "Enter among the ticked items: $entered, caret ${enter.caret}" }
+        pieces = layout.update(entered, 0, true, enter.caret, 2)
+        check(pieces.map { it.kind to it.id } == listOf("text" to 0, "checked" to 1)) { "The focus went to the new task: $pieces" }
+        // Without a focus the pieces are numbered as they stand.
+        layout.focused = -1
+        pieces = layout.update(entered, 1, true, 0, 2)
+        check(pieces.map { it.id } == listOf(0, 1)) { "Without a focus: $pieces" }
+    }
+    run {
+        // A table typed by hand stays text while its field has the focus, also when a task in that field is ticked.
+        val layout = PieceLayout()
+        val text = "intro\n- [ ] a\n- [x] c"
+        layout.update(text, 0, true, 0, 0)
+        layout.focused = 0
+        val typed = "$table\nintro\n- [ ] a\n- [x] c"
+        var pieces = layout.update(typed, 0, true, table.length, 0)
+        check(pieces.map { it.kind } == listOf("text", "checked")) { "A table that is typed: $pieces" }
+        val tick = FormatCore.tickEdit(typed, 4, true)!!
+        val ticked = typed.replaceRange(tick.edit.from, tick.edit.to, tick.edit.insert)
+        pieces = layout.update(ticked, 0, true, table.length, 1)
+        check(pieces.map { it.kind to ticked.substring(it.from, it.to) } == listOf("text" to "$table\nintro", "checked" to "- [x] a\n- [x] c")) { "A tick next to a typed table: $pieces" }
+        layout.focused = -1
+        pieces = layout.update(ticked, 1, true, 0, 1)
+        check(pieces.map { it.kind } == listOf("table", "text", "checked")) { "The focus left: $pieces" }
+    }
+    run {
+        // With the Markdown switch on the body is one text, in the field that had the focus; that field has it again
+        // when the body is shown in pieces.
+        val layout = PieceLayout()
+        val text = "- [ ] a\n- [x] c"
+        layout.update(text, 0, true, 0, 0)
+        layout.focused = 1
+        check(layout.whole(text) == listOf(BodyPiece("text", 0, text.length, 1))) { "The whole body in the field with the focus: ${layout.whole(text)}" }
+        check(layout.update(text, 0, true, 2, 0).map { it.kind to it.id } == listOf("text" to 1, "checked" to 0)) { "In pieces again, the caret in the open task" }
+        check(layout.whole(text).single().id == 1 && layout.update(text, 0, true, 10, 0).map { it.kind to it.id } == listOf("text" to 0, "checked" to 1)) { "In pieces again, the caret in the ticked task" }
+        layout.focused = -1
+        check(layout.whole(text) == listOf(BodyPiece("text", 0, text.length, 0))) { "The whole body without a focus" }
+    }
+    run {
+        // The caret in a table (Undo of a change in a cell puts it there) is in no field: the field that had the focus
+        // keeps it, as the field that stands where it stood among the fields.
+        val layout = PieceLayout()
+        val text = "above\n\n$table\n\nbelow\n- [x] c"
+        var pieces = layout.update(text, 0, true, 0, 0)
+        check(pieces.map { it.kind } == listOf("text", "table", "text", "checked")) { "Text, a table, text and ticked items: $pieces" }
+        layout.focused = pieces[2].id
+        val changed = text.replace("| 1 | 2 |", "| 9 | 2 |")
+        pieces = layout.update(changed, 0, true, changed.indexOf("| 9") + 2, 1)
+        check(pieces.map { it.kind } == listOf("text", "table", "text", "checked") && pieces[2].id == layout.focused && pieces.filter { it.kind != "table" }.map { it.id }.toSet().size == 3) { "The caret in a table: $pieces, focus ${layout.focused}" }
+    }
+    // Any run of changes: the pieces are the note, no two fields share an id, and the caret's piece has the focus.
+    run {
+        val layout = PieceLayout()
+        var acts = 0
+        for ((round, note) in notes.withIndex()) {
+            val caret = if (note.isEmpty()) 0 else random.nextInt(note.length + 1)
+            // Laid out again for sure: the change was not typed, or the key is new.
+            val again = random.nextInt(3) == 0
+            if (again) acts++
+            if (round % 7 == 0) layout.focused = -1
+            val pieces = layout.update(note, round / 50, true, caret, acts)
+            check(pieces.joinToString("\n") { note.substring(it.from, it.to) } == note) { "The pieces are not the note after a change: $note" }
+            val fields = pieces.filter { it.kind != "table" }
+            check(fields.map { it.id }.toSet().size == fields.size) { "Two fields with one id: $pieces" }
+            val holder = fields.firstOrNull { caret >= it.from && caret <= it.to }
+            if ((again || round % 50 == 0) && layout.focused >= 0 && holder != null) check(holder.id == layout.focused) { "The caret's piece lost the focus: $pieces, caret $caret, focus ${layout.focused}" }
+            if (layout.focused < 0 && fields.isNotEmpty()) layout.focused = fields[random.nextInt(fields.size)].id
+        }
+    }
+
+    // An item stays on its side of the header when it is dragged, and when it is moved with a button or a key.
+    val slots = { whole: String, above: Int, line: Int, count: Int, place: PiecePlace -> dropSlotsIn(whole, above, line, count, place) }
+    check(slots(list, 0, 0, 2, PiecePlace.FREE).map { it.before } == listOf(0, 2)) { "An open task lands among the open tasks: ${slots(list, 0, 0, 2, PiecePlace.FREE)}" }
+    check(slots(list, 0, 1, 2, PiecePlace.FREE).map { it.before } == listOf(0, 1)) { "The last open task: ${slots(list, 0, 1, 2, PiecePlace.FREE)}" }
+    check(slots(list, 2, 0, 2, PiecePlace.CHECKED) == listOf(FormatCore.Slot(0, 0, 0), FormatCore.Slot(2, 0, 1))) { "The first ticked task: ${slots(list, 2, 0, 2, PiecePlace.CHECKED)}" }
+    check(slots(list, 2, 1, 2, PiecePlace.CHECKED) == listOf(FormatCore.Slot(0, 0, 0), FormatCore.Slot(1, 0, 1))) { "The last ticked task: ${slots(list, 2, 1, 2, PiecePlace.CHECKED)}" }
+    val under = "- [x] c\n\n- [ ] e\n- [ ] f"
+    check(slots(under, 1, 1, 3, PiecePlace.UNDER_CHECKED).map { it.before } == listOf(1, 3)) { "Under ticked items: ${slots(under, 1, 1, 3, PiecePlace.UNDER_CHECKED)}" }
+    check(slots(under, 1, 1, 3, PiecePlace.FREE).map { it.before } == listOf(0, 1, 3)) { "The same piece when nothing is ticked above it: ${slots(under, 1, 1, 3, PiecePlace.FREE)}" }
+    check(dropSlotsIn(list, 0, 0, 4).map { it.before } == FormatCore.dropSlots(list, 0).map { it.before }) { "A body in one piece keeps every place" }
+    check(crossesChecked(list, 1, "down") && crossesChecked(list, 2, "up")) { "Past the header" }
+    check(listOf(0 to "down", 0 to "up", 1 to "up", 2 to "down", 3 to "up", 3 to "down").none { (line, direction) -> crossesChecked(list, line, direction) }) { "On its own side of the header" }
+    check(!crossesChecked("text\n- [ ] a", 0, "down") && !crossesChecked("- [ ] a\n- [ ] b", 0, "down")) { "No ticked items, nothing to cross" }
+
+    // The three rules among the ticked items.
+    check(checkedEnterEdit("plain", 2) == null) { "Enter outside a list" }
+    val completed = listEnterAfterChange("- [ ] a\n- [x] chees", "- [ ] a\n- [x] cheese\n", 21) { text, at -> checkedEnterEdit(text, at) }
+    check(completed == ("- [ ] a\n- [ ] \n- [x] cheese" to 14)) { "Enter along with a word the keyboard finished: $completed" }
+    val ticked = "- [ ] a\n- [x] c\n- [x] d"
+    check(backspaceAtChecked(ticked, 14, ticked.removeRange(13, 14), 8) && backspaceAtChecked(ticked, 10, ticked.removeRange(9, 10), 8)) { "Backspace at the start of the first ticked task" }
+    check(!backspaceAtChecked(ticked, 15, ticked.removeRange(14, 15), 8) && !backspaceAtChecked(ticked, 22, ticked.removeRange(21, 22), 8) && !backspaceAtChecked(ticked, 14, ticked, 8)) { "Backspace elsewhere among the ticked tasks" }
+    fun paste(text: String, at: Int, pasted: String, checked: Boolean) = pastedLines(text, at, at, text.replaceRange(at, at, pasted), at + pasted.length, checked)
+    check(paste("- [x] a", 7, "b\nc", true) == ("- [x] ab\n- [x] c" to 16)) { "Lines pasted in a ticked task: ${paste("- [x] a", 7, "b\nc", true)}" }
+    check(paste("- [x] a", 7, "b\nc", false) == ("- [x] ab\n- [ ] c" to 16)) { "The same paste among the open tasks: ${paste("- [x] a", 7, "b\nc", false)}" }
+    check(paste("- [x] a", 6, "- [ ] x\ny", true) == ("- [x] x\n- [x] ya" to 15)) { "A pasted open task among the ticked ones: ${paste("- [x] a", 6, "- [ ] x\ny", true)}" }
+    check(paste("- [ ] o\r\n- [x] a\r\n- [x] z", 16, "b\nc", true) == ("- [ ] o\r\n- [x] ab\r\n- [x] c\r\n- [x] z" to 26)) { "A paste in a note with Windows line endings: ${paste("- [ ] o\r\n- [x] a\r\n- [x] z", 16, "b\nc", true)}" }
+
+    // "+ List item" under the note: only when it ends in a list with a task.
+    check(listOf("- [ ] a\n- [ ] b", "text\n- [ ] a", "- [ ] a\n\tmore", "- a\n\t- [x] s").map { endsInTaskList(it) } == listOf(1, 1, 1, 1)) { "Notes that end in a task list" }
+    check(listOf("", "text", "- [ ] a\ntext", "- [ ] a\n", "- a\n- b", "1. one", "```\n- [ ] code\n```", "- [ ] a\n\n  text").all { endsInTaskList(it) == -1 }) { "Notes that do not" }
+
+    // Enter on an empty item right above the ticked items leaves the list at its end: the item goes, the caret comes on
+    // a new line under them (Eric, 26 Nov).
+    fun leave(text: String, at: Int): Pair<String, Int>? = leaveAboveChecked(text, at)?.let { text.replaceRange(it.from, it.to, it.insert) to it.caret }
+    check(leave("- [ ] a\n- [ ] \n- [x] c\n- [x] d", 14) == ("- [ ] a\n- [x] c\n- [x] d\n" to 24)) { "The ticked items end the note: ${leave("- [ ] a\n- [ ] \n- [x] c\n- [x] d", 14)}" }
+    check(leave("- [ ] a\n- [ ] \n- [x] c\n\nend", 14) == ("- [ ] a\n- [x] c\n\n\nend" to 16)) { "Text under the ticked items: ${leave("- [ ] a\n- [ ] \n- [x] c\n\nend", 14)}" }
+    check(leave("- [ ] \n- [x] c\n\t- [x] s", 6) == ("- [x] c\n\t- [x] s\n" to 17)) { "The only open task, a sub-task under the ticked one: ${leave("- [ ] \n- [x] c\n\t- [x] s", 6)}" }
+    check(leave("- \n- [x] c", 2) == ("- [x] c\n" to 8) && leave("1. \n- [x] c", 3) == ("- [x] c\n" to 8)) { "An empty bullet and an empty numbered item: ${leave("- \n- [x] c", 2)}" }
+    check(leave("- [ ] a\r\n- [ ] \r\n- [x] c", 15) == ("- [ ] a\r\n- [x] c\r\n" to 18)) { "Windows line endings, at the end: ${leave("- [ ] a\r\n- [ ] \r\n- [x] c", 15)}" }
+    check(leave("- [ ] \r\n- [x] c\r\n\r\nend", 6) == ("- [x] c\r\n\r\n\r\nend" to 9)) { "Windows line endings, text under it: ${leave("- [ ] \r\n- [x] c\r\n\r\nend", 6)}" }
+    // The pieces after it: the caret is in the text under the ticked items.
+    leave("- [ ] a\n- [ ] \n- [x] c\n- [x] d", 14)!!.let { (text, caret) ->
+        val pieces = bodyPieces(text, true)
+        check(pieces.map { it.kind } == listOf("text", "checked", "text") && pieces.last().from == caret && pieces.last().to == caret) { "The caret's place after leaving: $pieces, caret $caret" }
+    }
+    // Not there: a task with words, a task that is not right above the ticked items, one with an item under it, one in
+    // a level (it goes a level back first), a caret in front of the sign, a list without ticked items, the ticked items.
+    check(listOf("- [ ] a\n- [x] c" to 7, "- [ ] \n- [ ] b\n- [x] c" to 6, "- [ ] \n\t- [x] s\n- [x] c" to 6, "- [ ] a\n\t- [ ] \n- [x] c" to 15,
+        "- [ ] \n- [x] c" to 0, "- [ ] a\n- [ ] " to 14, "- [ ] a\n- [x] c" to 15, "- [ ] \n\n- [x] c" to 6, "plain\n- [x] c" to 5, "- [ ] \ntext" to 6)
+        .all { (text, at) -> leaveAboveChecked(text, at) == null }) { "Enter that does not leave the list above the ticked items" }
+    // Whatever the note holds: where it applies, the empty item is gone, nothing else changed, and the ticked items are
+    // still the ticked end of their list.
+    val withEmpty = lines + listOf("- [ ] ", "- [ ] ", "- ", "\t- [ ] ")
+    var left = 0
+    for (note in (0 until 4000).map { (0 until random.nextInt(9)).joinToString("\n") { withEmpty[random.nextInt(withEmpty.size)] } }) {
+        val starts = lineStarts(note)
+        for (line in starts.indices) {
+            val end = if (line + 1 < starts.size) starts[line + 1] - 1 else note.length
+            val (after, caret) = leave(note, end) ?: continue
+            left++
+            val before = note.split('\n')
+            val now = after.split('\n')
+            val tail = FormatCore.checkedTail(note).first { it.from == line + 1 }
+            check(now == before.take(line) + before.subList(tail.from, tail.to + 1) + listOf("") + before.drop(tail.to + 1)) { "Leaving the list changed more than it should: $note at line $line gave $after" }
+            check(lineOf(after, caret) == tail.to && caret == lineStarts(after)[tail.to]) { "The caret after leaving: $caret in $after" }
+            // A ticked task that stood above the empty item joins them now.
+            check(FormatCore.checkedTail(after).any { it.from <= line && it.to == tail.to - 1 && it.count >= tail.count }) { "The ticked items are no ticked end any more: $after" }
+        }
+    }
+    check(left > 100) { "Too few notes with an empty item above ticked items to tell: $left" }
+
+    // A tap in the room under ticked items that end the note: an empty line to type on.
+    check(withLineUnder("- [x] a") == "- [x] a\n" && withLineUnder("- [ ] o\r\n- [x] a") == "- [ ] o\r\n- [x] a\r\n" && withLineUnder("") == "\n" && withLineUnder("- [ ] o\n- [x] a") == "- [ ] o\n- [x] a\n") { "A line under the note" }
+    check(bodyPieces(withLineUnder(list), true).map { it.kind } == listOf("text", "checked", "text")) { "The line under the note is a piece to type in" }
+
+    // An item that is dragged is drawn inside its own piece: it stops at the piece's first and last line.
+    check(keptInPiece(30f, 100f, 140f, 0f, 200f) == 30f && keptInPiece(-30f, 100f, 140f, 0f, 200f) == -30f) { "Inside the piece the item follows the finger" }
+    check(keptInPiece(90f, 100f, 140f, 0f, 200f) == 60f && keptInPiece(-250f, 100f, 140f, 0f, 200f) == -100f) { "At the edge of the piece it stops" }
+    check(keptInPiece(50f, 0f, 200f, 0f, 200f) == 0f && keptInPiece(-50f, 0f, 200f, 0f, 200f) == 0f) { "An item that fills its piece stays" }
 }

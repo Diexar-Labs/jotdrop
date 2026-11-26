@@ -454,6 +454,13 @@
     <string name="list_uncheck_all">Alle items uitvinken</string>
     <string name="list_delete_checked">Afgevinkte items verwijderen</string>
     <string name="notice_dismiss">Sluiten</string>
+    <string name="list_add_item">Lijstitem</string>
+    <plurals name="checked_items">
+        <item quantity="one">%d afgevinkt item</item>
+        <item quantity="other">%d afgevinkte items</item>
+    </plurals>
+    <string name="checked_items_show">Afgevinkte items tonen</string>
+    <string name="checked_items_hide">Afgevinkte items verbergen</string>
     <plurals name="notice_item_deleted_subs">
         <item quantity="one">Item en %d subitem verwijderd</item>
         <item quantity="other">Item en %d subitems verwijderd</item>
