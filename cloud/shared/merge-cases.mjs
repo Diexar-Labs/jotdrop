@@ -1,5 +1,6 @@
 // Random but repeatable notes and dragged lists for the merge checks: merge.test.mjs tests the rules on them, and
 // scripts/check-cloud-android.mjs has Android merge them to the same bytes.
+import { addItemEdit, deleteItemEdit, dropItemEdit, dropSlots, tickEdit } from './format.mjs';
 
 // Few different lines, so equal lines and equal changes on both sides come up all the time.
 const words = ['- [ ] milk', '- [x] milk', '- [ ] eggs', '- [ ] bread', '', 'café', '📝', '# Title', 'Text'];
@@ -149,6 +150,52 @@ export function listCases(count) {
     const tasks = words.slice(0, size).map((word, index) => ({ word, ticked: index >= size - done }));
     const base = list(tasks), local = act(tasks, here, 'a'), cloud = act(tasks, there, 'b');
     if (local !== base && cloud !== base && local !== cloud) cases.push({ name: `list ${cases.length}`, base, local, cloud });
+  }
+  return cases;
+}
+
+/**
+ * Lists in levels as two devices leave them, random but repeatable: main tasks with sub-tasks under them, two levels
+ * deep, and every change made as the editors make it (format.mjs). Each device does one to three things: tick or untick
+ * a task (the tasks under it go along, and an untick takes the ticked tasks above it along: design checklists-77-v2,
+ * part 7; with "Move checked items to the bottom" on or off), drag an item with what is under it to another place or
+ * level, change the words of a task, add a task ("+ List item", or a first sub-task under a task), delete an item with
+ * what is under it. Every task has its own words, so a line that stands once is one task.
+ */
+export function levelCases(count) {
+  let seed = 20261125;
+  const next = (limit) => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return Math.floor((seed / 4294967296) * limit); };
+  const words = ['milk', 'eggs', 'bread', 'cheese', 'tea', 'rice', 'salt', 'jam', 'oil', 'nuts'];
+  const put = (text, edit) => (edit ? text.slice(0, edit.from) + edit.insert + text.slice(edit.to) : text);
+  const act = (from, move, device) => {
+    let text = from;
+    for (let steps = 1 + next(3), added = 0; steps > 0; steps--) {
+      const lines = text.split('\n'), kind = next(20), at = next(Math.max(1, lines.length - 1));
+      if (kind < 10) text = put(text, tickEdit(text, at, move));
+      else if (kind < 13) {
+        const slots = dropSlots(text, at), slot = slots[next(slots.length)];
+        if (slot) text = put(text, dropItemEdit(text, at, slot.before, slot.minLevel + next(slot.maxLevel - slot.minLevel + 1)));
+      } else if (kind < 15) {
+        if (lines[at]) { lines[at] += '!'; text = lines.join('\n'); }
+      } else if (kind < 17) text = put(text, deleteItemEdit(text, at));
+      else {
+        const word = `new ${device}${added++}`, edit = kind < 19 ? addItemEdit(text, at) : null;
+        if (edit) text = put(text, { ...edit, insert: edit.insert.replace('[ ] ', `[ ] ${word}`) });
+        else { lines.splice(lines[at] ? at + 1 : at, 0, `${lines[at] ? `${/^\t*/.exec(lines[at])[0]}\t` : ''}- [ ] ${word}`); text = lines.join('\n'); }
+      }
+    }
+    return text;
+  };
+  const cases = [];
+  while (cases.length < count) {
+    const size = 3 + next(6), tidy = next(2) === 1, here = next(2) === 1, there = next(2) === 1;
+    let level = 0;
+    const lines = words.slice(0, size).map((word, index) => { level = index ? next(Math.min(level + 2, 3)) : 0; return `${'\t'.repeat(level)}- [ ] ${word}`; });
+    // Up to two tasks were ticked before, with or without moving: lists as people have them.
+    let base = `${lines.join('\n')}\n`;
+    for (let done = next(3); done > 0; done--) base = put(base, tickEdit(base, next(size), tidy));
+    const local = act(base, here, 'a'), cloud = act(base, there, 'b');
+    if (local !== base && cloud !== base && local !== cloud) cases.push({ name: `levels ${cases.length}`, base, local, cloud });
   }
   return cases;
 }

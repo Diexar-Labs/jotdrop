@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { mergeNote } from './merge.mjs';
-import { bothMovedCases, dragCases, hugeCase, listCases, longCase, randomCases, tickCases } from './merge-cases.mjs';
+import { bothMovedCases, dragCases, hugeCase, levelCases, listCases, longCase, randomCases, tickCases } from './merge-cases.mjs';
 
 // The same cases run on Android (scripts/check-cloud-android.mjs), so both merge a note the same way.
 const vectors = JSON.parse(readFileSync(new URL('./merge-vectors.json', import.meta.url), 'utf8'));
@@ -85,12 +85,13 @@ test('a task ticked and moved to the bottom on both devices stays one task, what
   assert.equal(merges, 4 * 3 * (2 + 6 + 12 + 20 + 30 + 42));
 });
 
-test('lists ticked, dragged and changed on two devices merge with every line kept and no line or task twice', () => {
+/** Merges every case from both devices and holds each note that comes out to the rules for lists; the number of notes. */
+function listsMerge(cases) {
   const tally = (lines) => { const counts = new Map(); for (const line of lines) counts.set(line, (counts.get(line) ?? 0) + 1); return counts; };
-  // The task a line is, whatever its tick; every task of these lists is written `- [ ] words`.
-  const task = (line) => line.replace(/^- \[x\] /, '- [ ] ');
+  // The task a line is, whatever its tick; every task of these lists is written `- [ ] words`, with tabs before it for a sub-task.
+  const task = (line) => line.replace(/^(\t*- \[)x(\] )/, '$1 $2');
   let merges = 0;
-  for (const { name, base, local, cloud } of listCases(20000)) {
+  for (const { name, base, local, cloud } of cases) {
     const texts = [base, local, cloud].map((value) => value.split('\n'));
     const before = tally(texts[0]), sides = [tally(texts[1]), tally(texts[2])];
     const once = [...before.keys()].filter((line) => line && sides.every((side) => side.get(line) === 1));
@@ -107,7 +108,18 @@ test('lists ticked, dragged and changed on two devices merge with every line kep
       for (const line of same) assert.equal(names.get(line), 1, `${name}: the task "${line}" must stay once`);
     }
   }
+  return merges;
+}
+
+test('lists ticked, dragged and changed on two devices merge with every line kept and no line or task twice', () => {
+  const merges = listsMerge(listCases(20000));
   assert.ok(merges > 27000, `Too few lists merged: ${merges}`);
+});
+
+test('lists in levels, where a tick takes the tasks under it along, merge with every line kept and no line or task twice', () => {
+  // A tick changes several lines at once now (design checklists-77-v2, part 7): the rules for lists hold all the same.
+  const merges = listsMerge(levelCases(20000));
+  assert.ok(merges > 24000, `Too few lists in levels merged: ${merges}`);
 });
 
 test('a very long note merges', () => {

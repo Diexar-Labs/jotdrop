@@ -864,61 +864,98 @@ internal object FormatCore {
     /** A tick as one replacement, plus the line the task is on now. */
     data class Tick(val edit: Edit, val line: Int)
 
+    /** The task on a list line (its linePrefix), or null: a bullet, a numbered line, more text, a line outside a list. */
+    private fun taskAt(lines: List<String>, structure: List<ListItem?>, line: Int): Prefix? {
+        val item = structure.getOrNull(line) ?: return null
+        if (item.level < 0) return null
+        return linePrefix(lines[line]).takeIf { it.kind == "task" }
+    }
+
+    /** A task line with its box ticked (a small `x`) or empty. */
+    private fun boxed(line: String, checked: Boolean): String {
+        val box = line.indexOf('[', linePrefix(line).markFrom + 1) + 1
+        return line.substring(0, box) + (if (checked) "x" else " ") + line.substring(box + 1)
+    }
+
     /**
-     * Ticks or unticks the task on line [line] (ticking writes a small `x`). With [move] (the setting "Move checked
-     * items to the bottom") the task moves along with the lines under it, never past a blank or text line (design
-     * part 6): ticked, it goes right under its last open sibling below it; unticked, right above its first ticked
-     * sibling above it; else it stays. Bullets and numbered lines between the tasks stay where they are. The selection
-     * stays in its own text: in the task it goes along with it. Null when [line] is no task in a text block.
+     * The lines whose box changes when the task on [line] gets ticked or unticked, as tickedLines in format.mjs (design
+     * checklists-77-v2, part 7): the task itself, every task under it that is not that way yet, and for an untick every
+     * ticked task it hangs under. Ticking the last open sub-task leaves its main task open.
+     */
+    private fun tickedLines(lines: List<String>, structure: List<ListItem?>, line: Int, checked: Boolean): List<Int> {
+        val out = mutableListOf(line)
+        for (index in line + 1..itemEnd(structure, line)) {
+            val task = taskAt(lines, structure, index)
+            if (task != null && task.checked != checked) out += index
+        }
+        if (!checked) {
+            var up = structure[line]!!.parent
+            while (up >= 0) {
+                if (taskAt(lines, structure, up)?.checked == true) out += up
+                up = structure[up]!!.parent
+            }
+        }
+        return out
+    }
+
+    /** The tasks in the item on [line], itself and under it, when it is done: a ticked task with no open task under it. Else 0. */
+    private fun doneTasks(lines: List<String>, structure: List<ListItem?>, line: Int): Int {
+        if (taskAt(lines, structure, line)?.checked != true) return 0
+        var count = 0
+        for (index in line..itemEnd(structure, line)) {
+            val task = taskAt(lines, structure, index) ?: continue
+            if (!task.checked) return 0
+            count++
+        }
+        return count
+    }
+
+    /**
+     * Ticks or unticks the task on line [line] (ticking writes a small `x`), and with it the tasks under it; unticked,
+     * the ticked tasks it hangs under are unticked too (design checklists-77-v2, part 7). With [move] (the setting "Move
+     * checked items to the bottom") the task moves along with the lines under it, never past a blank or text line
+     * (design kaarten-en-lijsten, part 6): ticked, it goes right under the last sibling below it that is not done;
+     * unticked, right above the first sibling above it that is done; else it stays. Done is a ticked task with no open
+     * task under it, so a task that was ticked lands in the ticked end of its list ([checkedTail]). A main task that was
+     * unticked along moves the same way among its own siblings. Bullets and numbered lines between the tasks stay where
+     * they are. The selection stays in its own text: in the task it goes along with it. Null when [line] is no task in
+     * a text block. As tickEdit in format.mjs.
      */
     fun tickEdit(text: String, line: Int, move: Boolean, selFrom: Int = 0, selTo: Int = selFrom): Tick? {
         val lines = text.split('\n')
         val structure = listStructure(text)
-        val item = structure.getOrNull(line) ?: return null
-        if (item.level < 0) return null
-        val prefix = linePrefix(lines[line])
-        if (prefix.kind != "task") return null
-        val box = lines[line].indexOf('[', prefix.markFrom + 1) + 1
+        val prefix = taskAt(lines, structure, line) ?: return null
         val checked = !prefix.checked
+        val changed = tickedLines(lines, structure, line, checked)
         val toggled = lines.toMutableList()
-        toggled[line] = lines[line].substring(0, box) + (if (checked) "x" else " ") + lines[line].substring(box + 1)
+        for (index in changed) toggled[index] = boxed(lines[index], checked)
 
         var order = lines.indices.toList()
-        var at = line
-        if (move) {
-            val end = itemEnd(structure, line)
+        /** The order with the item on line [index] of the text as it was, and the lines under it, where its box now puts it; null when it stays. */
+        fun settled(index: Int): List<Int>? {
+            val item = structure[index]!!
+            val end = itemEnd(structure, index)
             // More text of the main item between its sub-items splits them into two lists, as in Markdown.
-            fun joined(index: Int): Boolean {
-                val other = structure.getOrNull(index) ?: return false
-                return other.series == item.series && !(other.level < 0 && other.parent == item.parent)
+            fun joined(other: Int): Boolean {
+                val there = structure.getOrNull(other) ?: return false
+                return there.series == item.series && !(there.level < 0 && there.parent == item.parent)
             }
-            var first = line
-            var last = line
+            var first = index
+            var last = index
             while (joined(first - 1)) first--
             while (joined(last + 1)) last++
-            // Each sibling task: its line, and whether it is ticked.
-            val siblings = mutableListOf<kotlin.Pair<Int, Boolean>>()
-            for (index in first..last) {
-                val other = structure[index]!!
-                if (index != line && other.level >= 0 && other.parent == item.parent) {
-                    val kind = linePrefix(lines[index])
-                    if (kind.kind == "task") siblings += index to kind.checked
-                }
+            val siblings = (first..last).filter { it != index && structure[it]!!.parent == item.parent && taskAt(toggled, structure, it) != null }
+            val block = order.subList(index, end + 1)
+            if (checked) {
+                val open = siblings.filter { it > index && doneTasks(toggled, structure, it) == 0 }
+                if (open.isEmpty()) return null
+                val target = itemEnd(structure, open.last())
+                return order.subList(0, index) + order.subList(end + 1, target + 1) + block + order.subList(target + 1, order.size)
             }
-            val block = order.subList(line, end + 1)
-            val open = siblings.filter { it.first > line && !it.second }
-            val done = siblings.filter { it.first < line && it.second }
-            if (checked && open.isNotEmpty()) {
-                val target = itemEnd(structure, open.last().first)
-                order = order.subList(0, line) + order.subList(end + 1, target + 1) + block + order.subList(target + 1, order.size)
-                at = line + target - end
-            } else if (!checked && done.isNotEmpty()) {
-                val target = done.first().first
-                order = order.subList(0, target) + block + order.subList(target, line) + order.subList(end + 1, order.size)
-                at = target
-            }
+            val target = siblings.firstOrNull { it < index && doneTasks(toggled, structure, it) > 0 } ?: return null
+            return order.subList(0, target) + block + order.subList(target, index) + order.subList(end + 1, order.size)
         }
-        fun arrange(): MutableList<String> {
+        fun arrange(order: List<Int>): MutableList<String> {
             val next = order.map { toggled[it] }.toMutableList()
             val last = lines.size - 1
             if (order[last] != last) {
@@ -931,18 +968,24 @@ internal object FormatCore {
             }
             return next
         }
-        var next = arrange()
-        if (at != line) {
-            // With mixed indents (4 spaces, then 2) a moved task could land under another main item. Then it is only ticked.
-            val after = listStructure(next.joinToString("\n"))
-            val kept = order.withIndex().all { (index, old) ->
+        // With mixed indents (4 spaces, then 2) a moved item could land under another main item. Then it stays where it is.
+        fun fits(tried: List<Int>): Boolean {
+            val after = listStructure(arrange(tried).joinToString("\n"))
+            return tried.withIndex().all { (index, old) ->
                 val was = structure[old]
                 val now = after[index]
                 if (was == null || now == null) was == null && now == null
-                else was.level == now.level && (if (was.parent < 0) now.parent < 0 else now.parent >= 0 && order[now.parent] == was.parent)
+                else was.level == now.level && (if (was.parent < 0) now.parent < 0 else now.parent >= 0 && tried[now.parent] == was.parent)
             }
-            if (!kept) { order = lines.indices.toList(); at = line; next = arrange() }
         }
+        // The task first, then every main task that was unticked along, from the inside out: each one moves inside the
+        // item above it, so the lines of that item are still where the text has them.
+        if (move) for (index in changed) {
+            val tried = (if (index <= line) settled(index) else null) ?: continue
+            if (fits(tried)) order = tried
+        }
+        val next = arrange(order)
+        val at = order.indexOf(line)
         val out = next.joinToString("\n")
         val before = Lines(text)
         val starts = IntArray(next.size)
@@ -1077,14 +1120,19 @@ internal object FormatCore {
         val edits = mutableListOf<Change>()
         val allTasks = prefixes.all { it.kind == "task" }
         val tick = prefixes.any { !it.checked }
-        for ((i, index) in targets.withIndex()) {
+        if (allTasks) {
+            // Every task that changes takes the tasks under it along, and unticked the ticked ones it hangs under.
+            val structure = listStructure(text)
+            val boxes = LinkedHashSet<Int>()
+            for ((i, index) in targets.withIndex()) if (prefixes[i].checked != tick) boxes += tickedLines(table.lines, structure, index, tick)
+            for (index in boxes) {
+                val box = table.starts[index] + table.lines[index].indexOf('[', linePrefix(table.lines[index]).markFrom + 1) + 1
+                edits += Change(box, box + 1, if (tick) "x" else " ")
+            }
+        } else for ((i, index) in targets.withIndex()) {
             val prefix = prefixes[i]
             val at = table.starts[index]
-            if (allTasks) {
-                if (prefix.checked == tick) continue
-                val box = at + table.lines[index].indexOf('[', prefix.markFrom + 1) + 1
-                edits += Change(box, box + 1, if (tick) "x" else " ")
-            } else when (prefix.kind) {
+            when (prefix.kind) {
                 "bullet" -> edits += Change(at + prefix.markTo, at + prefix.markTo, "[ ] ")
                 "ordered" -> edits += Change(at + prefix.markFrom, at + prefix.markTo, "- [ ] ")
                 "task" -> {}
@@ -1507,5 +1555,67 @@ internal object FormatCore {
         }
         edits += Change(a, b, insert)
         return replacement(text, applyEdits(text, edits).text, a + insert.length)
+    }
+
+    // --- The ticked end of a list and "+ List item" (design checklists-77-v2, part 6), as the same part of format.mjs ---
+
+    /** The ticked end of a list: its first and last line and the tasks in it (sub-tasks too; all of them are ticked). */
+    data class Tail(val from: Int, val to: Int, val count: Int)
+
+    /**
+     * The ticked end of every list that has one: the main items at the end of a list that are done (a ticked task with
+     * no open task under it), with the lines under them. A main item that is no task, or a ticked one with an open task
+     * under it, is not done: what stands above it is not at the end. With "Move checked items to the bottom" a tick puts
+     * a task here ([tickEdit]), and the editor can show these lines as a part of their own that folds.
+     */
+    fun checkedTail(text: String): List<Tail> {
+        val lines = text.split('\n')
+        val structure = listStructure(text)
+        val tails = mutableListOf<Tail>()
+        // The ticked end that is being read: the series it is in, its first and last line, its tasks.
+        var tail: IntArray? = null
+        fun close() { tail?.let { tails += Tail(it[1], it[2], it[3]) }; tail = null }
+        for ((index, item) in structure.withIndex()) {
+            if (item == null || item.level != 0) continue
+            if (tail != null && tail!![0] != item.series) close()
+            val count = doneTasks(lines, structure, index)
+            val reading = tail
+            if (count == 0) tail = null
+            else if (reading != null) { reading[2] = itemEnd(structure, index); reading[3] += count }
+            else tail = intArrayOf(item.series, index, itemEnd(structure, index), count)
+        }
+        close()
+        return tails
+    }
+
+    /**
+     * "+ List item": a new empty task at the bottom of the open tasks of the list [line] is in (any line of it): in
+     * front of the ticked end of that list ([checkedTail]), or after its last line when it has none. It is a main item,
+     * with the indent and the sign of the main item above it (of the first ticked one when nothing stands above); a
+     * numbered item gives a `-`. One replacement that only puts the line in, with the caret behind its box, plus the
+     * line the new task is on. A CRLF text stays CRLF. Null when [line] is not in a list.
+     */
+    fun addItemEdit(text: String, line: Int): Moved? {
+        val table = Lines(text)
+        val lines = table.lines
+        val structure = listStructure(text)
+        val item = structure.getOrNull(line) ?: return null
+        var first = line
+        var last = line
+        while (structure.getOrNull(first - 1)?.series == item.series) first--
+        while (structure.getOrNull(last + 1)?.series == item.series) last++
+        val at = checkedTail(text).firstOrNull { it.to == last }?.from ?: (last + 1)
+        var like = if (at > first) at - 1 else at
+        while (structure[like]!!.level != 0) like--
+        val prefix = linePrefix(lines[like])
+        val task = "${indentOf(lines[like])}${if (prefix.kind == "ordered") '-' else lines[like][prefix.markFrom]} [ ] "
+        if (at < lines.size) {
+            // In front of a line: the new line ends as the lines of this text end.
+            val from = table.starts[at]
+            return Moved(Edit(from, from, "$task${crOf(lines[if (at > 0) at - 1 else 0])}\n", from + task.length), at)
+        }
+        // A new last line: the line above gets the `\r` of a CRLF text, the new one ends the text without one.
+        val cr = if (lines.size > 1) crOf(lines[at - 2]) else ""
+        return Moved(Edit(text.length, text.length, "$cr\n$task", text.length + cr.length + 1 + task.length), at)
     }
 }

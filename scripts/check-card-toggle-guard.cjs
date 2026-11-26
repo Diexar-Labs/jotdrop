@@ -123,6 +123,18 @@ const viewPath = process.argv[2] || path.join(process.cwd(), "src/view.ts");
     if (after.notices.length || !after.moved || !after.disk.endsWith("- [ ] task 2\n- [x] task 1")) fail("the count after a code block hit the wrong line", after);
   }
 
+  // A tick takes the tasks under it along, an untick the ticked task above it (design checklists-77-v2, part 7): the
+  // card reads the note again, with the setting off too. A tick that changes one box does not.
+  {
+    const nested = "# List\n- [ ] main\n\t- [ ] sub one\n\t- [x] sub two\n- [ ] other";
+    const along = await run(nested, 0, nested);
+    if (along.notices.length || !along.moved || along.disk !== "# List\n- [x] main\n\t- [x] sub one\n\t- [x] sub two\n- [ ] other") fail("a main task did not take its sub-tasks along", along);
+    const up = await run(along.disk, 1, along.disk);
+    if (up.notices.length || !up.moved || up.disk !== "# List\n- [ ] main\n\t- [ ] sub one\n\t- [x] sub two\n- [ ] other") fail("unticking a sub-task did not untick its main task", up);
+    const alone = await run(nested, 3, nested);
+    if (alone.notices.length || alone.moved || !alone.disk.endsWith("- [x] other")) fail("a tick of one box has the card read the note again", alone);
+  }
+
   // A failed write shows an error, re-renders and leaves the card unticked.
   {
     const r = await run(rendered, 0, rendered, { fail: true });
