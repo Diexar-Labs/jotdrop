@@ -23,6 +23,8 @@
     <h1 id="access-title">Your notes, within reach.</h1>
     <p>Open your encrypted workspace. Your password never leaves this device, so nobody else can read your notes. Not even us.</p>
     <p id="access-choice" class="access-choice" role="status" hidden></p>
+    <!-- Above the forms, so a wrong password shows where the person looks, not below the links (#110). -->
+    <p id="access-message" role="status" aria-live="polite"></p>
     <form id="unlock-form" hidden>
       <label for="unlock-password">Password or device unlock passphrase</label>
       <input id="unlock-password" type="password" autocomplete="current-password" required>
@@ -148,7 +150,6 @@
       <div class="access-links"><button data-show="login-form" type="button">Back to log in</button></div>
     </form>
     <div id="device-limit" hidden></div>
-    <p id="access-message" role="status" aria-live="polite"></p>
     <p class="access-footnote">Local use of JotDrop never requires a cloud account. This preview does not change your existing notes or sync settings. <a href="/privacy">Privacy policy</a></p>
   </section>
 

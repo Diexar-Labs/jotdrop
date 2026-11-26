@@ -512,7 +512,7 @@ html { scrollbar-color: color-mix(in srgb, var(--ink) 35%, transparent) transpar
 .link-mark { color: var(--muted); font-size: .85rem; margin: 0; flex: 0 0 100%; }
 .note-card .live-link-chip { display: inline-block; border-radius: 20px; font-size: .75rem; font-weight: 500; }
 #note-report { display: grid; gap: .5rem; margin-top: .75rem; }
-.access .access-choice { color: var(--ink, inherit); font-weight: 600; border-left: 3px solid currentColor; padding-left: .75rem; }
+.access .access-choice, .access #access-message:not(:empty) { color: var(--ink, inherit); font-weight: 600; border-left: 3px solid currentColor; padding-left: .75rem; }
 .plan-price { font-size: 1.6rem; font-weight: 700; margin: .25rem 0; }
 
 /* Mail to JotDrop: the address with its copy button on one line. */

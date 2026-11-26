@@ -89,6 +89,7 @@
     "check:cloud-family": "python cloud/family_browser_check.py",
     "check:cloud-oauth": "python cloud/oauth_browser_check.py",
     "check:cloud-authenticator": "python cloud/authenticator_browser_check.py",
+    "check:cloud-login-error": "python cloud/login_error_browser_check.py",
     "check:cloud-android": "node scripts/check-cloud-android.mjs",
     "check:cloud-account-android": "node scripts/check-cloud-account-android.mjs",
     "check:cloud-list-link-android": "node scripts/check-list-links-android.mjs",

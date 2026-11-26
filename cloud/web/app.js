@@ -3032,7 +3032,11 @@ function accessForm(id, action) {
     submit.disabled = true;
     $('access-message').textContent = 'Working securely on this device...';
     try { await action(); }
-    catch (error) { $('access-message').textContent = accessError(error); }
+    catch (error) {
+      $('access-message').textContent = accessError(error);
+      // On a phone the form can push it out of view; the person must see why nothing happened (#110).
+      $('access-message').scrollIntoView({ block: 'nearest' });
+    }
     finally { submit.disabled = false; }
   });
 }
