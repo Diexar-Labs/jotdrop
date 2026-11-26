@@ -7,7 +7,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { activeFormats, applyFormat, backspaceEdit, blocks, cellSource, cellText, checklistEdit, deleteCheckedEdit, deleteItemEdit, dropItemEdit, dropSlots, emptyPair, indentEdit, inlineSpans, itemSpan, linePrefix, listEnterEdit, listItems, listLevels, moveItemEdit, parseTable, pasteLinesEdit, tableCells, tableEdit, tickEdit, uncheckAllEdit } from '../cloud/shared/format.mjs';
+import { activeFormats, addItemEdit, applyFormat, backspaceEdit, blocks, cellSource, cellText, checkedTail, checklistEdit, deleteCheckedEdit, deleteItemEdit, dropItemEdit, dropSlots, emptyPair, indentEdit, inlineSpans, itemSpan, linePrefix, listEnterEdit, listItems, listLevels, moveItemEdit, parseTable, pasteLinesEdit, tableCells, tableEdit, tickEdit, uncheckAllEdit } from '../cloud/shared/format.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const code = (value) => Buffer.from(value, 'utf8').toString('base64');
@@ -54,6 +54,9 @@ const answer = {
   uncheckAll: (text, from, to) => counted(uncheckAllEdit(text, Number(from), Number(to))),
   deleteChecked: (text, from, to) => counted(deleteCheckedEdit(text, Number(from), Number(to))),
   paste: (text, from, to, pasted) => edit(pasteLinesEdit(text, Number(from), Number(to), Buffer.from(pasted, 'base64').toString('utf8'))),
+  // The ticked end of a list and "+ List item" (design checklists-77-v2, part 6).
+  tail: (text) => checkedTail(text).map((tail) => [tail.from, tail.to, tail.count].join(':')).join(','),
+  addItem: (text, line) => placed(addItemEdit(text, Number(line))),
 };
 // The inserted text as UTF-16 units: a random selection can cut an emoji in half, which UTF-8 cannot carry.
 const units = (value) => Array.from({ length: value.length }, (_, i) => value.charCodeAt(i).toString(16)).join('.');
@@ -100,6 +103,8 @@ for (const vector of vectors.span) cases.push(['span', vector.text, vector.line]
 for (const vector of vectors.uncheckAll) cases.push(['uncheckAll', ...unmark(vector.text)]);
 for (const vector of vectors.deleteChecked) cases.push(['deleteChecked', ...unmark(vector.text)]);
 for (const vector of vectors.paste) cases.push(['paste', ...unmark(vector.text), code(vector.pasted)]);
+for (const vector of vectors.tail) cases.push(['tail', vector.text]);
+for (const vector of vectors.addItem) cases.push(['addItem', vector.text, vector.line]);
 // A table change as fields: fromLine, type, row, column, after, at, align, text (base64); `_` is not set.
 const tableCase = (text, fromLine, op) => ['table', text, fromLine, op.type,
   ...['row', 'column', 'after', 'at', 'align'].map((key) => (op[key] === undefined ? '_' : op[key])), op.text === undefined ? '_' : code(op.text)];
@@ -235,6 +240,42 @@ const clearing = tally('deleteChecked', (text) => deleteCheckedEdit(text));
 assert.ok(clearing > 300, `the lists give enough ticked tasks to delete (${clearing})`);
 const pasting = tally('paste', (text, from, to, pasted) => pasteLinesEdit(text, from, to, Buffer.from(pasted, 'base64').toString('utf8')));
 assert.ok(pasting > 1500, `the lists give enough pastes that make items (${pasting})`);
+
+// A tick takes the tasks under it along and an untick the ticked tasks above it (design checklists-77-v2, part 7); the
+// ticked end of a list and "+ List item" (part 6). The lists above, plus the texts of the new cases and lists in levels
+// where nearly every line is a task, so most ticks take tasks along and many lists end in ticked tasks. Every line (and
+// one before and after the text) is ticked with and without moving and asked for "+ List item"; the Checklist button
+// is pressed on a run of whole lines.
+const levelPool = ['- [ ] a', '- [x] b', '- [x] c', '\t- [ ] d', '\t- [x] e', '\t- [x] f', '\t\t- [ ] g', '\t\t- [x] h', '  - [ ] i', '  - [X] j', '    - [x] k',
+  '\t- note', '\t  more text', '- [x] l\r', '\t- [x] m\r', '', '* [x] n', '1. o', '- [x] 🚆 p'];
+const tailTexts = [...vectors.tail.map((vector) => vector.text), ...vectors.addItem.map((vector) => vector.text)];
+for (let i = 0; i < 600; i++) tailTexts.push(Array.from({ length: 2 + Math.floor(random() * 9) }, () => pick(levelPool)).join('\n'));
+for (const text of tailTexts) {
+  const rows = text.split('\n'), count = rows.length;
+  for (let line = -1; line <= count; line++) {
+    for (const move of [0, 1]) {
+      const a = Math.floor(random() * (text.length + 1)), b = random() < 0.5 ? a : Math.floor(random() * (text.length + 1));
+      cases.push(['tick', text, Math.min(a, b), Math.max(a, b), line, move]);
+    }
+  }
+  // From the start of one line to the end of a later one.
+  const first = Math.floor(random() * count), last = Math.min(count - 1, first + 1 + Math.floor(random() * 3));
+  const starts = rows.map((_, index) => rows.slice(0, index).join('\n').length + (index ? 1 : 0));
+  cases.push(['checklist', text, starts[first], starts[last] + rows[last].length - (rows[last].endsWith('\r') ? 1 : 0), random() < 0.5 ? 1 : 0]);
+}
+for (const text of [...checklistTexts, ...tailTexts]) {
+  cases.push(['tail', text]);
+  for (let line = -1, count = text.split('\n').length; line <= count; line++) cases.push(['addItem', text, line]);
+}
+// A tick without moving that changes more than its own box: the replacement runs from the first box to the last.
+const along = tally('tick', (text, from, to, line, move) => move === 0 && tickEdit(text, line, false)?.insert.length > 1);
+assert.ok(along > 1000, `the lists give enough ticks that take other tasks along (${along})`);
+const several = cases.filter(([kind, text, from, to, move]) => kind === 'checklist' && tailTexts.includes(text) && checklistEdit(text, from, to, move === 1)).length;
+assert.ok(several > 400, `the lists give enough presses of the Checklist button on several lines (${several})`);
+const ends = tally('tail', (text) => checkedTail(text).length);
+assert.ok(ends > 600, `the lists give enough ticked ends (${ends})`);
+const adding = tally('addItem', (text, line) => addItemEdit(text, line));
+assert.ok(adding > 5000, `the lists give enough lines to add an item from (${adding})`);
 
 const temporary = mkdtempSync(path.join(tmpdir(), 'jotdrop-android-format-'));
 try {

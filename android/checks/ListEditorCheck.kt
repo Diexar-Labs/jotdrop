@@ -19,7 +19,10 @@ fun main() {
     check(tickChecklistText("- [x] a\n- [x] b", 1, true) == "- [ ] b\n- [x] a")
     check(tickChecklistText("- [ ] a\r\n- [ ] b", 0, true) == "- [ ] b\r\n- [x] a")
     check(tickChecklistText("- [ ] a\ntext\n- [ ] b", 0, true) == "- [x] a\ntext\n- [ ] b")
-    check(tickChecklistText("- [ ] a\n\t- [ ] sub\n- [ ] b", 0, true) == "- [ ] b\n- [x] a\n\t- [ ] sub")
+    // The tasks under it go along, and an untick takes the ticked task above it along (design checklists-77-v2, part 7).
+    check(tickChecklistText("- [ ] a\n\t- [ ] sub\n- [ ] b", 0, true) == "- [ ] b\n- [x] a\n\t- [x] sub")
+    check(tickChecklistText("- [ ] a\n\t- [ ] sub\n- [ ] b", 0, false) == "- [x] a\n\t- [x] sub\n- [ ] b")
+    check(tickChecklistText("- [x] a\n\t- [x] sub\n\t- [x] other", 1, false) == "- [ ] a\n\t- [ ] sub\n\t- [x] other")
     // A task the card counts but the core does not (in a code block) still ticks, without moving.
     check(tickChecklistText("```\n- [ ] code\n```\n- [ ] a\n- [ ] b", 0, true) == "```\n- [x] code\n```\n- [ ] a\n- [ ] b")
     check(tickChecklistText("- [ ] a", 1, true) == null)

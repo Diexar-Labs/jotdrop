@@ -780,14 +780,59 @@ export function listItems(text) {
   return structure.map((_, index) => itemOf(structure, index));
 }
 
+/** The task on a list line (its linePrefix), or null: a bullet, a numbered line, more text, a line outside a list. */
+function taskAt(lines, structure, line) {
+  if (!(structure[line]?.level >= 0)) return null;
+  const prefix = linePrefix(lines[line]);
+  return prefix.kind === 'task' ? prefix : null;
+}
+
+/** A task line with its box ticked (a small `x`) or empty. */
+function boxed(line, checked) {
+  const box = line.indexOf('[', linePrefix(line).markFrom + 1) + 1;
+  return line.slice(0, box) + (checked ? 'x' : ' ') + line.slice(box + 1);
+}
+
 /**
- * Ticks or unticks the task on line `line` (ticking writes a small `x`). With `move` (the setting "Move checked items
- * to the bottom") the task moves along with the lines under it, never past a blank or text line (design part 6):
- * ticked, it goes right under its last open sibling below it; unticked, right above its first ticked sibling above
- * it; else it stays. Bullets and numbered lines between the tasks stay where they are. Siblings are the items with the
- * same main item in the same series, so a sub-item stays among the sub-items of its main item.
+ * The lines whose box changes when the task on `line` gets ticked or unticked (design checklists-77-v2, part 7): the
+ * task itself, every task under it that is not that way yet, and for an untick every ticked task it hangs under, so no
+ * ticked task keeps an open one under it. Ticking the last open sub-task leaves its main task open. Bullets, numbered
+ * lines and more text never change.
+ */
+function tickedLines(lines, structure, line, checked) {
+  const out = [line];
+  for (let index = line + 1, end = itemEnd(structure, line); index <= end; index++) {
+    const task = taskAt(lines, structure, index);
+    if (task && task.checked !== checked) out.push(index);
+  }
+  if (!checked) for (let up = structure[line].parent; up >= 0; up = structure[up].parent) if (taskAt(lines, structure, up)?.checked) out.push(up);
+  return out;
+}
+
+/** The tasks in the item on `line`, itself and under it, when it is done: a ticked task with no open task under it. Else 0. */
+function doneTasks(lines, structure, line) {
+  if (!taskAt(lines, structure, line)?.checked) return 0;
+  let count = 0;
+  for (let index = line, end = itemEnd(structure, line); index <= end; index++) {
+    const task = taskAt(lines, structure, index);
+    if (task && !task.checked) return 0;
+    if (task) count++;
+  }
+  return count;
+}
+
+/**
+ * Ticks or unticks the task on line `line` (ticking writes a small `x`), and with it the tasks under it; unticked, the
+ * ticked tasks it hangs under are unticked too (tickedLines; design checklists-77-v2, part 7). With `move` (the setting
+ * "Move checked items to the bottom") the task moves along with the lines under it, never past a blank or text line
+ * (design kaarten-en-lijsten, part 6): ticked, it goes right under the last sibling below it that is not done;
+ * unticked, right above the first sibling above it that is done; else it stays. Done is a ticked task with no open
+ * task under it, so a task that was ticked lands in the ticked end of its list (checkedTail). A main task that was
+ * unticked along moves the same way among its own siblings. Bullets and numbered lines between the tasks stay where
+ * they are. Siblings are the items with the same main item in the same series, so a sub-item stays among the sub-items
+ * of its main item.
  * One replacement plus `line`, the line the task is on now. The selection stays in its own text: in the task it goes
- * along with it, so a second press puts the same task back. Null when `line` is no task in a text block.
+ * along with it. Null when `line` is no task in a text block.
  * @param {string} text
  * @param {number} line
  * @param {boolean} move
@@ -797,45 +842,37 @@ export function listItems(text) {
 export function tickEdit(text, line, move, selFrom = 0, selTo = selFrom) {
   text = String(text);
   const lines = text.split('\n'), structure = listStructure(text);
-  const item = structure[line];
-  if (!item || item.level < 0) return null;
-  const prefix = linePrefix(lines[line]);
-  if (prefix.kind !== 'task') return null;
-  const box = lines[line].indexOf('[', prefix.markFrom + 1) + 1;
+  const prefix = taskAt(lines, structure, line);
+  if (!prefix) return null;
   const checked = !prefix.checked;
-  const toggled = lines.slice();
-  toggled[line] = lines[line].slice(0, box) + (checked ? 'x' : ' ') + lines[line].slice(box + 1);
+  const changed = tickedLines(lines, structure, line, checked), toggled = lines.slice();
+  for (const index of changed) toggled[index] = boxed(lines[index], checked);
 
-  let order = lines.map((_, index) => index), at = line;
-  if (move) {
-    const end = itemEnd(structure, line);
+  let order = lines.map((_, index) => index);
+  /** The order with the item on line `index` of the text as it was, and the lines under it, where its box now puts it; null when it stays. */
+  const settled = (index) => {
+    const item = structure[index], end = itemEnd(structure, index);
     // More text of the main item between its sub-items splits them into two lists, as in Markdown.
-    const joined = (index) => structure[index]?.series === item.series && !(structure[index].level < 0 && structure[index].parent === item.parent);
-    let first = line, last = line;
+    const joined = (other) => structure[other]?.series === item.series && !(structure[other].level < 0 && structure[other].parent === item.parent);
+    let first = index, last = index;
     while (joined(first - 1)) first--;
     while (joined(last + 1)) last++;
     const siblings = [];
-    for (let index = first; index <= last; index++) {
-      const other = structure[index];
-      if (index !== line && other.level >= 0 && other.parent === item.parent) {
-        const kind = linePrefix(lines[index]);
-        if (kind.kind === 'task') siblings.push({ index, checked: kind.checked });
-      }
+    for (let other = first; other <= last; other++) {
+      if (other !== index && structure[other].parent === item.parent && taskAt(toggled, structure, other)) siblings.push(other);
     }
-    const block = order.slice(line, end + 1);
-    const open = siblings.filter((other) => other.index > line && !other.checked);
-    const done = siblings.filter((other) => other.index < line && other.checked);
-    if (checked && open.length) {
-      const target = itemEnd(structure, open[open.length - 1].index);
-      order = [...order.slice(0, line), ...order.slice(end + 1, target + 1), ...block, ...order.slice(target + 1)];
-      at = line + target - end;
-    } else if (!checked && done.length) {
-      const target = done[0].index;
-      order = [...order.slice(0, target), ...block, ...order.slice(target, line), ...order.slice(end + 1)];
-      at = target;
+    const block = order.slice(index, end + 1);
+    if (checked) {
+      const open = siblings.filter((other) => other > index && !doneTasks(toggled, structure, other));
+      if (!open.length) return null;
+      const target = itemEnd(structure, open[open.length - 1]);
+      return [...order.slice(0, index), ...order.slice(end + 1, target + 1), ...block, ...order.slice(target + 1)];
     }
-  }
-  const arrange = () => {
+    const target = siblings.find((other) => other < index && doneTasks(toggled, structure, other));
+    if (target === undefined) return null;
+    return [...order.slice(0, target), ...block, ...order.slice(target, index), ...order.slice(end + 1)];
+  };
+  const arrange = (order) => {
     const next = order.map((index) => toggled[index]);
     const last = lines.length - 1;
     if (order[last] !== last) {
@@ -847,17 +884,22 @@ export function tickEdit(text, line, move, selFrom = 0, selTo = selFrom) {
     }
     return next;
   };
-  let next = arrange();
-  if (at !== line) {
-    // With mixed indents (4 spaces, then 2) a moved task could land under another main item. Then it is only ticked.
-    const after = listStructure(next.join('\n'));
-    const kept = order.every((old, index) => {
+  // With mixed indents (4 spaces, then 2) a moved item could land under another main item. Then it stays where it is.
+  const fits = (tried) => {
+    const after = listStructure(arrange(tried).join('\n'));
+    return tried.every((old, index) => {
       const was = structure[old], now = after[index];
       if (!was || !now) return !was && !now;
-      return was.level === now.level && (was.parent < 0 ? now.parent < 0 : order[now.parent] === was.parent);
+      return was.level === now.level && (was.parent < 0 ? now.parent < 0 : tried[now.parent] === was.parent);
     });
-    if (!kept) { order = lines.map((_, index) => index); at = line; next = arrange(); }
+  };
+  // The task first, then every main task that was unticked along, from the inside out: each one moves inside the item
+  // above it, so the lines of that item are still where the text has them.
+  if (move) for (const index of changed) {
+    const tried = index <= line ? settled(index) : null;
+    if (tried && fits(tried)) order = tried;
   }
+  const next = arrange(order), at = order.indexOf(line);
   const out = next.join('\n');
   const before = lineTable(text);
   const starts = [];
@@ -969,8 +1011,9 @@ export function indentEdit(text, selFrom, selTo = selFrom, direction = 'in') {
  * The Checklist button (design kaarten-en-lijsten, part 7), the same in every app. On one line: a line without a list
  * sign gets `- [ ] ` after its indent, a bullet or numbered line gets a box in place of its sign (the indent stays),
  * and a task is ticked or unticked (tickEdit, moving with `move`). On several lines: the ones that are no task yet
- * become one; when all are tasks, all get ticked, or all unticked when they all were ticked (no moving then). Blank
- * lines in a selection of several stay blank. Null in a code block or table.
+ * become one; when all are tasks, all get ticked, or all unticked when they all were ticked (no moving then), each
+ * with the tasks under and above it as in tickEdit. Blank lines in a selection of several stay blank. Null in a code
+ * block or table.
  * @param {string} text
  * @param {number} selFrom
  * @param {number} selTo
@@ -991,13 +1034,17 @@ export function checklistEdit(text, selFrom, selTo = selFrom, move = false) {
   if (targets.length === 1 && prefixes[0].kind === 'task') return tickEdit(text, targets[0], move, from, to);
   const edits = [];
   const allTasks = prefixes.every((prefix) => prefix.kind === 'task'), tick = prefixes.some((prefix) => !prefix.checked);
-  targets.forEach((index, i) => {
-    const prefix = prefixes[i], at = table.starts[index];
-    if (allTasks) {
-      if (prefix.checked === tick) return;
-      const box = at + table.lines[index].indexOf('[', prefix.markFrom + 1) + 1;
+  if (allTasks) {
+    // Every task that changes takes the tasks under it along, and unticked the ticked ones it hangs under.
+    const structure = listStructure(text), boxes = new Set();
+    targets.forEach((index, i) => { if (prefixes[i].checked !== tick) for (const line of tickedLines(table.lines, structure, index, tick)) boxes.add(line); });
+    for (const index of boxes) {
+      const box = table.starts[index] + table.lines[index].indexOf('[', linePrefix(table.lines[index]).markFrom + 1) + 1;
       edits.push({ from: box, to: box + 1, insert: tick ? 'x' : ' ' });
-    } else if (prefix.kind === 'bullet') edits.push({ from: at + prefix.markTo, to: at + prefix.markTo, insert: '[ ] ' });
+    }
+  } else targets.forEach((index, i) => {
+    const prefix = prefixes[i], at = table.starts[index];
+    if (prefix.kind === 'bullet') edits.push({ from: at + prefix.markTo, to: at + prefix.markTo, insert: '[ ] ' });
     else if (prefix.kind === 'ordered') edits.push({ from: at + prefix.markFrom, to: at + prefix.markTo, insert: '- [ ] ' });
     else if (prefix.kind !== 'task') edits.push({ from: at + prefix.indent, to: at + prefix.indent, insert: '- [ ] ' });
   });
@@ -1391,4 +1438,64 @@ export function pasteLinesEdit(text, from, to, pasted) {
   });
   edits.push({ from: a, to: b, insert });
   return replacement(text, applyEdits(text, edits).text, a + insert.length);
+}
+
+// --- The ticked end of a list and "+ List item" (design checklists-77-v2, part 6) ----------------------------------
+
+/**
+ * The ticked end of every list that has one: the main items at the end of a list that are done (a ticked task with no
+ * open task under it), with the lines under them. Per list { from, to, count }: its first and last line and the tasks
+ * in it, sub-tasks too; all of them are ticked. A list is a series of list lines, as tickEdit moves in it: it ends at a
+ * blank line, a line of plain text, a heading, a table. A main item that is no task, or a ticked one with an open task
+ * under it, is not done: what stands above it is not at the end. With "Move checked items to the bottom" a tick puts a
+ * task here (tickEdit), and an editor can show these lines as a part of their own that folds.
+ * @param {string} text
+ * @returns {{ from: number, to: number, count: number }[]}
+ */
+export function checkedTail(text) {
+  const lines = String(text).split('\n'), structure = listStructure(text), tails = [];
+  /** @type {{ series: number, from: number, to: number, count: number } | null} */
+  let tail = null;
+  const close = () => { if (tail) tails.push({ from: tail.from, to: tail.to, count: tail.count }); tail = null; };
+  structure.forEach((item, index) => {
+    if (item?.level !== 0) return;
+    if (tail && tail.series !== item.series) close();
+    const count = doneTasks(lines, structure, index);
+    if (!count) tail = null;
+    else if (tail) { tail.to = itemEnd(structure, index); tail.count += count; }
+    else tail = { series: item.series, from: index, to: itemEnd(structure, index), count };
+  });
+  close();
+  return tails;
+}
+
+/**
+ * "+ List item": a new empty task at the bottom of the open tasks of the list `line` is in (any line of it): in front
+ * of the ticked end of that list (checkedTail), or after its last line when it has none. It is a main item, with the
+ * indent and the sign of the main item above it (of the first ticked one when nothing stands above); a numbered item
+ * gives a `-`. One replacement that only puts the line in, with the caret behind its box, plus `line`, the line the
+ * new task is on. A CRLF text stays CRLF. Null when `line` is not in a list.
+ * @param {string} text
+ * @param {number} line
+ */
+export function addItemEdit(text, line) {
+  text = String(text);
+  const table = lineTable(text), lines = table.lines, structure = listStructure(text), item = structure[line];
+  if (!item) return null;
+  let first = line, last = line;
+  while (structure[first - 1]?.series === item.series) first--;
+  while (structure[last + 1]?.series === item.series) last++;
+  const at = checkedTail(text).find((tail) => tail.to === last)?.from ?? last + 1;
+  let like = at > first ? at - 1 : at;
+  while (structure[like].level !== 0) like--;
+  const prefix = linePrefix(lines[like]);
+  const task = `${indentOf(lines[like])}${prefix.kind === 'ordered' ? '-' : lines[like][prefix.markFrom]} [ ] `;
+  if (at < lines.length) {
+    // In front of a line: the new line ends as the lines of this text end.
+    const from = table.starts[at], caret = from + task.length;
+    return { from, to: from, insert: `${task}${crOf(lines[at > 0 ? at - 1 : 0])}\n`, selFrom: caret, selTo: caret, line: at };
+  }
+  // A new last line: the line above gets the `\r` of a CRLF text, the new one ends the text without one.
+  const cr = lines.length > 1 ? crOf(lines[at - 2]) : '', caret = text.length + cr.length + 1 + task.length;
+  return { from: text.length, to: text.length, insert: `${cr}\n${task}`, selFrom: caret, selTo: caret, line: at };
 }

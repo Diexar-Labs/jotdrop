@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
-import { activeFormats, applyFormat, backspaceEdit, blocks, cellSource, cellText, checklistEdit, deleteCheckedEdit, deleteItemEdit, dropItemEdit, dropSlots, emptyPair, indentEdit, inlineSpans, insertTable, itemSpan, linePrefix, listEnterEdit, listItems, listLevels, moveItemEdit, parseTable, pasteLinesEdit, tableCells, tableEdit, tickEdit, uncheckAllEdit } from './format.mjs';
+import { activeFormats, addItemEdit, applyFormat, backspaceEdit, blocks, cellSource, cellText, checkedTail, checklistEdit, deleteCheckedEdit, deleteItemEdit, dropItemEdit, dropSlots, emptyPair, indentEdit, inlineSpans, insertTable, itemSpan, linePrefix, listEnterEdit, listItems, listLevels, moveItemEdit, parseTable, pasteLinesEdit, tableCells, tableEdit, tickEdit, uncheckAllEdit } from './format.mjs';
 
 // The same cases run on Android (scripts/check-format-android.mjs), so every app sees the same tables.
 const vectors = JSON.parse(readFileSync(new URL('./format-vectors.json', import.meta.url), 'utf8'));
@@ -242,11 +242,24 @@ test('ticking a task, with and without moving it', () => {
   }
 });
 
-test('a tick flips one box and moves whole lines only; every line keeps its level', () => {
+// The lines whose box a tick changes besides the task's own (design checklists-77-v2, part 7), found here with itemSpan
+// alone: the tasks under it that are not that way yet, and for an untick the ticked tasks it lies in.
+const tickedAlong = (text, index, checked) => {
+  const lines = text.split('\n'), levels = listLevels(text), end = itemSpan(text, index).end, along = [];
+  lines.forEach((line, other) => {
+    const box = levels[other] >= 0 && linePrefix(line).kind === 'task' ? linePrefix(line) : null;
+    if (!box || other === index) return;
+    const under = other > index && other <= end, above = other < index && itemSpan(text, other).end >= index;
+    if ((under && box.checked !== checked) || (above && !checked && box.checked)) along.push(other);
+  });
+  return along;
+};
+
+test('a tick changes the box of the task, of the tasks under it and, unticked, of the ticked tasks above it; whole lines move only and every line keeps its level', () => {
   const strip = (line) => line.replace(/\r$/, '');
   const texts = [...vectors.levels.map((vector) => vector.text), ...vectors.tick.map((vector) => unmark(vector.text).text),
-    ...readdirSync(fixtures).map((name) => readFileSync(new URL(name, fixtures), 'utf8'))];
-  let moved = 0;
+    ...vectors.tail.map((vector) => vector.text), ...readdirSync(fixtures).map((name) => readFileSync(new URL(name, fixtures), 'utf8'))];
+  let moved = 0, under = 0, above = 0, twice = 0;
   for (const text of texts) {
     const lines = text.split('\n'), levels = listLevels(text);
     lines.forEach((line, index) => {
@@ -254,28 +267,37 @@ test('a tick flips one box and moves whole lines only; every line keeps its leve
         const name = `${JSON.stringify(text.slice(0, 40))} line ${index}${move ? ', moving' : ''}`;
         const edit = tickEdit(text, index, move);
         if (!edit) { assert.ok(!(linePrefix(line).kind === 'task' && levels[index] >= 0), `${name}: a task is ticked`); continue; }
+        const checked = !linePrefix(line).checked, along = tickedAlong(text, index, checked);
         const out = applied(text, edit), after = out.split('\n'), afterLevels = listLevels(out);
-        // The same words with the other box.
-        const was = linePrefix(line), now = linePrefix(after[edit.line]);
-        assert.equal(now.kind, 'task', name);
-        assert.equal(now.checked, !was.checked, name);
-        assert.equal(strip(after[edit.line]).replace(/\[[ xX]\]/, '[]'), strip(line).replace(/\[[ xX]\]/, '[]'), name);
+        // The lines as they must be before anything moves: the task and the ones that go along have the new box, the
+        // rest is as it was. Ticking writes a small x; a box that was right already stays as it is written.
+        const boxed = lines.map((value, i) => (i === index || along.includes(i) ? strip(value).replace(/\[[ xX]\]/, checked ? '[x]' : '[ ]') : strip(value)));
+        assert.equal(strip(after[edit.line]), boxed[index], `${name}: the same words with the other box`);
         // Only whole lines move, each with its level; the line endings stay as they were.
-        const want = lines.map((value, i) => `${strip(i === index ? after[edit.line] : value)}|${levels[i]}`).sort();
-        assert.deepEqual(after.map((value, i) => `${strip(value)}|${afterLevels[i]}`).sort(), want, name);
+        assert.deepEqual(after.map((value, i) => `${strip(value)}|${afterLevels[i]}`).sort(), boxed.map((value, i) => `${value}|${levels[i]}`).sort(), name);
         assert.equal(after.filter((value) => value.endsWith('\r')).length, lines.filter((value) => value.endsWith('\r')).length, name);
         assert.equal(out.endsWith('\n'), text.endsWith('\n'), name);
+        // Afterwards every task under it has its box, and unticked no ticked task has it under it.
+        assert.deepEqual(tickedAlong(out, edit.line, checked), [], `${name}: nothing is left to take along`);
         if (!move) {
           assert.equal(edit.line, index, name);
-          assert.deepEqual([edit.to - edit.from, edit.insert.length], [1, 1], `${name}: only the box changes`);
-          // Twice gives the text back; ticking writes a small x.
-          const back = tickEdit(out, index, false);
-          assert.equal(applied(out, back), lines.map((value, i) => (i === index ? value.replace('[X]', '[x]') : value)).join('\n'), `${name}: twice gives the text back`);
+          assert.deepEqual(after.map(strip), boxed, `${name}: only those boxes change`);
+          if (!along.length) assert.deepEqual([edit.to - edit.from, edit.insert.length], [1, 1], `${name}: only the box changes`);
+          if (!along.length && !tickedAlong(out, index, !checked).length) {
+            // With nothing to take along either way, twice gives the text back; ticking writes a small x.
+            const back = tickEdit(out, index, false);
+            assert.equal(applied(out, back), lines.map((value, i) => (i === index ? value.replace('[X]', '[x]') : value)).join('\n'), `${name}: twice gives the text back`);
+            twice++;
+          }
+          under += along.filter((other) => other > index).length;
+          above += along.filter((other) => other < index).length;
         } else if (edit.line !== index) moved++;
       }
     });
   }
-  assert.ok(moved >= 20, `only ${moved} moves were tried`);
+  assert.ok(moved >= 40, `only ${moved} moves were tried`);
+  assert.ok(under >= 40 && above >= 20, `only ${under} tasks under a task and ${above} above one went along`);
+  assert.ok(twice >= 100, `only ${twice} ticks were pressed twice`);
 });
 
 test('Tab and Shift+Tab on list items', () => {
@@ -394,8 +416,22 @@ test('pasting several lines in a list item', () => {
   }
 });
 
+// --- The ticked end of a list and "+ List item" (design checklists-77-v2, part 6) -----------------------------------
+
+test('the ticked end of a list', () => {
+  for (const vector of vectors.tail) assert.deepEqual(checkedTail(vector.text).map((tail) => [tail.from, tail.to, tail.count]), vector.expect, vector.name);
+});
+
+test('"+ List item" puts an empty task under the open tasks of a list', () => {
+  for (const vector of vectors.addItem) {
+    const edit = addItemEdit(vector.text, vector.line);
+    assert.equal(edit && marked(applied(vector.text, edit), edit.selFrom, edit.selTo), vector.expect, vector.name);
+    if (edit) assert.equal(edit.line, vector.expectLine, `${vector.name}: the line it is on`);
+  }
+});
+
 // Every text with a list that the cases and the real notes hold, for the checks below that try every line of them.
-const listTexts = () => [...new Set([...vectors.levels.map((vector) => vector.text), ...vectors.slots.map((vector) => vector.text), ...vectors.span.map((vector) => vector.text),
+const listTexts = () => [...new Set([...['levels', 'slots', 'span', 'tail', 'addItem'].flatMap((kind) => vectors[kind].map((vector) => vector.text)),
   ...['tick', 'indent', 'move', 'drop', 'delete', 'uncheckAll', 'deleteChecked', 'paste'].flatMap((kind) => vectors[kind].map((vector) => unmark(vector.text).text)),
   ...readdirSync(fixtures).map((name) => readFileSync(new URL(name, fixtures), 'utf8'))])];
 const bare = (line) => line.replace(/\r$/, '');
@@ -410,6 +446,15 @@ const itemSize = (text, line) => {
   return padded.split('\n').length - applied(padded, deleteItemEdit(padded, line)).split('\n').length;
 };
 const task = (line, level) => (level >= 0 && linePrefix(line).kind === 'task' ? linePrefix(line) : null);
+// The text with every open task under a ticked task ticked as well: what ticking a task leaves under it.
+const tickedThrough = (text) => {
+  const lines = text.split('\n'), levels = listLevels(text), under = new Set();
+  lines.forEach((line, index) => {
+    if (!task(line, levels[index])?.checked) return;
+    for (let other = index + 1, end = itemSpan(text, index).end; other <= end; other++) if (task(lines[other], levels[other])) under.add(other);
+  });
+  return lines.map((line, index) => (under.has(index) ? line.replace(/\[[ xX]\]/, (box) => (box === '[ ]' ? '[x]' : box)) : line)).join('\n');
+};
 
 test('moving trades two whole items: every line keeps its words and level, and the other way gives the text back', () => {
   const signature = (lines, levels) => lines.map((line, index) => `${words(line)}|${levels[index]}`).sort();
@@ -583,8 +628,9 @@ test('Uncheck all items empties every box and changes nothing else; ticking them
     let out = applied(text, edit);
     assert.deepEqual(out.split('\n'), lines.map((line, index) => (ticked.includes(index) ? line.replace(/\[[xX]\]/, '[ ]') : line)), `${name}: only the boxes`);
     assert.equal(uncheckAllEdit(out), null, `${name}: nothing is left to untick`);
-    for (const index of ticked) out = applied(out, tickEdit(out, index, false));
-    assert.equal(out, lines.map((line, index) => (ticked.includes(index) ? line.replace('[X]', '[x]') : line)).join('\n'), `${name}: ticked again`);
+    // Ticked again from the bottom up, the text is back, but for the tasks under a ticked task: a tick takes those along.
+    for (const index of [...ticked].reverse()) out = applied(out, tickEdit(out, index, false));
+    assert.equal(out, tickedThrough(text).split('\n').map((line, index) => (ticked.includes(index) ? line.replace('[X]', '[x]') : line)).join('\n'), `${name}: ticked again`);
   }
   assert.ok(unticked >= 40, `only ${unticked} tasks were unticked`);
 });
@@ -647,6 +693,126 @@ test('pasting lines in a list item adds items on the level of that item and chan
   assert.ok(pastes >= 300, `only ${pastes} pastes were tried`);
 });
 
+// The main items of the list a line is in, each as { line, end, done }: done is a ticked task with no open task in its
+// lines. Found with itemSpan and listLevels alone, to hold checkedTail and tickEdit against.
+const mainItems = (text, line) => {
+  const lines = text.split('\n'), owners = listItems(text), levels = listLevels(text), items = [];
+  let first = line;
+  while (first > 0 && owners[first - 1] >= 0) first--;
+  for (let index = first; index < lines.length && owners[index] >= 0; index++) {
+    if (levels[index] !== 0) continue;
+    const end = itemSpan(text, index).end, boxes = [];
+    for (let under = index; under <= end; under++) if (task(lines[under], levels[under])) boxes.push(task(lines[under], levels[under]).checked);
+    items.push({ line: index, end, done: Boolean(task(lines[index], 0)?.checked) && boxes.every(Boolean), tasks: boxes.length });
+  }
+  return items;
+};
+
+test('the ticked end is the done main items at the end of a list, with every line under them', () => {
+  let tails = 0, lists = 0;
+  for (const text of listTexts()) {
+    const lines = text.split('\n'), owners = listItems(text), found = checkedTail(text), name = label(text, 'ticked end');
+    const want = [];
+    lines.forEach((_, index) => {
+      // The first line of a list: the line above it is in no list.
+      if (owners[index] < 0 || (index > 0 && owners[index - 1] >= 0)) return;
+      lists++;
+      const items = mainItems(text, index);
+      let from = items.length;
+      while (from > 0 && items[from - 1].done) from--;
+      if (from < items.length) want.push({ from: items[from].line, to: items.at(-1).end, count: items.slice(from).reduce((sum, item) => sum + item.tasks, 0) });
+    });
+    assert.deepEqual(found, want, name);
+    tails += found.length;
+    for (const tail of found) {
+      assert.ok(tail.to + 1 >= lines.length || owners[tail.to + 1] < 0, `${name}: it runs to the end of its list`);
+      assert.ok(tail.count >= 1 && tail.count <= tail.to - tail.from + 1, `${name}: the number of tasks`);
+    }
+  }
+  assert.ok(tails >= 40 && lists >= 150, `only ${tails} ticked ends in ${lists} lists`);
+});
+
+test('with moving, a ticked main task lands in the ticked end of its list and an unticked one right above it', () => {
+  let landed = 0, back = 0, kept = 0;
+  for (const text of listTexts()) {
+    const lines = text.split('\n'), levels = listLevels(text);
+    lines.forEach((line, index) => {
+      const box = task(line, levels[index]);
+      if (!box || levels[index] !== 0) return;
+      const name = label(text, `line ${index}`), items = mainItems(text, index), own = items.findIndex((item) => item.line === index);
+      const edit = tickEdit(text, index, true), out = applied(text, edit), tail = checkedTail(out).find((range) => range.from <= edit.line && edit.line <= range.to);
+      if (box.checked) {
+        // Unticked: it is in no ticked end, and when a done task stood above it, the ticked end starts right under it.
+        assert.equal(tail, undefined, `${name}: an open task is in no ticked end`);
+        const first = items.slice(0, own).find((item) => item.done);
+        if (!first || edit.line === index) return;
+        back++;
+        assert.equal(edit.line, first.line, `${name}: it stands where the first done task stood`);
+        if (items.slice(own + 1).every((item) => item.done) && items.slice(items.indexOf(first), own).every((item) => item.done)) {
+          assert.equal(checkedTail(out).find((range) => range.to === items.at(-1).end)?.from, itemSpan(out, edit.line).end + 1, `${name}: the ticked end starts right under it`);
+        }
+        return;
+      }
+      // Ticked: every main item under it that is not done is a task it moves past, unless a bullet or a numbered line
+      // stands there (those stay where they are) or mixed indents keep it in place.
+      const below = items.slice(own + 1), open = below.filter((item) => !item.done);
+      if (open.some((item) => !task(lines[item.line], 0))) return;
+      if (open.length && edit.line === index) { kept++; return; }
+      landed++;
+      assert.ok(tail, `${name}: it is in the ticked end`);
+      // Moved, it stands right under the last item that is not done: it is the first of the ticked end.
+      if (open.length) assert.equal(tail.from, edit.line, `${name}: it is the first of the ticked end`);
+    });
+  }
+  assert.ok(landed >= 100 && back >= 15, `only ${landed} ticks landed in a ticked end and ${back} unticks went back`);
+  assert.ok(kept * 10 < landed, `${kept} ticks of ${landed} could not move`);
+});
+
+test('"+ List item" adds one line, an empty task on the main level, right in front of the ticked end or at the end of its list', () => {
+  let added = 0, inFront = 0, atEnd = 0;
+  for (const text of listTexts()) {
+    const lines = text.split('\n'), owners = listItems(text), levels = listLevels(text), tails = checkedTail(text);
+    for (let index = -1; index <= lines.length; index++) {
+      const name = label(text, `line ${index}`), edit = addItemEdit(text, index);
+      if (!(owners[index] >= 0)) { assert.equal(edit, null, `${name}: no list`); continue; }
+      added++;
+      const out = applied(text, edit), after = out.split('\n'), at = edit.line;
+      assert.deepEqual([edit.to, edit.selFrom], [edit.from, edit.selTo], `${name}: a line is put in and the caret is a caret`);
+      assert.deepEqual([...after.slice(0, at), ...after.slice(at + 1)].map(bare), lines.map(bare), `${name}: the other lines`);
+      assert.match(bare(after[at]), /^[ \t]*[-*+] \[ \] $/, `${name}: an empty task`);
+      const afterLevels = listLevels(out);
+      assert.equal(afterLevels[at], 0, `${name}: on the main level`);
+      assert.deepEqual([...afterLevels.slice(0, at), ...afterLevels.slice(at + 1)], levels, `${name}: the levels of the other lines`);
+      assert.equal(out.slice(0, edit.selFrom).split('\n').length - 1, at, `${name}: the caret is on the new line`);
+      assert.ok(out.slice(edit.selFrom).startsWith('\n') || out.slice(edit.selFrom).startsWith('\r\n') || edit.selFrom === out.length, `${name}: the caret is at its end`);
+      // The line endings: a CRLF text stays CRLF, and the text ends as it ended.
+      const crs = (all) => all.filter((value) => value.endsWith('\r')).length;
+      assert.ok(crs(after) === crs(lines) || crs(after) === crs(lines) + 1, `${name}: the line endings`);
+      if (crs(lines) === lines.length - 1 && lines.length > 1) assert.equal(crs(after), after.length - 1, `${name}: a CRLF text stays CRLF`);
+      if (!crs(lines)) assert.equal(crs(after), 0, `${name}: no \\r comes in`);
+      assert.equal(out.endsWith('\n'), text.endsWith('\n'), `${name}: the end of the text`);
+      // Its place: the first line of the ticked end of its list, which starts right under it now; with none, the last of its list.
+      let last = index;
+      while (last + 1 < lines.length && owners[last + 1] >= 0) last++;
+      const tail = tails.find((range) => range.to === last), moved = checkedTail(out);
+      if (tail) {
+        inFront++;
+        assert.equal(at, tail.from, `${name}: in front of the ticked end`);
+        assert.ok(moved.some((range) => range.from === tail.from + 1 && range.to === tail.to + 1 && range.count === tail.count), `${name}: the ticked end is as it was, one line down`);
+      } else {
+        atEnd++;
+        assert.equal(at, last + 1, `${name}: after the last line of its list`);
+        assert.ok(at + 1 >= after.length || listItems(out)[at + 1] < 0, `${name}: it is the last of its list`);
+      }
+      assert.equal(moved.length, tails.length, `${name}: no ticked end comes or goes`);
+      // Asked again from the new line, the next one lands right under it.
+      const again = addItemEdit(out, at);
+      assert.equal(again.line, at + 1, `${name}: the next one lands under it`);
+    }
+  }
+  assert.ok(added >= 300 && inFront >= 60 && atEnd >= 150, `only ${added} items were added, ${inFront} in front of a ticked end and ${atEnd} at the end of a list`);
+});
+
 test('real note: every move and drop can be taken back byte for byte, and so can unticking', () => {
   const text = readFileSync(new URL('checklists.md', fixtures), 'utf8');
   const lines = text.split('\n'), levels = listLevels(text);
@@ -678,7 +844,9 @@ test('real note: every move and drop can be taken back byte for byte, and so can
     }
   });
   assert.ok(moves >= 20 && drops >= 300, `${moves} moves and ${drops} drops were tried`);
+  // Unticking all and ticking again from the bottom up: the note is back, with the open tasks under a ticked task ticked.
   let out = applied(text, uncheckAllEdit(text));
-  lines.forEach((line, index) => { if (task(line, levels[index])?.checked) out = applied(out, tickEdit(out, index, false)); });
-  assert.equal(out, text);
+  for (let index = lines.length - 1; index >= 0; index--) if (task(lines[index], levels[index])?.checked) out = applied(out, tickEdit(out, index, false));
+  assert.equal(out, tickedThrough(text));
+  assert.notEqual(tickedThrough(text), text, 'the note holds a ticked task with an open task under it');
 });

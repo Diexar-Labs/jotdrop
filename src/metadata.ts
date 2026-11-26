@@ -636,7 +636,8 @@ export function checklistPreviewRows(content: string): PreviewRow[] {
 /**
  * Ticks the Nth task as `toggleChecklistItem` counts them, through the shared core: with `move` ("Move checked items to
  * the bottom") the task also moves in the note (design kaarten-en-lijsten, part 6). A task that only this count sees
- * (for example in a code block) is just ticked, as before. `moved`: the lines changed order.
+ * (for example in a code block) is just ticked, as before. `moved`: more than this one box changed, so the card reads
+ * the note again: the lines changed order, or the tick took other tasks along (design checklists-77-v2, part 7).
  */
 export function tickChecklistItem(content: string, targetIndex: number, move: boolean): { updated: string; moved: boolean } {
   const plain = toggleChecklistItem(content, targetIndex);
@@ -648,7 +649,8 @@ export function tickChecklistItem(content: string, targetIndex: number, move: bo
     const line = content.slice(0, bodyStart + match.index + match[1].indexOf("-")).split("\n").length - 1;
     const edit = tickEdit(content, line, move);
     if (!edit) break;
-    return { updated: content.slice(0, edit.from) + edit.insert + content.slice(edit.to), moved: edit.line !== line };
+    const updated = content.slice(0, edit.from) + edit.insert + content.slice(edit.to);
+    return { updated, moved: updated !== plain };
   }
   return { updated: plain, moved: false };
 }

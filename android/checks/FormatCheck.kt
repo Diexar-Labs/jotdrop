@@ -69,6 +69,9 @@ fun main(arguments: Array<String>) {
             "deleteChecked" -> counted(FormatCore.deleteCheckedEdit(input, fields[2].toInt(), fields[3].toInt()))
             // Fields: selection from, to, the pasted text (base64).
             "paste" -> edit(FormatCore.pasteLinesEdit(input, fields[2].toInt(), fields[3].toInt(), text(fields.getOrElse(4) { "" })))
+            // The ticked end of a list and "+ List item" (design checklists-77-v2, part 6). Fields of addItem: the line.
+            "tail" -> FormatCore.checkedTail(input).joinToString(",") { "${it.from}:${it.to}:${it.count}" }
+            "addItem" -> placed(FormatCore.addItemEdit(input, fields[2].toInt()))
             else -> error("Unknown case ${fields[0]}")
         }
     }

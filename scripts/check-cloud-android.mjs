@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bothMovedCases, dragCases, hugeCase, listCases, longCase, randomCases, tickCases } from '../cloud/shared/merge-cases.mjs';
+import { bothMovedCases, dragCases, hugeCase, levelCases, listCases, longCase, randomCases, tickCases } from '../cloud/shared/merge-cases.mjs';
 import { mergeNote } from '../cloud/shared/merge.mjs';
 import { base64ToBytes, bytesToBase64, CHUNK_BYTES, decryptChunk, decryptEnvelope, encryptChunk, encryptEnvelope, generateVaultKey, hashToken, normalizePath, objectId, sha256Hex } from '../cloud/shared/crypto.mjs';
 import { mailToNote } from '../cloud/shared/mail.mjs';
@@ -47,7 +47,7 @@ try {
   const utf8 = (value) => new TextEncoder().encode(value);
   // A line both devices moved goes where the cloud has it, so the random notes and lists are merged from both devices.
   const turned = (item) => ({ name: `${item.name}, from the other device`, base: item.base, local: item.cloud, cloud: item.local });
-  const generated = [...randomCases(3000), ...randomCases(3000).map(turned), ...listCases(3000), ...listCases(3000).map(turned), ...dragCases(), ...tickCases(), ...bothMovedCases(), hugeCase(), longCase()].map((item) => {
+  const generated = [...randomCases(3000), ...randomCases(3000).map(turned), ...listCases(3000), ...listCases(3000).map(turned), ...levelCases(3000), ...levelCases(3000).map(turned), ...dragCases(), ...tickCases(), ...bothMovedCases(), hugeCase(), longCase()].map((item) => {
     const merged = mergeNote(utf8(item.base), utf8(item.local), utf8(item.cloud));
     return { ...item, merged: merged && new TextDecoder().decode(merged) };
   });
