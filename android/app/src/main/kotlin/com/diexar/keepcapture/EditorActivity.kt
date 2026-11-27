@@ -332,6 +332,13 @@ private fun EditorScreen(
     // The Markdown switch (design opmaak-editor 5.1): off shows the formatting, on the raw text; kept per device.
     var markdownMode by remember { mutableStateOf(EditorPrefs.markdown(context)) }
     var bodyFocused by remember { mutableStateOf(false) }
+    // The caret in the title, and whether the note changed in this visit while the caret was nowhere in it (a task
+    // dragged or ticked without a keyboard, the note's menu): Undo and Redo then stand in a small block over the note
+    // until the caret comes into it (design checklists-77-v3, 3.3).
+    var titleFocused by remember { mutableStateOf(false) }
+    var changedWithoutCaret by rememberSaveable { mutableStateOf(false) }
+    // Counts the steps and the Undos made with the caret in the note: such a change can take the caret's own field away.
+    var caretSteps by remember { mutableIntStateOf(0) }
     // Tables in the formatted view (design 7.2): the cell with the focus (for the table bar), a cell that should get
     // it, a table waiting for "delete?", and a counter that lays the body out in pieces again.
     var cellFocus by remember { mutableStateOf<TableCell?>(null) }
@@ -404,6 +411,20 @@ private fun EditorScreen(
     var attachmentUris by remember { mutableStateOf<Map<String, Uri>>(emptyMap()) }
     var attachmentIndexLoaded by remember { mutableStateOf(false) }
 
+    /** Whether the caret is in the note: in its body, in a cell of a table or in its title. Each has a bar with Undo and Redo. */
+    fun caretInNote() = bodyFocused || cellFocus != null || titleFocused
+
+    // A step or an Undo made with the caret in the note can take the caret's own field away: Undo takes back the row of
+    // a table the caret is in, a table is deleted. The note is then without a caret and without a bar, so the block
+    // comes there too (design checklists-77-v3, 3.3). The caret may be on its way to another field (the cell next to a
+    // row that went, a task ticked with the caret in it): only when it is still nowhere a moment later.
+    LaunchedEffect(caretSteps) {
+        if (caretSteps == 0) return@LaunchedEffect
+        delay(CARET_SETTLES_MS)
+        while (tableFocus != null) delay(50)
+        if (!caretInNote()) changedWithoutCaret = true
+    }
+
     fun historyChanged() {
         canUndo = history.canUndo
         canRedo = history.canRedo
@@ -425,6 +446,9 @@ private fun EditorScreen(
             historyChanged()
             // The strip told about the change before this one.
             notice = null
+            // A step made while the caret is nowhere in the note: no bar is there, so Undo comes in sight over the note.
+            if (kind == EditKind.STEP && !caretInNote()) changedWithoutCaret = true
+            if (kind == EditKind.STEP && caretInNote()) caretSteps++
         } else if (kind != null && next.selection != current.selection) history.moved()
         staleBody.settle(fieldText, next.text)
         bodyText = next
@@ -451,6 +475,7 @@ private fun EditorScreen(
         historyChanged()
         if (applied == null) return
         notice = null
+        if (!caretInNote()) changedWithoutCaret = true else caretSteps++
         writeTitle(applied.title, typed = false)
         val selection = if (applied.selFrom >= 0) TextRange(applied.selFrom, applied.selTo)
             else TextRange(current.selection.start.coerceAtMost(applied.body.length), current.selection.end.coerceAtMost(applied.body.length))
@@ -881,6 +906,8 @@ private fun EditorScreen(
         loadError = null
         parkedUri = null
         notice = null
+        changedWithoutCaret = false
+        caretSteps = 0
         reveal = null
         val cachedAttachments = attachmentUris.takeIf { attachmentIndexLoaded }
         val result = withContext(Dispatchers.IO) {
@@ -1460,6 +1487,11 @@ private fun EditorScreen(
                     onNext = { navigateTo(1) },
                 )
             }
+            // Undo and Redo stand at the start of whichever bar is there, always at the same place (design
+            // checklists-77-v2, 4.4). Without a caret in the note there is no bar: after a change made that way the two
+            // stand in a small block over the note, for as long as there is a step (design checklists-77-v3, 3.3).
+            val steps = UndoRedo(canUndo && !saving, canRedo && !saving, ::stepHistory)
+            val undoBlock = changedWithoutCaret && (canUndo || canRedo) && loaded && loadError == null && parkedUri == null
             Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
             when {
                 !loaded -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -1591,15 +1623,24 @@ private fun EditorScreen(
                     tableFocus = tableFocus,
                     onTableFocusDone = { tableFocus = null },
                     onTableEdit = ::editTable,
-                    onCell = { cellFocus = it },
+                    onCell = {
+                        cellFocus = it
+                        if (it != null) changedWithoutCaret = false
+                    },
                     onReplaceBody = { next ->
                         writeBody(next, EditKind.STEP)
                         bodyEditing = true
                     },
                     onBodyFocus = { focused ->
                         bodyFocused = focused
-                        if (!focused) writeBody(bodyText.withoutEmptyPair(), EditKind.CLEANUP)
+                        if (focused) changedWithoutCaret = false
+                        else writeBody(bodyText.withoutEmptyPair(), EditKind.CLEANUP)
                     },
+                    onTitleFocus = { focused ->
+                        titleFocused = focused
+                        if (focused) changedWithoutCaret = false
+                    },
+                    roomUnder = if (undoBlock) UNDO_BLOCK_ROOM else 0.dp,
                     onStep = ::stepHistory,
                     reveal = reveal,
                     onRevealed = { if (reveal === it) reveal = null },
@@ -1678,13 +1719,11 @@ private fun EditorScreen(
                     foreground = fg,
                 )
             }
+            if (undoBlock) UndoBlock(steps, fg, bg, Modifier.align(Alignment.BottomEnd).padding(UNDO_BLOCK_MARGIN))
             }
             if (loaded && loadError == null && parkedUri == null) notice?.let { shown ->
                 NoticeStrip(shown, fg, onGone = { if (notice === shown) notice = null })
             }
-            // Undo and Redo stand at the start of whichever bar is there, always at the same place (design
-            // checklists-77-v2, 4.4).
-            val steps = UndoRedo(canUndo && !saving, canRedo && !saving, ::stepHistory)
             if (bodyFocused && loaded && loadError == null && parkedUri == null) {
                 val active = remember(bodyText.text, bodyText.selection) {
                     if (bodyText.text.length > FORMAT_RAW_ABOVE) emptyList()
@@ -1730,9 +1769,9 @@ private fun EditorScreen(
                     },
                     onDeleteTable = { confirmTableDelete = cell.table },
                 )
-                // No keyboard in the body (the read view, the title, an item moved without a caret): a narrow bar with
-                // only the two, and only while there is something to take back or to do again, as in Keep.
-                else if (canUndo || canRedo) UndoBar(steps, fg)
+                // The caret in the title: a narrow bar with only the two, and only while there is something to take back
+                // or to do again. The title has no formatting, and who types there must be able to reach Undo.
+                else if (titleFocused && (canUndo || canRedo)) UndoBar(steps, fg)
             }
         }
     }
@@ -1960,6 +1999,10 @@ private fun EditorBody(
     items: ItemActions,
     formatted: Boolean = true,
     onBodyFocus: (Boolean) -> Unit = {},
+    // Whether the caret is in the title, and room to keep under the note's last line: with it that line can be scrolled
+    // to above what lies over the note's bottom (the block with Undo and Redo).
+    onTitleFocus: (Boolean) -> Unit = {},
+    roomUnder: androidx.compose.ui.unit.Dp = 0.dp,
     tableBackground: Color = Color.Transparent,
     layoutKey: Int = 0,
     tableFocus: TableFocus? = null,
@@ -2101,6 +2144,8 @@ private fun EditorBody(
         revealScope.launch { if (shown.field == EditField.TITLE) titleView.bringIntoView() else places.show(shown.from, shown.to) }
         onRevealed(shown)
     }
+    // A title that goes with the caret in it (another note is loaded) does not tell that it lost the caret.
+    DisposableEffect(Unit) { onDispose { onTitleFocus(false) } }
 
     Column(
         modifier = Modifier
@@ -2191,7 +2236,7 @@ private fun EditorBody(
         TextField(
             value = title,
             onValueChange = onTitleChange,
-            modifier = Modifier.fillMaxWidth().bringIntoViewRequester(titleView).then(stepKeys),
+            modifier = Modifier.fillMaxWidth().bringIntoViewRequester(titleView).then(stepKeys).onFocusChanged { onTitleFocus(it.isFocused) },
             // De titel is de eerste regel van de body; een titelwijziging herschrijft de onzichtbare tekst.
             enabled = !bodyTooTall,
             singleLine = true,
@@ -2348,6 +2393,7 @@ private fun EditorBody(
                 focusText = Int.MAX_VALUE
             }
         }
+        if (roomUnder > 0.dp) Spacer(Modifier.height(roomUnder))
     }
     lightboxUri?.let { uri ->
         val drawing = DrawingFormat.isDrawingName(Uri.decode(uri.lastPathSegment.orEmpty()).substringAfterLast('/'))
@@ -2361,6 +2407,16 @@ private val taskLineHeight = 32.sp
 // The room around the body's text inside its field (Material's own for a field without a label): the handles and the
 // cross are laid over the text from outside the field and count from the same place.
 private val bodyFieldPadding = 16.dp
+
+// The block with Undo and Redo lies over the note's bottom, this far from the edges, as the floating buttons on the
+// board do (design checklists-77-v3, 3.3). While it is there the note keeps room under its last line: the block's
+// height with its margin, so that line can be scrolled to above the block.
+private val UNDO_BLOCK_MARGIN = 16.dp
+private val UNDO_BLOCK_ROOM = 64.dp
+
+// How long after a change the caret may be on its way from a field that went to another one, before the note counts as
+// left without a caret.
+private const val CARET_SETTLES_MS = 300L
 
 /**
  * The body's text field: Material's TextField, built from its parts so the caret's place is known: typing on at the
@@ -2832,7 +2888,8 @@ internal class EditorNotice(val message: String)
 
 /**
  * The strip above the formatting bar: what a list action took away when that was more than could be seen (design
- * checklists-77-v2, 4.5). It has no Undo: that is always in sight in the bar under it. It stays 4 seconds, or as long
+ * checklists-77-v2, 4.5). It has no Undo: that is in sight in the bar under it, or in the block over the note when the
+ * caret is nowhere in the note (design checklists-77-v3, 3.3). It stays 4 seconds, or as long
  * as the phone's setting for people who need more time asks. A swipe over it to either side takes it away, and so does
  * its cross, and the next change. TalkBack reads the strip when it comes.
  */

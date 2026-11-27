@@ -88,7 +88,24 @@ assert.equal((editor.match(/detectHorizontalDragGestures\(/g) || []).length, 1, 
 // Undo and Redo stand at the start of every bar, outside what scrolls (4.4).
 const formatBar = source('FormatBar');
 assert.equal((formatBar.match(/lead = \{ UndoRedoButtons\(steps, foreground\) \}/g) || []).length, 2, 'The formatting bar and the table bar both start with Undo and Redo');
-assert(formatBar.includes('internal fun UndoBar(') && editor.includes('else if (canUndo || canRedo) UndoBar(steps, fg)'), 'Without a keyboard in the body the two buttons have a bar of their own, only while there is a step');
+assert(formatBar.includes('internal fun UndoBar(') && editor.includes('else if (titleFocused && (canUndo || canRedo)) UndoBar(steps, fg)'), 'With the caret in the title the two buttons have a bar of their own, only while there is a step');
+// Without a caret in the note there is no bar (design checklists-77-v3, 3.3): a note that is only read keeps its whole
+// height. After a change made without a caret the two buttons stand in a block over the note, until the caret comes
+// into the note or another note is loaded.
+assert.equal((editor.match(/\bUndoBar\(/g) || []).length, 1, 'The bar with only the two buttons stands under the title, nowhere else');
+assert(formatBar.includes('internal fun UndoBlock(') && editor.includes('if (undoBlock) UndoBlock(steps, fg, bg, Modifier.align(Alignment.BottomEnd)'), 'After a change without a caret the two buttons lie over the note, at its end');
+assert(editor.includes('val undoBlock = changedWithoutCaret && (canUndo || canRedo)'), 'The block is there after a change without a caret, only while there is a step');
+assert(writeBody.includes('if (kind == EditKind.STEP && !caretInNote()) changedWithoutCaret = true'), 'A step made without a caret in the note brings Undo in sight');
+assert(loadNote.includes('changedWithoutCaret = false'), 'Another note starts without the block');
+assert.equal((editor.match(/changedWithoutCaret = false/g) || []).length, 4, 'The block goes when the caret comes into the body, a cell or the title, and when a note is loaded');
+// A step or an Undo made with the caret in the note can take the caret's own field away (Undo takes back the row of a
+// table the caret is in, a table is deleted): the note is left without a caret and without a bar, so the block comes
+// there too, once the caret had its time to reach another field.
+assert(writeBody.includes('if (kind == EditKind.STEP && caretInNote()) caretSteps++'), 'A step made with the caret in the note is counted');
+assert(editor.includes('if (!caretInNote()) changedWithoutCaret = true else caretSteps++'), 'Undo and Redo bring the block without a caret, and are counted with one');
+assert(/LaunchedEffect\(caretSteps\) \{\s+if \(caretSteps == 0\) return@LaunchedEffect\s+delay\(CARET_SETTLES_MS\)\s+while \(tableFocus != null\) delay\(50\)\s+if \(!caretInNote\(\)\) changedWithoutCaret = true\s+\}/.test(editor), 'A change that left the note without a caret brings Undo in sight, unless the caret is on its way to another field');
+assert(loadNote.includes('caretSteps = 0'), 'A change in the note before this one does not bring the block over this one');
+assert.equal((editor.match(/changedWithoutCaret = true/g) || []).length, 3, 'The block comes after a step without a caret, Undo or Redo without one, and a change that left the note without one');
 assert(storage.includes('LabelNames.applyChanges(meta.labels, added, removed)'), 'Only user-toggled memberships may change');
 assert(drawer.includes('Storage.addLabel(context, normalized)'), 'Creation must merge a fresh label registry under the write mutex');
 assert(storage.includes('private fun saveLabels('), 'Callers must not overwrite label snapshots without coordination');

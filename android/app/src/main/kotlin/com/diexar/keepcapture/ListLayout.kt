@@ -230,6 +230,14 @@ internal fun keptInPiece(off: Float, itemTop: Float, itemBottom: Float, pieceTop
     maxOf(minOf(off, pieceBottom - itemBottom), pieceTop - itemTop)
 
 /**
+ * Whether the task on [line] shows its cross (design checklists-77-v3, 2.2): it is the task with the caret ([caret], -1
+ * when there is none), and it is not in an item that is lifted off the note. [lifted] are the lines of that item with
+ * all that hangs under it, from the finger on its handle until its frame is gone. The frame's edge would run through
+ * the cross, and a finger that holds the handle cannot use it.
+ */
+internal fun crossShown(line: Int, caret: Int, lifted: IntRange?): Boolean = line == caret && (lifted == null || line !in lifted)
+
+/**
  * Whether Move up or Move down ([direction] "up" or "down") would take the item [line] belongs to past the header of
  * the ticked items (design checklists-77-v2, 6.1): the item it would trade places with is in the ticked end of the
  * list and the item itself is not, or the other way round. False too when the item has no such neighbour.
