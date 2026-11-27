@@ -2235,13 +2235,23 @@ button.jotdrop-provider-github:not(.clickable-icon):hover { background: #32383f;
   position: absolute;
   inset: -1px;
   z-index: -1;
+  border-radius: inherit;
+  /* A drop shadow rather than a box shadow: it takes the paper's shape, cut corner included (#109). */
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.05));
+  rotate: var(--jotdrop-tilt, 0deg);
+  transition: translate 0.15s ease, filter 0.15s ease;
+  pointer-events: none;
+}
+/* The paper itself. The folded corner is cut off for real, so whatever lies under the card shows there: the page, the shadow,
+   another card (#109, mrjo118: a corner painted in the page colour showed as a square edge on anything else). */
+.jotdrop-card-paper::before {
+  content: "";
+  position: absolute;
+  inset: 0;
   border: 1px solid var(--kc-border);
   border-radius: inherit;
   background: var(--kc-bg);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
-  rotate: var(--jotdrop-tilt, 0deg);
-  transition: translate 0.15s ease, box-shadow 0.15s ease;
-  pointer-events: none;
+  clip-path: polygon(0 0, 100% 0, 100% calc(100% - 16px), calc(100% - 16px) 100%, 0 100%);
 }
 .jotdrop-card :is(.jotdrop-card-thumbnail, .jotdrop-card-voice-banner) {
   rotate: var(--jotdrop-tilt, 0deg);
@@ -2259,24 +2269,18 @@ button.jotdrop-provider-github:not(.clickable-icon):hover { background: #32383f;
 .jotdrop-card:is(:hover, :has(:focus-visible)) :is(.jotdrop-card-paper, .jotdrop-card-tape, .jotdrop-card-thumbnail, .jotdrop-card-voice-banner) {
   translate: -2px -2px;
 }
-.jotdrop-card:is(:hover, :has(:focus-visible)) .jotdrop-card-paper { box-shadow: 5px 5px 0 #f4c458; }
-/* The shadow lies under the folded corner then, so the cut-off bit shows amber too, not the page. */
-.jotdrop-card:is(:hover, :has(:focus-visible)) .jotdrop-card-paper::after {
-  background-color: #f4c458;
-}
-/* One pixel past the paper's edge, so the turned paper's border does not shine through the cut-off bit as a thin line (Eric, 27 Oct).
-   The cut-off bit's colour fades with the shadow, so no page-coloured triangle lies on the shadow while it comes or goes (#109). */
+.jotdrop-card:is(:hover, :has(:focus-visible)) .jotdrop-card-paper { filter: drop-shadow(5px 5px 0 #f4c458); }
+/* The flap of the folded corner lies along the cut; past it the corner is open. */
 .jotdrop-card-paper::after {
   content: "";
   position: absolute;
-  right: -2px;
-  bottom: -2px;
-  width: 17px;
-  height: 17px;
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
   border-top-left-radius: 5px;
-  background: linear-gradient(to top left, transparent 50%, color-mix(in oklab, var(--kc-bg) 78%, var(--text-normal)) 50%) var(--background-primary);
+  background: linear-gradient(to top left, transparent 50%, color-mix(in oklab, var(--kc-bg) 78%, var(--text-normal)) 50%);
   filter: drop-shadow(-1px -1px 0 var(--kc-border));
-  transition: background-color 0.15s ease;
 }
 .jotdrop-card.is-pinned .jotdrop-card-tape::before {
   content: "";
@@ -2362,7 +2366,7 @@ button.jotdrop-provider-github:not(.clickable-icon):hover { background: #32383f;
   .jotdrop-view .jotdrop-new-btn:active { translate: 3px 3px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .jotdrop-card :is(.jotdrop-card-paper, .jotdrop-card-tape, .jotdrop-card-thumbnail, .jotdrop-card-voice-banner), .jotdrop-card-paper::after { transition: none; }
+  .jotdrop-card :is(.jotdrop-card-paper, .jotdrop-card-tape, .jotdrop-card-thumbnail, .jotdrop-card-voice-banner) { transition: none; }
   .jotdrop-card.is-dropped, .jotdrop-card.just-pinned.is-pinned .jotdrop-card-tape::before { animation: jotdrop-fade-in 0.2s ease-out var(--jotdrop-since, 0ms); }
   .jotdrop-card-stamp { animation: jotdrop-stamp-fade 1.8s ease-out var(--jotdrop-since, 0ms) forwards; }
 }
