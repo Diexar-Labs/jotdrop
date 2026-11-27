@@ -10,9 +10,10 @@
 // adopted (constructed) style sheet instead of a <style> element, and our own style comes in with a <link>.
 import { EditorSelection, EditorState, Prec, StateEffect, StateField } from '@codemirror/state';
 import { Decoration, EditorView, WidgetType, keymap, placeholder } from '@codemirror/view';
-import { defaultKeymap, history, historyKeymap, toggleTabFocusMode } from '@codemirror/commands';
+import { defaultKeymap, history, historyKeymap, isolateHistory, redo, redoDepth, toggleTabFocusMode, undo, undoDepth } from '@codemirror/commands';
 import { activeFormats, applyFormat, backspaceEdit, blocks, checklistEdit, emptyPair, indentEdit, inlineSpans, linePrefix, listEnterEdit, listLevels, parseTable, tableEdit, tickEdit } from '/shared/format.mjs';
 import { createTableGrid } from '/shared/table-grid.mjs';
+import { listGrips } from './list-grips.mjs';
 
 // Above this many characters the note shows raw, for speed.
 export const RAW_ABOVE = 50000;
@@ -27,7 +28,9 @@ const DEFAULT_LABELS = {
   placeholder: 'Take a note…',
   done: 'Done',
   table: 'Table',
-  keys: 'In a list, Tab and Shift+Tab change the level of an item. To leave the note with Tab, press Ctrl+M first.',
+  keys: 'In a list, Tab and Shift+Tab change the level of an item, and Alt+Up and Alt+Down move it. To leave the note with Tab, press Ctrl+M first.',
+  drag: 'Drag to move',
+  deleteItem: 'Delete item',
 };
 
 class BulletWidget extends WidgetType {
@@ -199,13 +202,15 @@ function decorate(state, formatted, host) {
 }
 
 /**
- * createBodyEditor({ parent, value, formatted, labels, onChange, onState, isTableTool, stylesheet })
+ * createBodyEditor({ parent, value, formatted, labels, onChange, onState, onItemDeleted, isTableTool, stylesheet })
  *   → { element, getValue, setValue, focus, getSelection, setSelection, replace(edit), insertText(text),
- *       apply(command), activeFormats(), context(), setFormatted(bool), flush(), destroy() }
- * onChange(text) runs on every change the user makes (not for setValue); onState({ context, active }) whenever the
- * selection, the text or the focus changes, so the host can show which buttons are on and which bar to show.
+ *       apply(command), activeFormats(), context(), setFormatted(bool), undo(), redo(), canUndo(), canRedo(),
+ *       flush(), destroy() }
+ * onChange(text) runs on every change the user makes (not for setValue); onState({ context, active, canUndo, canRedo })
+ * whenever the selection, the text or the focus changes, so the host can show which buttons are on and which bar to
+ * show. onItemDeleted(count) runs after the cross on a task deleted it, with the number of sub-items that went along.
  */
-export function createBodyEditor({ parent, value = '', formatted = true, labels: given = {}, onChange, onState, isTableTool, moveChecked = () => false, stylesheet = '/editor.css' }) {
+export function createBodyEditor({ parent, value = '', formatted = true, labels: given = {}, onChange, onState, onItemDeleted, isTableTool, moveChecked = () => false, stylesheet = '/editor.css' }) {
   const doc = parent.ownerDocument;
   const labels = { ...DEFAULT_LABELS, ...given };
   let view, context = 'text', activeGrid = null;
@@ -222,7 +227,10 @@ export function createBodyEditor({ parent, value = '', formatted = true, labels:
   mount.className = 'jd-editor';
   root.append(link, mount);
 
-  const notify = () => onState?.({ context, active: currentFormats() });
+  // A table cell that is being written in holds text the editor does not have yet: that can be undone too.
+  const canUndo = () => undoDepth(view.state) > 0 || Boolean(context === 'table' && activeGrid?.activeCell());
+  const canRedo = () => redoDepth(view.state) > 0;
+  const notify = () => onState?.({ context, active: currentFormats(), canUndo: canUndo(), canRedo: canRedo() });
 
   /** Where the table with this grid starts, as a line number from 0. */
   const tableLine = (dom) => view.state.doc.lineAt(view.posAtDOM(dom)).number - 1;
@@ -365,6 +373,8 @@ export function createBodyEditor({ parent, value = '', formatted = true, labels:
     placeholder(labels.placeholder),
     EditorView.contentAttributes.of({ spellcheck: 'true', autocapitalize: 'sentences', autocorrect: 'on', 'aria-label': labels.note, 'aria-description': labels.keys }),
     formatField,
+    // The handle and the cross of a task, Alt+arrows and pasting lines as items (design checklists-77-v2, part 24).
+    listGrips({ labels, onDeleted: (count) => onItemDeleted?.(count) }),
     // An empty pair the caret leaves without typing in it (a button pressed, then the caret moved on) goes again, so
     // no `****` stays behind in the note.
     EditorState.transactionFilter.of((tr) => {
@@ -422,7 +432,8 @@ export function createBodyEditor({ parent, value = '', formatted = true, labels:
 
   function replace(edit) {
     if (!edit) return false;
-    view.dispatch({ changes: { from: edit.from, to: edit.to, insert: edit.insert }, selection: EditorSelection.single(edit.selFrom ?? edit.from + edit.insert.length, edit.selTo ?? edit.selFrom ?? edit.from + edit.insert.length), userEvent: 'input', scrollIntoView: true });
+    // What the host puts in (a link, a menu action) is one step for Undo, apart from the typing around it.
+    view.dispatch({ changes: { from: edit.from, to: edit.to, insert: edit.insert }, selection: EditorSelection.single(edit.selFrom ?? edit.from + edit.insert.length, edit.selTo ?? edit.selFrom ?? edit.from + edit.insert.length), annotations: isolateHistory.of('full'), userEvent: 'input', scrollIntoView: true });
     view.focus();
     return true;
   }
@@ -487,6 +498,20 @@ export function createBodyEditor({ parent, value = '', formatted = true, labels:
     return true;
   }
 
+  /**
+   * Undo or Redo from a button (`run` is CodeMirror's own command). The focus stays where it was: no keyboard opens
+   * on a phone. In a table the open cell goes into the text first, and the same cell gets the focus back when the
+   * table is still there, so the table bar stays.
+   */
+  function step(run) {
+    const grid = context === 'table' ? activeGrid : null;
+    const cell = grid && (grid.activeCell() || grid.lastCell()), line = grid ? tableLine(grid.element) : -1;
+    grid?.flush();
+    const done = run(view);
+    if (cell) gridAtLine(line)?.focusCell(cell.row, cell.column);
+    return done;
+  }
+
   function insertText(text) {
     if (context === 'table' && activeGrid?.activeCell()) {
       const area = activeGrid.element.querySelector('textarea');
@@ -524,6 +549,10 @@ export function createBodyEditor({ parent, value = '', formatted = true, labels:
     activeFormats: currentFormats,
     context: () => context,
     setFormatted: (on) => view.dispatch({ effects: setFormatted.of(Boolean(on)) }),
+    undo: () => step(undo),
+    redo: () => step(redo),
+    canUndo,
+    canRedo,
     flush,
     destroy() { view.destroy(); element.remove(); },
   };

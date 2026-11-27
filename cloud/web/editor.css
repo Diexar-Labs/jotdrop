@@ -48,6 +48,14 @@
 .cm-jd-l7 { --jd-level: 7; }
 .cm-jd-l8 { --jd-level: 8; }
 .cm-jd-done { color: var(--muted); }
+/* Checklist grips (list-grips.mjs; design checklists-77-v2, part 24). A list with a task in it stands a little to the
+   right as a whole and leaves the margin to the handles; a task line keeps room on the right for its cross, so its
+   words do not wrap anew when the caret comes. The handle and the cross reach out over the content's own margin
+   (`--jd-edge`), and an item that is dragged has the field's own ground. */
+.jd-editor { --jd-edge: .7rem; --jd-lift-ground: var(--field); --jd-lift-line: var(--ink); }
+.jd-editor .cm-editor .cm-line.cm-jd-shift { padding-left: var(--jd-grip-room); }
+.jd-editor .cm-editor .cm-line.cm-jd-shift.cm-jd-li, .jd-editor .cm-editor .cm-line.cm-jd-shift.cm-jd-more { padding-left: calc(var(--jd-grip-room) + var(--jd-level) * 1.5em + var(--jd-hang)); }
+.jd-editor .cm-editor .cm-line.cm-jd-task { padding-right: var(--jd-cross-room); }
 .cm-jd-rule .cm-jd-hr { display: inline-block; width: 100%; vertical-align: middle; border-top: 2px solid var(--line); }
 .cm-jd-codeblock { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .92em; background: color-mix(in srgb, var(--ink) 6%, transparent); }
 .cm-jd-fence { color: var(--muted); }

@@ -1,7 +1,7 @@
 import { CloudClient, identifyClient } from '/shared/client.mjs';
 import { mergeNote } from '/shared/merge.mjs';
 import { cardPreview, tagOnly } from '/shared/card-preview.mjs';
-import { activeFormats, applyFormat, blocks, checklistEdit, indentEdit, linePrefix, listLevels, parseTable, tickEdit } from '/shared/format.mjs';
+import { activeFormats, applyFormat, blocks, checklistEdit, deleteCheckedEdit, deleteItemEdit, indentEdit, itemSpan, linePrefix, listLevels, moveItemEdit, parseTable, pasteLinesEdit, tickEdit, uncheckAllEdit } from '/shared/format.mjs';
 import { cardTable } from '/shared/format-dom.mjs';
 import { diffLines, foldUnchanged } from '/shared/diff.mjs';
 import { findDuplicates, pairKey } from '/shared/similar.mjs';
@@ -2062,6 +2062,7 @@ async function sync(force = false) {
 function openEditor(entry) {
   // Undo never works under an open note: the editor would show the old text and save it back (rule 10).
   hideToast();
+  hideListNotice();
   discardVoice();
   resetPhoto();
   $('editor').classList.toggle('in-space', Boolean(activeSpace));
@@ -2094,7 +2095,7 @@ $('editor').addEventListener('close', () => { renderNoteMedia(); closeEmojiPanel
 
 // How a keyboard leaves the note's text: Tab on a list line changes the item's level (design kaarten-en-lijsten).
 // Escape closes the whole editor here, so the way out is Ctrl+M, CodeMirror's own switch for Tab.
-const LIST_KEYS_HINT = 'In a list, Tab and Shift+Tab change the level of an item. To leave the note with Tab, press Ctrl+M first.';
+const LIST_KEYS_HINT = 'In a list, Tab and Shift+Tab change the level of an item, and Alt+Up and Alt+Down move it. To leave the note with Tab, press Ctrl+M first.';
 
 // The note's text box as the formatting buttons see it (design opmaak-editor): the formatted editor when it has
 // loaded, else a plain text box. Both answer the same few calls, so the buttons work the same in either.
@@ -2132,6 +2133,11 @@ function plainArea(area) {
     },
     activeFormats() { const { from, to } = selection(); return activeFormats(area.value, from, to); },
     context: () => 'text',
+    // A text box keeps its own history and does not say what is in it: the two buttons are always on here.
+    undo() { area.focus(); return document.execCommand('undo'); },
+    redo() { area.focus(); return document.execCommand('redo'); },
+    canUndo: () => true,
+    canRedo: () => true,
     flush() {},
   };
 }
@@ -2155,10 +2161,12 @@ function mountFormattedEditor({ createBodyEditor }) {
   const editor = createBodyEditor({
     parent: $('note-editor'),
     value: area.value,
-    labels: { note: 'Note', placeholder: 'Take a note…', done: 'Done', keys: LIST_KEYS_HINT },
+    labels: { note: 'Note', placeholder: 'Take a note…', done: 'Done', keys: LIST_KEYS_HINT, drag: 'Drag to move', deleteItem: 'Delete item' },
     moveChecked: () => moveChecked,
-    onChange: syncRaw,
+    onChange: () => { hideListNotice(); syncRaw(); },
     onState: showFormatState,
+    // One item gone shows; sub-items that went along with it are told (design checklists-77-v2, 24.4).
+    onItemDeleted: (count) => { if (count) listNotice(deletedWithSubs(count)); },
     // A table button or the emoji panel keeps the table bar, as long as no other place gets the focus.
     isTableTool: (element) => $('table-bar').contains(element) || $('emoji-panel').contains(element),
   });
@@ -2209,6 +2217,46 @@ $('note-title').addEventListener('keydown', (event) => { if (event.key === 'Ente
 // Numbered · Checklist · Indent · Outdent ·
 // Highlight · Table · Emoji · More. While a table cell has the focus, the table bar takes its place.
 const FORMAT_MORE = [['strike', 'Strikethrough'], ['quote', 'Quote'], ['code', 'Code'], ['rule', 'Dividing line']];
+
+// What a checklist action took along that you did not see (design checklists-77-v2, 4.5 and 24.4): a strip under the
+// note's text, for a few seconds, without a button. The next change to the note sends it off, and so does its cross.
+const LIST_NOTICE_MS = 4000;
+let listNoticeTimer;
+function listNotice(text) {
+  clearTimeout(listNoticeTimer);
+  $('list-notice-text').textContent = text;
+  $('list-notice').hidden = false;
+  listNoticeTimer = setTimeout(hideListNotice, LIST_NOTICE_MS);
+}
+function hideListNotice() {
+  clearTimeout(listNoticeTimer);
+  $('list-notice').hidden = true;
+}
+$('list-notice-dismiss').addEventListener('click', hideListNotice);
+$('editor-form').addEventListener('input', hideListNotice);
+const deletedWithSubs = (count) => `Item and ${count} sub-item${count === 1 ? '' : 's'} deleted`;
+
+/**
+ * The checklist actions under More (design checklists-77, 6.4): for the item with the caret "Move up", "Move down" and
+ * "Delete item", for the whole note "Uncheck all items" and "Delete checked items". Each is one replacement from the
+ * shared core, and is only offered when it would change something. The way to move an item without dragging it.
+ */
+function listActions() {
+  const area = editArea(), text = area.getValue(), { from, to } = area.getSelection();
+  const line = text.slice(0, from).split('\n').length - 1, items = [];
+  const offer = (label, edit, notice = '') => {
+    if (edit) items.push({ label, action: () => { area.replace(edit); if (notice) listNotice(notice); showFormatState(); } });
+  };
+  offer('Move up', moveItemEdit(text, line, 'up', from, to));
+  offer('Move down', moveItemEdit(text, line, 'down', from, to));
+  const gone = deleteItemEdit(text, line, from, to);
+  offer('Delete item', gone, gone?.count ? deletedWithSubs(gone.count) : '');
+  offer('Uncheck all items', uncheckAllEdit(text, from, to), 'All items unchecked');
+  const checked = deleteCheckedEdit(text, from, to);
+  offer('Delete checked items', checked, checked && `${checked.count} checked item${checked.count === 1 ? '' : 's'} deleted`);
+  return items;
+}
+
 function showFormatState(state) {
   const area = editArea();
   const context = state?.context ?? area.context();
@@ -2216,6 +2264,9 @@ function showFormatState(state) {
   const table = context === 'table' && !markdownMode;
   $('format-bar').hidden = table;
   $('table-bar').hidden = !table;
+  // Undo and Redo: switched off when there is nothing to take back or to do again. `state` is the formatted editor's.
+  const canUndo = (markdownMode ? undefined : state?.canUndo) ?? area.canUndo(), canRedo = (markdownMode ? undefined : state?.canRedo) ?? area.canRedo();
+  for (const button of document.querySelectorAll('#format-bar [data-history], #table-bar [data-history]')) button.disabled = !(button.dataset.history === 'undo' ? canUndo : canRedo);
   for (const button of document.querySelectorAll('#format-bar [aria-pressed], #table-bar [aria-pressed]')) {
     const name = button.dataset.format || button.dataset.table;
     button.setAttribute('aria-pressed', String(active.includes(name)));
@@ -2224,13 +2275,19 @@ function showFormatState(state) {
 for (const bar of ['format-bar', 'table-bar']) {
   // Pressing a button keeps the caret, the selection and an open table cell where they are.
   $(bar).addEventListener('mousedown', (event) => { if (event.target.closest('button')) event.preventDefault(); });
+  $(bar).addEventListener('click', (event) => {
+    const step = event.target.closest('button[data-history]')?.dataset.history;
+    if (!step) return;
+    if (step === 'undo') editArea().undo(); else editArea().redo();
+    showFormatState();
+  });
 }
 $('format-bar').addEventListener('click', (event) => {
   const button = event.target.closest('button[data-format]');
   if (!button) return;
   const command = button.dataset.format;
   if (command === 'emoji') toggleEmojiPanel();
-  else if (command === 'more') showMenu(button, FORMAT_MORE.map(([name, label]) => ({ label, action: () => { editArea().apply(name); showFormatState(); } })));
+  else if (command === 'more') showMenu(button, [...FORMAT_MORE.map(([name, label]) => ({ label, action: () => { editArea().apply(name); showFormatState(); } })), ...listActions()]);
   else { editArea().apply(command); showFormatState(); }
 });
 $('table-bar').addEventListener('click', (event) => {
@@ -2248,6 +2305,16 @@ for (const area of [$('note-body'), $('note-content')]) {
   area.addEventListener('keydown', (event) => {
     const mod = event.ctrlKey || event.metaKey;
     if (event.ctrlKey && !event.metaKey && !event.altKey && event.key.toLowerCase() === 'm') { event.preventDefault(); tabLeaves = !tabLeaves; return; }
+    // Alt+arrows move the list item with the caret among its siblings, as in the formatted editor; off a list the
+    // keys do what they did.
+    if (event.altKey && !mod && !event.shiftKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+      const { selectionStart: from, selectionEnd: to, value } = area;
+      const line = value.slice(0, from).split('\n').length - 1;
+      if (!itemSpan(value, line)) return;
+      event.preventDefault();
+      editArea().replace(moveItemEdit(value, line, event.key === 'ArrowUp' ? 'up' : 'down', from, to));
+      return;
+    }
     if ((event.key === 'Tab' && !mod && !event.altKey && !tabLeaves) || (mod && !event.altKey && !event.shiftKey && (event.key === ']' || event.key === '['))) {
       const tab = event.key === 'Tab', out = tab ? event.shiftKey : event.key === '[';
       const { selectionStart: from, selectionEnd: to, value } = area;
@@ -2263,6 +2330,14 @@ for (const area of [$('note-body'), $('note-content')]) {
     editArea().apply(event.key.toLowerCase() === 'b' ? 'bold' : 'italic');
   });
   for (const type of ['keyup', 'mouseup', 'input', 'focus']) area.addEventListener(type, () => showFormatState());
+  // Several lines pasted in a list item: every line an item of its own, as in the formatted editor.
+  area.addEventListener('paste', (event) => {
+    const pasted = event.clipboardData?.getData('text/plain');
+    const edit = pasted ? pasteLinesEdit(area.value, area.selectionStart, area.selectionEnd, pasted) : null;
+    if (!edit) return;
+    event.preventDefault();
+    editArea().replace(edit);
+  });
 }
 
 // Emoji (design part 10b, Eric's choice "a button with a panel"): about 60 common ones and the last used ones. The full

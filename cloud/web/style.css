@@ -383,6 +383,13 @@ dialog { overscroll-behavior: contain; }
 .format-bar button[aria-pressed="true"], .format-bar button[aria-expanded="true"] { border-width: 2.5px; border-color: var(--accent); background: var(--selected); box-shadow: inset 0 -3px 0 var(--accent); }
 .format-highlight { background: light-dark(#fde68a, #6b5413); padding: 0 .2em; border-radius: 3px; }
 .format-bar [data-format="bullet"] { font-size: 1.25em; line-height: 1; }
+/* Undo and Redo stand first, a little apart from the formatting. Switched off they are paler and cannot be pressed
+   (button:disabled above); the arrow keeps its shape. */
+.format-bar [data-history] { font-size: 1.2em; line-height: 1; }
+.format-bar [data-history="redo"] { margin-right: .5rem; }
+/* What a checklist action took along (app.js, listNotice): a strip under the note's text with a cross to send it off. */
+.list-notice { display: flex; align-items: center; justify-content: space-between; gap: .6rem; margin: .5rem 0 0; padding: .15rem .3rem .15rem .8rem; border: 1.5px solid var(--edge); border-radius: 10px; background: var(--surface); }
+.list-notice button { min-width: 2.5rem; min-height: 2.5rem; padding: .3rem; border: 0; background: none; box-shadow: none; }
 #note-editor { min-width: 0; }
 .emoji-panel { margin-top: .5rem; padding: .6rem .7rem; border: 1.5px solid var(--edge); border-radius: 10px; background: var(--surface); max-height: 18rem; overflow-y: auto; }
 .emoji-panel h3 { margin: .4rem 0 .2rem; font-size: .85rem; color: var(--muted); font-weight: 600; }
