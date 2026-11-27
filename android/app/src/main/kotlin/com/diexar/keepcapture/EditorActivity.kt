@@ -1507,12 +1507,16 @@ private fun EditorScreen(
                     onValueChange = { field, keep, checked ->
                         val current = bodyText
                         // Right after a list edit the field can still send changes on the text from before it.
-                        val replayed = staleBody.replay(current.text, field.text)
-                        val next = (if (replayed == null) field else TextFieldValue(
+                        val replayed = staleBody.replay(current.text, field.text,
+                            if (current.selection.collapsed) current.selection.start else -1, if (field.selection.collapsed) field.selection.start else -1)
+                        // A Backspace next to the sign of a list item joins the item with the line above it, or takes the
+                        // sign of a first line ([back].item; design checklists-77-v3, 4.3).
+                        val back = (if (replayed == null) field else TextFieldValue(
                             text = replayed.text,
                             selection = TextRange(replayed.map(field.selection.start), replayed.map(field.selection.end)),
                             composition = field.composition?.let { TextRange(replayed.map(it.start), replayed.map(it.end)) },
-                        )).let { current.backspacing(it, !markdownMode) }
+                        )).let { current.backspacing(it, !markdownMode, lists = true) }
+                        val next = back.value
                         val start = current.selection.min
                         val end = current.selection.max
                         // Among the ticked items of a list ([checked], design checklists-77-v2, 6.1) three things keep
@@ -1566,13 +1570,18 @@ private fun EditorScreen(
                             // Enter among the ticked items is meant to reach out of them: its task comes above them.
                             // And Enter on an empty item above them reaches past them.
                             if (keep == null || reached ||
-                                changedOnlyIn(current.text, result.text, keep.first, current.text.length - keep.second)) result else field
+                                changedOnlyIn(current.text, result.text, keep.first, current.text.length - keep.second)) result
+                            // An item that would join a line in another piece stays as it is: the field's own change
+                            // would take one sign of its box.
+                            else if (back.item) current
+                            else field
                         }
-                        // For Undo: a list Enter and a paste of lines are steps of their own, an empty pair that went
-                        // because the caret left it is the editor's own tidying, and the rest is typing.
+                        // For Undo: a list Enter, a paste of lines and an item that joined the line above it are steps
+                        // of their own, an empty pair that went because the caret left it is the editor's own tidying,
+                        // and the rest is typing.
                         val kind = when {
                             shown === field -> EditKind.TYPING
-                            edit != null || changed != null || pasted != null -> EditKind.STEP
+                            edit != null || changed != null || pasted != null || back.item -> EditKind.STEP
                             next.text == current.text -> EditKind.CLEANUP
                             else -> EditKind.TYPING
                         }

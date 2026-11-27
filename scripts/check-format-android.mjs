@@ -7,7 +7,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { activeFormats, addItemEdit, applyFormat, backspaceEdit, blocks, cellSource, cellText, checkedTail, checklistEdit, deleteCheckedEdit, deleteItemEdit, dropItemEdit, dropSlots, emptyPair, indentEdit, inlineSpans, itemSpan, linePrefix, listEnterEdit, listItems, listLevels, moveItemEdit, parseTable, pasteLinesEdit, tableCells, tableEdit, tickEdit, uncheckAllEdit } from '../cloud/shared/format.mjs';
+import { activeFormats, addItemEdit, applyFormat, backspaceEdit, blocks, cellSource, cellText, checkedTail, checklistEdit, deleteCheckedEdit, deleteItemEdit, dropItemEdit, dropSlots, emptyPair, indentEdit, inlineSpans, itemBackspaceEdit, itemSpan, linePrefix, listEnterEdit, listItems, listLevels, moveItemEdit, parseTable, pasteLinesEdit, tableCells, tableEdit, tickEdit, uncheckAllEdit } from '../cloud/shared/format.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const code = (value) => Buffer.from(value, 'utf8').toString('base64');
@@ -36,6 +36,7 @@ const answer = {
     return edit(tableEdit(text, Number(fromLine), op));
   },
   backspace: (text, from, to, hidden = '') => edit(backspaceEdit(text, Number(from), hidden.split(';').filter(Boolean).map((range) => range.split('-').map(Number)))),
+  itemBackspace: (text, from, to, hidden = '') => edit(itemBackspaceEdit(text, Number(from), hidden.split(';').filter(Boolean).map((range) => range.split('-').map(Number)))),
   levels: (text) => listLevels(text).join(','),
   items: (text) => listItems(text).join(','),
   tick: (text, from, to, line, move) => {
@@ -90,6 +91,7 @@ for (const vector of vectors.active) cases.push(['active', ...unmark(vector.text
 for (const vector of vectors.apply) cases.push(['apply', ...unmark(vector.text), vector.command]);
 for (const vector of vectors.enter) cases.push(['enter', ...unmark(vector.text)]);
 for (const vector of vectors.backspace) cases.push(['backspace', ...unmark(vector.text), vector.hidden.map((range) => range.join('-')).join(';')]);
+for (const vector of vectors.itemBackspace) cases.push(['itemBackspace', ...unmark(vector.text), vector.hidden.map((range) => range.join('-')).join(';')]);
 for (const vector of vectors.levels) cases.push(['levels', vector.text]);
 for (const vector of vectors.items) cases.push(['items', vector.text]);
 for (const vector of vectors.tick) cases.push(['tick', ...unmark(vector.text), vector.line, vector.move ? 1 : 0]);
@@ -276,6 +278,36 @@ const ends = tally('tail', (text) => checkedTail(text).length);
 assert.ok(ends > 600, `the lists give enough ticked ends (${ends})`);
 const adding = tally('addItem', (text, line) => addItemEdit(text, line));
 assert.ok(adding > 5000, `the lists give enough lines to add an item from (${adding})`);
+
+// Backspace at the sign of a list item (design checklists-77-v3, 4.3), on every line of the same lists: the caret right
+// behind the line's sign, at its start and at a random place, without hidden signs and with the signs an editor hides
+// (the indent of a list line, the `- ` and ` ]` around a task's box, inline signs).
+for (const text of [...checklistTexts, ...tailTexts]) {
+  const levels = listLevels(text), hidden = [], carets = [];
+  let offset = 0;
+  for (const [index, line] of text.split('\n').entries()) {
+    const prefix = linePrefix(line);
+    if (levels[index] >= 0 && prefix.indent) hidden.push([offset, offset + prefix.indent]);
+    if (levels[index] >= 0 && prefix.kind === 'task') {
+      const open = line.indexOf('[', prefix.markFrom);
+      hidden.push([offset + prefix.markFrom, offset + open], [offset + open + 1, offset + open + 3]);
+    }
+    for (const span of inlineSpans(line.slice(prefix.markTo))) {
+      const at = offset + prefix.markTo;
+      for (const [x, y] of [[span.from, span.openTo], [span.closeFrom, span.to]]) if (y > x) hidden.push([at + x, at + y]);
+    }
+    carets.push(offset + prefix.markTo, offset, offset + Math.floor(random() * (line.length + 1)));
+    offset += line.length + 1;
+  }
+  const ranges = hidden.map((range) => range.join('-')).join(';');
+  for (const caret of carets) cases.push(['itemBackspace', text, caret, caret, ''], ['itemBackspace', text, caret, caret, ranges]);
+}
+const signs = (kind) => tally('itemBackspace', (text, from, to, hidden = '') => {
+  const edit = itemBackspaceEdit(text, from, hidden.split(';').filter(Boolean).map((range) => range.split('-').map(Number)));
+  return edit && text.slice(edit.from, edit.to).includes('\n') === (kind === 'join');
+});
+const joining = signs('join'), first = signs('first');
+assert.ok(joining > 3000 && first > 1000, `the lists give enough items that join the line above (${joining}) and first lines that lose their sign (${first})`);
 
 const temporary = mkdtempSync(path.join(tmpdir(), 'jotdrop-android-format-'));
 try {

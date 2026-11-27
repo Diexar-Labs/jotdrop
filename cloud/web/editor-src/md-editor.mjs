@@ -11,7 +11,7 @@
 import { EditorSelection, EditorState, Prec, StateEffect, StateField } from '@codemirror/state';
 import { Decoration, EditorView, WidgetType, keymap, placeholder } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, isolateHistory, redo, redoDepth, toggleTabFocusMode, undo, undoDepth } from '@codemirror/commands';
-import { activeFormats, applyFormat, backspaceEdit, blocks, checklistEdit, emptyPair, indentEdit, inlineSpans, linePrefix, listEnterEdit, listLevels, parseTable, tableEdit, tickEdit } from '/shared/format.mjs';
+import { activeFormats, applyFormat, backspaceEdit, blocks, checklistEdit, emptyPair, indentEdit, inlineSpans, itemBackspaceEdit, linePrefix, listEnterEdit, listLevels, parseTable, tableEdit, tickEdit } from '/shared/format.mjs';
 import { createTableGrid } from '/shared/table-grid.mjs';
 import { listGrips } from './list-grips.mjs';
 
@@ -348,13 +348,14 @@ export function createBodyEditor({ parent, value = '', formatted = true, labels:
       run: (target) => {
         const { main } = target.state.selection, field = target.state.field(formatField);
         if (!main.empty || !field.formatted) return false;
-        // At the start of the words of an item in a level, Backspace takes it one level back (its indent is hidden).
-        const line = target.state.doc.lineAt(main.head), prefix = linePrefix(line.text);
-        if (main.head <= line.from + prefix.markTo && ['bullet', 'ordered', 'task'].includes(prefix.kind)
-          && listLevels(target.state.doc.toString())[line.number - 1] > 0) return indentKey('out', true)(target);
-        const edit = backspaceEdit(target.state.doc.toString(), main.head, field.signs);
+        const text = target.state.doc.toString();
+        // Right behind the sign of a list item, or in it, the item joins the line above it, as in Keep, and the first
+        // line of a list only loses its sign (design checklists-77-v3, 4.3; shared with Android). It is a step of its
+        // own for Undo. Not in a note too long to format: there the signs are text to see.
+        const item = text.length > RAW_ABOVE ? null : itemBackspaceEdit(text, main.head, field.signs);
+        const edit = item ?? backspaceEdit(text, main.head, field.signs);
         if (!edit) return false;
-        target.dispatch({ changes: { from: edit.from, to: edit.to, insert: edit.insert }, selection: { anchor: edit.selFrom }, userEvent: 'delete.backward', scrollIntoView: true });
+        target.dispatch({ changes: { from: edit.from, to: edit.to, insert: edit.insert }, selection: { anchor: edit.selFrom }, annotations: item ? isolateHistory.of('full') : undefined, userEvent: 'delete.backward', scrollIntoView: true });
         return true;
       },
     },

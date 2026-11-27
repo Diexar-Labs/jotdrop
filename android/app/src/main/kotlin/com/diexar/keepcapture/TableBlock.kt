@@ -259,7 +259,7 @@ private fun TableCellBox(
             value = shown,
             onValueChange = { field ->
                 val shown = shownValue()
-                var next = shown.backspacing(field, true)
+                var next = shown.backspacing(field, true).value
                 // Enter goes to the next cell; a pasted line break becomes a space.
                 val enter = next.text.length == shown.text.length + 1 && next.selection.collapsed && next.selection.start > 0 &&
                     next.text[next.selection.start - 1] == '\n' && next.text.removeRange(next.selection.start - 1, next.selection.start) == shown.text

@@ -155,17 +155,28 @@ internal fun TextFieldValue.leavingEmptyPair(next: TextFieldValue): TextFieldVal
     return TextFieldValue(text.removeRange(pair.from, pair.to), TextRange(map(next.selection.start), map(next.selection.end)))
 }
 
+/** What a change of a field is after [backspacing]. [item]: a Backspace took the sign of a list item, a step of its own for Undo. */
+internal class Backspaced(val value: TextFieldValue, val item: Boolean = false)
+
 /**
  * [next] after [this]: when it is one Backspace right behind signs the formatted view hides, it becomes the shared
  * core's Backspace (FormatCore.backspaceEdit): the last visible letter goes, not half a hidden sign that would then show.
+ * In a note's body ([lists]: a table's cell has no lists, and a note too long to format shows its signs) a Backspace
+ * next to the sign of a list item comes first (design checklists-77-v3, 4.3, [signBackspace]): the item joins the line
+ * above it, also when the keyboard takes more than a letter at once.
  */
-internal fun TextFieldValue.backspacing(next: TextFieldValue, formatted: Boolean): TextFieldValue {
-    if (!formatted || !selection.collapsed || !next.selection.collapsed) return next
+internal fun TextFieldValue.backspacing(next: TextFieldValue, formatted: Boolean, lists: Boolean = false): Backspaced {
+    if (!formatted || !selection.collapsed || !next.selection.collapsed) return Backspaced(next)
     val caret = selection.start
     val removed = caret - next.selection.start
-    if (removed !in 1..2 || next.text.length != text.length - removed || next.text != text.removeRange(caret - removed, caret)) return next
-    val edit = FormatCore.backspaceEdit(text, caret, hiddenSigns(text)) ?: return next
-    return TextFieldValue(text.replaceRange(edit.from, edit.to, edit.insert), TextRange(edit.selFrom))
+    if (removed < 1 || next.text.length != text.length - removed || next.text != text.removeRange(caret - removed, caret)) return Backspaced(next)
+    val body = lists && text.length <= FORMAT_RAW_ABOVE
+    // More than a letter at once is the keyboard's own, except next to the sign of a list item.
+    if (removed > 2 && !body) return Backspaced(next)
+    val hidden = hiddenSigns(text)
+    if (body) signBackspace(text, caret, removed, hidden)?.let { return Backspaced(TextFieldValue(it.text, TextRange(it.caret)), it.joined) }
+    val edit = (if (removed > 2) null else FormatCore.backspaceEdit(text, caret, hidden)) ?: return Backspaced(next)
+    return Backspaced(TextFieldValue(text.replaceRange(edit.from, edit.to, edit.insert), TextRange(edit.selFrom)))
 }
 
 /**

@@ -162,6 +162,31 @@ internal fun backspaceAtChecked(current: String, caret: Int, next: String, from:
 }
 
 /**
+ * What a Backspace next to the sign of a list item becomes (design checklists-77-v3, 4.3 and 4.4). [joined]: the item
+ * joined the line above it or lost its sign, which is a step of its own for Undo. Else the keyboard took several
+ * characters at once and they stop in front of the sign: that is typing.
+ */
+internal class SignBackspace(val text: String, val caret: Int, val joined: Boolean)
+
+/**
+ * The keyboard took the [removed] characters in front of the caret at [caret] of [text] away, in the formatted view of
+ * a note's body; [hidden] are the signs that view hides. With the caret right behind the sign of a list item, or in it,
+ * the item joins the line above it or loses its sign (FormatCore.itemBackspaceEdit), however many characters the
+ * keyboard wanted. With the caret further in the item, what goes stops in front of the sign: a keyboard that takes a
+ * whole word at once never takes half a box along, and the next Backspace is the one above. Null: an ordinary Backspace.
+ */
+internal fun signBackspace(text: String, caret: Int, removed: Int, hidden: List<IntRange>): SignBackspace? {
+    FormatCore.itemBackspaceEdit(text, caret, hidden)?.let { return SignBackspace(text.replaceRange(it.from, it.to, it.insert), it.selFrom, true) }
+    val lineStart = text.lastIndexOf('\n', caret - 1) + 1
+    val lineEnd = text.indexOf('\n', lineStart).let { if (it < 0) text.length else it }
+    val prefix = FormatCore.linePrefix(text.substring(lineStart, lineEnd))
+    val signEnd = lineStart + prefix.markTo
+    if (caret - removed >= signEnd || (prefix.kind != "task" && prefix.kind != "bullet" && prefix.kind != "ordered")) return null
+    if (FormatCore.listLevels(text).getOrElse(lineOf(text, lineStart)) { -1 } < 0) return null
+    return SignBackspace(text.removeRange(signEnd, caret), signEnd, false)
+}
+
+/**
  * A lowercase letter typed as the first thing in a list item (after "- ", "- [ ] " or "1. ") becomes a capital, like the
  * first letter of a sentence (issue #44, point 9). The keyboard cannot do it: it sees a marker before the cursor, not a
  * sentence start. Only one typed character counts; pasted text, a dictated phrase and a word taken from a suggestion
@@ -208,14 +233,15 @@ internal class Replayed(val text: String, val map: (Int) -> Int)
  * after Enter), when its next update arrives: it only takes over [shown] after the next frame.
  * Typing fast, or a busy phone, then sends [next] built on [raw], and taking it as it is drops the
  * marker. When [next] is closer to [raw] than to [shown], this replays that change on [shown].
- * Null when [next] is built on [shown], or when the change touches the part we replaced.
+ * Null when [next] is built on [shown], or when the change touches the part we replaced. One such change is replayed
+ * all the same: a Backspace ([staleBackspace], with [shownCaret] and [nextCaret] the carets of [shown] and [next]).
  */
-internal fun replayStale(raw: String, shown: String, next: String): Replayed? {
+internal fun replayStale(raw: String, shown: String, next: String, shownCaret: Int = -1, nextCaret: Int = -1): Replayed? {
     val stale = textDiff(raw, next)
     if (stale.size >= textDiff(shown, next).size) return null
     val ours = textDiff(raw, shown)
     val after = stale.start >= ours.endA
-    if (!after && stale.endA > ours.start) return null
+    if (!after && stale.endA > ours.start) return staleBackspace(raw, shown, next, shownCaret, nextCaret)
     val insert = next.substring(stale.start, stale.endB)
     val shift = shown.length - raw.length
     val text = if (after) shown.replaceRange(stale.start + shift, stale.endA + shift, insert)
@@ -232,19 +258,35 @@ internal fun replayStale(raw: String, shown: String, next: String): Replayed? {
     }
 }
 
+/**
+ * A Backspace the field made in the part of [raw] that the editor replaced (design checklists-77-v3, 4.4): an item
+ * joined the line above it, and the field, which still has the item's sign, goes on taking that sign away while the
+ * key is held. Such a change cannot be replayed by its place, and taken as it is it would put the item back with half
+ * a sign. It is replayed as what it is: as many characters in front of the caret of [shown] go, where the editor's own
+ * rules for a Backspace see it again. Null when [next] is not [raw] without the characters right behind [nextCaret].
+ */
+private fun staleBackspace(raw: String, shown: String, next: String, shownCaret: Int, nextCaret: Int): Replayed? {
+    val taken = raw.length - next.length
+    if (taken < 1 || nextCaret < 0 || nextCaret + taken > raw.length || shownCaret < 0 || shownCaret > shown.length) return null
+    if (next != raw.removeRange(nextCaret, nextCaret + taken)) return null
+    val at = maxOf(0, shownCaret - taken)
+    return Replayed(shown.removeRange(at, shownCaret)) { at }
+}
+
 /** Remembers the text the field still has after we replaced it, for a short while. */
 internal class StaleField(private val clock: () -> Long = System::currentTimeMillis) {
     private var raw: String? = null
     private var shown: String? = null
     private var at = 0L
 
-    fun replay(current: String, next: String): Replayed? {
+    /** [caret] and [nextCaret]: the carets of [current] and [next], or -1 where there is a selection. */
+    fun replay(current: String, next: String, caret: Int = -1, nextCaret: Int = -1): Replayed? {
         val before = raw ?: return null
         if (shown != current || clock() - at > 1500) {
             raw = null
             return null
         }
-        return replayStale(before, current, next)
+        return replayStale(before, current, next, caret, nextCaret)
     }
 
     /** The field sent [fieldText] and the editor shows [shownText]. */

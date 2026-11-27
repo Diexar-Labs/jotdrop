@@ -607,6 +607,41 @@ internal object FormatCore {
         return if (left != null) at(left.from, left.to + (start - from)) else at(from)
     }
 
+    /**
+     * Backspace with the caret right behind the sign of a list item (a box, a bullet, a number) and in front of its
+     * first word, or anywhere in that sign (design checklists-77-v3, 4.3). An editor asks this first, in the formatted
+     * view of a note's body, and [backspaceEdit] when it gives null. As in Keep the item joins the line above it when
+     * that line is of the same list: its words come right behind that line's words, with the caret between them, and an
+     * empty item is gone. The first line of a list only loses its sign, with the indent in front of it: its words stay
+     * on their own line as plain text, so an item never ends up behind a heading. It is one replacement and never takes
+     * half a sign. What hung under the item stays where it is. Signs the view hides between the item's sign and the
+     * caret ([hidden], as for [backspaceEdit]) stay in front of the caret. Null: the caret is not there, or it is in an
+     * empty pair, which goes first.
+     */
+    fun itemBackspaceEdit(text: String, caret: Int, hidden: List<IntRange>): Edit? {
+        if (emptyPair(text, caret) != null) return null
+        var start = caret
+        while (true) start = hidden.firstOrNull { it.last + 1 == start && it.first < start }?.first ?: break
+        val lineStart = if (start == 0) 0 else text.lastIndexOf('\n', start - 1) + 1
+        val next = text.indexOf('\n', lineStart)
+        val lineEnd = if (next < 0) text.length else next
+        val prefix = linePrefix(text.substring(lineStart, lineEnd))
+        val signEnd = lineStart + prefix.markTo
+        if (prefix.kind !in listKinds || start > signEnd) return null
+        val table = Lines(text)
+        val structure = listStructure(text)
+        val index = table.at(lineStart)
+        val item = structure[index]?.takeIf { it.level >= 0 } ?: return null
+        val kept = maxOf(0, caret - signEnd)
+        if (structure.getOrNull(index - 1)?.series != item.series) return Edit(lineStart, signEnd, "", lineStart + kept)
+        val from = lineStart - if (lineStart >= 2 && text[lineStart - 2] == '\r') 2 else 1
+        // An empty task above that ends right behind its box (`- [ ]`): a space keeps it a task when words come behind it.
+        val above = withoutCr(table.lines[index - 1])
+        val sign = linePrefix(above)
+        val insert = if (sign.kind == "task" && sign.markTo == above.length && above.endsWith("]") && withoutCr(text.substring(signEnd, lineEnd)).isNotEmpty()) " " else ""
+        return Edit(from, signEnd, insert, from + insert.length + kept)
+    }
+
     private val listItem = Regex("""^([ \t]*)(?:([-*+])|(\d{1,9})([.)]))[ \t]+(?:\[([ xX])\](?:[ \t]+|\z))?""")
 
     /**
