@@ -369,6 +369,13 @@ fun main() {
     }
     // The note's menu offers its checklist items only when the note has a task in a list.
     check(hasTask("text\n- a\n\t- [x] b") && hasTask("* [ ] star") && !hasTask("- a\n1. b") && !hasTask("```\n- [ ] code\n```") && !hasTask("> - [ ] quote") && !hasTask("see [link](https://example.com)") && !hasTask("- a bullet with a [link](https://example.com)\n1. b")) { "Which notes have a task" }
+    // The cross stands on the task with the caret, but not on an item that is lifted off the note (design
+    // checklists-77-v3, 2.2): under a finger, on its way, or let go with its frame still there. A sub-task that goes
+    // along loses it too; a task that stays keeps it.
+    check(crossShown(3, 3, null) && !crossShown(2, 3, null) && (0..9).none { crossShown(it, -1, null) }) { "The cross stands on the task with the caret" }
+    check((3..5).none { crossShown(it, it, 3..5) }) { "No cross on a line of the item that is lifted" }
+    check(crossShown(2, 2, 3..5) && crossShown(6, 6, 3..5) && !crossShown(6, 2, 3..5)) { "A task that is not lifted keeps its cross" }
+    check(!crossShown(3, 3, 3..3) && crossShown(4, 4, 3..3)) { "An item of one line that is lifted" }
     checkedParts()
     println("Android list editor checks passed")
 }

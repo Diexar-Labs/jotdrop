@@ -167,6 +167,12 @@ internal class ItemBands {
      */
     val busy by derivedStateOf { held != null || drag != null || landing?.let { it.at < SLIDE_MS } == true }
 
+    /**
+     * The lines of the item that is lifted off the note, or null: under a finger on its handle, on its way, or let go
+     * with its frame still around it. A task among them has no cross (design checklists-77-v3, 2.2, [crossShown]).
+     */
+    val lifted: IntRange? get() = held ?: drag?.let { it.line..it.end } ?: landing?.let { it.places.line..it.places.end }
+
     /** Which half screen of the text is in sight: the dots from a screen above it to a screen below it are drawn. */
     var band by mutableIntStateOf(0)
 
@@ -227,7 +233,7 @@ internal class ItemBands {
                 val top = heights.top(box.line)
                 if (top < from) continue
                 if (top > to) break
-                grips(now, heights, box, grip?.first == box.line)
+                grips(now, heights, box, grip?.first == box.line, grip)
             }
             if (grip != null) frame(now, heights.top(grip.first), heights.bottom(grip.last), 1f)
             return
@@ -285,7 +291,7 @@ internal class ItemBands {
             val bottom = minOf(heights.bottom(end), sightBottom - off)
             if (bottom > top) withTransform({ translate(0f, off); clipRect(left, top, right, bottom) }) {
                 this@draw.drawContent()
-                for (line in index..end) now.byLine[line]?.let { grips(now, heights, it, false) }
+                for (line in index..end) now.byLine[line]?.let { grips(now, heights, it, false, null) }
             }
             index = end + 1
         }
@@ -303,7 +309,7 @@ internal class ItemBands {
             }
             clipRect(left, top, right, bottom) {
                 this@draw.drawContent()
-                for (line in first..last) now.byLine[line]?.let { grips(now, heights, it, line == first && dragging != null) }
+                for (line in first..last) now.byLine[line]?.let { grips(now, heights, it, line == first && dragging != null, first..last) }
             }
             if (glow > 0f) frame(now, top, bottom, glow)
         }
@@ -317,10 +323,13 @@ internal class ItemBands {
         drawRoundRect(now.foreground.copy(alpha = 0.55f * strength), Offset(-now.pad, top), area, corner, style = Stroke(1.5.dp.toPx()))
     }
 
-    /** What stands in the margins next to the task [box]: the dots of its handle, and the cross when the caret is in it. */
-    private fun DrawScope.grips(now: GripsShown, heights: LineHeights, box: TaskBox, picked: Boolean) {
+    /**
+     * What stands in the margins next to the task [box]: the dots of its handle, and the cross when the caret is in it.
+     * [lifted] are the lines of the item that is lifted off the note, if this text has one: no cross there.
+     */
+    private fun DrawScope.grips(now: GripsShown, heights: LineHeights, box: TaskBox, picked: Boolean, lifted: IntRange?) {
         dots(now, heights, box, picked)
-        if (box.line == now.caret) cross(now, heights, box)
+        if (crossShown(box.line, now.caret, lifted)) cross(now, heights, box)
     }
 
     /** The cross of the task [box], in the other margin next to its first line on the screen. */

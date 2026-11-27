@@ -112,8 +112,9 @@ private fun CharSequence.hasRightToLeft() = any { it.code in 0x0590..0x08FF || i
 
 /**
  * The grips on the tasks of an open note, laid over its text (design checklists-77, parts 5 and 6): a handle of six
- * dots in the margin in front of every task, and a cross in the other margin on the task with the caret. The text
- * stays one text; a grip makes one replacement through the shared core.
+ * dots in the margin in front of every task, and a cross in the other margin on the task with the caret (not while
+ * that task is lifted off the note: design checklists-77-v3, 2.2). The text stays one text; a grip makes one
+ * replacement through the shared core.
  *
  * This layer lies next to the text field, over it, never in it: a finger on a handle or on the cross is then no touch
  * of the text. In the field, a finger that rests on a handle before it drags was a long press too, and the field
@@ -396,7 +397,7 @@ internal fun ListGrips(
             // The cross on the task with the caret, in the margin on the other side. As the handles it is only a place to
             // touch here: its strokes are drawn with the text, so the cross goes along with its line.
             val crossed = byLine[caret]
-            if (crossed != null && heights.fits && caret < heights.lines) {
+            if (crossed != null && heights.fits && caret < heights.lines) UnlessLifted(bands, caret) {
                 val top = heights.top(caret)
                 val line = heights.firstBottom(caret) - top
                 val high = maxOf(line, with(density) { 40.dp.toPx() })
@@ -413,4 +414,15 @@ internal fun ListGrips(
         }
         }
     }
+}
+
+/**
+ * [content], the cross's place to touch on the task on [line], only while that task is not lifted off the note (design
+ * checklists-77-v3, 2.2). From the finger on a handle until the item's frame is gone its cross is not drawn (see
+ * [ItemBands]), and a tap right after letting go must not delete what is not shown. A function of its own: a finger
+ * that comes on a handle composes only this again, not every handle of the list.
+ */
+@Composable
+private fun UnlessLifted(bands: ItemBands, line: Int, content: @Composable () -> Unit) {
+    if (crossShown(line, line, bands.lifted)) content()
 }

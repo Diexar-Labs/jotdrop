@@ -70,12 +70,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -206,13 +208,33 @@ private fun UndoRedoButtons(steps: UndoRedo, foreground: Color) {
     BarButton(Icons.AutoMirrored.Filled.Redo, R.string.drawing_redo, foreground, enabled = steps.canRedo) { steps.step(true) }
 }
 
-/** The bar without a keyboard in the body (the read view, the title): only Undo and Redo, where they stand in the other bars. */
+/** The bar while the caret is in the title: only Undo and Redo, where they stand in the other bars. */
 @Composable
 internal fun UndoBar(steps: UndoRedo, foreground: Color) {
     Column(Modifier.fillMaxWidth()) {
         HorizontalDivider(color = foreground.copy(alpha = 0.15f))
         Row(Modifier.padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) { UndoRedoButtons(steps, foreground) }
     }
+}
+
+/**
+ * Undo and Redo while the caret is nowhere in the note (design checklists-77-v3, 3.3): the two buttons in a small block
+ * of their own that lies over the note, as the floating buttons lie over the notes on the board. It takes no row, so
+ * the note does not jump when it comes or goes. A frame and a light shadow set it apart, not only a color;
+ * [background] is the note's own color. A touch between its buttons is the block's, never the note's under it.
+ */
+@Composable
+internal fun UndoBlock(steps: UndoRedo, foreground: Color, background: Color, modifier: Modifier = Modifier) {
+    val shape = RoundedCornerShape(12.dp)
+    Row(
+        modifier
+            .shadow(3.dp, shape)
+            .background(background, shape)
+            .border(1.dp, foreground.copy(alpha = 0.4f), shape)
+            .pointerInput(Unit) {}
+            .padding(horizontal = 4.dp, vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) { UndoRedoButtons(steps, foreground) }
 }
 
 /**
