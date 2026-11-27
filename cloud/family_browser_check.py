@@ -104,14 +104,10 @@ def check_family(browser, url, codes, database):
     ana.locator("#family-invite").wait_for()
     second = ana.locator("#family-link").input_value()
     dialog.get_by_role("button", name="Done").click()
-    # An open link leaves this browser signed out (not remembered): Cas logs in, then joins.
+    # Cas signed in with "Sign me out when I close this page": opening the link in the same tab keeps him signed in
+    # (#80, the page session survives a visit in the same tab), so he is asked to join at once.
     cas.goto(second, wait_until="networkidle")
-    cas.locator("#login-email").fill("cas@example.com")
-    cas.locator("#login-password").fill(PASSWORD)
-    cas.locator("#login-forget").check()
-    cas.locator('#login-form button[type="submit"]').click()
-    cas.locator("#code-input").fill(code("login"))
-    cas.locator('#code-form button[type="submit"]').click()
+    cas.locator("#workspace").wait_for()
     cas_join.get_by_role("button", name="Join").click()
     cas.locator("#plan-status").filter(has_text="through your family").wait_for()
     ana.locator("#open-family").click()
@@ -167,14 +163,8 @@ def check_family(browser, url, codes, database):
         fay.locator("#plan-dialog").get_by_role("button", name="Continue to payment").click()
     assert checkout == [{"interval": "month", "plan": "family", "currency": "usd"}], checkout
     # Someone who already pays for a family is told so instead of being offered a second plan.
+    # Ana signed in with "Sign me out when I close this page", so the link in the same tab keeps her signed in (#80).
     ana.goto(url + "/?plan=family&billing=month", wait_until="networkidle")
-    ana.locator("#access-choice").filter(has_text="JotDrop Family").wait_for()
-    ana.locator("#login-email").fill("ana@example.com")
-    ana.locator("#login-password").fill(PASSWORD)
-    ana.locator("#login-forget").check()
-    ana.locator('#login-form button[type="submit"]').click()
-    ana.locator("#code-input").fill(code("login"))
-    ana.locator('#code-form button[type="submit"]').click()
     ana.locator("#workspace-message").filter(has_text="already in a family plan").wait_for()
     assert ana.locator("#plan-dialog").is_hidden()
     assert not errors, errors

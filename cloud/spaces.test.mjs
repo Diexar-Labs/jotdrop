@@ -200,7 +200,7 @@ const refusedInSpace = [
   ['GET', '/family'], ['POST', '/family/invites', {}], ['POST', '/family/join', { token: 'A'.repeat(43) }], ['DELETE', `/family/members/${other}`], ['POST', '/account/checkout', { interval: 'year', plan: 'family' }],
   ['GET', '/mail'], ['POST', '/mail', { action: 'enable', publicKey: 'A'.repeat(43), addressHash: id64, addressEnvelope: '{}' }], ['DELETE', '/mail'], ['POST', '/mail/senders', { senders: [] }], ['GET', `/mail/${other}`], ['GET', `/mail/${other}/parts/0`], ['DELETE', `/mail/${other}`],
   ['GET', '/ai-key'], ['PUT', '/ai-key', { sealed: '{}' }], ['DELETE', '/ai-key'],
-  ['GET', '/devices'], ['PUT', '/devices/syncing', { deviceIds: [other] }], ['DELETE', `/devices/${other}`], ['POST', '/pairings', { deviceName: 'X', deviceTokenHash: id64, claimTokenHash: id64, envelope: '{}' }], ['GET', '/pieces/legacy'],
+  ['GET', '/devices'], ['PUT', '/devices/syncing', { deviceIds: [other] }], ['GET', '/devices/session'], ['PUT', '/devices/session', { resumeTokenHash: id64, key: 'A'.repeat(43) }], ['POST', '/devices/session/leave', {}], ['DELETE', `/devices/${other}`], ['POST', '/pairings', { deviceName: 'X', deviceTokenHash: id64, claimTokenHash: id64, envelope: '{}' }], ['GET', '/pieces/legacy'],
   ['POST', `/objects/${id64}/convert`, { from: id64 }], ['POST', `/objects/${id64}/purge`, { baseRevision: 1, envelope: '{}' }], ['GET', `/objects/${id64}/uploads/0/${id64}`], ['POST', `/objects/${id64}/uploads/0/${id64}`, { size: 100 }], ['PUT', `/objects/${id64}/uploads/0/${id64}?offset=0`, {}], ['DELETE', `/objects/${id64}/uploads/0/${id64}`], ['POST', `/objects/${id64}/uploads/0/${id64}/commit`, {}],
   ['GET', '/spaces'], ['POST', '/spaces', {}], ['GET', `/spaces/${other}`], ['DELETE', `/spaces/${other}`], ['PUT', `/spaces/${other}/key`, {}], ['POST', `/spaces/${other}/invites`, {}], ['DELETE', `/spaces/${other}/invites/${other}`], ['DELETE', `/spaces/${other}/members/${other}`], ['POST', `/spaces/${other}/leave`, {}], ['POST', `/spaces/${other}/takeover`, {}], ['POST', `/spaces/${other}/replace`, {}], ['POST', `/invites/${other}/claim`, {}],
   // The allowed paths with another method, and a route nobody knows.
@@ -234,7 +234,8 @@ test('with a space in the header every route outside the allowed list is refused
 
 test('the list of refused routes keeps up with the server', async () => {
   const source = await readFile(fileURLToPath(new URL('./server.mjs', import.meta.url)), 'utf8');
-  const start = source.indexOf("const device = one('SELECT * FROM devices WHERE id=?', deviceId);");
+  const start = source.indexOf("const device = one('SELECT d.*,s.deviceId AS sessionId,s.deadline AS sessionDeadline,s.leftAt AS sessionLeftAt FROM devices d LEFT JOIN page_sessions s ON s.deviceId=d.id WHERE d.id=?', deviceId);");
+  assert.ok(start > 0);
   const routes = [...new Set([...source.slice(start).matchAll(/route === '(\/[^']*)'/g)].map((match) => match[1]))];
   const allowed = new Set(['/changes', '/status', '/chunks/missing']);
   assert.ok(routes.length > 15);

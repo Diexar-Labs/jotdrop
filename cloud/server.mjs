@@ -114,6 +114,13 @@ const AI_KEY_APPS = ['web', 'obsidian', 'android'], MAX_AI_KEY = 8 * 1024;
 // of grace once a cloud without Plus has more devices than its limit, then the devices not chosen get no notes and send
 // none. After the pause starts the choice changes at most once a day; the reminder only follows a notice of over 14 days.
 const SYNC_GRACE = 7 * DAY, SYNC_CHANGE_WAIT = DAY, SYNC_REMINDER = 3 * DAY, SYNC_LONG_NOTICE = 14 * DAY;
+// "Sign me out when I close this page" (Hand-off/ontwerp-afmelden-bij-sluiten-80.md): how long a page may take to come
+// back after it said goodbye, after a trip to the payment page, when a quiet one makes room, and when it is gone anyway.
+const SESSION_RETURN = 2 * 60 * 1000, SESSION_AWAY = 30 * 60 * 1000, SESSION_QUIET = 10 * 60 * 1000, SESSION_GONE = DAY;
+// A request that arrives this soon after the goodbye was already on its way (an aborted sync, a call the page made just
+// before it went): it does not take the goodbye back. A live page's next request comes later and does.
+const SESSION_SETTLE = 10 * 1000;
+const SESSION_ENDED = 'You were signed out because the page was closed.';
 // The clipper and an AI agent come last when the server picks who goes on syncing: they call in often and would win from the phone.
 const SYNC_HELPER_APPS = ['clipper', 'mcp'];
 // What a device on hold still reaches: its own plan, its devices and its account. Everything else, also a route added later, is refused.
@@ -386,6 +393,10 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       // The latest time a blob of a cloud had, kept after removing it: a new blob always comes later, also when the clock
       // went back meanwhile, so a device that still follows the removed key takes the new one.
       db.exec('CREATE TABLE IF NOT EXISTS ai_key_times(vaultId TEXT PRIMARY KEY, lastAt INTEGER NOT NULL);');
+      // A page signed in without "Stay signed in": the key of the sealed packet it keeps in its tab, the hash of its resume
+      // code, and after its goodbye until when it may come back and when the goodbye came. No foreign key: an older server
+      // must keep revoking and deleting devices; the sweep removes what it leaves behind.
+      db.exec('CREATE TABLE IF NOT EXISTS page_sessions(deviceId TEXT PRIMARY KEY, vaultId TEXT NOT NULL, resumeHash TEXT NOT NULL, key TEXT NOT NULL, deadline INTEGER, leftAt INTEGER);');
       // Who uploaded a piece that no version uses yet; only set in a space, so one member cannot block the others.
       if (!all('PRAGMA table_info(chunks)').some((column) => column.name === 'deviceId')) db.exec('ALTER TABLE chunks ADD COLUMN deviceId TEXT;');
       db.exec('CREATE INDEX IF NOT EXISTS chunks_by_device ON chunks(deviceId) WHERE deviceId IS NOT NULL;');
@@ -591,10 +602,19 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       else if (familyPrices.length) run('DELETE FROM family_subscriptions WHERE subscriptionId=?', id);
     });
   }
-  // The active devices of a free cloud at its device limit; empty when another device fits.
-  function devicesAtLimit(vaultId) {
-    const active = isPlus(vaultId) ? [] : all('SELECT id,name,lastSeenAt FROM devices WHERE vaultId=? AND revoked=0 ORDER BY lastSeenAt', vaultId);
-    return active.length >= freeDeviceLimit ? active : [];
+  // The active devices of a free cloud at its device limit; empty when another device fits. A page session that said
+  // goodbye or has been quiet makes room by itself, the quietest first, unless the newcomer names a device to replace.
+  function devicesAtLimit(vaultId, replaceDeviceId) {
+    endSessions(vaultId);
+    if (isPlus(vaultId)) return [];
+    const active = () => all('SELECT id,name,lastSeenAt FROM devices WHERE vaultId=? AND revoked=0 ORDER BY lastSeenAt', vaultId);
+    let devices = active();
+    if (devices.length >= freeDeviceLimit && !devices.some((device) => device.id === replaceDeviceId)) {
+      const spare = all('SELECT d.id,d.vaultId,d.keepSync,d.revoked FROM page_sessions s JOIN devices d ON d.id=s.deviceId WHERE d.vaultId=? AND d.revoked=0 AND (s.deadline IS NOT NULL OR d.lastSeenAt<?) ORDER BY d.lastSeenAt', vaultId, new Date(clock() - SESSION_QUIET).toISOString());
+      for (const device of spare.slice(0, devices.length - freeDeviceLimit + 1)) signOut(device);
+      devices = active();
+    }
+    return devices.length >= freeDeviceLimit ? devices : [];
   }
   // A refusal that JotDrop Plus or the family plan lifts. The kind is counted for the dashboard and never sent.
   const planLimit = (kind, vaultId, status, message, extra = { code: 'plus-required' }) => { throw Object.assign(new Error(message), { status, extra, limit: { kind, vaultId } }); };
@@ -615,6 +635,30 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     } catch { /* A count must never turn a refusal into a server error. */ }
   }
   const dropDevicePieces = (deviceId) => run('DELETE FROM chunks WHERE deviceId=? AND claimed=0', deviceId);
+  /** Signs a device out: `target` is its row as it was. Its uploads, pieces and page session go; a chosen device's sync
+   * place goes to `prefer` when that one was on hold, otherwise to the next in syncOrder. */
+  function signOut(target, prefer) {
+    run('UPDATE devices SET revoked=1 WHERE id=?', target.id);
+    run('DELETE FROM uploads WHERE vaultId=? AND deviceId=?', target.vaultId, target.id);
+    dropDevicePieces(target.id);
+    run('DELETE FROM page_sessions WHERE deviceId=?', target.id);
+    // Signing out always works, also from a device on hold (rule 7). Not a change of devices.
+    if (target.keepSync && !target.revoked && syncOn && one('SELECT 1 FROM sync_pauses WHERE vaultId=?', target.vaultId)) settleKeepers(target.vaultId, syncLimit(target.vaultId), { prefer });
+  }
+  // A page session is over when the page said goodbye and did not come back in time, or nothing was heard for a day.
+  const sessionOver = (deadline, lastSeenAt) => deadline !== null && deadline <= clock() || Date.parse(lastSeenAt) < clock() - SESSION_GONE;
+  /** Signs out the page sessions that are over, of one cloud or of all. Inside the caller's transaction. */
+  function endSessions(vaultId) {
+    const rows = all(`SELECT d.id,d.vaultId,d.keepSync,d.revoked,d.lastSeenAt,s.deadline FROM page_sessions s JOIN devices d ON d.id=s.deviceId WHERE d.revoked=0${vaultId ? ' AND d.vaultId=?' : ''}`, ...(vaultId ? [vaultId] : []));
+    for (const row of rows) if (sessionOver(row.deadline, row.lastSeenAt)) signOut(row);
+  }
+  // The hourly sweep: sessions that are over, and rows an older server left behind when it revoked or deleted a device.
+  function sweepSessions() {
+    transaction(() => {
+      endSessions();
+      run('DELETE FROM page_sessions WHERE deviceId NOT IN (SELECT id FROM devices WHERE revoked=0)');
+    });
+  }
   // Sync on hold (Hand-off/ontwerp-sync-pauzeren-boven-free.md). When in doubt a device syncs: the switch off, no row in
   // sync_pauses, Plus at this moment, no more devices than the limit, or fewer chosen devices than the limit all mean
   // that every device syncs. Plus and the device count are worked out on every request, never stored.
@@ -660,8 +704,9 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   }
   function deviceList(vaultId) {
     const state = syncState(vaultId);
-    return all('SELECT id,name,app,createdAt,lastSeenAt,revoked FROM devices WHERE vaultId=? ORDER BY createdAt', vaultId)
-      .map((entry) => ({ ...entry, revoked: Boolean(entry.revoked), syncing: !entry.revoked && (!state.kept || state.kept.has(entry.id)) }));
+    // `session`: a page signed in without "Stay signed in" (ontwerp #80), so the list can tell it from a remembered browser.
+    return all('SELECT d.id,d.name,d.app,d.createdAt,d.lastSeenAt,d.revoked,s.deviceId IS NOT NULL AS session FROM devices d LEFT JOIN page_sessions s ON s.deviceId=d.id WHERE d.vaultId=? ORDER BY d.createdAt', vaultId)
+      .map((entry) => ({ ...entry, revoked: Boolean(entry.revoked), session: Boolean(entry.session), syncing: !entry.revoked && (!state.kept || state.kept.has(entry.id)) }));
   }
   /** Gives `limit` active devices a place: `protect` first, then the chosen ones, then `prefer`, then by syncOrder. Returns the chosen devices that lost their place. */
   function settleKeepers(vaultId, limit, { prefer, protect } = {}) {
@@ -702,13 +747,14 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   function addDevice(vaultId, name, tokenHash, replaceDeviceId) {
     // Count revoked rows too: revocation must not bypass the local metadata ceiling.
     if (one('SELECT COUNT(*) AS count FROM devices WHERE vaultId=?', vaultId).count >= maxDeviceEntries) fail(507, 'Cloud device metadata safety limit reached. Existing devices and history were kept.');
-    const active = devicesAtLimit(vaultId);
+    const active = devicesAtLimit(vaultId, replaceDeviceId);
     if (active.length) {
       const replaced = active.find((device) => device.id === replaceDeviceId);
       if (!replaced) deviceLimitReached(vaultId, active);
       run('UPDATE devices SET revoked=1 WHERE id=?', replaced.id);
       run('DELETE FROM uploads WHERE vaultId=? AND deviceId=?', vaultId, replaced.id);
       dropDevicePieces(replaced.id);
+      run('DELETE FROM page_sessions WHERE deviceId=?', replaced.id);
     }
     const id = randomUUID(), now = new Date(clock()).toISOString();
     run('INSERT INTO devices(id,vaultId,name,tokenHash,createdAt,lastSeenAt) VALUES(?,?,?,?,?,?)', id, vaultId, name.trim(), tokenHash, now, now);
@@ -1321,7 +1367,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       run('DELETE FROM code_failures WHERE scope IN (?,?,?)', `login:${account.id}`, `reset:${account.id}`, `signup:${account.email}`);
       run('DELETE FROM accounts WHERE id=?', account.id);
     }
-    for (const table of ['uploads', 'pairings', 'revisions', 'envelope_chunks', 'chunks', 'retired_envelopes', 'envelopes', 'changes', 'purges', 'signups', 'devices', 'plans', 'trials', 'subscriptions', 'mail_accounts', 'mail_senders', 'mail_items', 'mail_parts', 'mail_log', 'ai_keys', 'ai_key_times', 'sync_pauses', 'device_promises']) run(`DELETE FROM ${table} WHERE vaultId=?`, vaultId);
+    for (const table of ['uploads', 'pairings', 'revisions', 'envelope_chunks', 'chunks', 'retired_envelopes', 'envelopes', 'changes', 'purges', 'signups', 'devices', 'plans', 'trials', 'subscriptions', 'mail_accounts', 'mail_senders', 'mail_items', 'mail_parts', 'mail_log', 'ai_keys', 'ai_key_times', 'sync_pauses', 'device_promises', 'page_sessions']) run(`DELETE FROM ${table} WHERE vaultId=?`, vaultId);
     run('DELETE FROM vaults WHERE id=?', vaultId);
   }
   function forgetAddress(account, kind) {
@@ -2010,6 +2056,25 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         });
         reply(201, result); return;
       }
+      // A page that was reloaded, or came back from the payment page, asks for its packet key with its resume code (ontwerp
+      // #80). Every refusal looks the same; a right code that comes too late signs the device out at once, so tabs a
+      // browser restores after a crash leave no device behind.
+      if (method === 'POST' && route === '/sessions/resume') {
+        limit(`resume:${clientAddress(req)}`, 10);
+        const value = await body(req, MAX_METADATA_BODY);
+        requireValue(validId(value.deviceId) && validToken(value.resumeToken), 'Invalid resume request');
+        const key = transaction(() => {
+          const row = one('SELECT d.id,d.vaultId,d.keepSync,d.revoked,d.lastSeenAt,s.resumeHash,s.key,s.deadline FROM page_sessions s JOIN devices d ON d.id=s.deviceId WHERE s.deviceId=?', value.deviceId);
+          if (!row || row.revoked || !equal(hash(value.resumeToken), row.resumeHash)) return null;
+          const now = clock(), inTime = row.deadline !== null ? row.deadline > now : Date.parse(row.lastSeenAt) > now - SESSION_RETURN;
+          if (!inTime || sessionOver(row.deadline, row.lastSeenAt)) { signOut(row); return null; }
+          run('UPDATE page_sessions SET deadline=NULL,leftAt=NULL WHERE deviceId=?', row.id);
+          run('UPDATE devices SET lastSeenAt=? WHERE id=?', new Date(now).toISOString(), row.id);
+          return row.key;
+        });
+        if (!key) fail(401, SESSION_ENDED, { code: 'session-ended' });
+        reply(200, { key }); return;
+      }
       const ip = clientAddress(req);
       if (method === 'POST' && route === '/accounts') {
         requireAccounts();
@@ -2188,7 +2253,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           run('DELETE FROM device_approvals WHERE accountId=?', account.id);
           // Nobody can read the old ciphertext any more; deleting it is what the user confirmed. Mail to JotDrop goes too:
           // its address, filter and sealed mail belong to the old key, and mail_accounts still points at the vault that is deleted here.
-          for (const table of ['uploads', 'pairings', 'revisions', 'envelope_chunks', 'chunks', 'retired_envelopes', 'envelopes', 'changes', 'purges', 'signups', 'devices', 'ai_keys', 'ai_key_times', 'mail_accounts', 'mail_senders', 'mail_items', 'mail_parts', 'mail_log', 'sync_pauses']) run(`DELETE FROM ${table} WHERE vaultId=?`, account.vaultId);
+          for (const table of ['uploads', 'pairings', 'revisions', 'envelope_chunks', 'chunks', 'retired_envelopes', 'envelopes', 'changes', 'purges', 'signups', 'devices', 'ai_keys', 'ai_key_times', 'mail_accounts', 'mail_senders', 'mail_items', 'mail_parts', 'mail_log', 'sync_pauses', 'page_sessions']) run(`DELETE FROM ${table} WHERE vaultId=?`, account.vaultId);
           run('DELETE FROM vaults WHERE id=?', account.vaultId);
           return addDevice(vaultId, value.deviceName, value.deviceTokenHash);
         })); return;
@@ -2340,8 +2405,15 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
       const vaultId = req.headers['x-jotdrop-vault'], deviceId = req.headers['x-jotdrop-device'];
       const token = /^Bearer (.+)$/.exec(req.headers.authorization || '')?.[1];
       if (!validId(vaultId) || !validId(deviceId) || !validToken(token)) fail(401, 'Device authorization required');
-      const device = one('SELECT * FROM devices WHERE id=?', deviceId);
+      const device = one('SELECT d.*,s.deviceId AS sessionId,s.deadline AS sessionDeadline,s.leftAt AS sessionLeftAt FROM devices d LEFT JOIN page_sessions s ON s.deviceId=d.id WHERE d.id=?', deviceId);
       if (!device || device.revoked || !equal(hash(token), device.tokenHash)) fail(401, 'Device access denied');
+      // A page session that is over signs its device out; a live page takes back the goodbye it may have sent.
+      // Before lastSeenAt below, so the previous time counts.
+      if (device.sessionId && sessionOver(device.sessionDeadline, device.lastSeenAt)) {
+        transaction(() => signOut(device));
+        fail(401, SESSION_ENDED, { code: 'session-ended' });
+      }
+      if (device.sessionId && device.sessionDeadline !== null && clock() - device.sessionLeftAt > SESSION_SETTLE) run('UPDATE page_sessions SET deadline=NULL,leftAt=NULL WHERE deviceId=?', deviceId);
       // A device belongs to its own cloud, and reaches a space when its account is a member.
       const inSpace = device.vaultId !== vaultId;
       if (inSpace && !memberOf(vaultId, device.vaultId)) fail(401, 'Device access denied');
@@ -2437,6 +2509,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
             run('UPDATE devices SET revoked=1 WHERE vaultId=? AND id<>?', vaultId, deviceId);
             run('DELETE FROM uploads WHERE vaultId=? AND deviceId<>?', vaultId, deviceId);
             run('DELETE FROM chunks WHERE claimed=0 AND deviceId IN (SELECT id FROM devices WHERE vaultId=? AND id<>?)', vaultId, deviceId);
+            run('DELETE FROM page_sessions WHERE vaultId=? AND deviceId<>?', vaultId, deviceId);
           }
         });
         reply(200, { ok: true }); return;
@@ -2690,7 +2763,25 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
         }), cursor: objects.at(-1)?.id ?? after, hasMore }); return;
       }
       // `app` says which JotDrop app a device runs and `syncing` whether it goes on syncing (in the grace: what it will do).
-      if (method === 'GET' && route === '/devices') { reply(200, { devices: deviceList(vaultId) }); return; }
+      if (method === 'GET' && route === '/devices') { transaction(() => endSessions(vaultId)); reply(200, { devices: deviceList(vaultId) }); return; }
+      // A page signed in without "Stay signed in" (ontwerp #80): PUT keeps its packet key and the hash of its resume code,
+      // GET is its sign of life when hidden, and leave is its goodbye: back within 2 minutes, or 30 after the payment page.
+      if (route === '/devices/session' && method === 'GET') { reply(200, { session: Boolean(device.sessionId) }); return; }
+      if (route === '/devices/session' && method === 'PUT') {
+        const value = await body(req, MAX_METADATA_BODY);
+        requireValue(validHash(value.resumeTokenHash) && validToken(value.key), 'Invalid page session');
+        transaction(() => {
+          requireAccess(vaultId, deviceId);
+          run('INSERT INTO page_sessions(deviceId,vaultId,resumeHash,key,deadline) VALUES(?,?,?,?,NULL) ON CONFLICT(deviceId) DO UPDATE SET resumeHash=excluded.resumeHash,key=excluded.key,deadline=NULL,leftAt=NULL', deviceId, device.vaultId, value.resumeTokenHash, value.key);
+        });
+        reply(200, { ok: true }); return;
+      }
+      if (route === '/devices/session/leave' && method === 'POST') {
+        const value = await body(req, MAX_METADATA_BODY);
+        requireValue(value.away === undefined || typeof value.away === 'boolean', 'Invalid page session');
+        run('UPDATE page_sessions SET deadline=?,leftAt=? WHERE deviceId=?', clock() + (value.away ? SESSION_AWAY : SESSION_RETURN), clock(), deviceId);
+        reply(200, { ok: true }); return;
+      }
       // Which devices go on syncing: exactly as many active devices as the limit. As often as you like in the grace; after the
       // pause starts once a day (rule 6), so the limit cannot be passed by choosing every device in turn.
       if (method === 'PUT' && route === '/devices/syncing') {
@@ -2719,13 +2810,11 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
           requireAccess(vaultId, deviceId);
           const target = one('SELECT * FROM devices WHERE vaultId=? AND id=?', vaultId, revoke[1]);
           if (!target) fail(404, 'Device not found');
-          if (!target.revoked && one('SELECT COUNT(*) AS count FROM devices WHERE vaultId=? AND revoked=0', vaultId).count <= 1) fail(409, 'Cannot revoke the only active device');
-          run('UPDATE devices SET revoked=1 WHERE id=? AND vaultId=?', target.id, vaultId);
-          run('DELETE FROM uploads WHERE vaultId=? AND deviceId=?', vaultId, target.id);
-          dropDevicePieces(target.id);
-          // Signing out always works, also from a device on hold (rule 7). A chosen device's place goes to the device that
-          // signed it out when that one was on hold, otherwise to the next in syncOrder. Not a change of devices.
-          if (target.keepSync && !target.revoked && syncOn && one('SELECT 1 FROM sync_pauses WHERE vaultId=?', vaultId)) settleKeepers(vaultId, syncLimit(vaultId), { prefer: deviceId });
+          // The only device may sign itself out when it is a page session, or a web browser of a cloud with an account
+          // (Log out): the browser forgets its data anyway, and the account can always sign in again (ontwerp #80, rule 4).
+          const mayLeave = target.id === deviceId && (one('SELECT 1 FROM page_sessions WHERE deviceId=?', target.id) || target.app === 'web' && one('SELECT 1 FROM accounts WHERE vaultId=?', vaultId));
+          if (!target.revoked && !mayLeave && one('SELECT COUNT(*) AS count FROM devices WHERE vaultId=? AND revoked=0', vaultId).count <= 1) fail(409, 'Cannot revoke the only active device');
+          signOut(target, deviceId);
         });
         reply(200, { ok: true }); return;
       }
@@ -2979,6 +3068,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
   sweepSpaces();
   sweepTrials();
   sweepSyncPauses();
+  sweepSessions();
   // The privacy policy promises votes go when their idea leaves the list (roadmap.mjs changes need a restart anyway).
   run(`DELETE FROM roadmap_votes WHERE itemId NOT IN (${roadmap.map(() => '?').join(',')})`, ...roadmapIds);
   await new Promise((done, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', done); });
@@ -2989,6 +3079,7 @@ export async function createCloudServer({ dataDir, enrollmentToken, mailer, news
     sweepSpaces();
     sweepTrials();
     sweepSyncPauses();
+    sweepSessions();
     void fillBilling();
   }, sweepEvery);
   sweep.unref();
