@@ -206,6 +206,7 @@ import com.diexar.keepcapture.ui.PIN_MS
 import com.diexar.keepcapture.ui.PlayfulAmber
 import com.diexar.keepcapture.ui.PlayfulInk
 import com.diexar.keepcapture.ui.SealedStamp
+import com.diexar.keepcapture.ui.PaperShape
 import com.diexar.keepcapture.ui.drawPaper
 import com.diexar.keepcapture.ui.drawPenLines
 import com.diexar.keepcapture.ui.drawTape
@@ -3125,7 +3126,6 @@ private fun NoteCard(
     val edgeWidth = with(LocalDensity.current) { (if (isSelected || isDropTarget) 2.dp else 0.7.dp).toPx() }
     // Playful details (design A): only the paper is askew, so the text on it stays sharp.
     val tilt = remember(note.filename) { tiltFor(note.filename) }
-    val page = MaterialTheme.colorScheme.background
     val fold = remember(bg, fg) { lerp(bg, fg, 0.22f) }
     // A pin pressed here wiggles, and pinning sticks the tape on.
     val pinHolder = remember { arrayOfNulls<Boolean>(1) }
@@ -3174,14 +3174,14 @@ private fun NoteCard(
         modifier = modifier
             // An archived card is paler, like on the website and in Obsidian.
             .then(if (archived) Modifier.alpha(0.7f) else Modifier)
-            .then(if (isDragging) Modifier.shadow(10.dp, CARD_SHAPE, clip = false) else Modifier)
+            .then(if (isDragging) Modifier.shadow(10.dp, PaperShape, clip = false) else Modifier)
             .graphicsLayer {
                 val p = drop?.value ?: return@graphicsLayer
                 translationY = -44.dp.toPx() * (1f - p)
                 alpha = (p / 0.4f).coerceAtMost(1f)
                 rotationZ = -3f * (1f - p)
             }
-            .drawBehind { drawPaper(brush, edgeColor, edgeWidth, page, fold, tilt, highlight = isSelected || isDropTarget) }
+            .drawBehind { drawPaper(brush, edgeColor, edgeWidth, fold, tilt, highlight = isSelected || isDropTarget) }
             // Tape lies on top of the card, a photo included (Eric, 27 Oct).
             .drawWithContent {
                 drawContent()
