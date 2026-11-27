@@ -545,6 +545,37 @@ export function backspaceEdit(text, caret, hidden) {
   return left ? at(left.from, left.to + (start - from)) : at(from);
 }
 
+/**
+ * Backspace with the caret right behind the sign of a list item (a box, a bullet, a number) and in front of its first
+ * word, or anywhere in that sign (design checklists-77-v3, 4.3). An editor asks this first, in the formatted view of a
+ * note's body, and `backspaceEdit` when it gives null. As in Keep the item joins the line above it when that line is
+ * of the same list: its words come right behind that line's words, with the caret between them, and an empty item is
+ * gone. The first line of a list only loses its sign, with the indent in front of it: its words stay on their own line
+ * as plain text, so an item never ends up behind a heading. It is one replacement and never takes half a sign. What
+ * hung under the item stays where it is. Signs the view hides between the item's sign and the caret (`hidden`, as for
+ * `backspaceEdit`) stay in front of the caret. Null: the caret is not there, or it is in an empty pair, which goes first.
+ */
+export function itemBackspaceEdit(text, caret, hidden) {
+  text = String(text);
+  if (emptyPair(text, caret)) return null;
+  let start = caret;
+  for (let run; (run = hidden.find(([from, to]) => to === start && from < start));) start = run[0];
+  const lineStart = start === 0 ? 0 : text.lastIndexOf('\n', start - 1) + 1;
+  const next = text.indexOf('\n', lineStart), lineEnd = next < 0 ? text.length : next;
+  const prefix = linePrefix(text.slice(lineStart, lineEnd));
+  const signEnd = lineStart + prefix.markTo;
+  if (!LIST_KINDS.has(prefix.kind) || start > signEnd) return null;
+  const table = lineTable(text), structure = listStructure(text), index = table.at(lineStart);
+  if (!(structure[index]?.level >= 0)) return null;
+  const kept = Math.max(0, caret - signEnd);
+  if (structure[index - 1]?.series !== structure[index].series) return { from: lineStart, to: signEnd, insert: '', selFrom: lineStart + kept, selTo: lineStart + kept };
+  const from = lineStart - (text[lineStart - 2] === '\r' ? 2 : 1);
+  // An empty task above that ends right behind its box (`- [ ]`): a space keeps it a task when words come behind it.
+  const above = withoutCr(table.lines[index - 1]), sign = linePrefix(above);
+  const insert = sign.kind === 'task' && sign.markTo === above.length && above.endsWith(']') && withoutCr(text.slice(signEnd, lineEnd)) ? ' ' : '';
+  return { from, to: signEnd, insert, selFrom: from + insert.length + kept, selTo: from + insert.length + kept };
+}
+
 const LIST_ITEM = /^([ \t]*)(?:([-*+])|(\d{1,9})([.)]))[ \t]+(?:\[([ xX])\](?:[ \t]+|$))?/;
 
 const CARRIED = new Set(['bold', 'italic', 'strike', 'highlight', 'code']);

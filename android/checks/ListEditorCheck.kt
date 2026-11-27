@@ -107,6 +107,43 @@ fun main() {
     capital("~~~\ntext\n- ", "~~~\ntext\n- c", null)
     capital("> - ", "> - q", null)
     capital("# ", "# h", null)
+    // Backspace next to the sign of a list item, as a keyboard sends it (design checklists-77-v3, 4.3 and 4.4): the
+    // characters it took in front of the caret, one or a whole word at once.
+    run {
+        val list = "- [ ] Milk\n- [ ] Bread"
+        fun back(text: String, caret: Int, removed: Int = 1, hidden: List<IntRange> = emptyList()) =
+            signBackspace(text, caret, removed, hidden)?.let { Triple(it.text, it.caret, it.joined) }
+        // Right behind the sign the item joins the line above it, and an empty one is gone: one step, never half a sign.
+        check(back(list, 17) == Triple("- [ ] MilkBread", 10, true)) { "A task joins the task above it: ${back(list, 17)}" }
+        check(back("- [ ] Milk\n- [ ] ", 17) == Triple("- [ ] Milk", 10, true)) { "An empty task is gone: ${back("- [ ] Milk\n- [ ] ", 17)}" }
+        check(back("1. a\n2. b", 8) == Triple("1. ab", 4, true) && back("- a\n- b", 6) == Triple("- ab", 3, true)) { "A numbered line and a bullet join too" }
+        check(back("# List\n- [ ] Bread", 13) == Triple("# List\nBread", 7, true)) { "The first line of a list only loses its sign: ${back("# List\n- [ ] Bread", 13)}" }
+        // However many characters the keyboard wanted there.
+        check(back(list, 17, 6) == Triple("- [ ] MilkBread", 10, true) && back(list, 17, 17) == Triple("- [ ] MilkBread", 10, true)) { "A whole word taken at the sign joins as well" }
+        // The caret in the sign, with the signs the formatted view hides: between the box and its space, in front of the box.
+        val hidden = listOf(11 until 13, 14 until 16)
+        check(back(list, 16, 1, hidden) == Triple("- [ ] MilkBread", 10, true) && back(list, 11, 1, hidden) == Triple("- [ ] MilkBread", 10, true)) { "The caret in the sign: ${back(list, 16, 1, hidden)}" }
+        // Bold words right behind the box: the caret stands behind their hidden signs, which stay in front of it.
+        val bold = "- [ ] Milk\n- [ ] **Bread**"
+        check(back(bold, 19, 1, hidden + listOf(17 until 19, 24 until 26)) == Triple("- [ ] Milk**Bread**", 12, true)) { "Hidden signs behind the box: ${back(bold, 19, 1, hidden + listOf(17 until 19, 24 until 26))}" }
+        check(back(bold, 19, 1) == null) { "Signs that are not hidden are words: the caret is not behind the box" }
+        // Further in the item: a letter or the word itself is the keyboard's own, more than that stops in front of the sign.
+        check(back(list, 22) == null && back(list, 22, 5) == null && back(list, 19, 2) == null) { "Letters and a word are the keyboard's own" }
+        check(back(list, 22, 6) == Triple("- [ ] Milk\n- [ ] ", 17, false)) { "A word and more stops in front of the sign: ${back(list, 22, 6)}" }
+        check(back(list, 22, 20) == Triple("- [ ] Milk\n- [ ] ", 17, false)) { "Also when it would reach into the line above: ${back(list, 22, 20)}" }
+        check(back(list, 19, 3) == Triple("- [ ] Milk\n- [ ] ead", 17, false) && back("- a\n- bc", 8, 4) == Triple("- a\n- ", 6, false)) { "From the middle of a word, and in a bullet" }
+        // Holding Backspace: the words go, then the item joins, then the line above goes on.
+        var held = SignBackspace(list, 22, false)
+        val seen = mutableListOf<String>()
+        while (held.caret > 0) {
+            held = signBackspace(held.text, held.caret, 1, emptyList()) ?: SignBackspace(held.text.removeRange(held.caret - 1, held.caret), held.caret - 1, false)
+            seen += held.text
+        }
+        check(seen.take(7) == listOf("- [ ] Milk\n- [ ] Brea", "- [ ] Milk\n- [ ] Bre", "- [ ] Milk\n- [ ] Br", "- [ ] Milk\n- [ ] B", "- [ ] Milk\n- [ ] ", "- [ ] Milk", "- [ ] Mil")) { "Holding Backspace: ${seen.take(7)}" }
+        check(seen.last() == "" && seen.none { it.endsWith("- [ ]") || it.endsWith("- [") || it.endsWith("-") || it.endsWith("- ") && it != "- " }) { "No half sign on the way: $seen" }
+        // Not a list: plain text, a quote, a code block.
+        check(back("one\ntwo", 4) == null && back("one\ntwo", 7, 5) == null && back("> - [ ] a\n> - [ ] b", 18) == null && back("```\n- [ ] a\n- [ ] bc\n```", 20, 4) == null) { "Outside a list Backspace is the keyboard's own" }
+    }
     // The field still edits the text from before the list edit (seen on the emulator, 5 Nov):
     // Enter, an echo of the old text, then "jam" typed fast, all on the old text.
     run {
@@ -149,6 +186,56 @@ fun main() {
         stale.settle("old", "new")
         now += 2000
         check(stale.replay("new", "oldx") == null)
+    }
+    // Backspace held down on a busy phone (design checklists-77-v3, 4.4): the item joined the line above it, and the
+    // field, which still has the item's sign, goes on taking that sign away. Each such Backspace is one in the line the
+    // caret is in now; taken as it came it would put the item back with half a sign.
+    run {
+        var now = 0L
+        val stale = StaleField { now }
+        var shown = "- [ ] Milk\n- [ ] Bread"
+        var caret = 17
+        // What the editor makes of a change of the field, as the body's pipeline does it.
+        fun field(text: String, cursor: Int) {
+            val replayed = stale.replay(shown, text, caret, cursor)
+            val next = replayed?.text ?: text
+            val nextCaret = replayed?.map?.invoke(cursor) ?: cursor
+            val removed = caret - nextCaret
+            val back = if (removed >= 1 && next == shown.removeRange(caret - removed, caret)) signBackspace(shown, caret, removed, emptyList()) else null
+            stale.settle(text, back?.text ?: next)
+            shown = back?.text ?: next
+            caret = back?.caret ?: nextCaret
+        }
+        field("- [ ] Milk\n- [ ]Bread", 16)
+        check(shown == "- [ ] MilkBread" && caret == 10) { "Backspace behind the box: $shown at $caret" }
+        field("- [ ] Milk\n- [ Bread", 15)
+        check(shown == "- [ ] MilBread" && caret == 9) { "The next one on the old text takes a letter of the line above: $shown at $caret" }
+        field("- [ ] Milk\n- [Bread", 14)
+        field("- [ ] Milk\n-Bread", 12)
+        check(shown == "- [ ] Bread" && caret == 6) { "On and on, also two at once: $shown at $caret" }
+        // The caret is behind the sign of the first line now: that sign goes whole, and then there is nothing to take.
+        field("- [ ] Milk\nBread", 11)
+        check(shown == "Bread" && caret == 0) { "The first line loses its whole sign: $shown at $caret" }
+        field("- [ ] MilkBread", 10)
+        check(shown == "Bread" && caret == 0) { "At the start of the note nothing goes: $shown at $caret" }
+        // The field caught up: a change on the shown text is taken as it is.
+        field("xBread", 1)
+        check(shown == "xBread" && caret == 1) { "Caught up: $shown at $caret" }
+        // A letter typed fast after the join lands where the caret is.
+        shown = "- [ ] Milk\n- [ ] Bread"
+        caret = 17
+        stale.settle(shown, shown)
+        field("- [ ] Milk\n- [ ]Bread", 16)
+        field("- [ ] Milk\n- [ ]xBread", 17)
+        check(shown == "- [ ] MilkxBread" && caret == 11) { "A letter typed on the old text: $shown at $caret" }
+        // Only a Backspace is replayed that way: another change in the part that was replaced is not.
+        check(replayStale("- [ ] Milk\n- [ ]Bread", "- [ ] MilkBread", "- [ ] Milk\n- [x]Bread", 10, 15) == null) { "A replacement in the part that went" }
+        check(replayStale("- [ ] Milk\n- [ ]Bread", "- [ ] MilkBread", "- [ ] Milk\n- [ Bread") == null) { "Without the carets nothing is replayed there" }
+        // Shorter than the old text, but not that text without what stood in front of the caret: a letter over a selection.
+        check(replayStale("- [ ] Milk\n- [ ]Bread", "- [ ] MilkBread", "- [ ] Milk\n- [xBread", 10, 15) == null) { "A letter over two characters of the part that went" }
+        check(replayStale("- [ ] Milk\n- [ ]Bread", "- [ ] MilkBread", "- [ ] Milk\n- [ Bread", 10, 11) == null) { "A character that went somewhere else than in front of the caret" }
+        // The field's caret is known, but the text on screen has a selection: there is no place to take a character from.
+        check(replayStale("- [ ] Milk\n- [ ]Bread", "- [ ] MilkBread", "- [ ] Milk\n- [ Bread", -1, 15) == null) { "A selection in the text on screen" }
     }
     check(replayStale("- a\n", "- a\n- ", "x- a\n")?.text == "x- a\n- ") { "Change before ours" }
     check(replayStale("- a\n", "- a\n- ", "- a\n- ") == null) { "Built on shown text" }

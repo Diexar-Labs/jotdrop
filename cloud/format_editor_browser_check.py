@@ -111,18 +111,19 @@ def check_levels(page):
     assert body_text(page) == "- milk\n\t- eggs\n\t\t- bread\n", repr(body_text(page))
     page.keyboard.press("Control+[")
     assert body_text(page) == "- milk\n- eggs\n\t- bread\n", repr(body_text(page))
-    # Backspace at the start of a sub-item's words takes it one level back.
+    # Backspace at the start of a sub-item's words joins it with the line above, as in Keep; it does not go a level
+    # back first (design checklists-77-v3, 4.3).
     page.keyboard.press("ArrowDown")
     page.keyboard.press("End")
     for _ in range(len("bread")):
         page.keyboard.press("Backspace")
     assert body_text(page) == "- milk\n- eggs\n\t- \n", repr(body_text(page))
     page.keyboard.press("Backspace")
-    assert body_text(page) == "- milk\n- eggs\n- \n", repr(body_text(page))
+    assert body_text(page) == "- milk\n- eggs\n", repr(body_text(page))
     # The first item cannot go in, but Tab stays in the text on a list line.
     page.keyboard.press("Control+Home")
     page.keyboard.press("Tab")
-    assert body_text(page) == "- milk\n- eggs\n- \n" and body_has_focus(page), repr(body_text(page))
+    assert body_text(page) == "- milk\n- eggs\n" and body_has_focus(page), repr(body_text(page))
     # Ctrl+] off a list does nothing (CodeMirror's own would put two spaces before the line).
     fill_body(page, "plain")
     page.keyboard.press("Control+]")
@@ -177,6 +178,94 @@ def check_levels(page):
     body_editor(page)
     # The rest of the check goes on in a note with the same title as before.
     page.locator("#note-title").fill("Formatting")
+
+
+def check_item_backspace(page):
+    """Backspace right behind the sign of a list item, or in front of it (design checklists-77-v3, 4.3): the item joins
+    the line above it, an empty one is gone, the first line of a list only loses its sign. One key is one step for Undo,
+    and no half sign ever shows. In the Markdown view Backspace takes what is there to see."""
+    def before_words(count):
+        page.keyboard.press("Control+End")
+        for _ in range(count):
+            page.keyboard.press("ArrowLeft")
+
+    # An empty task under a task is gone in one key (it took seven), the caret behind the words above.
+    fill_body(page, "- [ ] Milk\n- [ ] ")
+    page.keyboard.press("Control+End")
+    page.keyboard.press("Backspace")
+    assert body_text(page) == "- [ ] Milk", repr(body_text(page))
+    page.keyboard.type("!")
+    assert body_text(page) == "- [ ] Milk!", repr(body_text(page))
+    # A task with words joins the task above, the caret between the words; no `[ ]` comes in sight.
+    fill_body(page, "- [ ] Milk\n- [x] Bread")
+    before_words(len("Bread"))
+    page.keyboard.press("Backspace")
+    assert body_text(page) == "- [ ] MilkBread" and "[" not in visible_text(page), repr(body_text(page))
+    assert page.locator("#note-editor .cm-jd-box").count() == 1
+    # One step for Undo: the task is back, Redo joins it again with the caret between the words, and after Undo the
+    # caret stands behind the box again.
+    page.keyboard.press("Control+z")
+    assert body_text(page) == "- [ ] Milk\n- [x] Bread", repr(body_text(page))
+    page.keyboard.press("Control+y")
+    assert body_text(page) == "- [ ] MilkBread", repr(body_text(page))
+    page.keyboard.type(" ")
+    assert body_text(page) == "- [ ] Milk Bread", repr(body_text(page))
+    page.keyboard.press("Control+z")
+    page.keyboard.press("Control+z")
+    assert body_text(page) == "- [ ] Milk\n- [x] Bread", repr(body_text(page))
+    page.keyboard.type("x")
+    assert body_text(page) == "- [ ] Milk\n- [x] xBread", repr(body_text(page))
+    # The caret in front of the box does the same as right behind it.
+    fill_body(page, "- [ ] Milk\n- [ ] Bread")
+    page.keyboard.press("Control+End")
+    page.keyboard.press("Home")
+    page.keyboard.press("Backspace")
+    assert body_text(page) == "- [ ] MilkBread", repr(body_text(page))
+    # A sub-task joins its main task; a bullet and a numbered line join too, and the numbers after it stay.
+    fill_body(page, "- [ ] Greens\n\t- [ ] Kale")
+    before_words(len("Kale"))
+    page.keyboard.press("Backspace")
+    assert body_text(page) == "- [ ] GreensKale", repr(body_text(page))
+    fill_body(page, "- Milk\n- Bread")
+    before_words(len("Bread"))
+    page.keyboard.press("Backspace")
+    assert body_text(page) == "- MilkBread", repr(body_text(page))
+    fill_body(page, "1. Milk\n2. Bread\n3. Eggs")
+    page.keyboard.press("Control+Home")
+    page.keyboard.press("ArrowDown")
+    page.keyboard.press("End")
+    for _ in range(len("Bread")):
+        page.keyboard.press("ArrowLeft")
+    page.keyboard.press("Backspace")
+    assert body_text(page) == "1. MilkBread\n3. Eggs", repr(body_text(page))
+    # The first line of a list only loses its sign: the task does not end up behind the heading. The next Backspace is
+    # an ordinary one.
+    fill_body(page, "## List\n- [ ] Bread")
+    before_words(len("Bread"))
+    page.keyboard.press("Backspace")
+    assert body_text(page) == "## List\nBread" and page.locator("#note-editor .cm-jd-box").count() == 0, repr(body_text(page))
+    page.keyboard.type("x")
+    assert body_text(page) == "## List\nxBread", repr(body_text(page))
+    page.keyboard.press("Backspace")
+    page.keyboard.press("Backspace")
+    assert body_text(page) == "## ListBread", repr(body_text(page))
+    # Holding Backspace from the end of a task: its words go, it joins, and the line above goes on. Never half a sign.
+    fill_body(page, "- [ ] Milk\n- [ ] ab")
+    page.keyboard.press("Control+End")
+    seen = []
+    for _ in range(5):
+        page.keyboard.press("Backspace")
+        seen.append(body_text(page))
+    assert seen == ["- [ ] Milk\n- [ ] a", "- [ ] Milk\n- [ ] ", "- [ ] Milk", "- [ ] Mil", "- [ ] Mi"], seen
+    # In the Markdown view the signs are text: Backspace takes one of them.
+    fill_body(page, "- [ ] Milk\n- [ ] ")
+    page.locator("#markdown-mode").click()
+    raw = page.locator("#note-content")
+    raw.press("Control+End")
+    raw.press("Backspace")
+    assert raw.input_value().endswith("- [ ] Milk\n- [ ]"), repr(raw.input_value())
+    page.locator("#markdown-mode").click()
+    assert body_text(page) == "- [ ] Milk\n- [ ]", repr(body_text(page))
 
 
 def check_format_editor(browser, url, token):
@@ -312,6 +401,7 @@ def check_format_editor(browser, url, token):
         size = page.locator("#note-editor .cm-jd-box").evaluate("box => parseFloat(getComputedStyle(box).fontSize) / parseFloat(getComputedStyle(box.closest('.cm-content')).fontSize)")
         assert 1.45 < size < 1.55, size
         check_levels(page)
+        check_item_backspace(page)
         fill_body(page, "very important")
         page.keyboard.press("Shift+Control+ArrowLeft")
         button(page, "highlight").click()

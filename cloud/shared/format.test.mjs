@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
-import { activeFormats, addItemEdit, applyFormat, backspaceEdit, blocks, cellSource, cellText, checkedTail, checklistEdit, deleteCheckedEdit, deleteItemEdit, dropItemEdit, dropSlots, emptyPair, indentEdit, inlineSpans, insertTable, itemSpan, linePrefix, listEnterEdit, listItems, listLevels, moveItemEdit, parseTable, pasteLinesEdit, tableCells, tableEdit, tickEdit, uncheckAllEdit } from './format.mjs';
+import { activeFormats, addItemEdit, applyFormat, backspaceEdit, blocks, cellSource, cellText, checkedTail, checklistEdit, deleteCheckedEdit, deleteItemEdit, dropItemEdit, dropSlots, emptyPair, indentEdit, inlineSpans, insertTable, itemBackspaceEdit, itemSpan, linePrefix, listEnterEdit, listItems, listLevels, moveItemEdit, parseTable, pasteLinesEdit, tableCells, tableEdit, tickEdit, uncheckAllEdit } from './format.mjs';
 
 // The same cases run on Android (scripts/check-format-android.mjs), so every app sees the same tables.
 const vectors = JSON.parse(readFileSync(new URL('./format-vectors.json', import.meta.url), 'utf8'));
@@ -126,6 +126,14 @@ test('Backspace behind hidden signs takes a letter you see', () => {
   for (const vector of vectors.backspace) {
     const { text, from } = unmark(vector.text);
     const edit = backspaceEdit(text, from, vector.hidden);
+    assert.equal(edit && marked(applied(text, edit), edit.selFrom, edit.selTo), vector.expect, vector.name);
+  }
+});
+
+test('Backspace at the sign of a list item joins the line above, or takes the sign of a first line', () => {
+  for (const vector of vectors.itemBackspace) {
+    const { text, from } = unmark(vector.text);
+    const edit = itemBackspaceEdit(text, from, vector.hidden);
     assert.equal(edit && marked(applied(text, edit), edit.selFrom, edit.selTo), vector.expect, vector.name);
   }
 });
@@ -455,6 +463,40 @@ const tickedThrough = (text) => {
   });
   return lines.map((line, index) => (under.has(index) ? line.replace(/\[[ xX]\]/, (box) => (box === '[ ]' ? '[x]' : box)) : line)).join('\n');
 };
+
+test('Backspace at a sign takes the whole sign and nothing else: every other line stays, no word is lost, the caret stands in front of the words', () => {
+  let joined = 0, unsigned = 0;
+  for (const text of [...listTexts(), ...vectors.itemBackspace.map((vector) => unmark(vector.text).text)]) {
+    const lines = text.split('\n'), levels = listLevels(text), items = listItems(text);
+    let offset = 0;
+    lines.forEach((line, index) => {
+      const prefix = linePrefix(line), rest = line.slice(prefix.markTo);
+      for (let at = 0; at <= bare(line).length; at++) {
+        const name = label(text, `line ${index} at ${at}`);
+        const edit = itemBackspaceEdit(text, offset + at, []);
+        // Exactly in and right behind the sign of a list line.
+        assert.equal(Boolean(edit), levels[index] >= 0 && at <= prefix.markTo, `${name}: where the rule holds`);
+        if (!edit) continue;
+        const after = applied(text, edit).split('\n');
+        assert.equal(edit.selFrom, edit.selTo, `${name}: a caret`);
+        if (index > 0 && items[index - 1] >= 0) {
+          // The line above is of the same list: one line fewer, and the two lines are one, the words behind each other.
+          joined++;
+          const above = bare(lines[index - 1]), glue = bare(rest) && /^[ \t]*[-*+][ \t]+\[[ xX]\]$/.test(above) ? ' ' : '';
+          assert.deepEqual(after, [...lines.slice(0, index - 1), above + glue + rest, ...lines.slice(index + 1)], `${name}: joined`);
+          assert.equal(edit.selFrom, offset - lines[index - 1].length - 1 + above.length + glue.length, `${name}: the caret between the words`);
+          assert.equal(linePrefix(after[index - 1]).kind, linePrefix(above).kind, `${name}: the line above keeps its sign`);
+        } else {
+          unsigned++;
+          assert.deepEqual(after, [...lines.slice(0, index), rest, ...lines.slice(index + 1)], `${name}: only the sign went`);
+          assert.equal(edit.selFrom, offset, `${name}: the caret in front of the words`);
+        }
+      }
+      offset += line.length + 1;
+    });
+  }
+  assert.ok(joined > 2000 && unsigned > 300, `${joined} joins and ${unsigned} first lines were tried`);
+});
 
 test('moving trades two whole items: every line keeps its words and level, and the other way gives the text back', () => {
   const signature = (lines, levels) => lines.map((line, index) => `${words(line)}|${levels[index]}`).sort();

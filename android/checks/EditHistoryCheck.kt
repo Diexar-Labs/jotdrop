@@ -218,6 +218,23 @@ fun main() {
         val shown = note.history.undo(note.title, note.body)!!
         check(shown.title == "" && shown.field == EditField.TITLE && shown.selFrom < 0) { "The title's typing is one step and leaves the body's caret alone" }
     }
+    // Backspace at the sign of a list item (design checklists-77-v3, 4.3): the item joins the line above it in one step
+    // of its own, between the letters that went before it and the ones that go after it. Undo brings the item back with
+    // the caret behind its sign, and Redo joins it again.
+    run {
+        val note = Note(body = "- [ ] Milk\n- [ ] ab")
+        note.backspace(2)
+        val join = signBackspace(note.body, note.caret, 1, emptyList())!!
+        check(join.joined && join.text == "- [ ] Milk" && join.caret == 10) { "The empty item joins: ${join.text} ${join.caret}" }
+        note.now += 100
+        note.write(join.text, EditKind.STEP, join.caret)
+        note.backspace(2)
+        check(note.body == "- [ ] Mi") { "Backspace goes on in the line above: ${note.body}" }
+        check(note.undo() && note.body == "- [ ] Milk" && note.caret == 10) { "First the letters of the line above come back: ${note.body} ${note.caret}" }
+        check(note.undo() && note.body == "- [ ] Milk\n- [ ] " && note.caret == 17) { "Then the item, the caret behind its sign: ${note.body} ${note.caret}" }
+        check(note.undo() && note.body == "- [ ] Milk\n- [ ] ab" && !note.undo()) { "Then its own letters: ${note.body}" }
+        check(note.redo() && note.redo() && note.body == "- [ ] Milk" && note.caret == 10) { "Redo joins it again: ${note.body} ${note.caret}" }
+    }
     // What Undo and Redo show: the field and the place of the change.
     run {
         val note = Note(body = "- [ ] a\n- [ ] b\n- [ ] c")
