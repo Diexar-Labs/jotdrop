@@ -1,4 +1,4 @@
-import { CloudClient, identifyClient } from '/shared/client.mjs';
+import { CloudClient, identifyClient, request } from '/shared/client.mjs';
 import { mergeNote } from '/shared/merge.mjs';
 import { cardPreview, tagOnly } from '/shared/card-preview.mjs';
 import { activeFormats, applyFormat, blocks, checklistEdit, deleteCheckedEdit, deleteItemEdit, indentEdit, itemSpan, linePrefix, listLevels, moveItemEdit, parseTable, pasteLinesEdit, tickEdit, uncheckAllEdit } from '/shared/format.mjs';
@@ -10,7 +10,7 @@ import { createLink, listLinks, removeLink } from '/shared/links.mjs';
 import { createListLink, hasChecklist, listListLinks, openList, removeListLink, syncList } from '/shared/list-links.mjs';
 import { acceptInvite, blockMember, createSpace, deleteSpace, leaveSpace, listSpaces, makeInvite, readInvite, removeMember, replaceSpace, reportSpace, saveSpacePrefs, setMemberName, spaceClient, spaceDetails, takeOverSpace, unreadableFile, withdrawInvite, writeUnderFreeName } from '/shared/spaces.mjs';
 import { accountInfo, approveDevice, attachAccount, availableProviders, changePassword, checkApproval, completeApproval, confirmLogin, confirmSignup, deleteAccount, disableTotp, enableTotp, listApprovals, logIn, newRecoveryCode, personCheckKey, providerApproval, providerRecover, providerSignUp, providerTicket, rejectDevice, requestApproval, resetWithRecoveryCode, setupTotp, signUp, startOver, startProviderSignIn, startReset } from '/shared/account.mjs';
-import { base64ToBytes, bytesToBase64, decodeRecovery, decryptEnvelope, encryptEnvelope, isSpacePath, objectId, sealLocal, unsealLocal } from '/shared/crypto.mjs';
+import { base64ToBytes, bytesToBase64, decodeRecovery, decryptEnvelope, encryptEnvelope, hashToken, isSpacePath, objectId, randomToken, sealLocal, unsealLocal } from '/shared/crypto.mjs';
 import { exportZip } from '/export.mjs';
 import { noteSummary, updateMetadata, toggleTask, attachmentPath, plainPreviewText, splitNote, joinNote, noteFilename, manualRank, betweenRank, noteUrls, urlHost, reminderBadge, repeatLabel, changedAgo, replaceAttachment } from '/note.mjs';
 import { drawingFileName, isDrawingName, read as readDrawing } from '/shared/drawing.mjs';
@@ -2027,7 +2027,7 @@ async function performSync(signal) {
 
 /** `force`: also on hold, as "Check again" does; otherwise a browser on hold asks the cloud at most every 30 minutes. */
 async function sync(force = false) {
-  if (!client || syncing || syncPaused) return syncing;
+  if (!client || syncing || syncPaused || leavingAway) return syncing;
   if (onHold && !force && Date.now() - holdCheckedAt < HOLD_RECHECK_MS) return;
   const activeGeneration = generation;
   const controller = new AbortController();
@@ -2039,6 +2039,11 @@ async function sync(force = false) {
   syncing = performSync(controller.signal).then(() => (onHold ? undefined : checkListLinks(activeGeneration))).then(() => { if (!onHold) void checkSharedKeyDaily().catch(() => {}); }).catch((error) => {
     if (activeGeneration !== generation) return;
     if (error?.code === 'device-paused') { heldByCloud(); return; }
+    // A page session refused: over, unless it happened in a group, where it may only mean removed from that group.
+    if (pageSession && error?.status === 401) {
+      if (!activeSpace || error.code === 'session-ended') { lock(SESSION_ENDED); return; }
+      void ownClient.call('/devices/session').catch(sessionLost);
+    }
     // Removed from a group or the group went read-only: that goes for this group only.
     if (activeSpace && (error.status === 401 || error.code === 'space-frozen' || error.code === 'space-unfinished')) void refreshSpaces();
     $('sync-status').textContent = syncPaused ? 'Sync paused. Encrypted drafts stay on this browser. Select Resume sync to continue.' : 'Cloud unavailable. Encrypted drafts stay on this browser.';
@@ -2874,7 +2879,7 @@ async function renderDevices() {
     row.className = 'device-row';
     const current = device.id === client.credentials.deviceId;
     const state = device.revoked || !hold ? '' : device.syncing ? ' · ✓ Syncing' : hold.state === 'ending' ? ` · On hold from ${shortDate(hold.pauseAt)}` : ' · On hold';
-    const about = `${APP_NAMES[device.app] ? ` · ${APP_NAMES[device.app]}` : ''}${device.lastSeenAt ? ` · last used ${shortDate(device.lastSeenAt)}` : ''}`;
+    const about = `${APP_NAMES[device.app] ? ` · ${APP_NAMES[device.app]}` : ''}${device.session ? ' · signs out when closed' : ''}${device.lastSeenAt ? ` · last used ${shortDate(device.lastSeenAt)}` : ''}`;
     row.append(paragraph(`${device.name}${current ? ' (this device)' : ''}${device.revoked ? ' - access revoked' : `${about}${state}`}`));
     if (!device.revoked && !current) row.append(button('Revoke access', async () => {
       if (!confirm(`Revoke future cloud access for "${device.name}"?`)) return;
@@ -2905,10 +2910,13 @@ async function openWorkspace(connected) {
   syncController?.abort();
   if (syncing) await syncing;
   const remembered = await store('get', 'connection');
-  if (remembered) await keepSignedIn(connected.credentials);
-  else await store('delete', 'session');
+  // A page session leaves the browser's storage alone: another tab may be a remembered browser.
+  if (!pageSession) {
+    if (remembered) await keepSignedIn(connected.credentials);
+    else await store('delete', 'session');
+  }
   // Signed in with Google or GitHub and no password: nothing could unlock a locked browser, so only Log out.
-  $('lock').hidden = Boolean(remembered?.provider);
+  $('lock').hidden = !pageSession && Boolean(remembered?.provider);
   client = connected;
   ownClient = connected;
   activeSpace = undefined;
@@ -2950,20 +2958,87 @@ async function openWorkspace(connected) {
   await sync();
 }
 
-// A browser that is not remembered signs in as a new device next time, so it gives its device slot back when it closes.
+// "Sign me out when I close this page" (Hand-off/ontwerp-afmelden-bij-sluiten-80.md): the page keeps its credentials in
+// its own tab, sealed with a key that only the server keeps. A reload gets the key back; a closed page does not, because
+// the server ends the session two minutes after the page's goodbye. The browser's own storage (connection, session) is
+// left alone in this mode, so a remembered browser in another tab stays as it is.
+const PAGE_SESSION = 'jotdrop-page-session', PAGE_SESSION_AAD = 'jotdrop:page-session:v1';
+const SESSION_ENDED = 'You were signed out because the page was closed.';
+let pageSession = false, leavingAway = false;
+function dropPageSession() {
+  pageSession = false;
+  try { sessionStorage.removeItem(PAGE_SESSION); } catch { /* Nothing was kept. */ }
+}
+async function startPageSession(connected) {
+  dropPageSession();
+  try {
+    const resumeToken = randomToken(), key = randomToken();
+    await connected.call('/devices/session', 'PUT', { resumeTokenHash: await hashToken(resumeToken), key });
+    const envelope = await encryptEnvelope(key, connected.credentials, PAGE_SESSION_AAD);
+    sessionStorage.setItem(PAGE_SESSION, JSON.stringify({ deviceId: connected.credentials.deviceId, resumeToken, envelope }));
+    pageSession = true;
+  } catch { dropPageSession(); }
+}
+/** The credentials of the session in this tab, or undefined: there is none, the page was closed (it says so), or the
+ * cloud cannot be reached (it says so and keeps the packet, so reloading tries again). */
+async function resumePageSession() {
+  let saved, key;
+  try { saved = JSON.parse(sessionStorage.getItem(PAGE_SESSION) ?? 'null'); } catch { return undefined; }
+  if (!saved) return undefined;
+  try { ({ key } = await request(location.origin, '/sessions/resume', { method: 'POST', body: { deviceId: saved.deviceId, resumeToken: saved.resumeToken } })); } catch (error) {
+    if (error?.status === 401 || error?.status === 400) { dropPageSession(); $('access-message').textContent = SESSION_ENDED; } else $('access-message').textContent = errorText(error);
+    return undefined;
+  }
+  try {
+    const credentials = await decryptEnvelope(key, saved.envelope, PAGE_SESSION_AAD);
+    pageSession = true;
+    return credentials;
+  } catch { dropPageSession(); return undefined; }
+}
+// The goodbye on every departure, also when the browser keeps the page for the back button. Safari sends none when the
+// page goes to another site (proef S0), so before the payment page the page says it first and waits (leaveForPayment).
+function sayGoodbye() {
+  const c = ownClient?.credentials;
+  if (!c) return;
+  void fetch(`${c.url}/api/v1/devices/session/leave`, { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${c.token}`, 'X-JotDrop-Vault': c.vaultId, 'X-JotDrop-Device': c.deviceId }, body: JSON.stringify(leavingAway ? { away: true } : {}) }).catch(() => {});
+}
+// The goodbye for the payment page must be the page's last request: any request after it takes the goodbye back.
+async function leaveForPayment(url) {
+  if (pageSession) {
+    leavingAway = true;
+    syncController?.abort();
+    if (syncing) await syncing;
+    await ownClient.call('/devices/session/leave', 'POST', { away: true }).catch(() => {});
+  }
+  location.assign(url);
+}
+// A refusal of this page's own device in session mode means the session is over: the sweep ends it without a code.
+function sessionLost(error) {
+  if (!pageSession || error?.status !== 401) return;
+  lock(SESSION_ENDED);
+}
+// A browser that is not remembered and could not keep a page session signs in as a new device next time, so it gives
+// its device slot back when it closes. A page session gives it back too when it locks or logs out.
 let forgetOnClose = false;
 function releaseDevice() {
-  if (!ownClient || !forgetOnClose) return;
+  if (!ownClient || !forgetOnClose && !pageSession) return;
   forgetOnClose = false;
+  dropPageSession();
   const c = ownClient.credentials;
   void fetch(`${c.url}/api/v1/devices/${c.deviceId}`, { method: 'DELETE', keepalive: true, headers: { Authorization: `Bearer ${c.token}`, 'X-JotDrop-Vault': c.vaultId, 'X-JotDrop-Device': c.deviceId } }).catch(() => {});
 }
-// A page kept for the back button can come back, so it keeps its device.
-window.addEventListener('pagehide', (event) => { if (!event.persisted) releaseDevice(); });
+// A page kept for the back button can come back, so it keeps its device; a page session says goodbye either way.
+window.addEventListener('pagehide', (event) => { if (pageSession) sayGoodbye(); else if (!event.persisted) releaseDevice(); });
+// Back from the back/forward cache: the session may have ended meanwhile.
+window.addEventListener('pageshow', (event) => {
+  if (!event.persisted || !pageSession) return;
+  leavingAway = false;
+  void ownClient?.call('/devices/session').catch(sessionLost);
+});
 
 function lock(notice = '') {
   if (voiceJob && !confirm('Discard the current recording and lock?')) return;
-  void store('delete', 'session');
+  if (!pageSession) void store('delete', 'session');
   releaseDevice();
   discardVoice();
   resetPhoto();
@@ -3082,7 +3157,9 @@ document.addEventListener('click', (event) => {
 async function finishAccess(connected, { password, remember, recoveryCode }) {
   if (remember) await store('put', 'connection', password === undefined ? { provider: true } : await sealLocal(connected.credentials, password));
   else await store('delete', 'connection');
-  forgetOnClose = !remember;
+  // Without "Stay signed in" the page keeps a sealed packet in its tab; when that fails it gives its device back as it goes.
+  if (remember) dropPageSession(); else await startPageSession(connected);
+  forgetOnClose = !remember && !pageSession;
   codeStep = undefined;
   // The next person on this page chooses again.
   for (const radio of $('access').querySelectorAll('.stay-choice input')) radio.checked = false;
@@ -3471,8 +3548,11 @@ $('log-out').addEventListener('click', async () => {
     if (waiting && !onHold) throw new Error('Some changes are still waiting to upload. Sync them first, then log out.');
     const left = waiting === 1 ? '1 change made on this browser has not reached the cloud. It stays encrypted on this browser and goes' : `${waiting} changes made on this browser have not reached the cloud. They stay encrypted on this browser and go`;
     if (!confirm(waiting ? `Log out of this browser? Sync is on hold here, so ${left} up only if you log in here again. Your other notes stay in the cloud.` : 'Log out of this browser? Your notes stay in the cloud. To come back, log in again.')) return;
-    await store('delete', 'connection');
-    await store('delete', 'session');
+    // A page session forgets only itself: another tab may be a remembered browser.
+    if (!pageSession) {
+      await store('delete', 'connection');
+      await store('delete', 'session');
+    }
     // Logging out also forgets the AI key in this browser: it is a password for another service.
     await store('delete', aiStoreKey());
     forgetOnClose = true;
@@ -3499,7 +3579,7 @@ $('get-plus').addEventListener('click', showPlusOffer);
 $('plus-not-now').addEventListener('click', () => { plusReason = ''; plusQuiet = true; showPlusNudge(); });
 // Stripe shows the payment page and is the seller; Plus turns on when Stripe confirms the payment to the server.
 for (const [id, interval, plan] of [['buy-month', 'month', 'plus'], ['buy-year', 'year', 'plus'], ['buy-family-month', 'month', 'family'], ['buy-family-year', 'year', 'family']]) $(id).addEventListener('click', async () => {
-  try { location.assign((await ownClient.call('/account/checkout', 'POST', { interval, plan, currency: currentPlan?.founderPrice ? undefined : payCurrency() })).url); }
+  try { await leaveForPayment((await ownClient.call('/account/checkout', 'POST', { interval, plan, currency: currentPlan?.founderPrice ? undefined : payCurrency() })).url); }
   catch (error) { message(error.code === 'account-required' ? 'The family plan needs an account. Add one in Devices & recovery first.' : errorText(error)); }
 });
 $('sync').addEventListener('click', () => { syncPaused = false; $('sync').textContent = 'Sync now'; message(); void sync(true); });
@@ -4587,7 +4667,7 @@ $('plan-pay').addEventListener('click', async () => {
   try {
     const { url } = await ownClient.call('/account/checkout', 'POST', { interval, plan, currency: payCurrency() });
     dropPlanChoice();
-    location.assign(url);
+    await leaveForPayment(url);
   } catch (error) {
     $('plan-message').textContent = error.code === 'account-required' ? 'The family plan needs an account. Add one in Devices & recovery first, then choose the family plan in the menu.' : errorText(error);
     $('plan-pay').disabled = false;
@@ -6053,7 +6133,9 @@ window.addEventListener('beforeunload', (event) => {
   if (unsaved) { event.preventDefault(); event.returnValue = ''; }
 });
 setInterval(() => {
-  if (!client || document.hidden) return;
+  if (!client || leavingAway) return;
+  // A hidden page session still says it is alive, on every tick: browsers slow a hidden tab to one tick a minute (proef S0).
+  if (document.hidden) { if (pageSession) void ownClient.call('/devices/session').catch(sessionLost); return; }
   void sync();
   // Someone who forgot their password waits for this device to approve. Groups wait while sync is on hold.
   if (!onHold) void refreshSpaces();
@@ -6066,9 +6148,13 @@ setInterval(() => {
 takeInvitation();
 takePlanChoice();
 try {
-  const credentials = (await providerReturn().catch((error) => { $('access-message').textContent = accessError(error); return true; })) ? undefined : await signedInCredentials().catch(() => undefined);
+  const provider = await providerReturn().catch((error) => { $('access-message').textContent = accessError(error); return true; });
+  // A page session in this tab goes before a remembered browser of another tab, so the tab stays the same device.
+  const resumed = provider ? undefined : await resumePageSession();
+  const credentials = provider || resumed ? undefined : await signedInCredentials().catch(() => undefined);
+  if (resumed) await openWorkspace(new CloudClient(resumed)).catch((error) => (error?.status === 401 ? lock(SESSION_ENDED) : lock(errorText(error))));
   // A connection that no longer opens is forgotten and says why; the password still unlocks this browser.
-  if (credentials) await openWorkspace(new CloudClient(credentials)).catch((error) => lock(`This browser could not open your notes by itself: ${errorText(error)} Unlock with your password.`));
+  else if (credentials) await openWorkspace(new CloudClient(credentials)).catch((error) => lock(`This browser could not open your notes by itself: ${errorText(error)} Unlock with your password.`));
   else if ($('provider-step').hidden && unlockable(await store('get', 'connection'))) showUnlock();
 } catch (error) { $('access-message').textContent = errorText(error); $('connect-form').querySelector('button[type="submit"]').disabled = true; }
 // Not signed in after all: now the login shows, never before (a refresh would otherwise flash it).

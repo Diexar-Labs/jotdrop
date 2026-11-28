@@ -73,6 +73,7 @@
     "check:cloud-playful": "python cloud/playful_browser_check.py",
     "check:cloud-quiet-sync": "python cloud/quiet_sync_browser_check.py",
     "check:cloud-reload": "python cloud/reload_browser_check.py",
+    "check:cloud-page-session": "python cloud/page_session_browser_check.py",
     "check:cloud-tick-scroll": "python cloud/tick_scroll_browser_check.py",
     "check:cloud-open-card-scroll": "python cloud/open_card_scroll_browser_check.py",
     "check:cloud-human": "python cloud/human_browser_check.py",
