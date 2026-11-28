@@ -8,10 +8,14 @@
 // (the height of that block is one custom property on the scroller), and the item itself is a copy that follows the
 // pointer, outside the editor's own content: it stays in view when its own line scrolls out of the part CodeMirror
 // draws. Nothing here writes a style attribute in markup: what moves is a custom property, set through the CSSOM.
-import { EditorSelection, Prec, StateEffect, StateField } from '@codemirror/state';
-import { Decoration, EditorView, ViewPlugin, WidgetType, keymap } from '@codemirror/view';
+//
+// With `checkedPart` the ticked end of a list (checkedTail) is a part of its own (design checklists-77-v2, part 6 and
+// part 25): a row "+ List item" and a header "3 checked items" stand above it, and the header folds it. Folded, its
+// lines are not drawn; they stay in the text. Nothing is dragged or moved past a header, in either direction.
+import { EditorSelection, EditorState, Facet, Prec, StateEffect, StateField } from '@codemirror/state';
+import { BlockType, Decoration, EditorView, ViewPlugin, WidgetType, keymap } from '@codemirror/view';
 import { isolateHistory } from '@codemirror/commands';
-import { deleteItemEdit, dropItemEdit, dropSlots, itemSpan, linePrefix, listItems, listLevels, moveItemEdit, pasteLinesEdit } from '/shared/format.mjs';
+import { addItemEdit, checkedTail, deleteItemEdit, dropItemEdit, dropSlots, itemSpan, linePrefix, listEnterEdit, listItems, listLevels, moveItemEdit, pasteLinesEdit } from '/shared/format.mjs';
 
 /** Above this many characters a note gets no grips, as it gets no formatting (md-editor.mjs, RAW_ABOVE). */
 const GRIPS_UNTIL = 50000;
@@ -29,7 +33,10 @@ const SLOP_TOUCH = 8;
 /** What the copy of a dragged item takes over from the editor's content, so its words look the same. */
 const LOOK = ['font-family', 'font-size', 'font-weight', 'font-style', 'line-height', 'letter-spacing', 'color', 'tab-size', 'direction'];
 
-const DEFAULT_LABELS = { drag: 'Drag to move', deleteItem: 'Delete item' };
+const DEFAULT_LABELS = {
+  drag: 'Drag to move', deleteItem: 'Delete item', addItem: 'List item',
+  checkedItems: (count) => `${count} checked item${count === 1 ? '' : 's'}`, showChecked: 'Show checked items', hideChecked: 'Hide checked items',
+};
 
 const rowsOf = new WeakMap();
 
@@ -125,24 +132,248 @@ function act(view, edit, userEvent, more = {}) {
   });
 }
 
+// --- The ticked end of a list as a part of its own (design checklists-77-v2, part 6 and part 25) --------------------
+
+// What the host gives for it: { on(state), folded(), onFold(folded), labels }.
+const partConfig = Facet.define({ combine: (values) => values[0] ?? null });
+/** The host's `on` or `folded` may have changed (a setting, the Markdown switch): the parts are read again. */
+export const checkedPartChanged = StateEffect.define();
+const setFold = StateEffect.define();
+
+/** "+ List item": a new empty task at the bottom of the open tasks of the list `line` is in, with the caret in it. */
+function addListItem(view, line) {
+  const edit = addItemEdit(view.state.doc.toString(), line);
+  if (!edit) return false;
+  act(view, edit, 'input', { scrollIntoView: true });
+  view.focus();
+  return true;
+}
+
+/** The row "+ List item" and, with `count` ticked tasks under it, the header that folds them. */
+class PartBar extends WidgetType {
+  constructor(count, folded) { super(); this.count = count; this.folded = folded; }
+  eq(other) { return other.count === this.count && other.folded === this.folded; }
+  toDOM(view) {
+    const page = view.dom.ownerDocument, { labels } = view.state.facet(partConfig);
+    const bar = page.createElement('div');
+    bar.className = 'cm-jd-part';
+    const button = (name, sign, text, run) => {
+      const element = page.createElement('button'), mark = page.createElement('span');
+      element.type = 'button';
+      element.className = name;
+      element.tabIndex = -1;
+      // A sign and words, not a colour: a plus, and a triangle that points down while the items show.
+      mark.className = 'cm-jd-sign';
+      mark.setAttribute('aria-hidden', 'true');
+      mark.textContent = sign;
+      element.append(mark, text);
+      // The caret and the keyboard stay where they are: a tap on the header opens no keyboard on a phone.
+      element.addEventListener('mousedown', (event) => event.preventDefault());
+      element.addEventListener('click', (event) => { event.preventDefault(); run(); });
+      bar.append(element);
+      return element;
+    };
+    button('cm-jd-add', '+', labels.addItem, () => addListItem(view, view.state.doc.lineAt(view.posAtDOM(bar)).number - 1));
+    if (this.count) {
+      const fold = button('cm-jd-fold', this.folded ? '▸' : '▾', labels.checkedItems(this.count), () => view.dispatch({ effects: setFold.of(!this.folded) }));
+      fold.setAttribute('aria-expanded', String(!this.folded));
+      fold.title = this.folded ? labels.showChecked : labels.hideChecked;
+    }
+    return bar;
+  }
+  ignoreEvent() { return true; }
+  get estimatedHeight() { return this.count ? 64 : 32; }
+}
+
 /**
- * Moves the list item the caret is in one place 'up' or 'down' among its siblings, with the lines under it
- * (moveItemEdit): a task, a bullet or a numbered line. True when the caret is in a list, also when the item is the
- * first or last and stays; false outside a list, so a key can do there what it did.
+ * The parts of a text: { on, folded, tails, ranges, decorations, hidden }. `tails` are the ticked ends of its lists
+ * (checkedTail, lines from 0) and `ranges` the same as places in the text. Above each stands a bar; under the last
+ * list of the note, when nothing stands under it and it has a task, the row "+ List item" alone. Folded, the lines of
+ * a ticked end are not drawn and `hidden` lists them, so the caret steps over them as one.
+ */
+function readPart(state, folded) {
+  const config = state.facet(partConfig);
+  if (!config?.on(state) || state.readOnly || state.doc.length > GRIPS_UNTIL) return { on: false, folded, tails: [], ranges: [], decorations: Decoration.none, hidden: Decoration.none };
+  const text = state.doc.toString(), tails = text.includes('[') ? checkedTail(text) : [], out = [], hidden = [];
+  const ranges = tails.map((tail) => ({ from: state.doc.line(tail.from + 1).from, to: state.doc.line(tail.to + 1).to }));
+  tails.forEach((tail, index) => {
+    out.push(Decoration.widget({ widget: new PartBar(tail.count, folded), block: true, side: -1 }).range(ranges[index].from));
+    if (!folded) return;
+    const fold = Decoration.replace({ block: true }).range(ranges[index].from, ranges[index].to);
+    out.push(fold);
+    hidden.push(fold);
+  });
+  const last = state.doc.lines - 1;
+  if (rows(state)[last] && !tails.some((tail) => tail.to === last)) out.push(Decoration.widget({ widget: new PartBar(0, false), block: true, side: 1 }).range(state.doc.length));
+  return { on: true, folded, tails, ranges, decorations: Decoration.set(out, true), hidden: Decoration.set(hidden) };
+}
+
+const partField = StateField.define({
+  create: (state) => readPart(state, Boolean(state.facet(partConfig)?.folded())),
+  update(value, tr) {
+    let folded = value.folded, again = tr.docChanged;
+    for (const effect of tr.effects) {
+      if (effect.is(setFold)) { folded = effect.value; again = true; }
+      if (effect.is(checkedPartChanged)) { folded = Boolean(tr.state.facet(partConfig)?.folded()); again = true; }
+    }
+    return again ? readPart(tr.state, folded) : value;
+  },
+  provide: (field) => [
+    EditorView.decorations.from(field, (value) => value.decorations),
+    EditorView.atomicRanges.of((view) => view.state.field(field).hidden),
+  ],
+});
+
+/** The ticked end line `index` is in, or undefined. */
+const tailAt = (part, index) => part.tails.find((tail) => index >= tail.from && index <= tail.to);
+
+/** The block of a line's own words: without a row that stands above or under it. */
+function wordsBlock(view, index) {
+  const block = view.lineBlockAt(view.state.doc.line(index + 1).from);
+  return (Array.isArray(block.type) && block.type.find((piece) => piece.type === BlockType.Text)) || block;
+}
+
+/**
+ * Enter on an empty item right above a ticked end (ListEditing.kt, `leaveAboveChecked`). Anywhere else Enter takes the
+ * sign of an empty item away and leaves an empty line there, but here that line would cut the ticked items off as a
+ * list of their own. So the empty item goes, and the caret comes on a new empty line under the ticked items: above
+ * the text that stands under the list, when there is any. A CRLF text stays CRLF. Null when the caret at `at` is in
+ * no such item.
+ */
+export function leaveAboveChecked(text, at, tails) {
+  const starts = [0];
+  for (let index = text.indexOf('\n'); index >= 0; index = text.indexOf('\n', index + 1)) starts.push(index + 1);
+  let line = starts.length - 1;
+  while (starts[line] > at) line--;
+  const tail = tails.find((found) => found.from === line + 1);
+  if (!tail) return null;
+  // Only where the core's own Enter takes the sign away and leaves the caret at the start of the line.
+  const plain = listEnterEdit(text, at, at), from = starts[line], ticked = starts[line + 1];
+  if (!plain || plain.from !== from || plain.insert !== '' || plain.selFrom !== from) return null;
+  const to = tail.to + 1 < starts.length ? starts[tail.to + 1] - 1 : text.length, kept = text.slice(ticked, to);
+  if (to === text.length) {
+    // The ticked items end the text: their last line gets the `\r` of a CRLF text, the new one ends the text without.
+    const insert = `${kept}${ticked >= 2 && text[ticked - 2] === '\r' && !kept.endsWith('\r') ? '\r' : ''}\n`;
+    return { from, to, insert, selFrom: from + insert.length };
+  }
+  return { from, to, insert: `${kept}\n${kept.endsWith('\r') ? '\r' : ''}`, selFrom: from + kept.length + 1 };
+}
+
+/** `insert` with every empty box after its first line ticked: lines pasted among ticked items are ticked items. */
+const tickPasted = (insert) => insert.split('\n').map((line, index) => {
+  const prefix = index ? linePrefix(line.replace(/\r$/, '')) : null;
+  if (prefix?.kind !== 'task' || prefix.checked) return line;
+  const box = line.indexOf('[', prefix.markFrom) + 1;
+  return `${line.slice(0, box)}x${line.slice(box + 1)}`;
+}).join('\n');
+
+/** Enter among ticked items makes a new open task instead of splitting one; on an empty item right above them it leaves the list at its end. */
+function checkedEnter(view) {
+  const { state } = view, part = state.field(partField), { main } = state.selection;
+  if (!part.tails.length || !main.empty) return false;
+  const line = state.doc.lineAt(main.head).number - 1;
+  if (tailAt(part, line)) return addListItem(view, line);
+  const edit = leaveAboveChecked(state.doc.toString(), main.head, part.tails);
+  if (!edit) return false;
+  view.dispatch({ changes: { from: edit.from, to: edit.to, insert: edit.insert }, selection: { anchor: edit.selFrom }, userEvent: 'input', scrollIntoView: true });
+  return true;
+}
+
+/** Backspace in front of the first ticked item does nothing: there is no line above it in that part to join, and its box stays. */
+function checkedBackspace(view) {
+  const { state } = view, part = state.field(partField), { main } = state.selection;
+  if (!main.empty) return false;
+  const line = state.doc.lineAt(main.head);
+  if (!part.tails.some((tail) => tail.from === line.number - 1)) return false;
+  return main.head - line.from <= linePrefix(line.text.replace(/\r$/, '')).markTo;
+}
+
+const TYPED = ['input.type', 'input.paste', 'input.drop', 'input.complete', 'delete.backward', 'delete.forward', 'delete.cut', 'delete.selection'];
+
+/**
+ * A folded part keeps its lines whole. The caret does not stand in it: with an arrow key from above it goes on to the
+ * line under it, from anywhere else to the end of the line above it. And what is typed or deleted at a caret next to
+ * it neither changes its lines nor glues anything to them (Delete at the end of the line above, Backspace at the start
+ * of the line under). A selection someone makes over a folded part is theirs, and so is every list action; a selection
+ * that reaches into a part at the moment it folds is not: it was made on lines that are out of sight now, and it goes
+ * where a caret goes.
+ */
+const keepFolded = EditorState.transactionFilter.of((tr) => {
+  const was = tr.startState.field(partField, false);
+  if (was?.folded && tr.docChanged && tr.startState.selection.main.empty && TYPED.some((event) => tr.isUserEvent(event))) {
+    for (const range of was.ranges) {
+      const from = tr.changes.mapPos(range.from, 1), to = tr.changes.mapPos(range.to, -1), doc = tr.newDoc;
+      // The first test is for an edit no key of the editor makes: one the browser made itself and the editor read back.
+      if (to < from || doc.sliceString(from, to) !== tr.startState.doc.sliceString(range.from, range.to)) return [];
+      if ((from > 0 && doc.sliceString(from - 1, from) !== '\n') || (to < doc.length && doc.sliceString(to, to + 1) !== '\n')) return [];
+    }
+  }
+  const folds = tr.effects.some((effect) => effect.is(setFold) || effect.is(checkedPartChanged));
+  if (!tr.selection && !tr.docChanged && !folds) return tr;
+  const now = tr.state.field(partField, false), { main } = tr.newSelection;
+  if (!now?.folded || (!main.empty && !folds)) return tr;
+  const range = now.ranges.find((found) => main.from <= found.to && main.to >= found.from);
+  if (!range) return tr;
+  const above = range.from > 0 ? range.from - 1 : -1, under = range.to < tr.newDoc.length ? range.to + 1 : -1;
+  const down = tr.selection && !tr.docChanged && tr.startState.selection.main.head < range.from;
+  const to = down && under >= 0 ? under : above >= 0 ? above : under;
+  return to < 0 ? tr : [tr, { selection: { anchor: to }, sequential: true }];
+});
+
+/**
+ * Undo and Redo never work out of sight: a step that changes the lines of a folded part opens it. A step that leaves
+ * them as they are (the task "+ List item" made right above the header, words typed next to the part) leaves it folded.
+ */
+const showUndone = EditorState.transactionExtender.of((tr) => {
+  const was = tr.startState.field(partField, false);
+  if (!was?.folded || !tr.docChanged || !(tr.isUserEvent('undo') || tr.isUserEvent('redo'))) return null;
+  const text = tr.newDoc.toString(), lines = text.split('\n'), tails = checkedTail(text);
+  const same = tails.length === was.ranges.length && tails.every((tail, index) => lines.slice(tail.from, tail.to + 1).join('\n') === tr.startState.doc.sliceString(was.ranges[index].from, was.ranges[index].to));
+  return same ? null : { effects: setFold.of(false) };
+});
+
+/**
+ * The replacement that moves the item with the caret one place 'up' or 'down' among its siblings, with the lines under
+ * it (moveItemEdit): a task, a bullet or a numbered line. Null when it stays: outside a list, the first or last of its
+ * siblings, or a header in the way (nothing moves past one, as nothing is dragged past one).
+ */
+export function itemMoveEdit(state, direction) {
+  const { main } = state.selection, text = state.doc.toString(), line = state.doc.lineAt(main.head).number - 1;
+  const span = itemSpan(text, line), part = state.field(partField, false);
+  if (!span) return null;
+  if (part?.tails.some((tail) => tail.from === (direction === 'down' ? span.end + 1 : span.line))) return null;
+  return moveItemEdit(text, line, direction, main.from, main.to);
+}
+
+/**
+ * Moves the list item the caret is in one place 'up' or 'down' (itemMoveEdit). True when the caret is in a list, also
+ * when the item stays; false outside a list, so a key can do there what it did.
  */
 export function moveListItem(view, direction) {
-  const { state } = view, { main } = state.selection, text = state.doc.toString();
-  const line = state.doc.lineAt(main.head).number - 1;
-  if (state.readOnly || !itemSpan(text, line)) return false;
-  const edit = moveItemEdit(text, line, direction, main.from, main.to);
+  const { state } = view;
+  if (state.readOnly || !itemSpan(state.doc.toString(), state.doc.lineAt(state.selection.main.head).number - 1)) return false;
+  const edit = itemMoveEdit(state, direction);
   if (edit) act(view, edit, 'move.item', { scrollIntoView: true });
   return true;
 }
 
 const theme = EditorView.baseTheme({
   // The room of the handle and of the cross: wider for a finger than for a mouse.
-  '.cm-scroller': { '--jd-grip-room': '20px', '--jd-cross-room': '24px' },
-  '@media (pointer: coarse)': { '.cm-scroller': { '--jd-grip-room': '29px', '--jd-cross-room': '28px' } },
+  '.cm-scroller': { '--jd-grip-room': '20px', '--jd-cross-room': '24px', '--jd-row': '32px' },
+  '@media (pointer: coarse)': { '.cm-scroller': { '--jd-grip-room': '29px', '--jd-cross-room': '28px', '--jd-row': '44px' } },
+  // The ticked end of a list as a part of its own: a row to add a task and a header that folds the ticked ones. They
+  // start where the lines of the list start, and are as high as a finger needs on a phone (`--jd-row`).
+  '.cm-jd-part': {
+    display: 'flex', flexDirection: 'column', alignItems: 'flex-start', paddingInlineStart: 'var(--jd-grip-room)',
+    textIndent: '0', userSelect: 'none', WebkitUserSelect: 'none',
+  },
+  '.cm-jd-add, .cm-jd-fold': {
+    display: 'flex', alignItems: 'center', gap: '.5em', minHeight: 'var(--jd-row)', minWidth: '0', margin: '0', padding: '0 6px',
+    marginInlineStart: '-6px', border: '0', borderRadius: '6px', background: 'none', color: 'inherit', font: 'inherit',
+    textAlign: 'start', cursor: 'pointer', opacity: '.7', appearance: 'none', WebkitAppearance: 'none', boxShadow: 'none',
+  },
+  '.cm-jd-add:hover, .cm-jd-fold:hover, .cm-jd-add:focus-visible, .cm-jd-fold:focus-visible': { opacity: '1' },
+  '.cm-jd-sign': { display: 'inline-block', width: '1.15em', textAlign: 'center' },
   '.cm-line.cm-jd-shift': { paddingInlineStart: 'var(--jd-grip-room)' },
   '.cm-line.cm-jd-task': { position: 'relative', paddingInlineEnd: 'var(--jd-cross-room)' },
   // The handle: the whole height of the line, from the edge of the editor (`--jd-edge`: how far the host's own margin
@@ -198,12 +429,17 @@ const theme = EditorView.baseTheme({
 });
 
 /**
- * listGrips({ labels, onDeleted, levelWidth }) → a CodeMirror extension.
+ * listGrips({ labels, onDeleted, levelWidth, checkedPart }) → a CodeMirror extension.
  * `labels`: { drag, deleteItem }, what the handle and the cross are called. `onDeleted(count)` runs after the cross
  * deleted an item, with the number of sub-items that went along. `levelWidth(view)`: how many px one level of a list
  * stands further in this editor (default 1.5 em of its text), for the copy of an item that is dragged in or out.
+ * `checkedPart`: { on(state), folded(), onFold(folded) } shows the ticked end of a list as a part of its own while
+ * `on` says so (the host's "Move checked items to the bottom", and only where it draws the boxes itself). `folded()`
+ * is asked when a text opens, `onFold` told when someone folds or unfolds, so the host can keep it per note. After
+ * `on` or `folded` changed for the text that is open, the host dispatches `checkedPartChanged`. Its labels:
+ * { addItem, checkedItems(count), showChecked, hideChecked }.
  */
-export function listGrips({ labels: given = {}, onDeleted, levelWidth } = {}) {
+export function listGrips({ labels: given = {}, onDeleted, levelWidth, checkedPart } = {}) {
   const labels = { ...DEFAULT_LABELS, ...given };
   let plugin;
 
@@ -246,10 +482,13 @@ export function listGrips({ labels: given = {}, onDeleted, levelWidth } = {}) {
   const gripMark = Decoration.widget({ widget: new Grip(), side: -1 }), crossMark = Decoration.widget({ widget: new Cross(), side: 1 });
 
   function build(view) {
-    const { state } = view, found = rows(state), drag = state.field(dragField), out = [];
+    const { state } = view, found = rows(state), drag = state.field(dragField), part = state.field(partField), out = [];
     const caret = view.hasFocus && !drag && !state.readOnly ? state.doc.lineAt(state.selection.main.head).number - 1 : -1;
     for (let pos = view.viewport.from; pos <= view.viewport.to;) {
       const line = state.doc.lineAt(pos), index = line.number - 1, kind = found[index];
+      // The lines of a folded part are not drawn: nothing to put a handle on.
+      const folded = part.folded && part.ranges.find((range) => line.from >= range.from && line.from <= range.to);
+      if (folded) { pos = folded.to + 1; continue; }
       const name = (kind === 'task' ? 'cm-jd-shift cm-jd-task' : kind ? 'cm-jd-shift' : '') + (drag ? dragClass(drag, index) : '');
       if (name) out.push(Decoration.line({ class: name.trim() }).range(line.from));
       if (kind === 'task' && !state.readOnly) {
@@ -285,7 +524,10 @@ export function listGrips({ labels: given = {}, onDeleted, levelWidth } = {}) {
         if (this.held) this.stop();
         this.glowing?.remove();
       }
-      if (update.docChanged || update.viewportChanged || update.selectionSet || update.focusChanged || update.startState.field(dragField) !== drag) this.decorations = build(update.view);
+      const part = update.state.field(partField), parted = update.startState.field(partField) !== part;
+      if (update.docChanged || update.viewportChanged || update.selectionSet || update.focusChanged || parted || update.startState.field(dragField) !== drag) this.decorations = build(update.view);
+      // Someone folded or unfolded here (the header, or Undo in a folded part): the host keeps it for this note.
+      if (update.transactions.some((tr) => tr.effects.some((effect) => effect.is(setFold)))) checkedPart?.onFold?.(part.folded);
     }
 
     destroy() {
@@ -361,7 +603,21 @@ export function listGrips({ labels: given = {}, onDeleted, levelWidth } = {}) {
     /** The pointer moved far enough: the item comes along as a copy of its lines. False when there is nothing to take. */
     lift() {
       const { view, held } = this, { state } = view, text = state.doc.toString();
-      const span = itemSpan(text, held.line), first = lineElement(view, held.line), slots = dropSlots(text, held.line);
+      const span = itemSpan(text, held.line), first = lineElement(view, held.line), part = state.field(partField), home = tailAt(part, held.line);
+      let slots = dropSlots(text, held.line), keep = null;
+      if (part.tails.length) {
+        // Nothing is dragged past a header: a ticked item stays among the ticked items of its list, on the main level
+        // when it comes first there, and any other item stays on its own side of every ticked end. `keep` are the
+        // lines the block stays between: it stops at the edge of its own part.
+        if (home) {
+          slots = slots.filter((slot) => slot.before >= home.from && slot.before <= home.to + 1).map((slot) => (slot.before === home.from ? { ...slot, minLevel: 0, maxLevel: 0 } : slot));
+          keep = { first: home.from, last: home.to };
+        } else {
+          const above = part.tails.filter((tail) => tail.to < held.line).pop(), below = part.tails.find((tail) => tail.from > held.line);
+          slots = slots.filter((slot) => (!above || slot.before > above.to + 1) && (!below || slot.before <= below.from));
+          keep = { after: above?.to, before: below?.from };
+        }
+      }
       if (!span || span.line !== held.line || !first || !slots.length) return false;
       const page = view.dom.ownerDocument, scroller = view.scrollDOM;
       const carry = page.createElement('div');
@@ -374,12 +630,12 @@ export function listGrips({ labels: given = {}, onDeleted, levelWidth } = {}) {
       const look = page.defaultView.getComputedStyle(view.contentDOM);
       for (const name of LOOK) carry.style.setProperty(name, look.getPropertyValue(name));
       const box = first.getBoundingClientRect(), base = this.base();
-      const top = view.lineBlockAt(state.doc.line(span.line + 1).from).top, bottom = view.lineBlockAt(state.doc.line(span.end + 1).from).bottom;
+      const top = wordsBlock(view, span.line).top, bottom = wordsBlock(view, span.end).bottom;
       carry.style.setProperty('--jd-w', `${box.width}px`);
       scroller.style.setProperty('--jd-room', `${bottom - top}px`);
       scroller.append(carry);
       Object.assign(held, {
-        carry, span, slots, text, target: null, lines: state.doc.lines, level: listLevels(text)[span.line],
+        carry, span, slots, text, home, keep, target: null, lines: state.doc.lines, level: listLevels(text)[span.line],
         // Where the pointer has the block, and where the block's lines start from the side.
         grabY: held.startY - box.top, left: box.left - base.left, height: carry.offsetHeight,
         step: (levelWidth?.(view) ?? parseFloat(look.fontSize) * 1.5) * (look.direction === 'rtl' ? -1 : 1),
@@ -397,9 +653,11 @@ export function listGrips({ labels: given = {}, onDeleted, levelWidth } = {}) {
     /** Where the item would land with the pointer where it is now. */
     aim() {
       const { view, held } = this, { doc } = view.state;
-      const block = (index) => view.lineBlockAt(doc.line(index + 1).from);
+      // A ticked item measures from the words of a line. Any other item measures the top of a line with the bar that
+      // stands above it, so the place at the end of the open tasks is right under the last of them.
+      const top = (index) => (held.home ? wordsBlock(view, index) : view.lineBlockAt(doc.line(index + 1).from)).top;
       const steps = Math.round((held.x - held.startX) / LEVEL_STEP) * held.towards;
-      held.target = dropTarget(held.slots, held.span.line, held.span.end, held.level, held.lines, held.y - view.documentTop, steps, (index) => block(index).top, (index) => block(index).bottom);
+      held.target = dropTarget(held.slots, held.span.line, held.span.end, held.level, held.lines, held.y - view.documentTop, steps, top, (index) => wordsBlock(view, index).bottom);
       return held.target;
     }
 
@@ -421,8 +679,17 @@ export function listGrips({ labels: given = {}, onDeleted, levelWidth } = {}) {
 
     /** The copy at the pointer, `levels` further in or out; it stays inside the editor's content. */
     place(levels) {
-      const { view, held } = this, base = this.base(), content = view.contentDOM.getBoundingClientRect();
-      const y = Math.max(content.top - base.top, Math.min(content.bottom - base.top - held.height, held.y - base.top - held.grabY));
+      const { view, held } = this, base = this.base(), content = view.contentDOM.getBoundingClientRect(), { keep } = held;
+      let top = content.top, bottom = content.bottom;
+      if (keep) {
+        // Between the lines of its own part: not over a bar, and not over the ticked items of another part.
+        const edge = (index, side, words) => view.documentTop + (words ? wordsBlock(view, index) : view.lineBlockAt(view.state.doc.line(index + 1).from))[side];
+        if (keep.first !== undefined) top = Math.max(top, edge(keep.first, 'top', true));
+        else if (keep.after !== undefined) top = Math.max(top, edge(keep.after, 'bottom', true));
+        if (keep.last !== undefined) bottom = Math.min(bottom, edge(keep.last, 'bottom', true));
+        else if (keep.before !== undefined) bottom = Math.min(bottom, edge(keep.before, 'top', false));
+      }
+      const y = Math.max(top - base.top, Math.min(bottom - base.top - held.height, held.y - base.top - held.grabY));
       held.carry.style.setProperty('--jd-x', `${held.left + levels * held.step}px`);
       held.carry.style.setProperty('--jd-y', `${y}px`);
     }
@@ -515,14 +782,24 @@ export function listGrips({ labels: given = {}, onDeleted, levelWidth } = {}) {
 
   return [
     dragField,
+    partConfig.of({ on: checkedPart?.on ?? (() => false), folded: checkedPart?.folded ?? (() => false), labels }),
+    partField,
+    keepFolded,
+    showUndone,
     plugin,
     EditorView.editorAttributes.from(dragField, (drag) => (drag?.slide ? { class: 'cm-jd-moving' } : null)),
     Prec.high(keymap.of([
       { key: 'Alt-ArrowUp', run: (view) => moveListItem(view, 'up') },
       { key: 'Alt-ArrowDown', run: (view) => moveListItem(view, 'down') },
     ])),
-    // Several lines pasted in a list item: every line an item of its own (pasteLinesEdit). Any other paste is the editor's.
+    // Among ticked items Enter and Backspace keep them ticked (design checklists-77-v2, 6.1): before the host's own keys.
+    Prec.highest(keymap.of([
+      { key: 'Enter', run: checkedEnter },
+      { key: 'Backspace', run: checkedBackspace },
+    ])),
     EditorView.domEventHandlers({
+      // Several lines pasted in a list item: every line an item of its own (pasteLinesEdit), ticked among ticked items.
+      // Any other paste is the editor's.
       paste(event, view) {
         const pasted = event.clipboardData?.getData('text/plain');
         if (!pasted || view.state.readOnly) return false;
@@ -530,7 +807,20 @@ export function listGrips({ labels: given = {}, onDeleted, levelWidth } = {}) {
         const edit = pasteLinesEdit(view.state.doc.toString(), main.from, main.to, pasted);
         if (!edit) return false;
         event.preventDefault();
-        view.dispatch({ changes: { from: edit.from, to: edit.to, insert: edit.insert }, selection: { anchor: edit.selFrom }, userEvent: 'input.paste', scrollIntoView: true });
+        const insert = tailAt(view.state.field(partField), view.state.doc.lineAt(main.from).number - 1) ? tickPasted(edit.insert) : edit.insert;
+        view.dispatch({ changes: { from: edit.from, to: edit.to, insert }, selection: { anchor: edit.selFrom }, userEvent: 'input.paste', scrollIntoView: true });
+        return true;
+      },
+      // A click in the room under ticked items that end the note: a new line under the list to type on, as on
+      // Android (`withLineUnder`). Without it there is no place under such a list to put the caret.
+      mousedown(event, view) {
+        const { doc } = view.state, last = view.contentDOM.lastElementChild;
+        if (event.button !== 0 || !view.state.field(partField).tails.some((tail) => tail.to === doc.lines - 1)) return false;
+        if (!last || event.clientY <= last.getBoundingClientRect().bottom) return false;
+        event.preventDefault();
+        const cr = doc.lines > 1 && doc.line(doc.lines - 1).text.endsWith('\r') && !doc.line(doc.lines).text.endsWith('\r') ? '\r' : '';
+        view.dispatch({ changes: { from: doc.length, insert: `${cr}\n` }, selection: { anchor: doc.length + cr.length + 1 }, annotations: isolateHistory.of('full'), userEvent: 'input', scrollIntoView: true });
+        view.focus();
         return true;
       },
     }),
