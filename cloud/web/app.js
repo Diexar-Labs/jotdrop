@@ -53,6 +53,22 @@ $('move-checked').addEventListener('click', () => {
   showMoveChecked();
   try { localStorage.setItem('jotdrop-move-checked', moveChecked ? 'on' : 'off'); } catch { /* Keep the choice for this page. */ }
 });
+// Which notes have their checked items folded away, on this browser (design checklists-77-v2, 6.1): only the notes that
+// differ from the usual, which is open, and the 300 folded last. By the note's id in the cloud, which says nothing
+// about the note. A note that was never saved has none yet and opens unfolded.
+const FOLDED_NOTES = 'jotdrop-checked-folded', FOLDED_MAX = 300;
+let foldedNotes = [];
+try {
+  const kept = JSON.parse(localStorage.getItem(FOLDED_NOTES) || '[]');
+  if (Array.isArray(kept)) foldedNotes = kept.filter((id) => typeof id === 'string');
+} catch { /* Every note opens unfolded. */ }
+const checkedFolded = () => Boolean(editing) && foldedNotes.includes(editing.id);
+function keepCheckedFold(folded) {
+  if (!editing) return;
+  foldedNotes = foldedNotes.filter((id) => id !== editing.id);
+  if (folded) foldedNotes = [...foldedNotes, editing.id].slice(-FOLDED_MAX);
+  try { localStorage.setItem(FOLDED_NOTES, JSON.stringify(foldedNotes)); } catch { /* Kept for this page. */ }
+}
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 const files = new Map();
@@ -2161,8 +2177,13 @@ function mountFormattedEditor({ createBodyEditor }) {
   const editor = createBodyEditor({
     parent: $('note-editor'),
     value: area.value,
-    labels: { note: 'Note', placeholder: 'Take a note…', done: 'Done', keys: LIST_KEYS_HINT, drag: 'Drag to move', deleteItem: 'Delete item' },
+    labels: {
+      note: 'Note', placeholder: 'Take a note…', done: 'Done', keys: LIST_KEYS_HINT, drag: 'Drag to move', deleteItem: 'Delete item',
+      addItem: 'List item', checkedItems: (count) => `${count} checked item${count === 1 ? '' : 's'}`, showChecked: 'Show checked items', hideChecked: 'Hide checked items',
+    },
     moveChecked: () => moveChecked,
+    checkedFolded,
+    onCheckedFold: keepCheckedFold,
     onChange: () => { hideListNotice(); syncRaw(); },
     onState: showFormatState,
     // One item gone shows; sub-items that went along with it are told (design checklists-77-v2, 24.4).
@@ -2204,6 +2225,9 @@ function syncSimple() {
   const { title, body } = splitNote($('note-content').value);
   $('note-title').value = title;
   bodyEditor.setValue(body);
+  // The same words as the note before (then the editor keeps its text): this note's own checked items may be folded
+  // or not, and "Move checked items to the bottom" may have changed meanwhile.
+  bodyEditor.refreshChecked?.();
 }
 function syncRaw() {
   $('note-content').value = joinNote({ front: splitNote($('note-content').value).front, title: $('note-title').value, body: bodyEditor.getValue() });
@@ -2247,8 +2271,10 @@ function listActions() {
   const offer = (label, edit, notice = '') => {
     if (edit) items.push({ label, action: () => { area.replace(edit); if (notice) listNotice(notice); showFormatState(); } });
   };
-  offer('Move up', moveItemEdit(text, line, 'up', from, to));
-  offer('Move down', moveItemEdit(text, line, 'down', from, to));
+  // The formatted editor knows where a header stands in the way: nothing moves past one.
+  const move = (direction) => (area.itemMove ? area.itemMove(direction) : moveItemEdit(text, line, direction, from, to));
+  offer('Move up', move('up'));
+  offer('Move down', move('down'));
   const gone = deleteItemEdit(text, line, from, to);
   offer('Delete item', gone, gone?.count ? deletedWithSubs(gone.count) : '');
   offer('Uncheck all items', uncheckAllEdit(text, from, to), 'All items unchecked');

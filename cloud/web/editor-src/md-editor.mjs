@@ -13,7 +13,7 @@ import { Decoration, EditorView, WidgetType, keymap, placeholder } from '@codemi
 import { defaultKeymap, history, historyKeymap, isolateHistory, redo, redoDepth, toggleTabFocusMode, undo, undoDepth } from '@codemirror/commands';
 import { activeFormats, applyFormat, backspaceEdit, blocks, checklistEdit, emptyPair, indentEdit, inlineSpans, itemBackspaceEdit, linePrefix, listEnterEdit, listLevels, parseTable, tableEdit, tickEdit } from '/shared/format.mjs';
 import { createTableGrid } from '/shared/table-grid.mjs';
-import { listGrips } from './list-grips.mjs';
+import { checkedPartChanged, itemMoveEdit, listGrips } from './list-grips.mjs';
 
 // Above this many characters the note shows raw, for speed.
 export const RAW_ABOVE = 50000;
@@ -202,15 +202,21 @@ function decorate(state, formatted, host) {
 }
 
 /**
- * createBodyEditor({ parent, value, formatted, labels, onChange, onState, onItemDeleted, isTableTool, stylesheet })
+ * createBodyEditor({ parent, value, formatted, labels, onChange, onState, onItemDeleted, isTableTool, moveChecked,
+ *                     checkedFolded, onCheckedFold, stylesheet })
  *   → { element, getValue, setValue, focus, getSelection, setSelection, replace(edit), insertText(text),
  *       apply(command), activeFormats(), context(), setFormatted(bool), undo(), redo(), canUndo(), canRedo(),
- *       flush(), destroy() }
+ *       itemMove(direction), refreshChecked(), flush(), destroy() }
  * onChange(text) runs on every change the user makes (not for setValue); onState({ context, active, canUndo, canRedo })
  * whenever the selection, the text or the focus changes, so the host can show which buttons are on and which bar to
  * show. onItemDeleted(count) runs after the cross on a task deleted it, with the number of sub-items that went along.
+ * While moveChecked() is true and the text shows formatted, the ticked end of a list is a part of its own under a header
+ * that folds (design checklists-77-v2, part 25): checkedFolded() says whether the note that opens has it folded,
+ * onCheckedFold(folded) runs when someone folds or unfolds it, and refreshChecked() reads both again after the host's
+ * setting changed. itemMove('up' | 'down') gives the replacement that moves the item with the caret, or null when it
+ * stays (a header in the way counts).
  */
-export function createBodyEditor({ parent, value = '', formatted = true, labels: given = {}, onChange, onState, onItemDeleted, isTableTool, moveChecked = () => false, stylesheet = '/editor.css' }) {
+export function createBodyEditor({ parent, value = '', formatted = true, labels: given = {}, onChange, onState, onItemDeleted, isTableTool, moveChecked = () => false, checkedFolded = () => false, onCheckedFold, stylesheet = '/editor.css' }) {
   const doc = parent.ownerDocument;
   const labels = { ...DEFAULT_LABELS, ...given };
   let view, context = 'text', activeGrid = null;
@@ -375,7 +381,12 @@ export function createBodyEditor({ parent, value = '', formatted = true, labels:
     EditorView.contentAttributes.of({ spellcheck: 'true', autocapitalize: 'sentences', autocorrect: 'on', 'aria-label': labels.note, 'aria-description': labels.keys }),
     formatField,
     // The handle and the cross of a task, Alt+arrows and pasting lines as items (design checklists-77-v2, part 24).
-    listGrips({ labels, onDeleted: (count) => onItemDeleted?.(count) }),
+    // With "Move checked items to the bottom" the ticked end of a list is a part of its own, only where the boxes are drawn.
+    listGrips({
+      labels,
+      onDeleted: (count) => onItemDeleted?.(count),
+      checkedPart: { on: (state) => moveChecked() && (state.field(formatField, false)?.formatted ?? formatted), folded: checkedFolded, onFold: (folded) => onCheckedFold?.(folded) },
+    }),
     // An empty pair the caret leaves without typing in it (a button pressed, then the caret moved on) goes again, so
     // no `****` stays behind in the note.
     EditorState.transactionFilter.of((tr) => {
@@ -549,11 +560,13 @@ export function createBodyEditor({ parent, value = '', formatted = true, labels:
     apply,
     activeFormats: currentFormats,
     context: () => context,
-    setFormatted: (on) => view.dispatch({ effects: setFormatted.of(Boolean(on)) }),
+    setFormatted: (on) => view.dispatch({ effects: [setFormatted.of(Boolean(on)), checkedPartChanged.of(null)] }),
     undo: () => step(undo),
     redo: () => step(redo),
     canUndo,
     canRedo,
+    itemMove: (direction) => itemMoveEdit(view.state, direction),
+    refreshChecked: () => view.dispatch({ effects: checkedPartChanged.of(null) }),
     flush,
     destroy() { view.destroy(); element.remove(); },
   };
